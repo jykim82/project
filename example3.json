@@ -1,0 +1,1886 @@
+[
+  {
+  "intent": "RESERVOIR_OVERVIEW",
+  "questions": [
+    "배수지 일반현황은?",
+    "신평 배수지 일반현황은?",
+    "신평배수지 일반 현황을 알려줘",
+    "신평 배수지의 일반 현황은 어때?"
+  ],
+  "sql": "SELECT\n  sitename,\n  general_overview ->> 'install_location'     AS install_location,\n  general_overview ->> 'operating_status'     AS operating_status,\n  general_overview ->> 'supply_population'    AS supply_population,\n  service_area,\n  general_overview -> 'reservoir_spec' ->> 'facility_capacity_m3' AS facility_capacity,\n  general_overview -> 'reservoir_spec' ->> 'count' AS reservoir_count,\n  general_overview -> 'reservoir_spec' ->> 'H.W.L' AS hwl,\n  general_overview -> 'reservoir_spec' ->> 'L.W.L' AS lwl,\n  CASE\n    WHEN general_overview ? 'emergency_water_plan'\n     AND jsonb_typeof(general_overview -> 'emergency_water_plan') = 'array'\n     AND jsonb_array_length(general_overview -> 'emergency_water_plan') > 0\n    THEN\n      '비상 용수 공급 방안은 '\n      || (\n        SELECT string_agg(value, ', ')\n        FROM jsonb_array_elements_text(\n          general_overview -> 'emergency_water_plan'\n        )\n      )\n      || ' 입니다.'\n    ELSE NULL\n  END AS emergency_water_plan_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_accessible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_accessible' = 'true'\n        THEN '비상 시 물차 진입이 가능합니다.'\n        ELSE '비상 시 물차 진입이 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_accessible_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_turning_possible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_turning_possible' = 'true'\n        THEN '물차 회차가 가능합니다.'\n        ELSE '물차 회차가 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_turning_possible_sentence,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 일반 현황은 다음과 같습니다.",
+    "detail": [
+      "급수 대상 지역은 {service_area}입니다.",
+      "급수 인구는 {supply_population}명입니다.",
+      "{emergency_water_plan_sentence}",
+      "{water_truck_accessible_sentence}",
+      "{water_truck_turning_possible_sentence}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename} 배수지 용수공급가능시간",
+        "2. 현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의 사항입니다.",
+      "items": [
+        "1. 배수지 운영현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+,
+ {
+  "intent": "RESERVOIR_EQUIPMENT_STATUS",
+  "questions": [
+    "배수지 설비현황은?",
+    "신평 배수지 설비현황은?",
+    "신평배수지 설비 현황을 알려줘",
+    "신평 배수지에 어떤 설비들이 있나요?"
+  ],
+  "sql": "SELECT \n  sitename,\n  meta,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 설비 현황은 다음과 같습니다.",
+    "detail": [
+      "{equipment_status_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename} 배수지 용수공급가능시간",
+        "2. 현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 운영현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "table_style"
+},
+{
+  "intent": "RESERVOIR_INITIAL_RESPONSE_MANUAL",
+  "questions": [
+    "배수지 초동대응 매뉴얼은?",
+    "신평 배수지 초동대응 매뉴얼은?",
+    "배수지 사고 발생 시 매뉴얼은?"
+  ],
+  "sql": "SELECT \n  sitename,\n  manual_url,\n  manual_preview_url,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 초동대응 매뉴얼은 다음과 같습니다.",
+    "detail": [
+      "{manual_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 {sitename} 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 배수지 운영현황은?",
+        "2. {sitename} 배수지 설비현황은?",
+        "3. {sitename} 배수지 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "document"
+}
+
+,{
+  "intent": "RESERVOIR_OPERATION_STATUS",
+  "questions": [
+    "배수지 운영현황은?",
+    "신평배수지 운영현황은?",
+    "신평 배수지 운영 상태는?",
+    "신평배수지 현재 운영현황을 알려줘"
+  ],
+  "sql": "SELECT\n  sitename,\n  general_overview ->> 'operating_status' AS operating_status,\n  avg_outflow,\n  avg_outflow_unit,\n  avg_usage,\n  usage_unit,\n  avg_reservoir_level,\n  water_level_unit,\n  alarm_high_water_level,\n  alarm_low_water_level,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 운영현황은 다음과 같습니다.",
+    "detail": [
+      "최근 7일간 평균 산출 방식으로 일평균 공급량을 산정합니다.",
+      "{sitename} 배수지 운영 상태는 현재 {operating_status} 상태입니다.",
+      "일평균 공급량은 {avg_outflow}{avg_outflow_unit}이며, 현재 시간당 {avg_usage}{usage_unit} 공급 중입니다.",
+      "배수지 평균 운영 수위는 {avg_reservoir_level}{water_level_unit}입니다.",
+      "배수지 수위 경보 기준은 HH {alarm_high_water_level}{water_level_unit}, LL {alarm_low_water_level}{water_level_unit}입니다.",
+      "현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename} 배수지 용수공급가능시간",
+        "2. 현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 일반현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "RESERVOIR_FACILITY_CAPACITY",
+  "questions": [
+    "배수지 시설용량은?",
+    "신평배수지 시설용량은?",
+    "신평 배수지의 시설용량은 얼마인가요?",
+    "신평배수지 저장 용량은?"
+  ],
+  "sql": "SELECT\n  sitename,\n  general_overview ->> 'facility_capacity_m3' AS facility_capacity_m3,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 시설용량은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 배수지 시설용량은 {facility_capacity_m3}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename} 배수지 용수공급가능시간",
+        "2. 현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 일반현황 및 운영현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "RESERVOIR_LEVEL_STATUS",
+  "questions": [
+    "배수지 수위 현황을 알려줘",
+    "신평 배수지 수위 현황은?",
+    "신평배수지 수위는 어떻게 되나요?",
+    "신평 배수지 현재 수위는?"
+  ],
+  "sql": "SELECT *\nFROM fn_reservoir_level_summary('{sitename}', '{facilitytype}', '수위');",
+  "answer_template": {
+    "summary": "{sitename}{facilitytype} 수위 현황은 다음과 같습니다.",
+    "detail": [
+      "{log_time} 기준 {sitename}{facilitytype} 평균 수위는 {avg_latest}{unit}입니다.",
+      "다음은 각 개별 수위 현황입니다.",
+      "{level_detail_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename}{facilitytype} 한달 평균 수위는 {avg_month}{unit}입니다.",
+        "2. {sitename}{facilitytype} 일년 평균 수위는 {avg_year}{unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 수위 트렌드는?",
+        "2. 용수공급 계통도 및 전단 가압장 설비 가동현황은?",
+        "3. 배수지 일반현황 및 운영현황은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "TODAY_FLOW_ACCUMULATION",
+  "questions": [
+    "금일 배수지 적산은?",
+    "금일 배수지 유출 적산은?",
+    "금일 행정 배수지 유출 적산은?",
+    "금일 행정 배수지 적산은?",
+    "금일 행정1-2 소블록 적산은?",
+    "오늘 배수지 적산량은?"
+  ],
+  "sql": "SELECT *\nFROM fn_today_outflow('{sitename}', '{facilitytype}', '{datainfo}');",
+  "answer_template": {
+    "summary": "금일 {sitename}{facilitytype} 적산 현황은 다음과 같습니다.",
+    "detail": [
+      "{today_flow_detail_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 금일 적산 산출은 당일 00시 기준 누적값을 사용합니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 일반현황 및 운영현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "TODAY_OUTFLOW_ALL_STATUS",
+  "questions": [
+    "금일 배수지 유출 현황은?",
+    "금일 전체 배수지 유출 현황은?",
+    "오늘 전체 배수지 유출량은?",
+    "금일 배수지별 유출 현황을 알려줘"
+  ],
+  "sql": "SELECT *\nFROM fn_today_outflow_all(CURRENT_DATE);",
+  "answer_template": {
+    "summary": "금일 전체 배수지 유출 현황은 다음과 같습니다.",
+    "detail": [
+      "전체 배수지 유출량은 {total_outflow}㎥입니다.",
+      "{outflow_detail_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 금일 유출량은 당일 00시부터 현재까지의 누적값 기준입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 일반현황 및 운영현황은?",
+        "2. 배수지 설비현황은?",
+        "3. 배수지 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "BOOSTER_STATION_OVERVIEW",
+  "questions": [
+    "가압장 일반현황은?",
+    "행정 가압장 일반현황은?",
+    "행정가압장 일반 현황을 알려줘",
+    "행정 가압장 기본 정보는?"
+  ],
+  "sql": "SELECT \n  sitename,\n  general_overview,\n  running_pump_count,\n  booster_avg_pressure,\n  booster_inlet_pressure,\n  booster_outlet_pressure,\n  pressure_unit\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 일반현황은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 가압장 설치 위치는 {install_location}에 위치하고 있습니다.",
+      "설치년도는 {install_year}년입니다.",
+      "가압장 시설용량은 {facility_capacity_m3}이며, {booster_type} 방식으로 운영 중입니다.",
+      "펌프는 총 {pump_count}대이며, {linked_reservoirs} 배수지와 연동되어 운영 중입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 가동 중인 펌프 수는 {running_pump_count}대입니다.",
+        "2. 평균 가압량은 {booster_avg_pressure}{pressure_unit}, 전단압력 {booster_inlet_pressure}{pressure_unit}, 후단압력 {booster_outlet_pressure}{pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 가압장 운영현황은?",
+        "2. 가압장 설비현황은?",
+        "3. 가압장 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "BOOSTER_STATION_OPERATION_STATUS",
+  "questions": [
+    "가압장 운영현황은?",
+    "행정 가압장 운영현황은?",
+    "행정가압장 현재 운영상태는?",
+    "행정 가압장 가동 현황을 알려줘"
+  ],
+  "sql": "SELECT \n  v.sitename,\n  v.general_overview ->> 'operating_status' AS operating_status,\n  v.general_overview -> 'pump' ->> 'count' AS pump_count,\n  v.normal_operation_pump_count,\n  v.pressure_unit,\n  v.booster_avg_pressure,\n  v.booster_inlet_pressure,\n  v.booster_outlet_pressure,\n  v.running_pump_count,\n  v.pump_start_threshold,\n  v.pump_stop_threshold,\n  v.infiltration_well_count,\n  v.zone_1_height,\n  v.zone_2_height\nFROM v_booster_station_info_status v\nWHERE v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 운영현황은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 가압장 운영상태는 현재 {operating_status} 상태입니다.",
+      "전체 펌프 {pump_count}대 중 평상시 {normal_operation_pump_count}대를 운영합니다.",
+      "현재 평균 가압량은 {booster_avg_pressure}{pressure_unit}입니다.",
+      "전단압력은 {booster_inlet_pressure}{pressure_unit}, 후단압력은 {booster_outlet_pressure}{pressure_unit}입니다.",
+      "현재 {running_pump_count}대 펌프가 가동 중입니다.",
+      "펌프 가동 기준은 수위 {pump_start_threshold}에서 기동, {pump_stop_threshold}에서 정지입니다.",
+      "흡수정은 총 {infiltration_well_count}지이며, 현재 수위는 {zone_1_height}m, {zone_2_height}m입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 가동 중인 펌프 대수는 {running_pump_count}대입니다.",
+        "2. 평균 가압량 및 전·후단 압력은 실시간 계측값 기준입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 가압장 일반현황은?",
+        "2. 가압장 설비현황은?",
+        "3. 가압장 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
+  "questions": [
+    "가압장 초동대응 매뉴얼은?",
+    "고대리 가압장 초동대응 매뉴얼은?",
+    "행정 가압장 초동대응 매뉴얼은?",
+    "가압장 사고 발생 시 매뉴얼은?"
+  ],
+  "sql": "SELECT \n  sitename,\n  manual_url,\n  running_pump_count,\n  booster_avg_pressure,\n  booster_inlet_pressure,\n  booster_outlet_pressure,\n  pressure_unit\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 초동대응 매뉴얼은 다음과 같습니다.",
+    "detail": [
+      "{manual_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 가동 중인 펌프 수는 {running_pump_count}대입니다.",
+        "2. 평균 가압량은 {booster_avg_pressure}{pressure_unit}, 전단압력 {booster_inlet_pressure}{pressure_unit}, 후단압력 {booster_outlet_pressure}{pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 가압장 운영현황은?",
+        "2. 가압장 설비현황은?",
+        "3. 가압장 일반현황은?"
+      ]
+    }
+  },
+  "graph_type": "document"
+}
+
+,
+  {
+  "intent": "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+  "questions": [
+    "감압시설 일반현황은?",
+    "행정 감압시설 일반현황은?",
+    "순성 감압시설 일반현황은?",
+    "감압시설 기본 정보는?"
+  ],
+  "sql": "SELECT \n  sitename,\n  general_overview,\n  status,\n  avg_inlet_pressure,\n  avg_outlet_pressure,\n  avg_pressure_reduction,\n  info_pressure_unit\nFROM v_pressure_reducing_facility_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 일반현황은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 감압시설 설치 위치는 {install_location}입니다.",
+      "본관 및 감압밸브 관경은 {pipe_diameter}입니다.",
+      "{control_method} 제어 방식으로 운영 중이며, 제조사는 {manufacturer}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 운영 상태는 {status}입니다.",
+        "2. 전단압력 평균 {avg_inlet_pressure}{info_pressure_unit}, 후단압력 평균 {avg_outlet_pressure}{info_pressure_unit}, 감압량 평균 {avg_pressure_reduction}{info_pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 감압시설 운영현황은?",
+        "2. 감압시설 설비현황은?",
+        "3. 감압시설 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS",
+  "questions": [
+    "감압시설 운영현황은?",
+    "행정 감압시설 운영현황은?",
+    "순성 감압시설 운영현황은?",
+    "감압시설 현재 운영상태는?"
+  ],
+  "sql": "SELECT \n  v.sitename,\n  v.status AS status,\n  v.pressure_reduction_pattern,\n  v.general_overview -> 'pressure_reducing_valve' ->> 'control_method' AS control_method,\n  v.avg_inlet_pressure,\n  v.avg_outlet_pressure,\n  v.avg_pressure_reduction,\n  v.info_pressure_unit,\n  v.pressure_reduction_criteria\nFROM v_pressure_reducing_facility_info_status v\nWHERE v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 운영현황은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 감압시설 운영상태는 현재 {status} 상태입니다.",
+      "감압 패턴은 {pressure_reduction_pattern} 방식이며, 제어 방식은 {control_method}입니다.",
+      "전단압력 평균은 {avg_inlet_pressure}{info_pressure_unit}입니다.",
+      "후단압력 평균은 {avg_outlet_pressure}{info_pressure_unit}입니다.",
+      "감압량 평균은 {avg_pressure_reduction}{info_pressure_unit}입니다.",
+      "감압 기준은 {pressure_reduction_criteria}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 전·후단 압력 및 감압량은 최근 평균값 기준입니다.",
+        "2. 감압 기준은 운영 정책에 따라 설정됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 감압시설 일반현황은?",
+        "2. 감압시설 설비현황은?",
+        "3. 감압시설 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+  "questions": [
+    "감압시설 설비현황은?",
+    "순성 감압시설 설비현황은?",
+    "행정 감압시설 설비현황은?",
+    "감압시설 주요 설비 상태는?"
+  ],
+  "sql": "SELECT \n  v.sitename,\n  v.meta,\n  v.status AS status,\n  v.pressure_reduction_pattern,\n  v.avg_inlet_pressure,\n  v.avg_outlet_pressure,\n  v.avg_pressure_reduction,\n  v.info_pressure_unit\nFROM v_pressure_reducing_facility_info_status v\nWHERE v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 설비현황은 다음과 같습니다.",
+    "detail": [
+      "{equipment_status_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 운영 상태는 {status}입니다.",
+        "2. 전단압력 평균 {avg_inlet_pressure}{info_pressure_unit}, 후단압력 평균 {avg_outlet_pressure}{info_pressure_unit}, 감압량 평균 {avg_pressure_reduction}{info_pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 감압시설 운영현황은?",
+        "2. 감압시설 일반현황은?",
+        "3. 감압시설 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "table_style"
+}
+
+,
+ {
+  "intent": "PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL",
+  "questions": [
+    "감압시설 초동대응 매뉴얼은?",
+    "순성 감압시설 초동대응 매뉴얼은?",
+    "행정 감압시설 초동대응 매뉴얼은?",
+    "감압시설 사고 발생 시 매뉴얼은?"
+  ],
+  "sql": "SELECT \n  sitename,\n  manual_url,\n  avg_inlet_pressure,\n  avg_outlet_pressure,\n  avg_pressure_reduction,\n  info_pressure_unit\nFROM v_pressure_reducing_facility_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 초동대응 매뉴얼은 다음과 같습니다.",
+    "detail": [
+      "{manual_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 전단압력 평균은 {avg_inlet_pressure}{info_pressure_unit}입니다.",
+        "2. 후단압력 평균은 {avg_outlet_pressure}{info_pressure_unit}, 감압량 평균은 {avg_pressure_reduction}{info_pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 감압시설 운영현황은?",
+        "2. 감압시설 설비현황은?",
+        "3. 감압시설 일반현황은?"
+      ]
+    }
+  },
+  "graph_type": "document"
+}
+
+,
+  {
+  "intent": "PRESSURE_REDUCING_FACILITY_CRITERIA",
+  "questions": [
+    "감압시설 감압기준은?",
+    "순성 감압설비 감압기준은?",
+    "행정 감압시설 감압기준은?",
+    "감압시설 감압 패턴은 어떻게 되나요?"
+  ],
+  "sql": "SELECT \n  sitename,\n  pressure_reduction_pattern,\n  pressure_reduction_criteria,\n  avg_inlet_pressure,\n  avg_outlet_pressure,\n  avg_pressure_reduction,\n  info_pressure_unit\nFROM v_pressure_reducing_facility_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 감압기준은 다음과 같습니다.",
+    "detail": [
+      "{sitename} 감압시설 감압 패턴은 {pressure_reduction_pattern} 방식입니다.",
+      "감압 기준은 {pressure_reduction_criteria}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 전단압력 평균 {avg_inlet_pressure}{info_pressure_unit}입니다.",
+        "2. 후단압력 평균 {avg_outlet_pressure}{info_pressure_unit}, 감압량 평균 {avg_pressure_reduction}{info_pressure_unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 감압시설 운영현황은?",
+        "2. 감압시설 설비현황은?",
+        "3. 감압시설 초동대응 매뉴얼은?"
+      ]
+    }
+  },
+  "graph_type": "document"
+}
+
+,
+  {
+  "intent": "BLOCK_OVERVIEW",
+  "questions": [
+    "블록 일반현황은?",
+    "합덕3 소블록 일반현황은?",
+    "행정1-1 중블록 일반현황은?",
+    "소블록 기본 정보는?"
+  ],
+  "sql": "SELECT \n  sitename,\n  block_level,\n  general_overview,\n  block_daily_usage,\n  daily_supply,\n  daily_flow_unit,\n  supply_ratio_percent\nFROM v_block_info_status\nWHERE sitename = '{sitename}'\n  AND block_level = '{block_level}';",
+  "answer_template": {
+    "summary": "{sitename}{block_level} 일반현황은 다음과 같습니다.",
+    "detail": [
+      "{sitename}{block_level} 수용가 수는 {customer_count}이며, 유수율 기준은 {non_revenue_water_rate}입니다.",
+      "현재 일사용량은 {block_daily_usage}{daily_flow_unit}입니다.",
+      "전체 관로 연장은 {pipeline_total}이며, 이 중 노후 관로는 {pipeline_old}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. {sitename}{block_level} 일평균 사용량은 {block_daily_usage}{daily_flow_unit}입니다.",
+        "2. 전체 일공급량 {daily_supply}{daily_flow_unit} 중 {supply_ratio_percent}%를 차지합니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename}{block_level} 운영현황은?",
+        "2. {sitename}{block_level} 위치도는?",
+        "3. {sitename}{block_level} 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "BLOCK_LOCATION",
+  "questions": [
+    "블록 위치도는?",
+    "합덕3 소블록 위치도는?",
+    "행정1-2 중블록 위치도는?",
+    "소블록 위치를 보여줘"
+  ],
+  "sql": "SELECT \n  sitename,\n  block_level,\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_block_info_status\nWHERE sitename = '{sitename}'\n  AND block_level = '{block_level}';",
+  "answer_template": {
+    "summary": "{sitename} {block_level} 위치도는 다음과 같습니다.",
+    "detail": [
+      "{sitename} {block_level}의 주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} {block_level} 일반현황은?",
+        "2. {sitename} {block_level} 운영현황은?",
+        "3. {sitename} {block_level} 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+,
+  {
+  "intent": "RESERVOIR_LOCATION",
+  "questions": [
+    "배수지 위치도는?",
+    "신평 배수지 위치도는?",
+    "송악1 배수지 위치도는?",
+    "배수지 위치를 보여줘"
+  ],
+  "sql": "SELECT \n  sitename,\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 위치도는 다음과 같습니다.",
+    "detail": [
+      "{sitename} 배수지의 주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 배수지 일반현황은?",
+        "2. {sitename} 배수지 운영현황은?",
+        "3. {sitename} 배수지 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+,
+ {
+  "intent": "BOOSTER_STATION_LOCATION",
+  "questions": [
+    "가압장 위치도는?",
+    "신평 가압장 위치도는?",
+    "고대리 가압장 위치도는?",
+    "천의리 가압장 위치도는?",
+    "가압장 위치를 보여줘"
+  ],
+  "sql": "SELECT \n  sitename,\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 위치도는 다음과 같습니다.",
+    "detail": [
+      "{sitename} 가압장의 주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 가압장 일반현황은?",
+        "2. {sitename} 가압장 운영현황은?",
+        "3. {sitename} 가압장 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+,
+  {
+  "intent": "PRESSURE_REDUCING_FACILITY_LOCATION",
+  "questions": [
+    "감압설비 위치도는?",
+    "감압시설 위치도는?",
+    "순성 감압설비 위치도는?",
+    "행정 감압시설 위치도는?",
+    "감압시설 위치를 보여줘"
+  ],
+  "sql": "SELECT \n  sitename,\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_pressure_reducing_facility_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 위치도는 다음과 같습니다.",
+    "detail": [
+      "{sitename} 감압시설의 주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 감압시설 일반현황은?",
+        "2. {sitename} 감압시설 운영현황은?",
+        "3. {sitename} 감압시설 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+,
+  {
+  "intent": "BLOCK_NETWORK_DIAGRAM",
+  "questions": [
+    "블록 계통도는?",
+    "합덕3 소블록 계통도는?",
+    "행정1-1 중블록 계통도는?",
+    "소블록 계통도를 보여줘"
+  ],
+  "sql": "SELECT \n  f.f AS facility_flow_path,\n  v.system_diagram_url\nFROM fn_get_facility_flow_path('{sitename}', '{block_level}') AS f\nJOIN v_block_info_status v\n  ON v.sitename = '{sitename}'\n AND v.block_level = '{block_level}';",
+  "answer_template": {
+    "summary": "{sitename} {block_level} 계통도는 다음과 같습니다.",
+    "detail": [
+      "계통 순서는 {facility_flow_path}입니다.",
+      "{system_diagram_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 계통도는 실제 운영 계통 기준으로 구성됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} {block_level} 일반현황은?",
+        "2. {sitename} {block_level} 운영현황은?",
+        "3. {sitename} {block_level} 위치도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+
+,
+  {
+  "intent": "RESERVOIR_NETWORK_DIAGRAM",
+  "questions": [
+    "배수지 계통도는?",
+    "합덕 배수지 계통도는?",
+    "신평 배수지 계통도는?",
+    "송악1 배수지 계통도는?",
+    "배수지 계통도를 보여줘"
+  ],
+  "sql": "SELECT\n    f.f AS facility_flow_path,\n    v.system_diagram_url\nFROM fn_get_facility_flow_path('{sitename}', '배수지') AS f\nJOIN v_reservoir_info_status v\n  ON v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 계통도는 다음과 같습니다.",
+    "detail": [
+      "계통 순서는 {facility_flow_path}입니다.",
+      "{system_diagram_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 계통도는 실제 운영 계통 기준으로 구성됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 배수지 일반현황은?",
+        "2. {sitename} 배수지 운영현황은?",
+        "3. {sitename} 배수지 위치도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+
+,
+  {
+  "intent": "BOOSTER_STATION_NETWORK_DIAGRAM",
+  "questions": [
+    "가압장 계통도는?",
+    "우강 가압장 계통도는?",
+    "신평 가압장 계통도는?",
+    "고대리 가압장 계통도는?",
+    "가압장 계통도를 보여줘"
+  ],
+  "sql": "SELECT\n    f.f AS facility_flow_path,\n    v.system_diagram_url\nFROM fn_get_facility_flow_path('{sitename}', '가압장') AS f\nJOIN v_booster_station_info_status v\n  ON v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 계통도는 다음과 같습니다.",
+    "detail": [
+      "계통 순서는 {facility_flow_path}입니다.",
+      "{system_diagram_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 계통도는 실제 운영 계통 기준으로 구성됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 가압장 일반현황은?",
+        "2. {sitename} 가압장 운영현황은?",
+        "3. {sitename} 가압장 위치도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+
+,
+ {
+  "intent": "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+  "questions": [
+    "감압설비 계통도는?",
+    "감압시설 계통도는?",
+    "순성 감압설비 계통도는?",
+    "행정 감압설비 계통도는?",
+    "감압설비 계통도를 보여줘"
+  ],
+  "sql": "SELECT\n    f.f AS facility_flow_path,\n    v.system_diagram_url\nFROM fn_get_facility_flow_path('{sitename}', '감압설비') AS f\nJOIN v_pressure_reducing_facility_info_status v\n  ON v.sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압설비 계통도는 다음과 같습니다.",
+    "detail": [
+      "계통 순서는 {facility_flow_path}입니다.",
+      "{system_diagram_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 계통도는 실제 운영 계통 기준으로 구성됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} 감압설비 일반현황은?",
+        "2. {sitename} 감압설비 운영현황은?",
+        "3. {sitename} 감압설비 위치도는?"
+      ]
+    }
+  },
+  "graph_type": "diagram"
+}
+
+,
+{
+  "intent": "BLOCK_OPERATION_STATUS",
+  "questions": [
+    "블록 운영현황은?",
+    "행정1-1 소블록 운영현황은?",
+    "합덕3 소블록 운영현황은?",
+    "소블록 현재 운영상태는?"
+  ],
+  "sql": "SELECT \n  sitename,\n  block_level,\n  avg_usage,\n  avg_usage_unit,\n  block_inlet_pressure,\n  block_outlet_pressure,\n  status_pressure_unit,\n  general_overview->'large_customer_status'->>'count' AS large_customer_count,\n  avg_usage * 24 AS avg_usage_day,\n  '㎥'::text AS avg_usage_day_unit,\n  block_daily_usage,\n  daily_flow_unit,\n  supply_ratio_percent\nFROM v_block_info_status \nWHERE sitename = '{sitename}'\n  AND block_level = '{block_level}';",
+  "answer_template": {
+    "summary": "{sitename} {block_level} 운영현황은 다음과 같습니다.",
+    "detail": [
+      "금일 00시부터 현재 시각까지의 평균값 산출 방식으로 일평균 사용량을 산정합니다.",
+      "{sitename} {block_level} 일평균 사용량은 {avg_usage}{avg_usage_unit}입니다.",
+      "{sitename} {block_level} 압력은 {block_inlet_pressure}{status_pressure_unit}입니다.",
+      "월 200톤 이상 대수용가는 {large_customer_count}개소이며, 일사용량은 {avg_usage_day}{avg_usage_day_unit}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 최근 7일 평균 기준 일사용량은 {block_daily_usage}{daily_flow_unit}입니다.",
+        "2. 전체 공급량 대비 비율은 {supply_ratio_percent}%입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} {block_level} 일반현황은?",
+        "2. {sitename} {block_level} 위치도는?",
+        "3. {sitename} {block_level} 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "RESERVOIR_LEVEL_HUNTING_CHECK",
+  "questions": [
+    "배수지 수위계 헌팅여부를 알려줘",
+    "신평배수지 수위계 헌팅여부를 알려줘",
+    "송악1 배수지 수위 헌팅 있어?",
+    "가압장 수위계 헌팅여부를 알려줘"
+  ],
+  "sql": "WITH variance AS (\n    SELECT\n        sitename,\n        datainfo,\n        variance_status,\n        diff_percent\n    FROM v_reservoir_status_variance_5min\n    WHERE sitename = '{sitename}'\n      AND facilitytype = '{facilitytype}'\n),\nlevel_avg AS (\n    SELECT \n        sitename,\n        datainfo,\n        ROUND(\n            AVG(CASE WHEN bucket_day >= now() - interval '1 month'\n                     THEN avg_daily_level END)::numeric, 2\n        ) AS avg_month,\n        ROUND(\n            AVG(CASE WHEN bucket_day >= now() - interval '1 year'\n                     THEN avg_daily_level END)::numeric, 2\n        ) AS avg_year\n    FROM public.mv_reservoir_level_stats_all\n    WHERE sitename = '{sitename}'\n    GROUP BY sitename, datainfo\n),\nalarm AS (\n    SELECT\n        sitename,\n        alarm_high_water_level,\n        alarm_low_water_level\n    FROM v_reservoir_info_status\n    WHERE sitename = '{sitename}'\n)\nSELECT\n    v.sitename,\n    v.datainfo,\n    v.variance_status,\n    v.diff_percent,\n    a.avg_month,\n    a.avg_year,\n    al.alarm_high_water_level,\n    al.alarm_low_water_level\nFROM variance v\nLEFT JOIN level_avg a\n       ON v.sitename = a.sitename\n      AND v.datainfo = a.datainfo\nCROSS JOIN alarm al\nORDER BY v.datainfo;",
+  "answer_template": {
+    "summary": "{sitename}{facilitytype} 수위계 헌팅여부 점검 결과는 다음과 같습니다.",
+    "detail": [
+      "최근 5분 데이터 분산값 기준으로 헌팅 여부를 점검한 결과입니다.",
+      "{hunting_result_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 한달 평균 수위는 {avg_month}m입니다.",
+        "2. 일년 평균 수위는 {avg_year}m입니다.",
+        "3. 수위 경보 기준은 HH {alarm_high_water_level}m, LL {alarm_low_water_level}m입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 수위 트렌드를 보여줘",
+        "2. 전단 가압장 및 감압시설 가동현황을 알려줘",
+        "3. 수위계 헌팅여부를 다시 확인해줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+{
+  "intent": "FACILITY_PRESSURE_STATUS",
+  "questions": [
+    "압력 현황은?",
+    "합덕3 소블록 압력 현황은?",
+    "남산1 소블록 압력은?",
+    "신평 배수지 압력 현황은?",
+    "고대리 가압장 압력은?"
+  ],
+  "sql": "WITH current_pressure AS (\n    SELECT \n        i.sitename,\n        i.facilitytype,\n        i.datainfo,\n        i.unit,\n        r.val AS pressure_val,\n        r.logtime\n    FROM tb_tag_info i\n    JOIN LATERAL (\n        SELECT val, logtime\n        FROM tb_tag_raw_data r\n        WHERE r.tagsn = i.tagsn\n        ORDER BY r.logtime DESC\n        LIMIT 1\n    ) r ON TRUE\n    WHERE i.sitename = '{sitename}'\n      AND i.facilitytype = '{facilitytype}'\n      AND i.tagtype = 'Analog Input'\n      AND i.datainfo ILIKE '%압력%'\n),\navg_pressure AS (\n    SELECT\n        sitename,\n        facilitytype,\n        datainfo,\n        month_avg,\n        year_avg,\n        unit\n    FROM fn_pressure_avg_summary('{sitename}', '{facilitytype}')\n)\nSELECT\n    c.sitename,\n    c.facilitytype,\n    c.datainfo,\n    c.pressure_val,\n    to_char(c.logtime, 'YYYY-MM-DD HH24:MI:SS') AS log_time,\n    a.month_avg,\n    a.year_avg,\n    c.unit\nFROM current_pressure c\nLEFT JOIN avg_pressure a\n  ON c.sitename      = a.sitename\n AND c.facilitytype = a.facilitytype\n AND c.datainfo     = a.datainfo\nORDER BY c.datainfo;",
+  "answer_template": {
+    "summary": "{sitename}{facilitytype} 압력 현황은 다음과 같습니다.",
+    "detail": [
+      "{log_time} 기준 {sitename}{facilitytype} 압력은 {pressure_val}{unit}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 금월 평균 압력은 {month_avg}{unit}입니다.",
+        "2. 금년 평균 압력은 {year_avg}{unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 압력 트렌드 그래프를 보여줘",
+        "2. 전단 가압장 및 감압시설 가동현황을 알려줘",
+        "3. 통신 이상 등 데이터 이상여부를 확인해줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+{
+  "intent": "NIGHT_MIN_FLOW_STATUS",
+  "questions": [
+    "야간최소유량 현황은?",
+    "신평배수지 야간최소유량 현황은?",
+    "소블록 야간최소유량은?",
+    "가압장 야간최소유량 현황을 알려줘"
+  ],
+  "sql": "WITH current_nmf AS (\n    SELECT\n        log_time,\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        val AS current_val\n    FROM fn_night_min_flow_summary(\n            '{sitename}',\n            '{facilitytype}',\n            (now() - interval '1 day')::date,\n            now()::date\n    )\n    ORDER BY log_time DESC\n    LIMIT 1\n),\navg_nmf AS (\n    SELECT\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        period_type,\n        ROUND(AVG(val), 2) AS avg_val\n    FROM (\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'year' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 year')::date, now()::date)\n        UNION ALL\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'month' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 month')::date, now()::date)\n    ) t\n    GROUP BY sitename, facilitytype, label, datadesc, unit, period_type\n)\nSELECT\n    c.sitename,\n    c.facilitytype,\n    c.label,\n    c.datadesc,\n    c.current_val,\n    c.unit,\n    c.log_time,\n    MAX(CASE WHEN a.period_type = 'month' THEN a.avg_val END) AS avg_month,\n    MAX(CASE WHEN a.period_type = 'year'  THEN a.avg_val END) AS avg_year\nFROM current_nmf c\nLEFT JOIN avg_nmf a\n  ON c.sitename = a.sitename\n AND c.facilitytype = a.facilitytype\n AND c.label = a.label\n AND c.datadesc = a.datadesc\nGROUP BY c.sitename, c.facilitytype, c.label, c.datadesc, c.current_val, c.unit, c.log_time;",
+  "answer_template": {
+    "summary": "{sitename}{facilitytype} 야간최소유량 현황은 다음과 같습니다.",
+    "detail": [
+      "{log_time} 기준 야간최소유량은 {current_val}{unit}입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 금월 야간최소유량 평균은 {avg_month}{unit}입니다.",
+        "2. 금년 야간최소유량 평균은 {avg_year}{unit}입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 야간최소유량 트렌드 그래프를 보여줘",
+        "2. 야간최소유량 표준편차 분석 결과를 알려줘",
+        "3. 데이터 결측 분석 결과를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "FACILITY_COMMUNICATION_TOPOLOGY",
+  "questions": [
+    "통신 구성을 알려줘",
+    "소블록 통신 구성을 알려줘",
+    "행정1-1 소블록의 통신 구성을 알려줘",
+    "배수지 통신 경로는 어떻게 되나요?",
+    "가압장 통신 구조를 설명해줘"
+  ],
+  "sql": "SELECT * FROM fn_equipment_type_path_server_origin('{sitename}', '{facilitytype}');\n\nSELECT\n  source_sitename,\n  source_facilitytype,\n  source_equipmenttype,\n  target_equipmenttype,\n  link_device_interface,\n  link_protocol\nFROM fn_network_path_hop_detail('{sitename}', '{facilitytype}');",
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} 통신 구성은 다음과 같습니다.",
+    "detail": [
+      "네트워크 전체 흐름은 {type_path}입니다.",
+      "{network_hop_detail_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 통신 경로는 상위 제어망부터 현장 설비까지 순차적으로 구성됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} {facilitytype} 통신 상태를 알려줘",
+        "2. 통신 이상 지점을 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+,
+  {
+  "intent": "FACILITY_COMMUNICATION_STATUS",
+  "questions": [
+    "통신 상태를 알려줘",
+    "현재 소블록 통신 상태는?",
+    "남산1 소블록 통신 상태를 알려줘",
+    "배수지 통신 상태는 정상인가?",
+    "가압장 통신 이상 여부를 알려줘"
+  ],
+  "sql": "SELECT\n  pos,\n  sitename,\n  facilitytype,\n  equipmenttype,\n  status_code,\n  rtt_ms,\n  error_message\nFROM fn_network_path_trace_with_status('{sitename}', '{facilitytype}')\nORDER BY pos;",
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} 통신 상태는 다음과 같습니다.",
+    "detail": [
+      "상위 제어망부터 현장 설비까지 구간별 통신 상태를 점검한 결과입니다.",
+      "{network_status_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 통신 지연 시간은 RTT(ms) 기준입니다.",
+        "2. 오류 메시지는 최근 상태 기준으로 표시됩니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 통신 구성(경로)을 다시 보여줘",
+        "2. 통신 이상 지점을 알려줘",
+        "3. 상위 제어망 네트워크 상태를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "FACILITY_ADDRESS_INFO_RESERVOIR",
+  "questions": [
+    "주소를 알려줘",
+    "배수지 주소를 알려줘",
+    "신평 배수지 주소는?",
+    "가압장 주소는 어디야?",
+    "소블록 주소를 알려줘"
+  ],
+  "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 배수지 주소는 다음과 같습니다.",
+    "detail": [
+      "주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 위치 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 위치도를 보여줘",
+        "2. 배수지 계통도를 보여줘",
+        "3. 다른 설비 주소를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "graph_type"
+}
+
+,
+  {
+  "intent": "FACILITY_ADDRESS_INFO_BOOSTER",
+  "questions": [
+    "가압장 주소를 알려줘",
+    "고대리 가압장 주소를 알려줘",
+    "천의리 가압장 주소는?",
+    "행정 가압장 주소는 어디야?"
+  ],
+  "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 가압장 주소는 다음과 같습니다.",
+    "detail": [
+      "주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 위치 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 가압장 위치도를 보여줘",
+        "2. 가압장 계통도를 보여줘",
+        "3. 다른 설비 주소를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "graph_type"
+}
+
+,
+  {
+  "intent": "FACILITY_ADDRESS_INFO_BLOCK",
+  "questions": [
+    "소블록 주소를 알려줘",
+    "행정1-1 소블록 주소를 알려줘",
+    "대블록 주소는 어디야?",
+    "중블록 주소를 알려줘"
+  ],
+  "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_block_info_status\nWHERE sitename = '{sitename}'\n  AND block_level = '{block_level}';",
+  "answer_template": {
+    "summary": "{sitename} {block_level} 주소는 다음과 같습니다.",
+    "detail": [
+      "주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 위치 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. {sitename} {block_level} 위치도를 보여줘",
+        "2. {sitename} {block_level} 계통도를 보여줘",
+        "3. 다른 블록 주소를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "FACILITY_ADDRESS_INFO_PRESSURE",
+  "questions": [
+    "감압시설 주소를 알려줘",
+    "행정 감압시설 주소를 알려줘",
+    "순성 감압시설 주소는 어디야?"
+  ],
+  "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_pressure_reducing_facility_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "{sitename} 감압시설 주소는 다음과 같습니다.",
+    "detail": [
+      "주소는 {install_location}입니다.",
+      "{location_image_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현장 위치 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 가압장 주소를 알려줘",
+        "2. 배수지 주소를 알려줘",
+        "3. 소블록 주소를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+  {
+  "intent": "FACILITY_RECENT_ALARM",
+  "questions": [
+    "최근 알람은 뭐야?",
+    "삼봉 가압장의 최근 펌프 알람은 뭐야?",
+    "배수지 최근 수위 알람 알려줘",
+    "소블록 통신 알람 최근 내역은?"
+  ],
+  "sql": "SELECT\n  TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,\n  alarm_msg\nFROM tb_equipment_alarm_report\nWHERE sitename = '{sitename}'\n  AND facilitytype = '{facilitytype}'\n  AND alarm_msg LIKE '%{alarm_msg}%'\nORDER BY alarm_start_time DESC\nLIMIT 5;",
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} 최근 알람은 다음과 같습니다.",
+    "detail": [
+      "최근 알람은 일반적인 센서 알람 발생 빈도를 고려하여 최대 5건까지 표시합니다.",
+      "{alarm_list_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 알람 시간은 발생 시각 기준입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 알람 발생 누적 건수를 알려줘",
+        "2. 통신 알람만 따로 보여줘",
+        "3. 특정 설비의 최근 알람을 보여줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+,
+{
+  "intent": "FACILITY_ALARM_TOP_COUNT",
+  "questions": [
+    "경보 발생 누적건수가 높은 순서대로 보여줘",
+    "알람 많이 발생한 순서대로 알려줘",
+    "경보 누적 TOP 10을 보여줘",
+    "알람 발생 건수 상위 5개만 보여줘"
+  ],
+  "sql": "SELECT\n  COUNT(*) AS alarm_count,\n  string_agg(DISTINCT alarm_msg, '; ' ORDER BY alarm_msg) AS alarm_msg\nFROM tb_equipment_alarm_report\nGROUP BY equipment_id, equipmenttype, sitename, facilitytype\nORDER BY alarm_count DESC\nLIMIT {limit};",
+  "answer_template": {
+    "summary": "경보 발생 누적 건수가 높은 순서는 다음과 같습니다.",
+    "detail": [
+      "{alarm_rank_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 집계 기준은 설비 단위이며, 최근 데이터부터 누적 산정합니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 특정 설비의 최근 알람 내역을 보여줘",
+        "2. 통신 알람만 누적 기준으로 보여줘",
+        "3. 경보 발생 원인별 분류 결과를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+  "questions": [
+    "통신 경보 발생원인 진단 순위를 알려줘",
+    "소블록 통신 경보 발생원인 순위를 알려줘",
+    "행정1-1 소블록 통신 경보 원인 TOP 4는?",
+    "가압장 고장 알람 발생원인 진단 순위를 알려줘"
+  ],
+  "sql": "SELECT\n  sitename,\n  facilitytype,\n  COUNT(*) AS alarm_count,\n  string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause) AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE diagnosed_cause IS NOT NULL\n  AND alarm_msg LIKE '%{alarm_msg}%'\n  AND sitename = '{sitename}'\n  AND facilitytype = '{facilitytype}'\nGROUP BY equipment_id, equipmenttype, sitename, facilitytype\nORDER BY alarm_count DESC\nLIMIT {limit};",
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} {alarm_msg} 경보 발생원인 진단 순위는 다음과 같습니다.",
+    "detail": [
+      "{alarm_cause_rank_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 진단 원인은 기존 룰베이스 진단 결과를 기준으로 집계합니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 최근 {alarm_msg} 알람 내역을 보여줘",
+        "2. {sitename} {facilitytype} 통신 상태를 알려줘",
+        "3. 동일 원인이 반복 발생한 설비를 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "FACILITY_TAG_LATEST_VALUE",
+  "questions": [
+    "현재 수위를 알려줘",
+    "현재 압력을 조회해줘",
+    "배수지의 현재 수위를 알려줘",
+    "가압장의 현재 압력을 조회해줘",
+    "현재 밸브 데이터는?"
+  ],
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  i.datainfo,\n  i.datadesc,\n  r.tagsn,\n  last(r.val, r.logtime) AS latest_val,\n  to_char(max(r.logtime), 'YYYY-MM-DD HH24:MI:SS') AS latest_time\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND (\n        i.datadesc ILIKE '%{datakey}%'\n     OR i.datainfo ILIKE '%{datakey}%'\n  )\nGROUP BY i.sitename, i.facilitytype, i.datainfo, i.datadesc, r.tagsn\nORDER BY r.tagsn;",
+  "answer_template": {
+    "summary": "{sitename} {facilitytype}에서 조회한 현재 데이터는 다음과 같습니다.",
+    "detail": [
+      "{latest_value_list_block}"
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 값은 가장 최근 수집 시점 기준입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 해당 데이터의 트렌드를 보여줘",
+        "2. 데이터 결측 여부를 확인해줘",
+        "3. 동일 설비의 다른 계측값을 조회해줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+}
+
+,
+ {
+  "intent": "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+  "questions": [
+    "배수지 용수공급가능 시간은?",
+    "송악1 배수지 용수공급가능 시간은?",
+    "신평 배수지 물 얼마나 공급 가능해?",
+    "배수지 비상시 몇 시간 버텨?"
+  ],
+  "sql": "SELECT * FROM fn_reservoir_supply_hours('{sitename}');",
+  "answer_template": {
+    "summary": "{sitename} 배수지 용수공급가능시간 산출 결과입니다.",
+    "detail": [
+      "{sitename} 배수지는 총 {zone_count}지로 구성되어 있으며, 총 시설용량은 {facility_capacity}{facility_unit}입니다.",
+      "한 달 평균 기준 유입량은 {monthly_inflow}{avg_unit}, 유출량은 {monthly_outflow}{avg_unit}입니다.",
+      "금일 기준 유입량은 {today_inflow}{avg_unit}, 유출량은 {today_outflow}{avg_unit}입니다.",
+      "한 달 평균 기준 용수공급가능시간은 {supply_hours_monthly}시간입니다.",
+      "금일 기준 용수공급가능시간은 {supply_hours_today}시간입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 시설용량은 배수지 존별 용량 합산 기준입니다.",
+        "2. 용수공급가능시간은 유입·유출 평균값 기반 산정 결과입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 배수지 일반현황을 알려줘",
+        "2. 배수지 운영현황을 알려줘",
+        "3. 배수지 비상 급수 계획을 알려줘"
+      ]
+    }
+  },
+  "graph_type": "none"
+},
+{
+  "intent": "FACILITY_FLOW_CURRENT_TABLE",
+  "questions": [
+    "현재 남산1 소블록 유량을 표로 보여줘",
+    "현재 남산1 소블록 유량값을 표로 보여줘",
+    "현재 남산1 소블록 유량 데이터를 표로 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_info i\nJOIN LATERAL (\n  SELECT tagsn, val, logtime\n  FROM tb_tag_raw_data r\n  WHERE r.tagsn = i.tagsn\n    AND r.logtime >= {from_ts}\n    AND r.logtime < {to_ts}\n  ORDER BY r.logtime DESC\n  LIMIT 1\n) r ON true\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '{datainfo}';",
+
+  "answer_template": {
+    "summary": "현재 {sitename} {facilitytype} {datainfo} 현황입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 금일 {sitename} {facilitytype} 유량을 보여줘",
+      "2. 한달간 {sitename} {facilitytype} 유량 순시를 보여줘",
+      "3. 금일 행정 배수지 수위를 보여줘"
+    ]
+  },
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+  "questions": [
+    "현재 우강 가압장 밸브 상태를 표로 보여줘",
+    "우강 가압장 밸브 상태를 표로 보여줘",
+    "현재 우강 가압장 유입밸브 상태를 보여줘",
+    "현재 우강 가압장 유출밸브 상태를 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_info i\nJOIN LATERAL (\n  SELECT tagsn, val, logtime\n  FROM tb_tag_raw_data r\n  WHERE r.tagsn = i.tagsn\n    AND r.logtime >= {from_ts}\n    AND r.logtime < {to_ts}\n  ORDER BY r.logtime DESC\n  LIMIT 1\n) r ON true\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Digital Input'\n  AND i.datainfo ~ '{datainfo}'\n  AND r.val = 1;",
+
+  "answer_template": {
+    "summary": "현재 {sitename} {facilitytype} 밸브 상태입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 금일 {sitename} 소블록 유량을 보여줘",
+      "2. 한달간 {sitename} 소블록 유량 순시를 보여줘",
+      "3. 금일 행정 배수지 수위를 보여줘"
+    ]
+  },
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_ANALOG_TIMESERIES_TABLE",
+  "questions": [
+    "7일간 남산1 소블록 유량을 표로 보여줘",
+    "한달간 남산1 소블록 유량을 표로 보여줘",
+    "최근 7일 남산1 소블록 유량 데이터를 보여줘",
+    "최근 한달 남산1 소블록 유량을 표로 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '{datainfo}'\n  AND r.logtime >= {from_ts}\n  AND r.logtime < {to_ts}\nORDER BY r.tagsn, r.logtime ASC;",
+
+  "answer_template": {
+    "summary": "{period_desc} 기준 {sitename} {facilitytype} {datainfo} 데이터입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 금일 {sitename} {facilitytype} 유량을 보여줘",
+      "2. 현재 {sitename} {facilitytype} 유량을 표로 보여줘",
+      "3. 금일 행정 배수지 수위를 보여줘"
+    ]
+  },
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+  "questions": [
+    "한달간 남산2 소블록 유량 순시 데이터를 보여줘",
+    "7일간 남산1 소블록 유량 순시를 보여줘",
+    "최근 한달 소블록 유량 순시를 표로 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '(유량.*순시|순시.*유량)'\n  AND r.logtime >= {from_ts}\n  AND r.logtime < {to_ts}\nORDER BY r.tagsn, r.logtime ASC;",
+
+  "answer_template": {
+    "summary": "{period_desc} 기준 {sitename} {facilitytype} 유량 순시 데이터입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+  "questions": [
+    "한달간 남산2 소블록 유량 적산 데이터를 보여줘",
+    "7일간 남산1 소블록 유량 적산을 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '유량.*적산'\n  AND r.logtime >= {from_ts}\n  AND r.logtime < {to_ts}\nORDER BY r.tagsn, r.logtime ASC;",
+
+  "answer_template": {
+    "summary": "{period_desc} 기준 {sitename} {facilitytype} 유량 적산 데이터입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+
+{
+  "intent": "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+  "questions": [
+    "행정 배수지 유입밸브 상태 데이터를 표로 보여줘",
+    "특정 기간 행정 배수지 유출밸브 상태를 보여줘",
+    "2025년 12월 29일부터 2025년 12월 30일까지 행정 배수지 유입밸브 상태를 표로 보여줘",
+    "최근 7일간 가압장 펌프 상태 데이터를 보여줘"
+  ],
+
+  "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Digital Input'\n  AND i.datainfo ~ '{datainfo}'\n  AND r.logtime >= {from_ts}\n  AND r.logtime < {to_ts}\nORDER BY r.logtime ASC;",
+
+  "answer_template": {
+    "summary": "{from_date}부터 {to_date}까지 {sitename} {facilitytype} {datainfo} 상태 데이터입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "logtime",
+    "tagsn",
+    "datadesc",
+    "val"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 금일 {sitename} 소블록 유량을 보여줘",
+      "2. 한달간 {sitename} 소블록 유량 순시를 보여줘",
+      "3. 금일 행정 배수지 수위를 보여줘"
+    ]
+  },
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+  "questions": [
+    "소블록 야간최소유량 데이터를 표로 보여줘",
+    "전체 소블록 야간최소유량을 표로 보여줘",
+    "합덕3 소블록 야간최소유량을 표로 보여줘"
+  ],
+
+  "sql": "SELECT * FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', {from_ts}, {to_ts});",
+
+  "answer_template": {
+    "summary": "{period_desc} 기준 {facilitytype} 야간최소유량 데이터입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "log_time",
+    "out_sitename",
+    "out_facilitytype",
+    "out_label",
+    "out_val"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 야간최소유량 트렌드 그래프를 보여줘",
+      "2. 야간최소유량 표준편차 분석을 통해 이상여부를 확인해줘",
+      "3. 데이터 결측 분석 결과를 알려줘"
+    ]
+  },
+
+  "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "TAG_DAILY_MISSING_SUMMARY",
+  "questions": [
+    "한달간 송악1 배수지 유량데이터 중 결측구간 분석결과는?",
+    "신평 배수지 데이터 결측분석결과는?",
+    "배수지 데이터 결측률을 알려줘",
+    "소블록 데이터 결측분석결과를 보여줘",
+    "최근 한달간 배수지 데이터 결측분석결과는?"
+  ],
+
+  "sql": "SELECT * \nFROM fn_tag_daily_summary(\n  {from_ts},\n  {to_ts},\n  '{sitename}',\n  '{facilitytype}'\n);",
+
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} 데이터 결측 분석 결과입니다.",
+    "detail": []
+  },
+
+  "table_columns": [
+    "log_date",
+    "total_good_cnt",
+    "total_expect_cnt",
+    "total_missing_cnt",
+    "good_rate_pct",
+    "missing_rate_pct"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 야간최소유량 트렌드 그래프를 보여줘",
+      "2. 야간최소유량 표준편차 분석을 통해 이상여부를 확인해줘",
+      "3. 데이터 이상 설비 현황을 알려줘"
+    ]
+  },
+
+ "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "ONGOING_ALARM_STATUS",
+  "questions": [
+    "현재 진행중인 알람은?",
+    "현재 기준 진행중인 경보는?",
+    "지금 알람 몇 건 있어?",
+    "종료되지 않은 알람 현황을 알려줘",
+    "현재 살아있는 알람을 보여줘"
+  ],
+
+  "sql": "SELECT * FROM v_ongoing_alarm;",
+
+  "answer_template": {
+    "summary": "현재 기준 진행중인 알람은 총 {total_alarm_count}건입니다.",
+    "detail": [
+      "{category_summary}"
+    ]
+  },
+
+  "table_columns": [
+    "no",
+    "sitename",
+    "facilitytype",
+    "alarm_msg",
+    "alarm_value"
+  ],
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 알람 발생 누적건수가 높은 순서대로 보여줘",
+      "2. 통신 알람만 따로 보여줘",
+      "3. 특정 현장의 진행중인 알람을 알려줘"
+    ]
+  },
+
+ "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_ABNORMAL_STATUS_SUMMARY",
+  "questions": [
+    "현재 이상 설비 현황을 알려줘",
+    "유량 데이터 이상 설비 현황을 알려줘",
+    "수위 데이터 이상 설비 현황을 보여줘",
+    "압력 데이터 이상 설비가 있는지 알려줘"
+  ],
+
+  "sql": "WITH base AS (\n    SELECT result_facilitytype, result_sitename, result_missing_pct\n    FROM public.fn_realtime_missing_summary('{sitename}', '{facilitytype}', '{datainfo}')\n)\nSELECT result_facilitytype AS facilitytype,\n       COUNT(*) AS cnt,\n       COUNT(CASE WHEN result_missing_pct > 50 THEN 1 END) AS missing_cnt,\n       STRING_AGG(CASE WHEN result_missing_pct > 50 THEN result_sitename END, ', ' ORDER BY result_sitename) AS missing_sites\nFROM base\nGROUP BY result_facilitytype\nORDER BY result_facilitytype;",
+
+  "answer_template": {
+    "summary": "{datainfo} 데이터 기준 시설 유형별 이상 설비 현황입니다. (결측률 50% 초과)",
+    "detail": []
+  },
+
+  "table_columns": [
+    "facilitytype",
+    "cnt",
+    "missing_cnt",
+    "missing_sites"
+  ],
+
+ "graph_type": "table",
+"table_type": "summary"
+
+}
+
+,
+{
+  "intent": "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+  "questions": [
+    "야간최소유량 표준편차분석을 통해 이상여부를 확인해줘",
+    "남산1 소블록 야간최소유량 표준편차분석 결과를 알려줘",
+    "신평 배수지 야간최소유량이 이상한지 분석해줘",
+    "야간최소유량 표준편차 기준으로 이상여부를 확인해줘"
+  ],
+
+  "sql": "SELECT\n    m.sitename,\n    m.facilitytype,\n    fn_night_min_flow_stats('{sitename}', '{facilitytype}') AS stats_report,\n    m.avg_val AS avg_month,\n    y.avg_val AS avg_year,\n    m.unit\nFROM (\n    SELECT \n        sitename,\n        facilitytype,\n        ROUND(AVG(val), 2) AS avg_val,\n        '㎥/hr' AS unit\n    FROM fn_night_min_flow_summary(\n        '{sitename}',\n        '{facilitytype}',\n        date_trunc('month', now())::date,\n        now()::date\n    )\n    GROUP BY sitename, facilitytype\n) m\nLEFT JOIN (\n    SELECT \n        sitename,\n        facilitytype,\n        ROUND(AVG(val), 2) AS avg_val\n    FROM fn_night_min_flow_summary(\n        '{sitename}',\n        '{facilitytype}',\n        date_trunc('year', now())::date,\n        now()::date\n    )\n    GROUP BY sitename, facilitytype\n) y\n  ON m.sitename = y.sitename\n AND m.facilitytype = y.facilitytype;",
+
+  "answer_template": {
+    "summary": "{sitename} {facilitytype} 야간최소유량 표준편차 분석 결과입니다.",
+    "detail": []
+  },
+
+  "recommend_questions": {
+    "title": "추가로 추천 질의입니다.",
+    "items": [
+      "1. 야간최소유량 트렌드 그래프를 보여줘",
+      "2. 야간최소유량 데이터 결측분석결과를 알려줘",
+      "3. 데이터 이상 설비 현황을 알려줘"
+    ]
+  },
+"graph_type": "table",
+"table_type": "summary"
+
+}
+
+
+,
+{
+  "intent": "FACILITY_TREND",
+  "questions": [
+    "유량 그래프 보여줘",
+    "유량 트렌드 보여줘",
+    "수위 그래프 보여줘",
+    "수위 트렌드 보여줘",
+    "압력 그래프 보여줘",
+    "압력 트렌드 보여줘",
+
+    "신평 배수지 유량 그래프 보여줘",
+    "신평 배수지 유량 트렌드 보여줘",
+    "기지시 가압장 압력 그래프 보여줘",
+
+    "한달간 신평배수지 유량 그래프를 보여줘",
+    "한달간 신평배수지 유량 트렌드를 보여줘",
+    "한달간 신평배수지 수위 그래프 보여줘",
+    "한달간 신평배수지 수위 트렌드 보여줘",
+
+    "일별 행정1-1 소블록 유량 트렌드를 보여줘",
+    "일별 행정1-1 소블록 유량 그래프를 보여줘",
+    "일별 행정1-1 소블록 유량 트렌드 그래프를 보여줘",
+
+    "소블록 야간최소유량 트렌드를 보여줘",
+    "소블록 야간최소유량 그래프를 보여줘",
+    "소블록 야간최소유량 트렌드 그래프를 보여줘",
+    "한달간 소블록 야간최소유량 트렌드를 보여줘",
+    "한달간 소블록 야간최소유량 그래프를 보여줘",
+    "한달간 소블록 야간최소유량 트렌드 그래프를 보여줘",
+    "최근 3년간 행정1-1 소블록 야간최소유량 트렌드 보여줘",
+    "최근 3년간 년도별로 행정1-1 소블록 야간최소유량 트렌드 보여줘",
+    "최근 3년간 행정1-1 소블록 야간최소유량 그래프를 보여줘",
+    "최근 3년간 행정1-1 소블록 야간최소유량 트렌드 그래프를 보여줘",
+    "9월 2일부터 9월 9일까지 신평 배수지 유출 유량과  및 기지시 가압장 압력 데이터 트랜드를 보여줘"
+  ],
+  "sql": "SELECT * FROM fn_trend_period_summary('{sitename}', '{facilitytype}', '{datainfo}', {from_ts}, {to_ts});",
+  "default_period": "7 days",
+  "default_period_desc": "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다.",
+  "answer_template": {
+    "summary": "{period_desc}",
+    "detail": [
+      "{sitename} {facilitytype} {datainfo} 트렌드 그래프입니다."
+    ],
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 트렌드 데이터는 선택한 기간 내 수집된 시계열 데이터를 기준으로 합니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 신평 배수지 수위 트렌드 그래프를 보여줘",
+        "2. 한달간 송악1 배수지 압력 트렌드를 보여줘"
+      ]
+    }
+  },
+  "graph_type": "plot",
+  "plot_type": "line"
+},
+
+{
+  "intent": "FACILITY_MIXED_TREND",
+  "questions": [
+    "유입밸브 상태와 유입유량을 함께 트렌드로 보여줘",
+    "유입밸브 가동상태와 유입유량을 함께 트렌드로 보여줘",
+    "상태와 유량을 함께 트렌드로 보여줘",
+    "밸브 상태와 유량을 함께 그래프로 보여줘",
+    "펌프 가동상태와 수위를 함께 트렌드로 보여줘",
+    "12월 2일부터 12월 10일까지 신평 배수지 수위를 신평생활 가압장 가압펌프상태와 함께 트랜드로 보여줘",
+    "12월 28일부터 12월 31일까지 신평 배수지 유입밸브상태와 유입유량을 함께 트랜드로 보여줘",
+    "신평 배수지 데이터 트렌드 보여줘"
+  ],
+  "sql": [
+    "SELECT * FROM fn_trend_period_summary('{sitename}', '{facilitytype}', '{analog_datainfo}', {from_ts}, {to_ts})",
+    "UNION ALL",
+    "SELECT * FROM fn_trend_period_summary('{sitename}', '{facilitytype}', '{digital_datainfo}', {from_ts}, {to_ts})",
+    "ORDER BY log_time ASC"
+  ],
+  "default_period": "7 days",
+  "default_period_desc": "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다.",
+  "answer_template": {
+    "summary": "□ {period_desc} {sitename} {facilitytype}의 {digital_label} 가동 상태와 {analog_label} 데이터 트렌드는 다음과 같습니다.",
+    "detail": [],
+    "recommend_questions": {
+      "title": "다음은 추천질의입니다.",
+      "items": [
+        "1. {sitename} {facilitytype} {digital_label} 가동상태와 {analog_label}를 함께 트렌드로 보여줘",
+        "2. 1월 1일부터 1월 10일까지 {sitename} {facilitytype} 수위를 펌프 가동상태와 함께 트렌드로 보여줘",
+        "3. 1월 1일부터 1월 10일까지 {sitename} {facilitytype} 유입밸브 가동상태와 유입유량을 함께 트렌드로 보여줘"
+      ]
+    }
+  },
+  "graph_type": "plot",
+  "plot_type": "multi_axis_line"
+}
+
+]
