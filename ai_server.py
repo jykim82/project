@@ -223,15 +223,24 @@ def normalize_question(question: str) -> str:
 def normalize_for_matching(text: str) -> str:
     """
     매칭용 정규화: 조사 제거, 공백 제거, 소문자 변환
+
+    핵심 규칙:
+    - 구두점을 먼저 제거한다.
+    - 공백 기준으로 단어를 분리한 뒤, 각 단어 끝의 조사만 제거한다.
+    - 이렇게 하면 "가압장" → "가압장" (보존), "배수지의" → "배수지" (조사 제거)
+    - 공백 제거 전에 조사를 제거하여 단어 경계의 '가', '이' 등이 오인되는 것을 방지한다.
     """
     text = text.lower()
-    text = re.sub(r"\s+", "", text)
-    text = re.sub(
-        r"(의|은|는|이|가|을|를|에|에서|으로|와|과|도|만|까지|부터)",
-        "",
-        text
-    )
+    # 구두점 먼저 제거
     text = re.sub(r"[?!.]", "", text)
+    # 공백 기준으로 단어를 분리하고, 각 단어 끝의 조사 제거
+    words = text.split()
+    cleaned_words = []
+    for word in words:
+        # 단어 끝에서 조사 패턴 제거 (긴 조사부터 매칭)
+        word = re.sub(r"(에서|으로|까지|부터|은|는|이|가|을|를|에|의|와|과|도|만)$", "", word)
+        cleaned_words.append(word)
+    text = "".join(cleaned_words)
     return text
 
 
@@ -800,22 +809,39 @@ def is_null_or_empty(value: Any) -> bool:
     return False
 
 
-def render_template_line(line: str, data: dict) -> Optional[str]:
+def render_template_line(line, data: dict):
     """
     템플릿 라인의 placeholder를 치환한다.
     placeholder 치환 값이 null/None/빈 문자열인 경우 None 반환
+
+    line이 dict인 경우 {"prefix": "•", "text": "..."} 구조를 처리하여
+    {"prefix": "•", "text": "치환된 텍스트"} 형태로 반환한다.
+    line이 str인 경우 기존처럼 치환된 문자열을 반환한다.
     """
-    placeholders = re.findall(r"\{(\w+)\}", line)
+    if isinstance(line, dict):
+        prefix = line.get("prefix", "")
+        text = line.get("text", "")
+        rendered_text = _render_text(text, data)
+        if rendered_text is None:
+            return None
+        return {"prefix": prefix, "text": rendered_text}
+
+    return _render_text(line, data)
+
+
+def _render_text(text: str, data: dict) -> Optional[str]:
+    """문자열 내 placeholder를 치환한다. null 값이 있으면 None 반환."""
+    placeholders = re.findall(r"\{(\w+)\}", text)
 
     if not placeholders:
-        return line
+        return text
 
     for placeholder in placeholders:
         value = data.get(placeholder)
         if is_null_or_empty(value):
             return None
 
-    result = line
+    result = text
     for placeholder in placeholders:
         value = data.get(placeholder)
         result = result.replace("{" + placeholder + "}", str(value))
@@ -963,6 +989,47 @@ def build_no_data_response(intent: str, answer_template: dict) -> dict:
 # 데이터 후처리 함수
 # =============================================================================
 
+
+def build_equipment_table(meta: Any) -> list:
+    """
+    meta JSONB를 설비현황 테이블 데이터로 변환한다.
+
+    meta 구조 예시:
+    - dict 형태: 키가 설비 카테고리, 값이 설비 목록 배열
+      {"펌프": [{"datadesc": "...", "status": "..."}, ...], ...}
+    - list 형태: 각 항목이 설비 정보 객체
+      [{"equipmenttype": "펌프", "datadesc": "...", "status": "..."}, ...]
+
+    반환: [{"category": "...", "name": "...", "key": "value", ...}, ...]
+    """
+    if meta is None:
+        return []
+
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+
+    result = []
+
+    if isinstance(meta, dict):
+        for category, items in meta.items():
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        row = {"category": category}
+                        row.update(item)
+                        result.append(row)
+            elif isinstance(items, dict):
+                row = {"category": category}
+                row.update(items)
+                result.append(row)
+    elif isinstance(meta, list):
+        for item in meta:
+            if isinstance(item, dict):
+                result.append(item)
+
+    return result
+
+
 def process_sql_result(
     rows: list,
     columns: list,
@@ -1001,6 +1068,17 @@ def process_sql_result(
     intent = intent_def.get("intent")
 
     # -------------------------------------------------
+    # 설비현황 (배수지 / 가압장 / 감압시설 공통)
+    # meta JSONB → 테이블 데이터 변환
+    # -------------------------------------------------
+    if intent in [
+        "RESERVOIR_EQUIPMENT_STATUS",
+        "BOOSTER_STATION_EQUIPMENT_STATUS",
+        "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+    ]:
+        data["equipment_table"] = build_equipment_table(data.get("meta"))
+
+    # -------------------------------------------------
     # 초동대응 매뉴얼 (배수지 / 가압장 / 블록 / 감압시설 공통)
     # -------------------------------------------------
     if intent in [
@@ -1011,7 +1089,7 @@ def process_sql_result(
     ]:
         manual_url = data.get("manual_url")
         if manual_url:
-            data["manual_image_block"] = {
+            data["manual_block"] = {
                 "type": "image",
                 "url": manual_url,
                 "title": f"{params.get('sitename')} 초동대응 매뉴얼"
@@ -1062,9 +1140,9 @@ async def ask(request: AskRequest):
         return build_error_response(
             message="질문을 이해하지 못했습니다. 다른 방식으로 질문해 주세요.",
             recommend_questions=[
-                "1. 배수지 일반현황은?",
-                "2. 가압장 운영현황은?",
-                "3. 소블록 압력 현황은?",
+                {"prefix": "1.", "text": "배수지 일반현황은?"},
+                {"prefix": "2.", "text": "가압장 운영현황은?"},
+                {"prefix": "3.", "text": "소블록 압력 현황은?"},
             ],
         )
 
@@ -1101,9 +1179,9 @@ async def ask(request: AskRequest):
         return build_error_response(
             message="현장명(sitename)을 명시해 주세요. 예: '신평 배수지 일반현황은?'",
             recommend_questions=[
-                "1. 신평 배수지 일반현황은?",
-                "2. 행정 가압장 운영현황은?",
-                "3. 합덕3 소블록 압력 현황은?",
+                {"prefix": "1.", "text": "신평 배수지 일반현황은?"},
+                {"prefix": "2.", "text": "행정 가압장 운영현황은?"},
+                {"prefix": "3.", "text": "합덕3 소블록 압력 현황은?"},
             ],
         )
 
@@ -1113,9 +1191,9 @@ async def ask(request: AskRequest):
         return build_error_response(
             message="시설 유형을 명시해 주세요. (배수지, 가압장, 감압시설, 소블록/중블록/대블록)",
             recommend_questions=[
-                "1. 신평 배수지 수위 현황은?",
-                "2. 행정 가압장 압력 현황은?",
-                "3. 합덕3 소블록 유량 현황은?",
+                {"prefix": "1.", "text": "신평 배수지 수위 현황은?"},
+                {"prefix": "2.", "text": "행정 가압장 압력 현황은?"},
+                {"prefix": "3.", "text": "합덕3 소블록 유량 현황은?"},
             ],
         )
 
@@ -1125,8 +1203,8 @@ async def ask(request: AskRequest):
         return build_error_response(
             message="블록 유형을 명시해 주세요. (소블록, 중블록, 대블록)",
             recommend_questions=[
-                "1. 합덕3 소블록 일반현황은?",
-                "2. 행정1-1 중블록 운영현황은?",
+                {"prefix": "1.", "text": "합덕3 소블록 일반현황은?"},
+                {"prefix": "2.", "text": "행정1-1 중블록 운영현황은?"},
             ],
         )
 
@@ -1177,8 +1255,8 @@ async def ask(request: AskRequest):
     # -------------------------------------------------
     detail = rendered_answer.get("detail", [])
 
-    if "manual_image_block" in processed_data:
-        detail.append(processed_data["manual_image_block"])
+    if "manual_block" in processed_data:
+        detail.append(processed_data["manual_block"])
 
     if "system_diagram_block" in processed_data:
         detail.append(processed_data["system_diagram_block"])
@@ -1186,11 +1264,18 @@ async def ask(request: AskRequest):
     if detail:
         rendered_answer["detail"] = detail
 
-    # 10. 응답 생성 (data 항목 제거)
+    # 10. 응답 생성
+    # 설비현황(equipment) 테이블인 경우 data에 equipment_table 포함
+    response_data = None
+    if table_type == "equipment" and "equipment_table" in processed_data:
+        response_data = processed_data["equipment_table"]
+
     return build_success_response(
         intent=intent,
         answer=rendered_answer,
         graph_type=graph_type,
+        data=response_data,
+        table_type=table_type,
     )
 
 
