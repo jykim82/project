@@ -1,0 +1,39 @@
+총 35개 테스트: 성공 33개, 실패 2개 (94.3%)
+
+질문 | 예상 | 실제 | 상태 | 결과
+------------------------------------------------------------------------------------------------------------------------------------------------------
+신평 배수지 일반현황은?                       | RESERVOIR_OVERVIEW                       | RESERVOIR_OVERVIEW                       | OK    | O
+신평 배수지 설비현황은?                       | RESERVOIR_EQUIPMENT_STATUS               | RESERVOIR_EQUIPMENT_STATUS               | OK    | O
+신평 배수지 초동대응 매뉴얼은?                   | RESERVOIR_INITIAL_RESPONSE_MANUAL        | N/A                                      | ERROR | X
+신평 배수지 운영현황은?                       | RESERVOIR_OPERATION_STATUS               | RESERVOIR_OPERATION_STATUS               | OK    | O
+신평 배수지 시설용량은?                       | RESERVOIR_FACILITY_CAPACITY              | RESERVOIR_FACILITY_CAPACITY              | OK    | O
+신평 배수지 수위 현황은?                      | RESERVOIR_LEVEL_STATUS                   | RESERVOIR_LEVEL_STATUS                   | OK    | O
+신평 배수지 위치도는?                        | RESERVOIR_LOCATION                       | RESERVOIR_LOCATION                       | OK    | O
+신평 배수지 계통도는?                        | RESERVOIR_NETWORK_DIAGRAM                | RESERVOIR_NETWORK_DIAGRAM                | OK    | O
+행정 가압장 일반현황은?                       | BOOSTER_STATION_OVERVIEW                 | BOOSTER_STATION_OVERVIEW                 | OK    | O
+행정 가압장 운영현황은?                       | BOOSTER_STATION_OPERATION_STATUS         | BOOSTER_STATION_OPERATION_STATUS         | OK    | O
+고대리 가압장 초동대응 매뉴얼은?                  | BOOSTER_STATION_INITIAL_RESPONSE_MANUAL  | BOOSTER_STATION_INITIAL_RESPONSE_MANUAL  | OK    | O
+행정 가압장 위치도는?                        | BOOSTER_STATION_LOCATION                 | BOOSTER_STATION_LOCATION                 | OK    | O
+행정 가압장 계통도는?                        | BOOSTER_STATION_NETWORK_DIAGRAM          | BOOSTER_STATION_NETWORK_DIAGRAM          | OK    | O
+순성 감압시설 일반현황은?                      | PRESSURE_REDUCING_FACILITY_OVERVIEW      | PRESSURE_REDUCING_FACILITY_OVERVIEW      | OK    | O
+행정 감압시설 운영현황은?                      | PRESSURE_REDUCING_FACILITY_OPERATION_STATUS | PRESSURE_REDUCING_FACILITY_OPERATION_STATUS | OK    | O
+순성 감압시설 설비현황은?                      | PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS | PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS | OK    | O
+행정 감압시설 초동대응 매뉴얼은?                  | PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL | PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL | OK    | O
+합덕3 소블록 일반현황은?                      | BLOCK_OVERVIEW                           | BLOCK_OVERVIEW                           | OK    | O
+행정1-1 소블록 운영현황은?                    | BLOCK_OPERATION_STATUS                   | BLOCK_OPERATION_STATUS                   | OK    | O
+합덕3 소블록 위치도는?                       | BLOCK_LOCATION                           | BLOCK_LOCATION                           | OK    | O
+합덕3 소블록 계통도는?                       | BLOCK_NETWORK_DIAGRAM                    | BLOCK_NETWORK_DIAGRAM                    | OK    | O
+금일 신평 배수지 적산은?                      | TODAY_FLOW_ACCUMULATION                  | N/A                                      | ERROR | X
+금일 전체 배수지 유출 현황은?                   | TODAY_OUTFLOW_ALL_STATUS                 | TODAY_OUTFLOW_ALL_STATUS                 | OK    | O
+남산1 소블록 압력 현황은?                     | FACILITY_PRESSURE_STATUS                 | FACILITY_PRESSURE_STATUS                 | OK    | O
+신평 배수지 수위계 헌팅여부를 알려줘                | RESERVOIR_LEVEL_HUNTING_CHECK            | RESERVOIR_LEVEL_HUNTING_CHECK            | OK    | O
+신평 배수지 야간최소유량 현황은?                  | NIGHT_MIN_FLOW_STATUS                    | NIGHT_MIN_FLOW_STATUS                    | OK    | O
+행정1-1 소블록 통신 구성을 알려줘                | FACILITY_COMMUNICATION_TOPOLOGY          | FACILITY_COMMUNICATION_TOPOLOGY          | OK    | O
+남산1 소블록 통신 상태를 알려줘                  | FACILITY_COMMUNICATION_STATUS            | FACILITY_COMMUNICATION_STATUS            | OK    | O
+신평 배수지 주소를 알려줘                      | FACILITY_ADDRESS_INFO_RESERVOIR          | FACILITY_ADDRESS_INFO_RESERVOIR          | OK    | O
+고대리 가압장 주소를 알려줘                     | FACILITY_ADDRESS_INFO_BOOSTER            | FACILITY_ADDRESS_INFO_BOOSTER            | OK    | O
+행정1-1 소블록 주소를 알려줘                   | FACILITY_ADDRESS_INFO_BLOCK              | FACILITY_ADDRESS_INFO_BLOCK              | OK    | O
+순성 감압시설 주소를 알려줘                     | FACILITY_ADDRESS_INFO_PRESSURE           | FACILITY_ADDRESS_INFO_PRESSURE           | OK    | O
+삼봉 가압장의 최근 펌프 알람은 뭐야?               | FACILITY_RECENT_ALARM                    | FACILITY_RECENT_ALARM                    | OK    | O
+경보 발생 누적건수가 높은 순서대로 보여줘             | FACILITY_ALARM_TOP_COUNT                 | FACILITY_ALARM_TOP_COUNT                 | OK    | O
+신평 배수지 용수공급가능 시간은?                  | RESERVOIR_SUPPLY_AVAILABLE_HOURS         | RESERVOIR_SUPPLY_AVAILABLE_HOURS         | OK    | O

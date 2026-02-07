@@ -1,0 +1,22 @@
+{
+  "status": "OK",
+  "intent": "RESERVOIR_INITIAL_RESPONSE_MANUAL",
+  "answer": {
+    "summary": "신평 배수지 초동대응 매뉴얼은 다음과 같습니다.",
+    "reference": {
+      "title": "참고 자료",
+      "items": [
+        "1. 현재 신평 배수지 용수공급가능시간은 20시간입니다."
+      ]
+    },
+    "recommend_questions": {
+      "title": "추가로 추천 질의입니다.",
+      "items": [
+        "1. 신평 배수지 운영현황은?",
+        "2. 신평 배수지 설비현황은?",
+        "3. 신평 배수지 계통도는?"
+      ]
+    }
+  },
+  "graph_type": "document"
+}

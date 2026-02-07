@@ -1,0 +1,18 @@
+질문 | 예상 INTENT | 실제 INTENT | 상태 | 매칭
+----------------------------------------------------------------------------------------------------
+신평 배수지 설비현황은?             | RESERVOIR_EQUIPMENT_STATUS     | RESERVOIR_EQUIPMENT_STATUS     | OK    | O
+신평 배수지 초동대응 매뉴얼은?         | RESERVOIR_INITIAL_RESPONSE_MAN | N/A                            | ERROR | X
+신평 배수지 운영현황은?             | RESERVOIR_OPERATION_STATUS     | RESERVOIR_OPERATION_STATUS     | OK    | O
+신평 배수지 시설용량은?             | RESERVOIR_FACILITY_CAPACITY    | RESERVOIR_FACILITY_CAPACITY    | OK    | O
+신평 배수지 수위 현황은?            | RESERVOIR_LEVEL_STATUS         | RESERVOIR_LEVEL_STATUS         | OK    | O
+신평 배수지 위치도는?              | RESERVOIR_LOCATION             | RESERVOIR_LOCATION             | OK    | O
+신평 배수지 계통도는?              | RESERVOIR_NETWORK_DIAGRAM      | RESERVOIR_NETWORK_DIAGRAM      | OK    | O
+행정 가압장 일반현황은?             | BOOSTER_STATION_OVERVIEW       | BOOSTER_STATION_OVERVIEW       | OK    | O
+고대리 가압장 초동대응 매뉴얼은?        | BOOSTER_STATION_INITIAL_RESPON | BOOSTER_STATION_INITIAL_RESPON | OK    | O
+행정 가압장 위치도는?              | BOOSTER_STATION_LOCATION       | BOOSTER_STATION_LOCATION       | OK    | O
+순성 감압시설 일반현황은?            | PRESSURE_REDUCING_FACILITY_OVE | PRESSURE_REDUCING_FACILITY_OVE | OK    | O
+행정 감압시설 운영현황은?            | PRESSURE_REDUCING_FACILITY_OPE | PRESSURE_REDUCING_FACILITY_OPE | OK    | O
+순성 감압시설 설비현황은?            | PRESSURE_REDUCING_FACILITY_EQU | PRESSURE_REDUCING_FACILITY_EQU | OK    | O
+합덕3 소블록 일반현황은?            | BLOCK_OVERVIEW                 | BLOCK_OVERVIEW                 | OK    | O
+행정1-1 소블록 운영현황은?          | BLOCK_OPERATION_STATUS         | BLOCK_OPERATION_STATUS         | OK    | O
+합덕3 소블록 위치도는?             | BLOCK_LOCATION                 | BLOCK_LOCATION                 | OK    | O

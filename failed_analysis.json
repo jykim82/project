@@ -1,0 +1,79 @@
+[
+  {
+    "question": "신평 배수지 초동대응 매뉴얼은?",
+    "response": {
+      "status": "ERROR",
+      "message": "데이터베이스 연결 오류가 발생했습니다."
+    }
+  },
+  {
+    "question": "금일 신평 배수지 적산은?",
+    "response": {
+      "status": "ERROR",
+      "message": "질문을 이해하지 못했습니다. 다른 방식으로 질문해 주세요.",
+      "answer": {
+        "recommend_questions": {
+          "title": "추가로 추천 질의입니다.",
+          "items": [
+            "1. 배수지 일반현황은?",
+            "2. 가압장 운영현황은?",
+            "3. 소블록 압력 현황은?"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "question": "고대리 가압장 주소를 알려줘",
+    "response": {
+      "status": "OK",
+      "intent": "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "answer": {
+        "summary": "고대리 배수지 주소는 다음과 같습니다.",
+        "detail": [
+          "주소는 충남 당진시 송악읍 고대리 163-79입니다."
+        ],
+        "reference": {
+          "title": "참고 자료",
+          "items": [
+            "1. 현장 위치 사진은 위치 보기 이미지를 참고하시기 바랍니다."
+          ]
+        },
+        "recommend_questions": {
+          "title": "추가로 추천 질의입니다.",
+          "items": [
+            "1. 배수지 위치도를 보여줘",
+            "2. 배수지 계통도를 보여줘",
+            "3. 다른 설비 주소를 알려줘"
+          ]
+        }
+      },
+      "graph_type": "graph_type"
+    }
+  },
+  {
+    "question": "신평 배수지 현재 수위를 알려줘",
+    "response": {
+      "status": "OK",
+      "intent": "RESERVOIR_LEVEL_STATUS",
+      "answer": {
+        "summary": "신평배수지 수위 현황은 다음과 같습니다.",
+        "detail": [
+          "다음은 각 개별 수위 현황입니다."
+        ],
+        "reference": {
+          "title": "참고 자료"
+        },
+        "recommend_questions": {
+          "title": "추가로 추천 질의입니다.",
+          "items": [
+            "1. 배수지 수위 트렌드는?",
+            "2. 용수공급 계통도 및 전단 가압장 설비 가동현황은?",
+            "3. 배수지 일반현황 및 운영현황은?"
+          ]
+        }
+      },
+      "graph_type": "none"
+    }
+  }
+]

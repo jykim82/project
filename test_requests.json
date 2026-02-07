@@ -1,0 +1,7 @@
+[
+  {"q": "신평 배수지 초동대응 매뉴얼은?", "expected": "RESERVOIR_INITIAL_RESPONSE_MANUAL"},
+  {"q": "금일 신평 배수지 적산은?", "expected": "TODAY_FLOW_INTEGRATION"},
+  {"q": "신평 가압장 주소는?", "expected": "BOOSTER_STATION_ADDRESS"},
+  {"q": "신평 배수지 주소는?", "expected": "RESERVOIR_ADDRESS"},
+  {"q": "합덕3 소블록 일반현황은?", "expected": "BLOCK_GENERAL_OVERVIEW"}
+]

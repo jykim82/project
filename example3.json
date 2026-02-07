@@ -75,7 +75,7 @@
     "신평 배수지 초동대응 매뉴얼은?",
     "배수지 사고 발생 시 매뉴얼은?"
   ],
-  "sql": "SELECT \n  sitename,\n  manual_url,\n  manual_preview_url,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "sql": "SELECT \n  sitename,\n  manual_url,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
   "answer_template": {
     "summary": "{sitename} 배수지 초동대응 매뉴얼은 다음과 같습니다.",
     "detail": [

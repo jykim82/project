@@ -1,0 +1,15 @@
+질문 | 예상 INTENT | 실제 INTENT | 상태 | 매칭
+------------------------------------------------------------------------------------------------------------------------
+금일 신평 배수지 적산은?                 | TODAY_FLOW_ACCUMULATION             | N/A                                 | ERROR | X
+금일 전체 배수지 유출 현황은?              | TODAY_OUTFLOW_ALL_STATUS            | TODAY_OUTFLOW_ALL_STATUS            | OK    | O
+남산1 소블록 압력 현황은?                | FACILITY_PRESSURE_STATUS            | FACILITY_PRESSURE_STATUS            | OK    | O
+신평 배수지 수위계 헌팅여부를 알려줘           | RESERVOIR_LEVEL_HUNTING_CHECK       | RESERVOIR_LEVEL_HUNTING_CHECK       | OK    | O
+신평 배수지 야간최소유량 현황은?             | NIGHT_MIN_FLOW_STATUS               | NIGHT_MIN_FLOW_STATUS               | OK    | O
+행정1-1 소블록 통신 구성을 알려줘           | FACILITY_COMMUNICATION_TOPOLOGY     | FACILITY_COMMUNICATION_TOPOLOGY     | OK    | O
+남산1 소블록 통신 상태를 알려줘             | FACILITY_COMMUNICATION_STATUS       | FACILITY_COMMUNICATION_STATUS       | OK    | O
+신평 배수지 주소를 알려줘                 | FACILITY_ADDRESS_INFO_RESERVOIR     | FACILITY_ADDRESS_INFO_RESERVOIR     | OK    | O
+고대리 가압장 주소를 알려줘                | FACILITY_ADDRESS_INFO_BOOSTER       | FACILITY_ADDRESS_INFO_RESERVOIR     | OK    | X
+삼봉 가압장의 최근 펌프 알람은 뭐야?          | FACILITY_RECENT_ALARM               | FACILITY_RECENT_ALARM               | OK    | O
+경보 발생 누적건수가 높은 순서대로 보여줘        | FACILITY_ALARM_TOP_COUNT            | FACILITY_ALARM_TOP_COUNT            | OK    | O
+신평 배수지 용수공급가능 시간은?             | RESERVOIR_SUPPLY_AVAILABLE_HOURS    | RESERVOIR_SUPPLY_AVAILABLE_HOURS    | OK    | O
+신평 배수지 현재 수위를 알려줘              | FACILITY_TAG_LATEST_VALUE           | RESERVOIR_LEVEL_STATUS              | OK    | X
