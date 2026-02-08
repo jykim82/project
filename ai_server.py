@@ -119,6 +119,7 @@ def load_sitenames_from_db() -> list:
     - tb_block_info (블록)
     - tb_service_reservoir_info (배수지)
     - tb_service_booster_station_info (가압장)
+    - tb_pressure_reducing_facility_info (감압시설)
     """
     sitenames = set()
 
@@ -127,6 +128,7 @@ def load_sitenames_from_db() -> list:
         "SELECT DISTINCT sitename FROM tb_block_info WHERE sitename IS NOT NULL",
         "SELECT DISTINCT sitename FROM tb_service_reservoir_info WHERE sitename IS NOT NULL",
         "SELECT DISTINCT sitename FROM tb_service_booster_station_info WHERE sitename IS NOT NULL",
+        "SELECT DISTINCT sitename FROM tb_pressure_reducing_facility_info WHERE sitename IS NOT NULL",
     ]
 
     conn = None
@@ -354,7 +356,7 @@ def extract_alarm_msg(question: str) -> Optional[str]:
 
 # 시설 타입별 INTENT 접두사 매핑
 FACILITY_INTENT_PREFIX = {
-    "배수지": ["RESERVOIR_", "TODAY_FLOW_", "TODAY_OUTFLOW_"],
+    "배수지": ["RESERVOIR_", "TODAY_FLOW_", "TODAY_OUTFLOW_", "TODAY_RESERVOIR_"],
     "가압장": ["BOOSTER_STATION_"],
     "감압시설": ["PRESSURE_REDUCING_"],
     "감압설비": ["PRESSURE_REDUCING_"],
@@ -499,10 +501,12 @@ def match_intent(user_question: str) -> Optional[dict]:
     개선된 알고리즘:
     1. 시설 타입 기반 필터링
     2. 매칭 점수 계산 (패턴 길이 + 키워드 보너스)
-    3. 가장 높은 점수의 INTENT 선택
+    3. sitename 유무와 SQL 템플릿의 {sitename} 유무 정합성 보너스/패널티
+    4. 가장 높은 점수의 INTENT 선택
     """
     normalized_user = normalize_for_matching(user_question)
     facility_type = extract_facility_type_from_question(user_question)
+    has_sitename = extract_sitename(user_question) is not None
 
     best_match = None
     best_score = 0.0
@@ -517,6 +521,23 @@ def match_intent(user_question: str) -> Optional[dict]:
         for q in intent_def.get("questions", []):
             normalized_q = normalize_for_matching(q)
             score = calculate_match_score(normalized_user, normalized_q, intent_name, user_question, q)
+
+            if score <= 0:
+                continue
+
+            # sitename 유무와 SQL 템플릿 정합성 보정
+            sql_template = intent_def.get("sql", "")
+            sql_needs_sitename = "{sitename}" in sql_template
+
+            if has_sitename and sql_needs_sitename:
+                # sitename 있고, SQL도 sitename 필요 → 보너스
+                score += 25
+            elif has_sitename and not sql_needs_sitename:
+                # sitename 있지만, SQL은 전체 조회용 → 패널티
+                score -= 25
+            elif not has_sitename and not sql_needs_sitename:
+                # sitename 없고, SQL도 전체 조회용 → 보너스
+                score += 25
 
             if score > best_score:
                 best_score = score
@@ -990,6 +1011,104 @@ def build_no_data_response(intent: str, answer_template: dict) -> dict:
 # =============================================================================
 
 
+def build_level_detail_block(rows: list, columns: list) -> list:
+    """
+    fn_reservoir_level_summary() 다중 행을 개별 수위 항목 리스트로 조립한다.
+    반환 컬럼: log_time, out_sitename, out_facilitytype, out_datainfo,
+              avg_latest, latest_val, avg_month, avg_year, unit
+    반환: [{"prefix": "-", "text": "1지 수위: 3.45m"}, ...]
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        datainfo = row_dict.get("out_datainfo", "")
+        latest_val = row_dict.get("latest_val")
+        unit = row_dict.get("unit", "")
+        if latest_val is not None:
+            items.append({"prefix": "-", "text": f"{datainfo}: {latest_val}{unit}"})
+    return items
+
+
+def build_today_flow_detail_block(rows: list, columns: list) -> list:
+    """
+    fn_today_outflow() 다중 행을 금일 적산 항목 리스트로 조립한다.
+    반환 컬럼: sitename, facilitytype, datainfo, unit, today_outflow
+    반환: [{"prefix": "-", "text": "유출적산: 1234.5m3"}, ...]
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        datainfo = row_dict.get("datainfo", "")
+        today_outflow = row_dict.get("today_outflow")
+        unit = row_dict.get("unit", "")
+        if today_outflow is not None:
+            items.append({"prefix": "-", "text": f"{datainfo}: {today_outflow}{unit}"})
+    return items
+
+
+def build_outflow_detail_block(rows: list, columns: list) -> list:
+    """
+    fn_today_outflow_all() 다중 행을 전체 배수지 유출 현황 항목 리스트로 조립한다.
+    반환 컬럼: result_sitename, result_facilitytype, result_today_outflow, result_is_total
+    반환: [{"prefix": "-", "text": "신평 배수지: 1234.5㎥"}, ...]
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        sitename = row_dict.get("result_sitename", "")
+        facilitytype = row_dict.get("result_facilitytype", "")
+        outflow = row_dict.get("result_today_outflow")
+        is_total = row_dict.get("result_is_total", 0)
+        if is_total == 1:
+            continue  # 합계 행은 별도 처리 (total_outflow)
+        if outflow is not None:
+            items.append({"prefix": "-", "text": f"{sitename} {facilitytype}: {outflow}㎥"})
+    return items
+
+
+def build_network_hop_detail_block(rows: list, columns: list) -> list:
+    """
+    fn_network_path_hop_detail() 다중 행을 통신 홉 항목 리스트로 조립한다.
+    반환 컬럼: source_node, source_sitename, source_facilitytype, source_equipmenttype,
+              target_node, target_sitename, target_facilitytype, target_equipmenttype,
+              link_device_interface, link_protocol
+    반환: [{"prefix": "-", "text": "구간1: SERVER → RTU (인터페이스: Ethernet) ..."}, ...]
+    """
+    items = []
+    for i, row in enumerate(rows, 1):
+        row_dict = dict(zip(columns, row))
+        src = row_dict.get("source_equipmenttype", "")
+        tgt = row_dict.get("target_equipmenttype", "")
+        interface = row_dict.get("link_device_interface", "")
+        protocol = row_dict.get("link_protocol", "")
+        parts = [f"구간{i}: {src} → {tgt}"]
+        if interface:
+            parts.append(f"(인터페이스: {interface})")
+        if protocol:
+            parts.append(f"(프로토콜: {protocol})")
+        items.append({"prefix": "-", "text": " ".join(parts)})
+    return items
+
+
+def build_avg_usage_detail_block(rows: list, columns: list) -> list:
+    """
+    v_reservoir_info_status 다중 행을 개별 배수지 평균사용량 항목 리스트로 조립한다.
+    반환 컬럼: sitename, avg_usage, usage_unit, ..., is_avg_usage_null
+    반환: [{"prefix": "-", "text": "신평: 12.34m³/h"}, ...]
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        sitename = row_dict.get("sitename", "")
+        avg_usage = row_dict.get("avg_usage")
+        usage_unit = row_dict.get("usage_unit", "")
+        is_null = row_dict.get("is_avg_usage_null", "N")
+        if is_null == "Y" or avg_usage is None:
+            continue
+        items.append({"prefix": "-", "text": f"{sitename}: {avg_usage}{usage_unit}"})
+    return items
+
+
 def build_equipment_table(meta: Any) -> list:
     """
     meta JSONB를 설비현황 테이블 데이터로 변환한다.
@@ -1063,9 +1182,73 @@ def process_sql_result(
 
     
     # =============================================================================
-    # INTENT별 매뉴얼 / 다이어그램 / 이미지 블록 후처리
+    # INTENT별 다중 행 → detail_block 조립
+    # example3.json 정책에서 {level_detail_block} 등의 placeholder는
+    # SQL 결과 다중 행을 {"prefix", "text"} 리스트로 조립한다.
+    # data에는 마커 문자열("__EXPAND__")을 넣어 render_answer_template이
+    # 해당 라인을 제거하지 않도록 하고, _detail_blocks에 실제 리스트를 저장한다.
     # =============================================================================
     intent = intent_def.get("intent")
+    data["_detail_blocks"] = {}
+    _EXPAND_MARKER = "__EXPAND__"
+
+    # -------------------------------------------------
+    # 배수지 수위 현황: 개별 수위 데이터 조립
+    # -------------------------------------------------
+    if intent == "RESERVOIR_LEVEL_STATUS":
+        data["level_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["level_detail_block"] = build_level_detail_block(rows, columns)
+
+    # -------------------------------------------------
+    # 금일 적산 현황: 개별 적산 데이터 조립
+    # -------------------------------------------------
+    if intent == "TODAY_FLOW_ACCUMULATION":
+        data["today_flow_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["today_flow_detail_block"] = build_today_flow_detail_block(rows, columns)
+
+    # -------------------------------------------------
+    # 금일 전체 배수지 유출 현황: 개별 배수지 유출 데이터 조립
+    # -------------------------------------------------
+    if intent == "TODAY_OUTFLOW_ALL_STATUS":
+        data["outflow_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["outflow_detail_block"] = build_outflow_detail_block(rows, columns)
+        # total_outflow: is_total=1인 행에서 추출
+        for row in rows:
+            row_dict_tmp = dict(zip(columns, row))
+            if row_dict_tmp.get("result_is_total") == 1:
+                data["total_outflow"] = row_dict_tmp.get("result_today_outflow")
+                break
+
+    # -------------------------------------------------
+    # 금일 전체 배수지 평균사용량: 개별 배수지 사용량 + 전체 평균 + 데이터 없음 목록
+    # -------------------------------------------------
+    if intent == "TODAY_RESERVOIR_AVG_USAGE_ALL":
+        data["avg_usage_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["avg_usage_detail_block"] = build_avg_usage_detail_block(rows, columns)
+        # total_avg_usage: avg_usage가 있는 행들의 평균
+        usage_values = []
+        no_data_sites = []
+        unit = ""
+        for row in rows:
+            row_dict_tmp = dict(zip(columns, row))
+            is_null = row_dict_tmp.get("is_avg_usage_null", "N")
+            if is_null == "Y" or row_dict_tmp.get("avg_usage") is None:
+                no_data_sites.append(row_dict_tmp.get("sitename", ""))
+            else:
+                usage_values.append(float(row_dict_tmp["avg_usage"]))
+                if not unit:
+                    unit = row_dict_tmp.get("usage_unit", "")
+        if usage_values:
+            data["total_avg_usage"] = round(sum(usage_values) / len(usage_values), 2)
+        data["usage_unit"] = unit
+        data["no_data_sitename_list"] = ", ".join(no_data_sites) if no_data_sites else None
+
+    # -------------------------------------------------
+    # 통신 구성: 홉 상세 데이터 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_COMMUNICATION_TOPOLOGY":
+        data["network_hop_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["network_hop_detail_block"] = build_network_hop_detail_block(rows, columns)
 
     # -------------------------------------------------
     # 설비현황 (배수지 / 가압장 / 감압시설 공통)
@@ -1249,6 +1432,24 @@ async def ask(request: AskRequest):
         )
     # 9. answer_template 렌더링
     rendered_answer = render_answer_template(answer_template, processed_data)
+
+    # -------------------------------------------------
+    # detail에서 __EXPAND__ 마커가 포함된 항목을 개별 항목 리스트로 expand
+    # render_answer_template 결과: {"prefix": "", "text": "__EXPAND__"}
+    # → [{"prefix": "-", "text": "1지 수위: 3.45m"}, {"prefix": "-", "text": "2지 수위: 3.55m"}, ...]
+    # -------------------------------------------------
+    detail_blocks = processed_data.get("_detail_blocks", {})
+    if detail_blocks and "detail" in rendered_answer:
+        expanded_detail = []
+        for item in rendered_answer["detail"]:
+            if isinstance(item, dict) and item.get("text") == "__EXPAND__":
+                # 해당 INTENT의 detail_block 항목들을 삽입
+                for block_items in detail_blocks.values():
+                    if isinstance(block_items, list):
+                        expanded_detail.extend(block_items)
+            else:
+                expanded_detail.append(item)
+        rendered_answer["detail"] = expanded_detail
 
     # -------------------------------------------------
     # detail에 UI 블록 삽입 (공통)

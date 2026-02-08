@@ -297,7 +297,7 @@
           "text": "다음은 각 개별 수위 현황입니다."
         },
         {
-          "prefix": "",
+          "prefix": "-",
           "text": "{level_detail_block}"
         }
       ],
@@ -334,6 +334,113 @@
     },
     "graph_type": "none"
   },
+  {
+  "intent": "TODAY_RESERVOIR_AVG_USAGE",
+  "questions": [
+    "배수지 평균사용량은?",
+    "행정 배수지 평균사용량은?",
+    "신평 배수지 평균사용량은?",
+    "금일 배수지 평균 사용량은?"
+  ],
+  "sql": "SELECT\n  sitename,\n  avg_usage,\n  usage_unit,\n  avg_inflow,\n  avg_inflow_unit,\n  avg_outflow,\n  avg_outflow_unit\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+  "answer_template": {
+    "summary": "금일 {sitename}배수지 평균사용량은 다음과 같습니다.",
+    "detail": [
+      {
+        "prefix": "ㆍ",
+        "text": "금일 00시부터 현재시간까지의 평균값 산출 방식으로 시간당 평균 사용량을 산정합니다."
+      },
+      {
+        "prefix": "ㆍ",
+        "text": "{sitename}배수지 시간당 평균 사용량은 {avg_usage}{usage_unit}입니다."
+      }
+    ],
+    "reference": {
+      "title": "다음 참고자료입니다.",
+      "items": [
+        {
+          "prefix": "1.",
+          "text": "{sitename}배수지 유량현황"
+        },
+        {
+          "prefix": "ㆍ",
+          "text": "최근 7일간 평균 산출방식으로 일평균 유입량과 유출량을 산정합니다."
+        },
+        {
+          "prefix": "ㆍ",
+          "text": "배수지 일평균 유입량은 {avg_inflow}{avg_inflow_unit}, 일평균 유출량은 {avg_outflow}{avg_outflow_unit}입니다."
+        }
+      ]
+    },
+    "recommend_questions": {
+      "title": "다음은 추천질의입니다.",
+      "items": [
+        {
+          "prefix": "1.",
+          "text": "배수지 일반현황 및 운영현황은?"
+        },
+        {
+          "prefix": "2.",
+          "text": "배수지 설비현황은?"
+        },
+        {
+          "prefix": "3.",
+          "text": "배수지 초동대응 매뉴얼은?"
+        }
+      ]
+    }
+  },
+  "graph_type": "none"
+},
+{
+  "intent": "TODAY_RESERVOIR_AVG_USAGE_ALL",
+  "questions": [
+    "배수지 평균사용량은?",
+    "전체 배수지 평균사용량은?",
+    "금일 전체 배수지 평균사용량은?"
+  ],
+  "sql": "SELECT\n  sitename,\n  avg_usage,\n  usage_unit,\n  avg_inflow,\n  avg_inflow_unit,\n  avg_outflow,\n  avg_outflow_unit,\n  CASE\n    WHEN avg_usage IS NULL THEN 'Y'\n    ELSE 'N'\n  END AS is_avg_usage_null\nFROM v_reservoir_info_status;",
+  "answer_template": {
+    "summary": "금일 전체 배수지 평균사용량은 다음과 같습니다.",
+    "detail": [
+      {
+        "prefix": "ㆍ",
+        "text": "금일 00시부터 현재시간까지의 평균값 산출 방식으로 시간당 평균 사용량을 산정합니다."
+      },
+      {
+        "prefix": "ㆍ",
+        "text": "배수지 전체 평균 사용량은 {total_avg_usage}{usage_unit}입니다. 다음은 개별 배수지의 평균 사용량입니다."
+      },
+      {
+        "prefix": "",
+        "text": "{avg_usage_detail_block}"
+      },
+      {
+        "prefix": "ㆍ",
+        "text": "(데이터 없음): {no_data_sitename_list}"
+      }
+    ],
+    "recommend_questions": {
+      "title": "다음은 추천질의입니다.",
+      "items": [
+        {
+          "prefix": "1.",
+          "text": "배수지 일반현황 및 운영현황은?"
+        },
+        {
+          "prefix": "2.",
+          "text": "배수지 설비현황은?"
+        },
+        {
+          "prefix": "3.",
+          "text": "배수지 초동대응 매뉴얼은?"
+        }
+      ]
+    }
+  },
+  "graph_type": "none"
+}, 
+  
   {
     "intent": "TODAY_FLOW_ACCUMULATION",
     "questions": [
@@ -382,7 +489,7 @@
     },
     "graph_type": "none"
   },
-  {
+{
     "intent": "TODAY_OUTFLOW_ALL_STATUS",
     "questions": [
       "금일 배수지 유출 현황은?",
