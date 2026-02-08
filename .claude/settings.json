@@ -4,19 +4,12 @@
       "Bash",
       "Read",
       "Edit",
-      "Write",
-      "Glob",
-      "Grep",
-      "Task",
-      "WebFetch",
       "WebSearch"
     ],
-    "deny": [
-      "Bash(rm -rf *)",
-      "Read(.env*)"
-    ]
+    "deny": []
   },
-  "env": {
-    "ENABLE_TOOL_SEARCH": "auto:5"
-  }
+  "rules": [
+    "Never use 'rm -rf' commands.",
+    "Do not read any files starting with '.env'."
+  ]
 }
