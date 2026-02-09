@@ -920,14 +920,23 @@ def render_template_line(line, data: dict):
     return _render_text(line, data)
 
 
+_UNIT_PLACEHOLDER_NAMES = {
+    "unit", "water_level_unit", "pressure_unit",
+    "avg_outflow_unit", "avg_inflow_unit", "usage_unit",
+}
+
+
 def _render_text(text: str, data: dict) -> Optional[str]:
-    """문자열 내 placeholder를 치환한다. null 값이 있으면 None 반환."""
+    """문자열 내 placeholder를 치환한다. null 값이 있으면 None 반환.
+    단, unit 계열 placeholder는 null이어도 빈 문자열로 치환한다."""
     placeholders = re.findall(r"\{(\w+)\}", text)
 
     if not placeholders:
         return text
 
     for placeholder in placeholders:
+        if placeholder in _UNIT_PLACEHOLDER_NAMES:
+            continue
         value = data.get(placeholder)
         if is_null_or_empty(value):
             return None
@@ -935,6 +944,8 @@ def _render_text(text: str, data: dict) -> Optional[str]:
     result = text
     for placeholder in placeholders:
         value = data.get(placeholder)
+        if value is None and placeholder in _UNIT_PLACEHOLDER_NAMES:
+            value = ""
         result = result.replace("{" + placeholder + "}", str(value))
 
     return result
