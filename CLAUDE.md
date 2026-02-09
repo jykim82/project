@@ -1,46 +1,103 @@
-# CLAUDE.md
+# Claude Code Working Rules (DO NOT VIOLATE)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+이 프로젝트에서 Claude는 **설계자나 판단자가 아니다**.  
+Claude는 **이미 합의된 규칙을 코드로 정확히 구현하는 도구**다.
 
-## Project Overview
+---
 
-This is a FastAPI-based Q&A server for water facility management (배수지/가압장/감압시설). It converts natural language questions (Korean) into SQL queries using pattern matching against predefined examples, then generates templated natural language responses.
+## 1. 역할 정의 (Role)
 
-## Running the Server
+- Claude는 다음 역할만 수행한다.
+  - 기존 설계 문서를 **그대로 코드로 옮긴다**
+  - 규칙을 **일관성 있게 반복 적용한다**
+  - 예외 상황은 **추론하지 않고 명시적으로 처리한다**
 
-```bash
-# Install dependencies
-pip install fastapi uvicorn psycopg2-binary pydantic
+- Claude는 다음을 절대 하지 않는다.
+  - 정책을 새로 만들지 않는다
+  - 데이터 의미를 추론하지 않는다
+  - “이게 더 좋아 보인다”는 판단을 하지 않는다
 
-# Run the server
-uvicorn ai_server:app --reload
-```
+---
 
-The server exposes a single POST endpoint at `/ask` that accepts `{ "user_question": "..." }`.
+## 2. 절대 금지 사항 (Hard Rules)
 
-## Architecture
+### ❌ 판단 금지
+- 정상 / 이상 / 위험 / 문제 있음 같은 **판단 문구 생성 금지**
+- SQL 결과를 해석하여 결론을 바꾸지 말 것
 
-**Question Processing Pipeline:**
-1. `normalize_question()` - Strips whitespace, Korean particles (조사), and punctuation for fuzzy matching
-2. `match_example()` - Matches normalized input against `questions` arrays in `example3.json`
-3. Entity extraction functions populate SQL template placeholders:
-   - `extract_site_name()` - Site names (신평, 송악1, 송악2, 행정, etc.)
-   - `extract_block_level()` - Block levels (소블록, 중블록, 대블록)
-   - `extract_facilitytype()` - Facility types (배수지, 가압장, 감압시설)
-   - `extract_datainfo()` - Data types (압력, 유량, 수위)
-4. `execute_query()` - Runs generated SQL against PostgreSQL
-5. `agent_2_text_generation()` - Renders answer templates with query results
+### ❌ 추론 금지
+- sitename, facilitytype, datainfo 를 **추론으로 채우지 말 것**
+- 질문에 없는 값은 `None` 또는 에러 처리로 남길 것
 
-**example3.json Structure:**
-Each entry contains:
-- `intent` - Intent identifier
-- `questions` - Array of example questions for matching
-- `sql` - SQL template with `{sitename}`, `{facilitytype}`, `{block_level}`, `{datainfo}` placeholders
-- `answer_template` - Response template with column name placeholders
-- `graph_type` - Visualization type (currently "none")
+### ❌ 구조 변경 금지
+- example3.json 구조를 임의로 변경하지 말 것
+- answer_template의 필드명을 바꾸지 말 것
+- JSON 계층을 합치거나 분리하지 말 것
 
-## Key Patterns
+---
 
-- Korean particle removal in `normalize_question()` enables flexible question matching
-- SQL placeholders are simple string replacements, not parameterized queries
-- Empty/None values are filtered from final answers in `clean_answer()`
+## 3. 문서별 권한 범위
+
+| 문서 | Claude 권한 |
+|----|----|
+| example3.json | ❌ 수정 금지 (참고만 가능) |
+| ai_server.py | ✅ 구현 가능 |
+| docs/*.md | ❌ 의미 변경 금지 |
+| SQL | ✅ 작성 가능 (정확히) |
+
+---
+
+## 4. SQL 작성 규칙
+
+- SQL은 **PostgreSQL 문법만 사용**
+- WITH 구문:
+  - CTE 사이에는 콤마(,) 사용
+  - 마지막 CTE 뒤에는 콤마 금지
+- SQL이 비어 있으면 **실행하지 말고 에러 반환**
+- 파라미터 치환:
+  - `{sitename}`, `{facilitytype}`, `{datainfo}` 만 허용
+  - 새로운 placeholder 생성 금지
+
+---
+
+## 5. NULL / 빈값 처리 규칙
+
+- 결과값이 NULL인 경우:
+  - 문장을 억지로 만들지 않는다
+  - 해당 줄 자체를 출력하지 않는다
+
+❌ 예시 (금지)
+- “용수공급가능량은 null입니다”
+
+✅ 예시 (허용)
+- 해당 항목 출력 생략
+
+---
+
+## 6. LLM 출력 제한
+
+- Claude는 **자연어 답변을 직접 생성하지 않는다**
+- Claude의 출력은 다음 중 하나여야 한다:
+  1. Python 코드
+  2. SQL
+  3. JSON
+  4. 기존 템플릿을 채우는 로직
+
+설명 문장은 **주석으로만 작성 가능**하다.
+
+---
+
+## 7. 에러 처리 원칙
+
+- 값 누락 → 에러 반환 (보완 요청)
+- SQL 실패 → 실행 중단
+- 데이터 없음 → “데이터 없음” 명시 (추론 금지)
+
+---
+
+## 8. 최종 원칙 (가장 중요)
+
+> **Claude는 ‘똑똑해 보이는 코드’를 만들지 않는다.  
+> Claude는 ‘운영 중 사고가 나지 않는 코드’만 만든다.**
+
+이 원칙을 위반하는 모든 코드는 실패로 간주한다.

@@ -26,16 +26,26 @@ SLM 기반 운영 질의 응답 서버
 =============================================================================
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import psycopg2
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from slm_config import ENABLE_KEYWORD_FALLBACK, get_model, set_model
+from ollama_client import OllamaClient, OllamaConnectionError
+from intent_index import IntentIndex
+from intent_classifier import IntentClassifier
+from param_extractor import ParamExtractor
+from query_validator import QueryValidator, CORRECTION_TEMPLATES, CORRECTION_HINTS
+from session_manager import SessionManager
 
 # =============================================================================
 # 로깅 설정
@@ -48,11 +58,70 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# SLM 모듈 인스턴스 (서버 시작 시 초기화)
+# =============================================================================
+ollama_client = OllamaClient()
+intent_index = IntentIndex()
+session_manager = SessionManager()
+# intent_classifier, param_extractor, query_validator는 startup에서 초기화
+intent_classifier: Optional[IntentClassifier] = None
+param_extractor_instance: Optional[ParamExtractor] = None
+query_validator: Optional[QueryValidator] = None
+
+_cleanup_task: Optional[asyncio.Task] = None
+
+
+async def _session_cleanup_loop():
+    """백그라운드: 60초마다 만료 세션 정리"""
+    while True:
+        await asyncio.sleep(60)
+        session_manager.cleanup_expired()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """서버 시작/종료 시 실행되는 lifespan 이벤트"""
+    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task
+
+    # Intent 인덱스 빌드
+    intent_index.build(INTENT_DEFINITIONS)
+
+    # 분류기, 추출기, 검증기 초기화
+    intent_classifier = IntentClassifier(ollama_client, intent_index)
+    param_extractor_instance = ParamExtractor(
+        known_sitenames=KNOWN_SITENAMES,
+        known_block_levels=KNOWN_BLOCK_LEVELS,
+        ollama=ollama_client,
+    )
+    query_validator = QueryValidator(intent_index, KNOWN_SITENAMES)
+
+    # Ollama 연결 상태 로그
+    if ollama_client.health_check():
+        logger.info(f"Ollama 연결 성공: {get_model()}")
+    else:
+        logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
+
+    # 세션 정리 백그라운드 태스크
+    _cleanup_task = asyncio.create_task(_session_cleanup_loop())
+
+    yield
+
+    # shutdown
+    if _cleanup_task:
+        _cleanup_task.cancel()
+        try:
+            await _cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+
+# =============================================================================
 # FastAPI 앱 생성
 # =============================================================================
 app = FastAPI(
     title="SLM 운영 질의 응답 서버",
     description="자연어 질의를 정의된 정책에 따라 해석하고 SQL 실행 결과를 설명하는 서버",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -78,6 +147,7 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "DJpost0827///")
 # =============================================================================
 class AskRequest(BaseModel):
     user_question: str
+    session_id: Optional[str] = None
 
 
 # =============================================================================
@@ -938,6 +1008,7 @@ def render_answer_template(template: dict, data: dict) -> dict:
 def build_error_response(
     message: str,
     recommend_questions: Optional[list] = None,
+    session_id: Optional[str] = None,
 ) -> dict:
     """
     오류 응답을 생성한다.
@@ -947,6 +1018,8 @@ def build_error_response(
         "status": "ERROR",
         "message": message,
     }
+    if session_id:
+        response["session_id"] = session_id
     if recommend_questions:
         response["answer"] = {
             "recommend_questions": {
@@ -957,6 +1030,33 @@ def build_error_response(
     return response
 
 
+def build_correction_response(
+    message: str,
+    session_id: str,
+    correction_hints: Optional[list] = None,
+) -> dict:
+    """
+    NEED_CORRECTION 응답을 생성한다.
+    질의 검증 실패 시 정정 요청 응답.
+    """
+    hints = correction_hints or []
+    recommend_items = [
+        {"prefix": f"{i+1}.", "text": h} for i, h in enumerate(hints[:5])
+    ]
+    return {
+        "status": "NEED_CORRECTION",
+        "session_id": session_id,
+        "message": message,
+        "correction_hints": hints,
+        "answer": {
+            "recommend_questions": {
+                "title": "다음과 같이 질문해 보세요.",
+                "items": recommend_items,
+            }
+        },
+    }
+
+
 def build_success_response(
     intent: str,
     answer: dict,
@@ -964,6 +1064,7 @@ def build_success_response(
     data: Optional[list] = None,
     table_columns: Optional[list] = None,
     table_type: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> dict:
     """
     성공 응답을 생성한다.
@@ -975,6 +1076,8 @@ def build_success_response(
         "answer": answer,
         "graph_type": graph_type,
     }
+    if session_id:
+        response["session_id"] = session_id
     if data is not None:
         response["data"] = data
     if table_columns is not None:
@@ -984,7 +1087,11 @@ def build_success_response(
     return response
 
 
-def build_no_data_response(intent: str, answer_template: dict) -> dict:
+def build_no_data_response(
+    intent: str,
+    answer_template: dict,
+    session_id: Optional[str] = None,
+) -> dict:
     """
     조회 결과 없음 응답을 생성한다.
     docs/ai_server_plan.md 6.3절 참조:
@@ -998,12 +1105,15 @@ def build_no_data_response(intent: str, answer_template: dict) -> dict:
     if "recommend_questions" in answer_template:
         result["recommend_questions"] = answer_template["recommend_questions"]
 
-    return {
+    response = {
         "status": "OK",
         "message": "조회된 데이터가 없습니다.",
         "intent": intent,
         "answer": result,
     }
+    if session_id:
+        response["session_id"] = session_id
+    return response
 
 
 # =============================================================================
@@ -1262,6 +1372,29 @@ def process_sql_result(
         data["equipment_table"] = build_equipment_table(data.get("meta"))
 
     # -------------------------------------------------
+    # 주소 (배수지 / 가압장 / 블록 / 감압시설 공통)
+    # detail에 {location_image_block} → site_photo_url 기반 이미지 블록 삽입
+    # -------------------------------------------------
+    _UI_BLOCK_PREFIX = "__UI_BLOCK__"
+
+    if intent in [
+        "FACILITY_ADDRESS_INFO_RESERVOIR",
+        "FACILITY_ADDRESS_INFO_BOOSTER",
+        "FACILITY_ADDRESS_INFO_BLOCK",
+        "FACILITY_ADDRESS_INFO_PRESSURE",
+    ]:
+        site_photo_url = data.get("site_photo_url")
+        if site_photo_url:
+            data["_ui_blocks"] = data.get("_ui_blocks", {})
+            data["_ui_blocks"]["location_image_block"] = {
+                "type": "image",
+                "url": site_photo_url,
+                "title": f"{params.get('sitename')} 현장 위치 사진"
+            }
+            data["location_image_block"] = f"{_UI_BLOCK_PREFIX}location_image_block"
+            logger.info(f"site_photo_url={site_photo_url}")
+
+    # -------------------------------------------------
     # 초동대응 매뉴얼 (배수지 / 가압장 / 블록 / 감압시설 공통)
     # -------------------------------------------------
     if intent in [
@@ -1272,28 +1405,34 @@ def process_sql_result(
     ]:
         manual_url = data.get("manual_url")
         if manual_url:
-            data["manual_block"] = {
+            data["_ui_blocks"] = data.get("_ui_blocks", {})
+            data["_ui_blocks"]["manual_block"] = {
                 "type": "image",
                 "url": manual_url,
                 "title": f"{params.get('sitename')} 초동대응 매뉴얼"
             }
+            data["manual_block"] = f"{_UI_BLOCK_PREFIX}manual_block"
             logger.info(f"manual_url={manual_url}")
     # -------------------------------------------------
-    # 시스템 / 계통도 (있을 경우)
+    # 계통도 (배수지 / 가압장 / 블록 / 감압시설 공통)
+    # detail에 {system_diagram_block} → system_diagram_url 기반 이미지 블록 삽입
     # -------------------------------------------------
     if intent in [
-        "RESERVOIR_SYSTEM_DIAGRAM",
-        "BOOSTER_STATION_SYSTEM_DIAGRAM",
-        "BLOCK_SYSTEM_DIAGRAM",
-        "PRESSURE_REDUCING_SYSTEM_DIAGRAM",
+        "RESERVOIR_NETWORK_DIAGRAM",
+        "BOOSTER_STATION_NETWORK_DIAGRAM",
+        "BLOCK_NETWORK_DIAGRAM",
+        "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
     ]:
         diagram_url = data.get("system_diagram_url")
         if diagram_url:
-            data["system_diagram_block"] = {
-                "type": "diagram",
+            data["_ui_blocks"] = data.get("_ui_blocks", {})
+            data["_ui_blocks"]["system_diagram_block"] = {
+                "type": "image",
                 "url": diagram_url,
-                "title": f"{params.get('sitename')} 시스템 계통도"
+                "title": f"{params.get('sitename')} 계통도"
             }
+            data["system_diagram_block"] = f"{_UI_BLOCK_PREFIX}system_diagram_block"
+            logger.info(f"system_diagram_url={diagram_url}")
 
     return data
 
@@ -1308,142 +1447,158 @@ async def ask(request: AskRequest):
     """
     POST /ask 엔드포인트
 
-    요청: { "user_question": "..." }
+    요청: { "user_question": "...", "session_id": "..." (선택) }
     응답: example3.json 및 ai_server_plan.md에서 정의된 구조를 따른다.
+
+    신규 흐름:
+    1. 세션 로드/생성
+    2. 정정 턴 단축 체크
+    3. SLM Intent 분류 (2단계) — 폴백: 기존 match_intent()
+    4. 하이브리드 파라미터 추출
+    5. 세션 파라미터 병합 (multi-turn)
+    6. 질의 검증 → NEED_CORRECTION이면 정정 응답
+    7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
     """
     user_question = request.user_question
     logger.info(f"질의 수신: {user_question}")
 
-    # 1. INTENT 매칭
-    intent_def = match_intent(user_question)
+    # 1. 세션 로드/생성
+    session = session_manager.get_or_create(request.session_id)
+    sid = session.session_id
 
-    if not intent_def:
-        # docs/ai_server_plan.md 5.2절: 매칭 실패
-        logger.warning(f"INTENT 매칭 실패: {user_question}")
-        return build_error_response(
-            message="질문을 이해하지 못했습니다. 다른 방식으로 질문해 주세요.",
-            recommend_questions=[
-                {"prefix": "1.", "text": "배수지 일반현황은?"},
-                {"prefix": "2.", "text": "가압장 운영현황은?"},
-                {"prefix": "3.", "text": "소블록 압력 현황은?"},
-            ],
+    # 최대 턴 수 체크
+    if session_manager.is_max_turns(session):
+        logger.warning(f"세션 최대 턴 초과: {sid}")
+        return build_correction_response(
+            message="대화 턴 수가 초과되었습니다. 새로운 질문을 시작해 주세요.",
+            session_id=sid,
+            correction_hints=["새 질문을 입력해 주세요."],
         )
 
-    intent = intent_def["intent"]
+    # 2. 정정 턴 단축 체크
+    is_correction = session_manager.is_correction_turn(session, user_question)
+
+    # 3. SLM Intent 분류
+    if is_correction and session.last_intent:
+        # 정정 턴: 이전 INTENT 재사용
+        intent_name = session.last_intent
+        intent_def = intent_index.get_definition(intent_name)
+        category = "정정"
+        classify_method = "correction_reuse"
+        logger.info(f"정정 턴 단축: intent={intent_name}")
+    else:
+        # 신규 분류
+        classification = intent_classifier.classify(
+            question=user_question,
+            keyword_fallback_fn=match_intent,
+        )
+        intent_name = classification["intent_name"]
+        intent_def = classification["intent_def"]
+        category = classification["category"]
+        classify_method = classification["method"]
+        logger.info(
+            f"Intent 분류: name={intent_name}, category={category}, method={classify_method}"
+        )
+
+    # 4. 하이브리드 파라미터 추출
+    new_params = param_extractor_instance.extract_all(user_question, intent_name)
+
+    # 5. 세션 파라미터 병합
+    params = session_manager.get_merged_params(session, new_params)
+
+    # 6. 질의 검증
+    validation = query_validator.validate(
+        category=category,
+        intent_name=intent_name,
+        intent_def=intent_def,
+        params=params,
+    )
+
+    if not validation.is_valid:
+        # 세션 업데이트 (NEED_CORRECTION)
+        session_manager.update_session(
+            session,
+            intent_name=intent_name,
+            params=new_params,
+            status="NEED_CORRECTION",
+            pending_corrections=validation.missing_params,
+        )
+        logger.info(
+            f"검증 실패: type={validation.error_type}, missing={validation.missing_params}"
+        )
+        return build_correction_response(
+            message=validation.message,
+            session_id=sid,
+            correction_hints=validation.hints,
+        )
+
+    # 검증 통과 — 기존 파이프라인 진행
+    intent = intent_name
     sql_template = intent_def.get("sql", "")
     answer_template = intent_def.get("answer_template", {})
     graph_type = intent_def.get("graph_type", "none")
     table_columns = intent_def.get("table_columns")
     table_type = intent_def.get("table_type")
 
-    logger.info(f"INTENT 매칭 성공: {intent}")
+    logger.info(f"INTENT 확정: {intent} (method={classify_method})")
 
-    # 2. 파라미터 추출
-    block_level = extract_block_level(user_question)
-    sitename = extract_sitename(user_question)
-    facilitytype = extract_facilitytype(user_question, block_level)
-    datainfo = extract_datainfo(user_question)
-    limit_val = extract_limit(user_question)
-    alarm_msg = extract_alarm_msg(user_question)
+    # 세션 업데이트 (OK)
+    session_manager.update_session(
+        session,
+        intent_name=intent,
+        params=new_params,
+        status="OK",
+    )
 
-    params = {
-        "sitename": sitename,
-        "facilitytype": facilitytype,
-        "block_level": block_level,
-        "datainfo": datainfo,
-        "limit": limit_val,
-        "alarm_msg": alarm_msg,
-    }
-
-    # 3. sitename 검증
-    # docs/ai_server_task.md: sitename 누락 시 SQL 실행 금지
-    if "{sitename}" in sql_template and not sitename:
-        logger.warning(f"sitename 누락: {user_question}")
-        return build_error_response(
-            message="현장명(sitename)을 명시해 주세요. 예: '신평 배수지 일반현황은?'",
-            recommend_questions=[
-                {"prefix": "1.", "text": "신평 배수지 일반현황은?"},
-                {"prefix": "2.", "text": "행정 가압장 운영현황은?"},
-                {"prefix": "3.", "text": "합덕3 소블록 압력 현황은?"},
-            ],
-        )
-
-    # 4. facilitytype 검증
-    if "{facilitytype}" in sql_template and not facilitytype:
-        logger.warning(f"facilitytype 누락: {user_question}")
-        return build_error_response(
-            message="시설 유형을 명시해 주세요. (배수지, 가압장, 감압시설, 소블록/중블록/대블록)",
-            recommend_questions=[
-                {"prefix": "1.", "text": "신평 배수지 수위 현황은?"},
-                {"prefix": "2.", "text": "행정 가압장 압력 현황은?"},
-                {"prefix": "3.", "text": "합덕3 소블록 유량 현황은?"},
-            ],
-        )
-
-    # 5. block_level 검증
-    if "{block_level}" in sql_template and not block_level:
-        logger.warning(f"block_level 누락: {user_question}")
-        return build_error_response(
-            message="블록 유형을 명시해 주세요. (소블록, 중블록, 대블록)",
-            recommend_questions=[
-                {"prefix": "1.", "text": "합덕3 소블록 일반현황은?"},
-                {"prefix": "2.", "text": "행정1-1 중블록 운영현황은?"},
-            ],
-        )
-
-    # 6. SQL 실행
+    # SQL 실행
     if not sql_template or not sql_template.strip():
         rendered_answer = render_answer_template(answer_template, params)
         return build_success_response(
             intent=intent,
             answer=rendered_answer,
             graph_type=graph_type,
+            session_id=sid,
         )
 
     try:
         rows, columns = execute_sql(sql_template, params)
     except psycopg2.OperationalError as e:
-        # docs/ai_server_plan.md 6.1절: DB 접속 오류
         logger.error(f"DB 접속 오류: {e}")
         return build_error_response(
             message="데이터베이스 연결 오류가 발생했습니다.",
+            session_id=sid,
         )
     except psycopg2.Error as e:
-        # docs/ai_server_plan.md 6.2절: SQL 실행 오류
         logger.error(f"SQL 실행 오류: {e}")
         return build_error_response(
             message="데이터베이스 연결 오류가 발생했습니다.",
+            session_id=sid,
         )
 
-    # 7. 결과 확인
+    # 결과 확인
     if not rows:
-        # docs/ai_server_plan.md 6.3절: 조회 결과 없음
         logger.info(f"조회 결과 없음: {intent}, params={params}")
-        return build_no_data_response(intent, answer_template)
+        return build_no_data_response(intent, answer_template, session_id=sid)
 
-    # 8. 데이터 후처리
+    # 데이터 후처리
     try:
         processed_data = process_sql_result(rows, columns, intent_def, params)
     except JsonbSchemaViolation as e:
-        # docs/ai_server_plan.md 6.5절: JSONB 스키마 불일치
         logger.error(f"JSONB 스키마 위반: {e.message}, path: {e.path}")
         return build_error_response(
             message="데이터 구조 오류가 발생했습니다.",
+            session_id=sid,
         )
-    # 9. answer_template 렌더링
+
+    # answer_template 렌더링
     rendered_answer = render_answer_template(answer_template, processed_data)
 
-    # -------------------------------------------------
-    # detail에서 __EXPAND__ 마커가 포함된 항목을 개별 항목 리스트로 expand
-    # render_answer_template 결과: {"prefix": "", "text": "__EXPAND__"}
-    # → [{"prefix": "-", "text": "1지 수위: 3.45m"}, {"prefix": "-", "text": "2지 수위: 3.55m"}, ...]
-    # -------------------------------------------------
+    # detail에서 __EXPAND__ 마커 expand
     detail_blocks = processed_data.get("_detail_blocks", {})
     if detail_blocks and "detail" in rendered_answer:
         expanded_detail = []
         for item in rendered_answer["detail"]:
             if isinstance(item, dict) and item.get("text") == "__EXPAND__":
-                # 해당 INTENT의 detail_block 항목들을 삽입
                 for block_items in detail_blocks.values():
                     if isinstance(block_items, list):
                         expanded_detail.extend(block_items)
@@ -1451,22 +1606,26 @@ async def ask(request: AskRequest):
                 expanded_detail.append(item)
         rendered_answer["detail"] = expanded_detail
 
-    # -------------------------------------------------
-    # detail에 UI 블록 삽입 (공통)
-    # -------------------------------------------------
-    detail = rendered_answer.get("detail", [])
+    # detail에 UI 블록 삽입
+    ui_blocks = processed_data.get("_ui_blocks", {})
+    _UI_BLOCK_PREFIX = "__UI_BLOCK__"
 
-    if "manual_block" in processed_data:
-        detail.append(processed_data["manual_block"])
+    if ui_blocks and "detail" in rendered_answer:
+        replaced_detail = []
+        for item in rendered_answer["detail"]:
+            replaced = False
+            if isinstance(item, dict):
+                text = item.get("text", "")
+                if isinstance(text, str) and text.startswith(_UI_BLOCK_PREFIX):
+                    block_key = text[len(_UI_BLOCK_PREFIX):]
+                    if block_key in ui_blocks:
+                        replaced_detail.append(ui_blocks[block_key])
+                        replaced = True
+            if not replaced:
+                replaced_detail.append(item)
+        rendered_answer["detail"] = replaced_detail
 
-    if "system_diagram_block" in processed_data:
-        detail.append(processed_data["system_diagram_block"])
-
-    if detail:
-        rendered_answer["detail"] = detail
-
-    # 10. 응답 생성
-    # 설비현황(equipment) 테이블인 경우 data에 equipment_table 포함
+    # 응답 생성
     response_data = None
     if table_type == "equipment" and "equipment_table" in processed_data:
         response_data = processed_data["equipment_table"]
@@ -1477,6 +1636,7 @@ async def ask(request: AskRequest):
         graph_type=graph_type,
         data=response_data,
         table_type=table_type,
+        session_id=sid,
     )
 
 
@@ -1488,7 +1648,56 @@ async def ask(request: AskRequest):
 @app.get("/health")
 async def health_check():
     """서버 상태 확인용 엔드포인트"""
-    return {"status": "ok"}
+    ollama_ok = ollama_client.health_check()
+    return {
+        "status": "ok",
+        "ollama_available": ollama_ok,
+        "current_model": get_model(),
+        "active_sessions": session_manager.active_session_count(),
+    }
+
+
+# =============================================================================
+# 모델 관리 엔드포인트
+# =============================================================================
+
+@app.get("/models")
+async def list_models():
+    """Ollama에 설치된 모델 목록을 반환한다."""
+    models = ollama_client.list_models()
+    current = get_model()
+    return {
+        "current_model": current,
+        "available_models": models,
+    }
+
+
+class ModelSelectRequest(BaseModel):
+    model_name: str
+
+
+@app.post("/models/select")
+async def select_model(request: ModelSelectRequest):
+    """Ollama 모델을 런타임에 변경한다."""
+    model_name = request.model_name
+
+    # 설치된 모델 목록에서 확인
+    models = ollama_client.list_models()
+    installed_names = [m["name"] for m in models]
+
+    if models and model_name not in installed_names:
+        return {
+            "status": "ERROR",
+            "message": f"'{model_name}'은(는) 설치되지 않은 모델입니다.",
+            "available_models": installed_names,
+        }
+
+    set_model(model_name)
+    logger.info(f"모델 변경: {model_name}")
+    return {
+        "status": "OK",
+        "current_model": model_name,
+    }
 
 
 # =============================================================================
