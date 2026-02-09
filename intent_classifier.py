@@ -94,21 +94,26 @@ class IntentClassifier:
                     "method": stage2_method,
                 }
 
-        # Stage 2 실패 시: 카테고리가 공통이면 다른 카테고리도 시도
+        # Stage 2 실패 시: 다른 카테고리도 시도
+        # - "공통"이면 시설별 카테고리 시도
+        # - 시설별 카테고리이면 "공통" 카테고리 시도
+        fallback_categories = []
         if category == "공통":
-            for alt_category in self._index.get_categories():
-                if alt_category == "공통":
-                    continue
-                alt_name, alt_method = self._classify_intent(question, alt_category)
-                if alt_name:
-                    alt_def = self._index.get_definition(alt_name)
-                    if alt_def:
-                        return {
-                            "intent_name": alt_name,
-                            "category": alt_category,
-                            "intent_def": alt_def,
-                            "method": alt_method,
-                        }
+            fallback_categories = [c for c in self._index.get_categories() if c != "공통"]
+        else:
+            fallback_categories = ["공통"]
+
+        for alt_category in fallback_categories:
+            alt_name, alt_method = self._classify_intent(question, alt_category)
+            if alt_name:
+                alt_def = self._index.get_definition(alt_name)
+                if alt_def:
+                    return {
+                        "intent_name": alt_name,
+                        "category": alt_category,
+                        "intent_def": alt_def,
+                        "method": alt_method,
+                    }
 
         # 최종 폴백: 기존 키워드 매칭
         if ENABLE_KEYWORD_FALLBACK and keyword_fallback_fn:
@@ -133,22 +138,30 @@ class IntentClassifier:
         """
         Stage 1: 시설 유형 분류
         반환: (category, method)
+
+        우선순위: 공통 키워드 → 시설 키워드 → SLM
+        "야간최소유량", "알람" 등 공통 INTENT 키워드가 시설명보다 우선한다.
         """
-        # 프로그래밍적 단축 (~70% 케이스)
+        # 공통 키워드 체크 (시설 키워드보다 우선)
+        common_keywords = [
+            "야간최소유량", "야간 최소유량", "최소유량", "야간",
+            "알람", "경보", "알림", "태그", "통신",
+            "결측", "진행중",
+            "트렌드",
+        ]
+        for kw in common_keywords:
+            if kw in question:
+                if kw == "트렌드":
+                    logger.info(f"Stage1 키워드 매칭: '{kw}' → 트렌드")
+                    return "트렌드", "keyword"
+                logger.info(f"Stage1 키워드 매칭: '{kw}' → 공통")
+                return "공통", "keyword"
+
+        # 시설 키워드 단축 (~70% 케이스)
         for keyword, category in _KEYWORD_TO_CATEGORY.items():
             if keyword in question:
                 logger.info(f"Stage1 키워드 매칭: '{keyword}' → {category}")
                 return category, "keyword"
-
-        # 공통 키워드 체크
-        common_keywords = [
-            "알람", "경보", "알림", "태그", "통신", "주소",
-            "야간", "최소유량", "결측",
-        ]
-        for kw in common_keywords:
-            if kw in question:
-                logger.info(f"Stage1 키워드 매칭: '{kw}' → 공통")
-                return "공통", "keyword"
 
         # SLM 호출
         try:
