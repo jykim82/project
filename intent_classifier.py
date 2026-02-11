@@ -83,6 +83,7 @@ class IntentClassifier:
 
         # Stage 2: 구체적 INTENT 분류
         intent_name, stage2_method = self._classify_intent(question, category)
+        slm_failed = (stage2_method == "slm_error")
 
         if intent_name:
             intent_def = self._index.get_definition(intent_name)
@@ -104,7 +105,7 @@ class IntentClassifier:
             fallback_categories = ["공통"]
 
         for alt_category in fallback_categories:
-            alt_name, alt_method = self._classify_intent(question, alt_category)
+            alt_name, alt_method = self._classify_intent(question, alt_category, skip_slm=slm_failed)
             if alt_name:
                 alt_def = self._index.get_definition(alt_name)
                 if alt_def:
@@ -142,18 +143,23 @@ class IntentClassifier:
         우선순위: 공통 키워드 → 시설 키워드 → SLM
         "야간최소유량", "알람" 등 공통 INTENT 키워드가 시설명보다 우선한다.
         """
+        # "트렌드"는 다른 공통 키워드보다 우선 (야간최소유량 트렌드 등)
+        if "트렌드" in question:
+            logger.info("Stage1 키워드 매칭: '트렌드' → 트렌드")
+            return "트렌드", "keyword"
+
         # 공통 키워드 체크 (시설 키워드보다 우선)
         common_keywords = [
             "야간최소유량", "야간 최소유량", "최소유량", "야간",
             "알람", "경보", "알림", "태그", "통신",
             "결측", "진행중",
-            "트렌드",
+            "표로",
+            "이상",
+            "표준편차",
+            "주소",
         ]
         for kw in common_keywords:
             if kw in question:
-                if kw == "트렌드":
-                    logger.info(f"Stage1 키워드 매칭: '{kw}' → 트렌드")
-                    return "트렌드", "keyword"
                 logger.info(f"Stage1 키워드 매칭: '{kw}' → 공통")
                 return "공통", "keyword"
 
@@ -182,13 +188,67 @@ class IntentClassifier:
             logger.warning(f"Stage1 Ollama 연결 실패: {e}")
             return "공통", "keyword"
 
-    def _classify_intent(self, question: str, category: str) -> tuple:
+    def _classify_intent(self, question: str, category: str, skip_slm: bool = False) -> tuple:
         """
         Stage 2: 카테고리 내 구체적 INTENT 분류
         반환: (intent_name or None, method)
         """
+        # 키워드 단축: "트렌드" 카테고리
+        if category == "트렌드":
+            if "함께" in question or "혼합" in question:
+                return "FACILITY_MIXED_TREND", "keyword"
+            return "FACILITY_TREND", "keyword"
+
+        # 키워드 단축: 주소 → 시설별 ADDRESS_INFO
+        if "주소" in question:
+            if "배수지" in question:
+                return "FACILITY_ADDRESS_INFO_RESERVOIR", "keyword"
+            if "가압장" in question:
+                return "FACILITY_ADDRESS_INFO_BOOSTER", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "FACILITY_ADDRESS_INFO_BLOCK", "keyword"
+            if "감압" in question:
+                return "FACILITY_ADDRESS_INFO_PRESSURE", "keyword"
+
+        # 키워드 단축: 최근 알람
+        if "최근" in question and ("알람" in question or "경보" in question or "알림" in question):
+            return "FACILITY_RECENT_ALARM", "keyword"
+
+        # 키워드 단축: 현재 + 데이터 키워드 → 태그 최신값 (표/현황 제외)
+        if "현재" in question and "표" not in question and "현황" not in question:
+            for dkw in ["수위", "압력", "유량"]:
+                if dkw in question:
+                    return "FACILITY_TAG_LATEST_VALUE", "keyword"
+
+        # 키워드 단축: 전체 평균사용량
+        if "전체" in question and "평균사용량" in question:
+            return "TODAY_RESERVOIR_AVG_USAGE_ALL", "keyword"
+
+        # 키워드 단축: "공통" 카테고리
+        if "결측" in question:
+            return "TAG_DAILY_MISSING_SUMMARY", "keyword"
+        if "이상" in question and ("설비" in question or "현황" in question):
+            return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
+        if "표준편차" in question:
+            return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
+        if "진행중" in question or "진행 중" in question:
+            return "ONGOING_ALARM_STATUS", "keyword"
+
+        # 키워드 단축: 적산 관련
+        if "적산" in question:
+            if "표" in question or "보여" in question:
+                return "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE", "keyword"
+            return "TODAY_FLOW_ACCUMULATION", "keyword"
+
+        # 키워드 단축: 순시 관련
+        if "순시" in question and "유량" in question:
+            return "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "keyword"
+
         intent_list_str = self._index.build_category_prompt_segment(category)
         if not intent_list_str:
+            return None, "keyword"
+
+        if skip_slm:
             return None, "keyword"
 
         # SLM 호출
@@ -213,4 +273,4 @@ class IntentClassifier:
 
         except OllamaConnectionError as e:
             logger.warning(f"Stage2 Ollama 연결 실패: {e}")
-            return None, "keyword"
+            return None, "slm_error"

@@ -391,6 +391,10 @@ def extract_datainfo(question: str) -> Optional[str]:
         return "유량"
     if "수위" in question:
         return "수위"
+    if "적산" in question:
+        return "유량"
+    if "밸브" in question:
+        return "밸브"
     return None
 
 
@@ -447,7 +451,14 @@ COMMON_INTENT_PREFIXES = [
     "FACILITY_FLOW_",
     "FACILITY_VALVE_",
     "FACILITY_ANALOG_",
+    "FACILITY_DIGITAL_",
+    "FACILITY_ABNORMAL_",
+    "FACILITY_NIGHT_MIN_FLOW_",
+    "FACILITY_TREND",
+    "FACILITY_MIXED_TREND",
     "NIGHT_MIN_FLOW_",
+    "TAG_DAILY_",
+    "ONGOING_",
 ]
 
 
@@ -649,6 +660,8 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
         return [], []
 
     # 템플릿 변수 치환
+    # from_ts, to_ts는 SQL에서 따옴표 없이 사용되므로 여기서 감싸줘야 한다
+    _QUOTE_PARAMS = {"from_ts", "to_ts"}
     sql = sql_template
     for key, value in params.items():
         placeholder = "{" + key + "}"
@@ -656,6 +669,8 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
             if value is not None:
                 # SQL 인젝션 방지를 위한 이스케이프
                 escaped_value = str(value).replace("'", "''")
+                if key in _QUOTE_PARAMS:
+                    escaped_value = f"'{escaped_value}'"
                 sql = sql.replace(placeholder, escaped_value)
 
     conn = None
@@ -1562,7 +1577,14 @@ async def ask(request: AskRequest):
     )
 
     # SQL 실행
-    if not sql_template or not sql_template.strip():
+    # sql_template은 string 또는 list (FACILITY_MIXED_TREND: 리스트를 join하여 단일 SQL로)
+    if isinstance(sql_template, list):
+        sql_combined = "\n".join(sql_template)
+    else:
+        sql_combined = sql_template or ""
+
+    # 빈 SQL 체크
+    if not sql_combined or not sql_combined.strip():
         rendered_answer = render_answer_template(answer_template, params)
         return build_success_response(
             intent=intent,
@@ -1572,7 +1594,7 @@ async def ask(request: AskRequest):
         )
 
     try:
-        rows, columns = execute_sql(sql_template, params)
+        rows, columns = execute_sql(sql_combined, params)
     except psycopg2.OperationalError as e:
         logger.error(f"DB 접속 오류: {e}")
         return build_error_response(

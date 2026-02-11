@@ -152,9 +152,9 @@ class QueryValidator:
                     missing_params=missing,
                 )
 
-        # 4. sitename 존재 검증
+        # 4. sitename 존재 검증 (와일드카드 %% 는 전체 조회용이므로 스킵)
         sitename = params.get("sitename")
-        if sitename and sitename not in self._sitenames:
+        if sitename and sitename != "%%" and sitename not in self._sitenames:
             msg = CORRECTION_TEMPLATES["unknown_sitename"].format(sitename=sitename)
             return ValidationResult(
                 is_valid=False,

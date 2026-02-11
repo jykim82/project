@@ -25,11 +25,16 @@ DATE_REQUIRED_INTENTS = {
     "FACILITY_MIXED_TREND",
     "FACILITY_ANALOG_TIMESERIES_TABLE",
     "FACILITY_DIGITAL_TIMESERIES_TABLE",
+    "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
     "FACILITY_FLOW_CURRENT_TABLE",
+    "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+    "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
     "FACILITY_VALVE_CURRENT_TABLE",
+    "FACILITY_VALVE_STATUS_CURRENT_TABLE",
     "NIGHT_MIN_FLOW_STATUS",
     "NIGHT_MIN_FLOW_SUMMARY_TABLE",
     "FACILITY_ABNORMAL_STATUS_SUMMARY",
+    "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
     "TAG_DAILY_MISSING_SUMMARY",
 }
 
@@ -100,6 +105,32 @@ class ParamExtractor:
                 if to_ts is None and slm_to:
                     to_ts = slm_to
 
+        # SLM이 from_ts > to_ts를 반환한 경우 무효화
+        if from_ts and to_ts:
+            try:
+                if datetime.strptime(from_ts, "%Y-%m-%d") > datetime.strptime(to_ts, "%Y-%m-%d"):
+                    logger.warning(f"SLM 날짜 무효: from_ts={from_ts} > to_ts={to_ts}, 초기화")
+                    from_ts = None
+                    to_ts = None
+            except ValueError:
+                from_ts = None
+                to_ts = None
+
+        # 날짜 필요 INTENT인데 from_ts/to_ts 모두 없으면 기본 7일 적용
+        if intent_name in DATE_REQUIRED_INTENTS and from_ts is None and to_ts is None:
+            today = datetime.now()
+            from_ts = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+            to_ts = today.strftime("%Y-%m-%d")
+
+        # FACILITY_ABNORMAL_STATUS_SUMMARY: 전체 조회용 기본값 설정
+        if intent_name == "FACILITY_ABNORMAL_STATUS_SUMMARY":
+            if not datainfo:
+                datainfo = "유량"
+            if not facilitytype:
+                facilitytype = "%%"
+            if not sitename:
+                sitename = "%%"
+
         return {
             "sitename": sitename,
             "facilitytype": facilitytype,
@@ -150,6 +181,10 @@ class ParamExtractor:
             return "유량"
         if "수위" in question:
             return "수위"
+        if "적산" in question:
+            return "유량"
+        if "밸브" in question:
+            return "밸브"
         return None
 
     def _extract_limit(self, question: str) -> int:
@@ -208,6 +243,13 @@ class ParamExtractor:
             from_date = today - timedelta(days=days)
             return from_date.strftime("%Y-%m-%d"), today_str
 
+        # "N일간" (e.g., "7일간", "30일간") — "최근" 접두사 없이
+        match = re.search(r"(\d+)\s*일간", question)
+        if match:
+            days = int(match.group(1))
+            from_date = today - timedelta(days=days)
+            return from_date.strftime("%Y-%m-%d"), today_str
+
         # "최근 N주"
         match = re.search(r"최근\s*(\d+)\s*주", question)
         if match:
@@ -225,8 +267,8 @@ class ParamExtractor:
             monday = today - timedelta(days=today.weekday())
             return monday.strftime("%Y-%m-%d"), today_str
 
-        # "오늘", "금일"
-        if "오늘" in question or "금일" in question:
+        # "오늘", "금일", "현재"
+        if "오늘" in question or "금일" in question or "현재" in question:
             return today_str, today_str
 
         # "YYYY-MM-DD~YYYY-MM-DD" 직접 지정
