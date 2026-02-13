@@ -1412,6 +1412,10 @@ def process_sql_result(
         "FACILITY_ADDRESS_INFO_BOOSTER",
         "FACILITY_ADDRESS_INFO_BLOCK",
         "FACILITY_ADDRESS_INFO_PRESSURE",
+        "BLOCK_LOCATION",
+        "RESERVOIR_LOCATION",
+        "BOOSTER_STATION_LOCATION",
+        "PRESSURE_REDUCING_FACILITY_LOCATION",
     ]:
         site_photo_url = data.get("site_photo_url")
         if site_photo_url:
