@@ -210,6 +210,10 @@ class IntentClassifier:
             if "감압" in question:
                 return "FACILITY_ADDRESS_INFO_PRESSURE", "keyword"
 
+        # 키워드 단축: 압력 현황
+        if "압력" in question and ("현황" in question or "현항" in question):
+            return "FACILITY_PRESSURE_STATUS", "keyword"
+
         # 키워드 단축: 최근 알람
         if "최근" in question and ("알람" in question or "경보" in question or "알림" in question):
             return "FACILITY_RECENT_ALARM", "keyword"

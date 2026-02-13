@@ -647,6 +647,32 @@ def get_db_connection():
     )
 
 
+def _split_sql_statements(sql: str) -> list:
+    """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
+    statements = []
+    current = []
+    in_quote = False
+    for char in sql:
+        if char == "'" and not in_quote:
+            in_quote = True
+            current.append(char)
+        elif char == "'" and in_quote:
+            in_quote = False
+            current.append(char)
+        elif char == ";" and not in_quote:
+            stmt = "".join(current).strip()
+            if stmt:
+                statements.append(stmt)
+            current = []
+        else:
+            current.append(char)
+    # 마지막 statement
+    stmt = "".join(current).strip()
+    if stmt:
+        statements.append(stmt)
+    return statements
+
+
 def execute_sql(sql_template: str, params: dict) -> tuple:
     """
     SQL 템플릿에 파라미터를 치환하고 실행한다.
@@ -673,17 +699,51 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
                     escaped_value = f"'{escaped_value}'"
                 sql = sql.replace(placeholder, escaped_value)
 
+    # 세미콜론으로 구분된 다중 SQL인 경우 개별 실행 후 결과 병합
+    # psycopg2는 nextset()을 지원하지 않으므로 수동 분리 필요
+    # 문자열 리터럴('...')안의 세미콜론은 무시한다
+    statements = _split_sql_statements(sql)
+
     conn = None
     cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(sql)
-        if cur.description:
-            columns = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-            return rows, columns
-        return [], []
+
+        all_rows = []
+        all_columns = []
+
+        for stmt in statements:
+            cur.execute(stmt)
+            if cur.description:
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+                if not all_columns:
+                    # 첫 번째 결과셋: 기본 columns/rows
+                    all_columns = cols
+                    all_rows = rows
+                else:
+                    # 후속 결과셋: 첫 행 데이터를 첫 번째 결과에 병합
+                    # (첫 번째 결과가 1행 메타 + 두 번째가 다중행 상세인 패턴)
+                    if all_rows and len(all_rows) == 1:
+                        # 첫 번째 결과가 1행이면 → 메타 데이터로 취급
+                        # 두 번째 결과를 메인으로 교체, 첫 번째 행 데이터를 extra에 저장
+                        first_row_data = dict(zip(all_columns, all_rows[0]))
+                        all_columns = cols + [f"_extra_{k}" for k in first_row_data]
+                        all_rows = [
+                            tuple(list(row) + list(first_row_data.values()))
+                            for row in rows
+                        ]
+                    else:
+                        # 두 번째 결과 컬럼을 추가 (행 수가 같을 때)
+                        all_columns = all_columns + cols
+                        if len(rows) == len(all_rows):
+                            all_rows = [
+                                tuple(list(a) + list(b))
+                                for a, b in zip(all_rows, rows)
+                            ]
+
+        return all_rows, all_columns
     finally:
         if cur:
             cur.close()
@@ -944,6 +1004,9 @@ _UNIT_PLACEHOLDER_NAMES = {
 def _render_text(text: str, data: dict) -> Optional[str]:
     """문자열 내 placeholder를 치환한다. null 값이 있으면 None 반환.
     단, unit 계열 placeholder는 null이어도 빈 문자열로 치환한다."""
+    # {sitename}{facilitytype} 붙어있으면 공백 삽입
+    text = text.replace("{sitename}{facilitytype}", "{sitename} {facilitytype}")
+
     placeholders = re.findall(r"\{(\w+)\}", text)
 
     if not placeholders:
@@ -1151,6 +1214,26 @@ def build_no_data_response(
 # =============================================================================
 
 
+def build_hunting_result_block(rows: list, columns: list) -> list:
+    """
+    v_reservoir_status_variance_5min 다중 행을 헌팅 점검 결과 리스트로 조립한다.
+    반환 컬럼: datainfo, variance_status, diff_percent
+    반환: [{"prefix": "-", "text": "수위(m) 계측1: 정상 (변동률 1.1%)"}, ...]
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        datainfo = row_dict.get("datainfo", "").strip()
+        status = row_dict.get("variance_status", "")
+        diff_pct = row_dict.get("diff_percent")
+        if datainfo and status:
+            if diff_pct is not None:
+                items.append({"prefix": "-", "text": f"{datainfo}: {status} (변동률 {diff_pct}%)"})
+            else:
+                items.append({"prefix": "-", "text": f"{datainfo}: {status}"})
+    return items
+
+
 def build_level_detail_block(rows: list, columns: list) -> list:
     """
     fn_reservoir_level_summary() 다중 행을 개별 수위 항목 리스트로 조립한다.
@@ -1206,27 +1289,127 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
     return items
 
 
-def build_network_hop_detail_block(rows: list, columns: list) -> list:
+def build_pressure_detail_block(rows: list, columns: list) -> list:
     """
-    fn_network_path_hop_detail() 다중 행을 통신 홉 항목 리스트로 조립한다.
-    반환 컬럼: source_node, source_sitename, source_facilitytype, source_equipmenttype,
-              target_node, target_sitename, target_facilitytype, target_equipmenttype,
-              link_device_interface, link_protocol
-    반환: [{"prefix": "-", "text": "구간1: SERVER → RTU (인터페이스: Ethernet) ..."}, ...]
+    FACILITY_PRESSURE_STATUS 다중 행을 압력 항목 리스트로 조립한다.
+    반환 컬럼: datainfo, pressure_val, log_time, unit
     """
     items = []
-    for i, row in enumerate(rows, 1):
+    for row in rows:
         row_dict = dict(zip(columns, row))
-        src = row_dict.get("source_equipmenttype", "")
-        tgt = row_dict.get("target_equipmenttype", "")
-        interface = row_dict.get("link_device_interface", "")
-        protocol = row_dict.get("link_protocol", "")
-        parts = [f"구간{i}: {src} → {tgt}"]
-        if interface:
-            parts.append(f"(인터페이스: {interface})")
-        if protocol:
-            parts.append(f"(프로토콜: {protocol})")
-        items.append({"prefix": "-", "text": " ".join(parts)})
+        datainfo = row_dict.get("datainfo", "").strip()
+        val = row_dict.get("pressure_val")
+        log_time = row_dict.get("log_time", "")
+        unit = row_dict.get("unit", "")
+        if val is not None:
+            items.append({"prefix": "•", "text": f"{log_time} 기준 {datainfo}: {val}{unit}"})
+    return items
+
+
+def build_pressure_reference_block(rows: list, columns: list) -> list:
+    """
+    FACILITY_PRESSURE_STATUS 다중 행을 평균 압력 참고 자료로 조립한다.
+    반환 컬럼: datainfo, month_avg, year_avg, unit
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        datainfo = row_dict.get("datainfo", "").strip()
+        month_avg = row_dict.get("month_avg")
+        year_avg = row_dict.get("year_avg")
+        unit = row_dict.get("unit", "")
+        if month_avg is not None:
+            items.append({"prefix": "-", "text": f"{datainfo} 금월 평균: {month_avg}{unit}"})
+        if year_avg is not None:
+            items.append({"prefix": "-", "text": f"{datainfo} 금년 평균: {year_avg}{unit}"})
+    return items
+
+
+def build_network_hop_detail_block(rows: list, columns: list) -> list:
+    """
+    fn_network_path_hop_detail() 다중 행을 source_sitename 기준 그룹핑하여 조립한다.
+    반환 컬럼: source_sitename, source_facilitytype, source_equipmenttype,
+              target_equipmenttype, link_device_interface, link_protocol
+    반환: [{"prefix": "1.", "text": "당진시청의 연결 구간별 ..."}, {"prefix": "-", "text": "..."}, ...]
+    """
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        site = row_dict.get("source_sitename", "")
+        ftype = row_dict.get("source_facilitytype", "")
+        key = f"{site} {ftype}".strip() if site else ftype
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(row_dict)
+
+    items = []
+    for idx, (group_name, hops) in enumerate(groups.items(), 1):
+        items.append({
+            "prefix": f"{idx}.",
+            "text": f"{group_name}의 연결 구간별 통신 방식 및 프로토콜 정보"
+        })
+        for hop in hops:
+            src = hop.get("source_equipmenttype", "")
+            tgt = hop.get("target_equipmenttype", "")
+            interface = hop.get("link_device_interface", "")
+            protocol = hop.get("link_protocol", "")
+            items.append({
+                "prefix": "-",
+                "text": f"{src} - {tgt} : {interface} 통신, 프로토콜 : {protocol}"
+            })
+    return items
+
+
+def build_network_status_block(rows: list, columns: list) -> list:
+    """
+    fn_network_path_trace_with_status() 다중 행을 sitename 기준 그룹핑하여 조립한다.
+    반환 컬럼: pos, sitename, facilitytype, equipmenttype, status_code, rtt_ms, error_message
+    """
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        site = row_dict.get("sitename", "")
+        ftype = row_dict.get("facilitytype", "")
+        key = f"{site} {ftype}".strip() if site else ftype
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(row_dict)
+
+    items = []
+    items.append({
+        "prefix": "•",
+        "text": "네트워크 상태는 상위 네트워크 장비부터 현장까지 구간을 확인합니다."
+    })
+    for group_name, hops in groups.items():
+        items.append({"prefix": "•", "text": group_name})
+        for hop in hops:
+            equip = hop.get("equipmenttype", "")
+            status = hop.get("status_code")
+            rtt = hop.get("rtt_ms")
+            error = hop.get("error_message")
+            if status and rtt is not None:
+                rtt_val = int(float(str(rtt))) if rtt else 0
+                items.append({
+                    "prefix": "-",
+                    "text": f"{equip} : {status}, 응답속도 : {rtt_val}ms"
+                })
+            elif status and error:
+                items.append({
+                    "prefix": "-",
+                    "text": f"{equip} : {status}, {error}"
+                })
+            elif status:
+                items.append({
+                    "prefix": "-",
+                    "text": f"{equip} : {status}"
+                })
+            else:
+                items.append({
+                    "prefix": "-",
+                    "text": f"{equip} : 상태없음"
+                })
     return items
 
 
@@ -1389,6 +1572,32 @@ def process_sql_result(
     if intent == "FACILITY_COMMUNICATION_TOPOLOGY":
         data["network_hop_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["network_hop_detail_block"] = build_network_hop_detail_block(rows, columns)
+        # 첫 번째 SQL 결과(type_path)가 _extra_ 접두사로 병합됨
+        if "_extra_type_path" in data:
+            data["type_path"] = data["_extra_type_path"]
+
+    # -------------------------------------------------
+    # 통신 상태: sitename 기준 그룹핑
+    # -------------------------------------------------
+    if intent == "FACILITY_COMMUNICATION_STATUS":
+        data["network_status_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["network_status_block"] = build_network_status_block(rows, columns)
+
+    # -------------------------------------------------
+    # 압력 현황: 복수 압력 포인트 결과 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_PRESSURE_STATUS":
+        data["pressure_detail_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["pressure_detail_block"] = build_pressure_detail_block(rows, columns)
+        data["pressure_reference_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["pressure_reference_block"] = build_pressure_reference_block(rows, columns)
+
+    # -------------------------------------------------
+    # 수위계 헌팅 점검: 복수 계측 포인트 결과 조립
+    # -------------------------------------------------
+    if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
+        data["hunting_result_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["hunting_result_block"] = build_hunting_result_block(rows, columns)
 
     # -------------------------------------------------
     # 설비현황 (배수지 / 가압장 / 감압시설 공통)
@@ -1635,18 +1844,37 @@ async def ask(request: AskRequest):
     # answer_template 렌더링
     rendered_answer = render_answer_template(answer_template, processed_data)
 
-    # detail에서 __EXPAND__ 마커 expand
+    # detail/reference에서 __EXPAND__ 마커 expand
     detail_blocks = processed_data.get("_detail_blocks", {})
-    if detail_blocks and "detail" in rendered_answer:
-        expanded_detail = []
-        for item in rendered_answer["detail"]:
-            if isinstance(item, dict) and item.get("text") == "__EXPAND__":
-                for block_items in detail_blocks.values():
-                    if isinstance(block_items, list):
-                        expanded_detail.extend(block_items)
+
+    def _expand_section(section_items: list) -> list:
+        """섹션 내 __EXPAND__ 마커를 _detail_blocks의 해당 리스트로 치환한다."""
+        expanded = []
+        for item in section_items:
+            if not isinstance(item, dict):
+                expanded.append(item)
+                continue
+            text = item.get("text", "")
+            if text == "__EXPAND__":
+                # prefix가 비어있는 __EXPAND__는 순서대로 매칭
+                matched = False
+                for bk, bv in detail_blocks.items():
+                    if isinstance(bv, list) and bv:
+                        expanded.extend(bv)
+                        detail_blocks[bk] = []  # 사용한 블록은 비움
+                        matched = True
+                        break
+                if not matched:
+                    expanded.append(item)
             else:
-                expanded_detail.append(item)
-        rendered_answer["detail"] = expanded_detail
+                expanded.append(item)
+        return expanded
+
+    if detail_blocks and "detail" in rendered_answer:
+        rendered_answer["detail"] = _expand_section(rendered_answer["detail"])
+
+    if detail_blocks and "reference" in rendered_answer and "items" in rendered_answer["reference"]:
+        rendered_answer["reference"]["items"] = _expand_section(rendered_answer["reference"]["items"])
 
     # detail에 UI 블록 삽입
     ui_blocks = processed_data.get("_ui_blocks", {})

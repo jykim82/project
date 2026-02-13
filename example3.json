@@ -1650,20 +1650,16 @@
       "summary": "{sitename}{facilitytype} 압력 현황은 다음과 같습니다.",
       "detail": [
         {
-          "prefix": "•",
-          "text": "{log_time} 기준 {sitename}{facilitytype} 압력은 {pressure_val}{unit}입니다."
+          "prefix": "",
+          "text": "{pressure_detail_block}"
         }
       ],
       "reference": {
         "title": "참고 자료",
         "items": [
           {
-            "prefix": "1.",
-            "text": "금월 평균 압력은 {month_avg}{unit}입니다."
-          },
-          {
-            "prefix": "2.",
-            "text": "금년 평균 압력은 {year_avg}{unit}입니다."
+            "prefix": "",
+            "text": "{pressure_reference_block}"
           }
         ]
       },
@@ -1754,6 +1750,10 @@
           "prefix": "•",
           "text": "네트워크 전체 흐름은 {type_path}입니다."
         },
+		        {
+          "prefix": "•",
+          "text": "이더넷 통신 경로 및 프로토콜 (다수의 프로토콜 정책이 있는 경우는 unknown으로 표기합니다.)"
+        },
         {
           "prefix": "",
           "text": "{network_hop_detail_block}"
@@ -1795,12 +1795,8 @@
     ],
     "sql": "SELECT\n  pos,\n  sitename,\n  facilitytype,\n  equipmenttype,\n  status_code,\n  rtt_ms,\n  error_message\nFROM fn_network_path_trace_with_status('{sitename}', '{facilitytype}')\nORDER BY pos;",
     "answer_template": {
-      "summary": "{sitename} {facilitytype} 통신 상태는 다음과 같습니다.",
+      "summary": "현재 {sitename} {facilitytype} 통신 상태는 다음과 같습니다.",
       "detail": [
-        {
-          "prefix": "•",
-          "text": "상위 제어망부터 현장 설비까지 구간별 통신 상태를 점검한 결과입니다."
-        },
         {
           "prefix": "",
           "text": "{network_status_block}"
@@ -1820,19 +1816,19 @@
         ]
       },
       "recommend_questions": {
-        "title": "추가로 추천 질의입니다.",
+        "title": "다음은 추천 질의입니다.",
         "items": [
           {
             "prefix": "1.",
-            "text": "통신 구성(경로)을 다시 보여줘"
+            "text": "당진시청 네트워크 상태를 알려줘"
           },
           {
             "prefix": "2.",
-            "text": "통신 이상 지점을 알려줘"
+            "text": "고대리 가압장의 통신 상태를 알려줘"
           },
           {
             "prefix": "3.",
-            "text": "상위 제어망 네트워크 상태를 알려줘"
+            "text": "통신 이상 지점을 알려줘"
           }
         ]
       }
