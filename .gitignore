@@ -10,3 +10,30 @@ out/
 
 #flexiai-next
 flexiai-next/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Logs
+server.log
+*.log
+
+# Test reports
+test_report.md
+test_failures.md
+test_results.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project index
+PROJECT_INDEX.json
+PROJECT_INDEX.md
+
+# Misc
+slm *.txt
