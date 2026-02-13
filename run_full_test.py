@@ -86,6 +86,50 @@ TEST_CASES = [
     ("행정 배수지 유입밸브 상태 데이터를 표로 보여줘", "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE", "디지털 상태 표"),
     ("합덕3 소블록 야간최소유량을 표로 보여줘", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "야간최소유량 표"),
     ("신평 배수지 데이터 결측분석결과는?", "TAG_DAILY_MISSING_SUMMARY", "결측 분석"),
+
+    # ============================================================
+    # Edge Case 테스트 (키워드 변형, 경계 케이스, 다른 시설명)
+    # ============================================================
+
+    # ---- 키워드 동의어 / 변형 ----
+    ("진행 중인 경보 알려줘", "ONGOING_ALARM_STATUS", "EC: 진행 중(띄어쓰기)+경보"),
+    ("최근 배수지 경보 알려줘", "FACILITY_RECENT_ALARM", "EC: 경보→알람 동의어"),
+    ("최근 가압장 알림 내역", "FACILITY_RECENT_ALARM", "EC: 알림→알람 동의어"),
+    ("감압설비 유량 트렌드", "FACILITY_TREND", "EC: 감압설비→감압시설 alias"),
+    ("감압밸브 주소 알려줘", "FACILITY_ADDRESS_INFO_PRESSURE", "EC: 감압밸브→감압 alias"),
+    ("이상 발생 설비 알려줘", "FACILITY_ABNORMAL_STATUS_SUMMARY", "EC: 이상+설비 변형"),
+
+    # ---- 다른 시설명으로 같은 INTENT ----
+    ("순성 감압시설 유량 트렌드 보여줘", "FACILITY_TREND", "EC: 감압시설 트렌드"),
+    ("합덕3 소블록 수위 트렌드 보여줘", "FACILITY_TREND", "EC: 블록 트렌드"),
+    ("우강 가압장 주소를 알려줘", "FACILITY_ADDRESS_INFO_BOOSTER", "EC: 다른 가압장 주소"),
+    ("남산1 소블록 주소 알려줘", "FACILITY_ADDRESS_INFO_BLOCK", "EC: 다른 블록 주소"),
+    ("고대리 가압장 현재 압력 알려줘", "FACILITY_TAG_LATEST_VALUE", "EC: 다른 가압장 현재값"),
+    ("행정 배수지 현재 유량 알려줘", "FACILITY_TAG_LATEST_VALUE", "EC: 다른 배수지 현재값"),
+
+    # ---- 유사 INTENT 경계 테스트 ----
+    ("신평 배수지 현재 수위", "FACILITY_TAG_LATEST_VALUE", "EC: 현재+수위(현황 없음)→TAG"),
+    ("배수지 야간최소유량 트렌드 보여줘", "FACILITY_TREND", "EC: 트렌드 우선(야간최소유량보다)"),
+    ("오늘 신평 배수지 적산 유량", "TODAY_FLOW_ACCUMULATION", "EC: 적산(표/보여 없음)→적산"),
+    ("신평 배수지 적산 유량을 표로 보여줘", "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE", "EC: 적산+표→적산표"),
+    ("혼합 트렌드 보여줘", "FACILITY_MIXED_TREND", "EC: 혼합 키워드→MIXED"),
+    ("시설 이상 현황 보여줘", "FACILITY_ABNORMAL_STATUS_SUMMARY", "EC: 이상+현황"),
+
+    # ---- 어순 변형 / 다른 표현 ----
+    ("현재 행정 배수지 유량을 알려줘", "FACILITY_TAG_LATEST_VALUE", "EC: 현재 앞배치"),
+    ("전체 배수지 평균사용량 조회", "TODAY_RESERVOIR_AVG_USAGE_ALL", "EC: 전체+평균사용량 변형"),
+    ("배수지 데이터 결측 현황", "TAG_DAILY_MISSING_SUMMARY", "EC: 결측 다른 표현"),
+    ("가압장 데이터 결측분석", "TAG_DAILY_MISSING_SUMMARY", "EC: 결측 다른 시설"),
+    ("야간최소유량 표준편차 분석 결과", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "EC: 표준편차 다른 표현"),
+    ("적산 유량을 보여줘", "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE", "EC: 적산+보여→적산표"),
+
+    # ---- 축약/간결 질의 ----
+    ("배수지 주소", "FACILITY_ADDRESS_INFO_RESERVOIR", "EC: 축약 주소 질의"),
+    ("가압장 적산 현황", "TODAY_FLOW_ACCUMULATION", "EC: 적산(표/보여 없음)"),
+    ("30일간 행정 배수지 유량 순시", "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "EC: 순시+유량 변형"),
+    ("블록 주소 알려줘", "FACILITY_ADDRESS_INFO_BLOCK", "EC: 블록 축약 주소"),
+    ("감압시설 표준편차 분석", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "EC: 감압시설 표준편차"),
+    ("신평배수지 적산유량은?", "TODAY_FLOW_ACCUMULATION", "EC: 띄어쓰기 없는 질의"),
 ]
 
 

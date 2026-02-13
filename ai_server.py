@@ -1060,6 +1060,7 @@ def build_correction_response(
     message: str,
     session_id: str,
     correction_hints: Optional[list] = None,
+    intent: Optional[str] = None,
 ) -> dict:
     """
     NEED_CORRECTION 응답을 생성한다.
@@ -1069,7 +1070,7 @@ def build_correction_response(
     recommend_items = [
         {"prefix": f"{i+1}.", "text": h} for i, h in enumerate(hints[:5])
     ]
-    return {
+    response = {
         "status": "NEED_CORRECTION",
         "session_id": session_id,
         "message": message,
@@ -1081,6 +1082,9 @@ def build_correction_response(
             }
         },
     }
+    if intent:
+        response["intent"] = intent
+    return response
 
 
 def build_success_response(
@@ -1556,6 +1560,7 @@ async def ask(request: AskRequest):
             message=validation.message,
             session_id=sid,
             correction_hints=validation.hints,
+            intent=intent_name,
         )
 
     # 검증 통과 — 기존 파이프라인 진행
