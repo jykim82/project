@@ -32,6 +32,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import psycopg2
@@ -1307,6 +1308,44 @@ def build_alarm_list_block(rows: list, columns: list) -> list:
     return items
 
 
+def build_latest_value_list_block(rows: list, columns: list) -> list:
+    """
+    FACILITY_TAG_LATEST_VALUE 다중 행을 최신값 리스트로 조립한다.
+    반환 컬럼: datadesc, latest_val, latest_time
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        datadesc = row_dict.get("datadesc", "")
+        latest_val = row_dict.get("latest_val", "")
+        latest_time = row_dict.get("latest_time", "")
+        if datadesc and latest_val is not None:
+            items.append({
+                "prefix": "-",
+                "text": f"{datadesc}: {latest_val} ({latest_time})"
+            })
+    return items
+
+
+def build_alarm_rank_block(rows: list, columns: list) -> list:
+    """
+    FACILITY_ALARM_TOP_COUNT 다중 행을 알람 누적건수 순위 리스트로 조립한다.
+    반환 컬럼: alarm_msg, alarm_count
+    마지막 항목에 '순으로 발생하였습니다.' 를 붙인다.
+    """
+    items = []
+    for idx, row in enumerate(rows):
+        row_dict = dict(zip(columns, row))
+        alarm_msg = row_dict.get("alarm_msg", "")
+        alarm_count = row_dict.get("alarm_count", 0)
+        if alarm_msg:
+            text = f"{alarm_msg} {alarm_count}건"
+            if idx == len(rows) - 1:
+                text += " 순으로 발생하였습니다."
+            items.append({"prefix": "-", "text": text})
+    return items
+
+
 def build_pressure_detail_block(rows: list, columns: list) -> list:
     """
     FACILITY_PRESSURE_STATUS 다중 행을 압력 항목 리스트로 조립한다.
@@ -1602,11 +1641,25 @@ def process_sql_result(
         data["_detail_blocks"]["network_status_block"] = build_network_status_block(rows, columns)
 
     # -------------------------------------------------
+    # 태그 최신값: 다중 행 최신값 리스트 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_TAG_LATEST_VALUE":
+        data["latest_value_list_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["latest_value_list_block"] = build_latest_value_list_block(rows, columns)
+
+    # -------------------------------------------------
     # 최근 알람: 다중 행 알람 목록 조립
     # -------------------------------------------------
     if intent == "FACILITY_RECENT_ALARM":
         data["alarm_list_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["alarm_list_block"] = build_alarm_list_block(rows, columns)
+
+    # -------------------------------------------------
+    # 알람 누적건수 TOP: 다중 행 순위 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_ALARM_TOP_COUNT":
+        data["alarm_rank_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["alarm_rank_block"] = build_alarm_rank_block(rows, columns)
 
     # -------------------------------------------------
     # 압력 현황: 복수 압력 포인트 결과 조립
@@ -1840,6 +1893,42 @@ async def ask(request: AskRequest):
     if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
         params["alarm_msg"] = ""
 
+    # FACILITY_TAG_LATEST_VALUE / FACILITY_TAG_DATA_TABLE: datakey 기반 tagtype 필터 주입
+    # 수위/압력/유량 → Analog Input, 밸브 → Digital Input, 설정 → Analog Output
+    if intent in ("FACILITY_TAG_LATEST_VALUE", "FACILITY_TAG_DATA_TABLE"):
+        _dk = params.get("datakey") or params.get("datainfo") or ""
+        if "밸브" in _dk:
+            _tagtype = "Digital Input"
+        elif "설정" in _dk:
+            _tagtype = "Analog Output"
+        else:
+            _tagtype = "Analog Input"
+        if intent == "FACILITY_TAG_LATEST_VALUE":
+            # GROUP BY 앞에 tagtype 조건 주입
+            sql_combined = sql_combined.replace(
+                "GROUP BY",
+                f"  AND i.tagtype = '{_tagtype}'\nGROUP BY",
+            )
+        elif "AND i.tagtype = 'Analog Input'" in sql_combined:
+            # FACILITY_TAG_DATA_TABLE: 하드코딩된 tagtype을 동적으로 교체
+            sql_combined = sql_combined.replace(
+                "AND i.tagtype = 'Analog Input'",
+                f"AND i.tagtype = '{_tagtype}'",
+            )
+
+    # FACILITY_TAG_DATA_TABLE: from_ts == to_ts(금일 등)이면 to_ts를 다음날로 보정
+    if intent in ("FACILITY_TAG_DATA_TABLE", "FACILITY_ANALOG_TIMESERIES_TABLE",
+                   "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE"):
+        _ft = params.get("from_ts")
+        _tt = params.get("to_ts")
+        if _ft and _tt and len(_tt) == 10 and _ft == _tt:
+            # 날짜만 있고 같은 날인 경우 to_ts를 다음날로 (< 비교이므로)
+            try:
+                to_date = datetime.strptime(_tt, "%Y-%m-%d")
+                params["to_ts"] = (to_date + timedelta(days=1)).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
     try:
         rows, columns = execute_sql(sql_combined, params)
     except psycopg2.OperationalError as e:
@@ -1928,12 +2017,16 @@ async def ask(request: AskRequest):
     response_data = None
     if table_type == "equipment" and "equipment_table" in processed_data:
         response_data = processed_data["equipment_table"]
+    elif table_type == "summary" and rows and columns:
+        # summary 테이블: SQL 결과 전체를 dict 리스트로 변환
+        response_data = [dict(zip(columns, row)) for row in rows]
 
     return build_success_response(
         intent=intent,
         answer=rendered_answer,
         graph_type=graph_type,
         data=response_data,
+        table_columns=table_columns,
         table_type=table_type,
         session_id=sid,
     )

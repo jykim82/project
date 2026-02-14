@@ -8,6 +8,7 @@ Stage 2: 카테고리 내 구체적 INTENT 분류 (SLM)
 """
 
 import logging
+import re
 from typing import Optional
 
 from ollama_client import OllamaClient, OllamaConnectionError
@@ -193,6 +194,21 @@ class IntentClassifier:
         Stage 2: 카테고리 내 구체적 INTENT 분류
         반환: (intent_name or None, method)
         """
+        # 키워드 단축: 기간 키워드 + 데이터 키워드 → FACILITY_TAG_DATA_TABLE (cross-category)
+        # 금일/오늘/최근/N분/N시간/N일 등 기간이 있으면 테이블 형식
+        # 유량은 전용 인텐트(적산/순시 등)가 많으므로 제외
+        _has_period = (
+            "금일" in question or "오늘" in question
+            or re.search(r"\d+\s*분", question)
+            or re.search(r"\d+\s*시간", question)
+            or re.search(r"\d+\s*일", question)
+        )
+        _TAG_DATA_EXCLUDE = ["적산", "순시", "표로"]
+        if _has_period and not any(ek in question for ek in _TAG_DATA_EXCLUDE):
+            for dkw in ["수위", "압력", "유량", "밸브"]:
+                if dkw in question:
+                    return "FACILITY_TAG_DATA_TABLE", "keyword"
+
         # 키워드 단축: "트렌드" 카테고리
         if category == "트렌드":
             if "함께" in question or "혼합" in question:
@@ -214,15 +230,30 @@ class IntentClassifier:
         if "압력" in question and ("현황" in question or "현항" in question):
             return "FACILITY_PRESSURE_STATUS", "keyword"
 
+        # 키워드 단축: 알람 누적건수 / TOP / 순서
+        if ("누적" in question or "순서" in question or "TOP" in question.upper()) and \
+           ("알람" in question or "경보" in question or "알림" in question):
+            return "FACILITY_ALARM_TOP_COUNT", "keyword"
+
         # 키워드 단축: 최근 알람
         if "최근" in question and ("알람" in question or "경보" in question or "알림" in question):
             return "FACILITY_RECENT_ALARM", "keyword"
 
-        # 키워드 단축: 현재 + 데이터 키워드 → 태그 최신값 (표/현황 제외)
-        if "현재" in question and "표" not in question and "현황" not in question:
-            for dkw in ["수위", "압력", "유량"]:
+        # 키워드 단축: 수위/압력 단독 → 태그 최신값 (다른 INTENT 키워드 제외)
+        _TAG_LATEST_EXCLUDE = [
+            "현황", "현항", "헌팅", "표", "적산", "순시",
+            "알람", "경보", "알림", "통신", "주소", "이상",
+            "결측", "표준편차", "밸브", "트렌드",
+        ]
+        if not any(ek in question for ek in _TAG_LATEST_EXCLUDE):
+            for dkw in ["수위", "압력"]:
                 if dkw in question:
                     return "FACILITY_TAG_LATEST_VALUE", "keyword"
+
+        # 키워드 단축: 현재 + 유량 → 태그 최신값 (표/현황 제외)
+        if "현재" in question and "표" not in question and "현황" not in question:
+            if "유량" in question:
+                return "FACILITY_TAG_LATEST_VALUE", "keyword"
 
         # 키워드 단축: 전체 평균사용량
         if "전체" in question and "평균사용량" in question:

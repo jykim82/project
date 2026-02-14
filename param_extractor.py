@@ -36,6 +36,8 @@ DATE_REQUIRED_INTENTS = {
     "FACILITY_ABNORMAL_STATUS_SUMMARY",
     "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
     "TAG_DAILY_MISSING_SUMMARY",
+    "FACILITY_ALARM_TOP_COUNT",
+    "FACILITY_TAG_DATA_TABLE",
 }
 
 # SLM 날짜 추출 프롬프트
@@ -108,7 +110,10 @@ class ParamExtractor:
         # SLM이 from_ts > to_ts를 반환한 경우 무효화
         if from_ts and to_ts:
             try:
-                if datetime.strptime(from_ts, "%Y-%m-%d") > datetime.strptime(to_ts, "%Y-%m-%d"):
+                # timestamp 형식("YYYY-MM-DD HH:MM:SS")과 date 형식("YYYY-MM-DD") 모두 지원
+                fmt = "%Y-%m-%d %H:%M:%S" if " " in from_ts else "%Y-%m-%d"
+                fmt2 = "%Y-%m-%d %H:%M:%S" if " " in to_ts else "%Y-%m-%d"
+                if datetime.strptime(from_ts, fmt) > datetime.strptime(to_ts, fmt2):
                     logger.warning(f"SLM 날짜 무효: from_ts={from_ts} > to_ts={to_ts}, 초기화")
                     from_ts = None
                     to_ts = None
@@ -194,6 +199,9 @@ class ParamExtractor:
         match = re.search(r"상위\s*(\d+)", question)
         if match:
             return int(match.group(1))
+        match = re.search(r"(\d+)\s*개", question)
+        if match:
+            return int(match.group(1))
         return 10
 
     def _extract_alarm_msg(self, question: str) -> Optional[str]:
@@ -204,8 +212,11 @@ class ParamExtractor:
         return None
 
     def _extract_datakey(self, question: str) -> Optional[str]:
-        # datakey는 태그 조회에서 사용 — 질문에서 직접 추출 어려움
-        # 현재는 None 반환, 세션 병합으로 이전 턴에서 채워짐
+        """태그 조회용 datakey 추출 (수위, 압력, 유량 등)"""
+        datakey_keywords = ["수위", "압력", "유량", "밸브", "펌프", "탁도", "염소", "온도", "전력"]
+        for kw in datakey_keywords:
+            if kw in question:
+                return kw
         return None
 
     def _extract_analog_datainfo(self, question: str) -> Optional[str]:
@@ -235,6 +246,20 @@ class ParamExtractor:
         """
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
+
+        # "최근 N분" (e.g., "최근 10분", "10분간")
+        match = re.search(r"(\d+)\s*분", question)
+        if match:
+            minutes = int(match.group(1))
+            from_dt = today - timedelta(minutes=minutes)
+            return from_dt.strftime("%Y-%m-%d %H:%M:%S"), today.strftime("%Y-%m-%d %H:%M:%S")
+
+        # "최근 N시간"
+        match = re.search(r"(\d+)\s*시간", question)
+        if match:
+            hours = int(match.group(1))
+            from_dt = today - timedelta(hours=hours)
+            return from_dt.strftime("%Y-%m-%d %H:%M:%S"), today.strftime("%Y-%m-%d %H:%M:%S")
 
         # "최근 N일"
         match = re.search(r"최근\s*(\d+)\s*일", question)

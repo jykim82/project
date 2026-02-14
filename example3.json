@@ -2093,9 +2093,9 @@
       "경보 누적 TOP 10을 보여줘",
       "알람 발생 건수 상위 5개만 보여줘"
     ],
-    "sql": "SELECT\n  COUNT(*) AS alarm_count,\n  string_agg(DISTINCT alarm_msg, '; ' ORDER BY alarm_msg) AS alarm_msg\nFROM tb_equipment_alarm_report\nGROUP BY equipment_id, equipmenttype, sitename, facilitytype\nORDER BY alarm_count DESC\nLIMIT {limit};",
+    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count\nFROM tb_equipment_alarm_report\nWHERE alarm_start_time >= {from_ts}\n  AND alarm_start_time < {to_ts}::date + 1\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
     "answer_template": {
-      "summary": "경보 발생 누적 건수가 높은 순서는 다음과 같습니다.",
+      "summary": "경보 발생 누적건수가 높은 순서는 다음과 같습니다.",
       "detail": [
         {
           "prefix": "",
@@ -2107,24 +2107,24 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "집계 기준은 설비 단위이며, 최근 데이터부터 누적 산정합니다."
+            "text": "집계 기준은 설비 단위이며, 조회 기간 내 누적 산정합니다."
           }
         ]
       },
       "recommend_questions": {
-        "title": "추가로 추천 질의입니다.",
+        "title": "다음은 추천 질의입니다.",
         "items": [
           {
             "prefix": "1.",
-            "text": "특정 설비의 최근 알람 내역을 보여줘"
+            "text": "죽동 배수지의 최근 알람은 뭐야?"
           },
           {
             "prefix": "2.",
-            "text": "통신 알람만 누적 기준으로 보여줘"
+            "text": "행정1-1 소블록 통신 경보 발생원인 진단 순위를 1순위부터 4순위까지 알려줘"
           },
           {
             "prefix": "3.",
-            "text": "경보 발생 원인별 분류 결과를 알려줘"
+            "text": "최근 일주일간 경보 발생 원인별 분류 결과를 알려줘"
           }
         ]
       }
@@ -2476,6 +2476,45 @@
         {
           "prefix": "2.",
           "text": "한달간 {sitename} 소블록 유량 순시를 보여줘"
+        },
+        {
+          "prefix": "3.",
+          "text": "금일 행정 배수지 수위를 보여줘"
+        }
+      ]
+    },
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "FACILITY_TAG_DATA_TABLE",
+    "questions": [
+      "최근 10분간 신평 배수지의 수위는?",
+      "고대리 가압장 압력의 최근 10분 데이터를 조회해줘",
+      "금일 신평 배수지 수위를 표로 보여줘",
+      "최근 30분간 죽동 배수지 수위 데이터를 보여줘"
+    ],
+    "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '{datainfo}'\n  AND r.logtime >= {from_ts}\n  AND r.logtime < {to_ts}\nORDER BY r.tagsn, r.logtime ASC;",
+    "answer_template": {
+      "summary": "{sitename} {facilitytype} {datainfo} 데이터는 다음과 같습니다.",
+      "detail": []
+    },
+    "table_columns": [
+      "logtime",
+      "tagsn",
+      "datadesc",
+      "val"
+    ],
+    "recommend_questions": {
+      "title": "다음은 추천 질의입니다.",
+      "items": [
+        {
+          "prefix": "1.",
+          "text": "금일 남산1 소블록 유량을 보여줘"
+        },
+        {
+          "prefix": "2.",
+          "text": "한달간 남산2 소블록 유량 순시를 보여줘"
         },
         {
           "prefix": "3.",
