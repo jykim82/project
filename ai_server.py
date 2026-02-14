@@ -1289,6 +1289,24 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
     return items
 
 
+def build_alarm_list_block(rows: list, columns: list) -> list:
+    """
+    FACILITY_RECENT_ALARM 다중 행을 알람 목록 리스트로 조립한다.
+    반환 컬럼: alarm_start_time, alarm_msg
+    """
+    items = []
+    for row in rows:
+        row_dict = dict(zip(columns, row))
+        alarm_time = row_dict.get("alarm_start_time", "")
+        alarm_msg = row_dict.get("alarm_msg", "")
+        if alarm_time and alarm_msg:
+            items.append({
+                "prefix": "-",
+                "text": f"알람 발생 시각 : {alarm_time}, 발생알람 : {alarm_msg}"
+            })
+    return items
+
+
 def build_pressure_detail_block(rows: list, columns: list) -> list:
     """
     FACILITY_PRESSURE_STATUS 다중 행을 압력 항목 리스트로 조립한다.
@@ -1584,6 +1602,13 @@ def process_sql_result(
         data["_detail_blocks"]["network_status_block"] = build_network_status_block(rows, columns)
 
     # -------------------------------------------------
+    # 최근 알람: 다중 행 알람 목록 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_RECENT_ALARM":
+        data["alarm_list_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["alarm_list_block"] = build_alarm_list_block(rows, columns)
+
+    # -------------------------------------------------
     # 압력 현황: 복수 압력 포인트 결과 조립
     # -------------------------------------------------
     if intent == "FACILITY_PRESSURE_STATUS":
@@ -1810,6 +1835,10 @@ async def ask(request: AskRequest):
             graph_type=graph_type,
             session_id=sid,
         )
+
+    # alarm_msg가 None이면 전체 알람 조회 (LIKE '%%')
+    if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
+        params["alarm_msg"] = ""
 
     try:
         rows, columns = execute_sql(sql_combined, params)
