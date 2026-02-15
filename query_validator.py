@@ -68,9 +68,11 @@ class ValidationResult:
 
 
 class QueryValidator:
-    def __init__(self, index: IntentIndex, known_sitenames: list):
+    def __init__(self, index: IntentIndex, known_sitenames: list,
+                 sitename_facility_map: dict = None):
         self._index = index
         self._sitenames = known_sitenames
+        self._sitename_facility_map = sitename_facility_map or {}
 
     def validate(
         self,
@@ -108,8 +110,10 @@ class QueryValidator:
             )
 
         # 3. 필수 파라미터 검증
+        # fn_realtime_missing_summary()는 빈 문자열 = 전체 조회이므로 검증 스킵
+        _SKIP_REQUIRED_CHECK = {"FACILITY_ABNORMAL_STATUS_SUMMARY"}
         intent_info = self._index.get_intent_summary(intent_name)
-        if intent_info:
+        if intent_info and intent_name not in _SKIP_REQUIRED_CHECK:
             required = intent_info.get("required_params", [])
             sql_template = intent_def.get("sql", "")
             if isinstance(sql_template, list):
@@ -164,7 +168,36 @@ class QueryValidator:
                 missing_params=["sitename"],
             )
 
-        # 5. 날짜 범위 논리 검증
+        # 5. sitename-facilitytype 정합성 검증
+        facilitytype = params.get("facilitytype") or params.get("block_level")
+        if (sitename and sitename != "%%"
+                and facilitytype and facilitytype != "%%"
+                and self._sitename_facility_map):
+            available = self._sitename_facility_map.get(sitename)
+            if available and facilitytype not in available:
+                # 해당 현장에서 사용 가능한 시설 유형 안내
+                avail_str = ", ".join(sorted(available))
+                # 요청한 시설 유형에 등록된 다른 현장 안내
+                sites_for_ftype = sorted([
+                    s for s, ftypes in self._sitename_facility_map.items()
+                    if facilitytype in ftypes
+                ])
+                hints = sites_for_ftype[:5] if sites_for_ftype else []
+                msg = (
+                    f"'{sitename}'은(는) '{facilitytype}'에 등록되지 않은 현장입니다. "
+                    f"'{sitename}'의 등록 시설: {avail_str}."
+                )
+                if hints:
+                    msg += f" '{facilitytype}' 등록 현장: {', '.join(hints)}."
+                return ValidationResult(
+                    is_valid=False,
+                    error_type="sitename_facility_mismatch",
+                    message=msg,
+                    hints=[f"{h} {facilitytype}" for h in hints[:3]],
+                    missing_params=["sitename"],
+                )
+
+        # 6. 날짜 범위 논리 검증
         from_ts = params.get("from_ts")
         to_ts = params.get("to_ts")
         if from_ts and to_ts:

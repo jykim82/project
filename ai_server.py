@@ -27,6 +27,8 @@ SLM 기반 운영 질의 응답 서버
 """
 
 import asyncio
+import csv
+import glob as glob_module
 import json
 import logging
 import os
@@ -38,6 +40,7 @@ from typing import Any, Optional
 import psycopg2
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from slm_config import ENABLE_KEYWORD_FALLBACK, get_model, set_model
@@ -71,18 +74,120 @@ query_validator: Optional[QueryValidator] = None
 
 _cleanup_task: Optional[asyncio.Task] = None
 
+# =============================================================================
+# CSV 내보내기 설정
+# =============================================================================
+MAX_TABLE_ROWS = 1000  # JSON 응답 최대 행 수 (테이블)
+MAX_GRAPH_ROWS = 5000  # JSON 응답 최대 행 수 (그래프/차트)
+CSV_EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csv_exports")
+CSV_MAX_AGE_SECONDS = 3600  # CSV 파일 보존 기간 (1시간)
+
+
+def save_csv(rows: list, columns: list, intent: str, session_id: str) -> str:
+    """SQL 결과를 CSV로 저장하고 파일명을 반환한다."""
+    os.makedirs(CSV_EXPORT_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{intent}_{session_id}_{timestamp}.csv"
+    filepath = os.path.join(CSV_EXPORT_DIR, filename)
+
+    with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(columns)
+        writer.writerows(rows)
+
+    logger.info(f"CSV 저장: {filename} ({len(rows)}행)")
+    return filename
+
+
+def downsample_rows(rows: list, max_rows: int) -> list:
+    """시계열 데이터를 다운샘플링한다. 첫 행과 마지막 행은 보존."""
+    if len(rows) <= max_rows:
+        return rows
+    step = len(rows) / max_rows
+    sampled = []
+    for i in range(max_rows - 1):
+        idx = int(i * step)
+        sampled.append(rows[idx])
+    sampled.append(rows[-1])  # 마지막 행 보존
+    return sampled
+
+
+def stratified_sample(rows: list, columns: list, max_rows: int) -> list:
+    """sitename 컬럼 기준으로 균등 샘플링한다.
+
+    sitename이 여러 개인 경우 각 sitename에서 비례 배분하여 추출.
+    sitename 컬럼이 없거나 단일 sitename이면 앞에서 자른다.
+    """
+    if len(rows) <= max_rows:
+        return rows
+    if "sitename" not in columns:
+        return rows[:max_rows]
+
+    site_idx = columns.index("sitename")
+    # sitename별 그룹핑
+    groups = {}
+    for row in rows:
+        sn = row[site_idx] if isinstance(row, (list, tuple)) else row.get("sitename", "")
+        groups.setdefault(sn, []).append(row)
+
+    if len(groups) <= 1:
+        return rows[:max_rows]
+
+    # 비례 배분 (최소 1행 보장)
+    sampled = []
+    remaining = max_rows
+    site_list = sorted(groups.keys())
+    per_site = max(1, max_rows // len(site_list))
+
+    for sn in site_list:
+        site_rows = groups[sn]
+        take = min(per_site, len(site_rows), remaining)
+        # 균일 간격 샘플링
+        if take >= len(site_rows):
+            sampled.extend(site_rows)
+        else:
+            step = len(site_rows) / take
+            for i in range(take):
+                sampled.append(site_rows[int(i * step)])
+        remaining -= take
+        if remaining <= 0:
+            break
+
+    return sampled
+
+
+def cleanup_old_csv_files():
+    """CSV_MAX_AGE_SECONDS 이상 경과한 CSV 파일을 삭제한다."""
+    if not os.path.exists(CSV_EXPORT_DIR):
+        return
+    now = datetime.now().timestamp()
+    count = 0
+    for filepath in glob_module.glob(os.path.join(CSV_EXPORT_DIR, "*.csv")):
+        if now - os.path.getmtime(filepath) > CSV_MAX_AGE_SECONDS:
+            try:
+                os.remove(filepath)
+                count += 1
+            except OSError:
+                pass
+    if count:
+        logger.info(f"CSV 파일 정리: {count}개 삭제")
+
 
 async def _session_cleanup_loop():
-    """백그라운드: 60초마다 만료 세션 정리"""
+    """백그라운드: 60초마다 만료 세션 정리 + CSV 파일 정리"""
     while True:
         await asyncio.sleep(60)
         session_manager.cleanup_expired()
+        cleanup_old_csv_files()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
     global intent_classifier, param_extractor_instance, query_validator, _cleanup_task
+
+    # CSV 내보내기 디렉토리 생성
+    os.makedirs(CSV_EXPORT_DIR, exist_ok=True)
 
     # Intent 인덱스 빌드
     intent_index.build(INTENT_DEFINITIONS)
@@ -94,7 +199,7 @@ async def lifespan(app: FastAPI):
         known_block_levels=KNOWN_BLOCK_LEVELS,
         ollama=ollama_client,
     )
-    query_validator = QueryValidator(intent_index, KNOWN_SITENAMES)
+    query_validator = QueryValidator(intent_index, KNOWN_SITENAMES, SITENAME_FACILITY_MAP)
 
     # Ollama 연결 상태 로그
     if ollama_client.health_check():
@@ -276,9 +381,59 @@ def load_block_levels_from_db() -> list:
     return result
 
 
+def load_sitename_facility_map() -> dict:
+    """
+    DB에서 sitename → facilitytype 집합 매핑을 로드한다.
+    블록 계열(소블록/중블록/대블록)은 facilitytype을 block_level로 대체한다.
+    반환: {"신평": {"배수지"}, "고대리": {"가압장"}, "남산1": {"소블록"}, ...}
+    """
+    mapping = {}
+
+    queries = [
+        ("SELECT DISTINCT sitename FROM tb_service_reservoir_info WHERE sitename IS NOT NULL", "배수지"),
+        ("SELECT DISTINCT sitename FROM tb_service_booster_station_info WHERE sitename IS NOT NULL", "가압장"),
+        ("SELECT DISTINCT sitename FROM tb_pressure_reducing_facility_info WHERE sitename IS NOT NULL", "감압시설"),
+    ]
+    block_query = "SELECT DISTINCT sitename, block_level FROM tb_block_info WHERE sitename IS NOT NULL AND block_level IS NOT NULL"
+
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            for query, ftype in queries:
+                try:
+                    cur.execute(query)
+                    for row in cur.fetchall():
+                        if row[0]:
+                            mapping.setdefault(row[0], set()).add(ftype)
+                except psycopg2.Error:
+                    continue
+
+            try:
+                cur.execute(block_query)
+                for row in cur.fetchall():
+                    if row[0] and row[1]:
+                        mapping.setdefault(row[0], set()).add(row[1])
+            except psycopg2.Error:
+                pass
+    except psycopg2.Error as e:
+        logger.error(f"DB 연결 실패 (sitename-facility 매핑 로딩): {e}")
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+    logger.info(f"DB에서 {len(mapping)}개의 sitename-facility 매핑 로드 완료")
+    return mapping
+
+
 # 서버 시작 시 DB에서 로드
 KNOWN_SITENAMES = load_sitenames_from_db()
 KNOWN_BLOCK_LEVELS = load_block_levels_from_db()
+SITENAME_FACILITY_MAP = load_sitename_facility_map()
 
 
 # =============================================================================
@@ -289,8 +444,12 @@ def normalize_question(question: str) -> str:
     질문 문자열을 정규화한다.
     - 연속 공백을 단일 공백으로
     - 앞뒤 공백 제거
+    - 한글과 숫자 사이 공백 제거 (띄어쓰기 오류 보정: "행정 1-1" → "행정1-1")
     """
-    return re.sub(r"\s+", " ", question.strip())
+    result = re.sub(r"\s+", " ", question.strip())
+    # 한글 뒤 공백 + 숫자 → 공백 제거 (예: "행정 1-1" → "행정1-1", "남산 1" → "남산1")
+    result = re.sub(r"([\uac00-\ud7a3])\s+(\d)", r"\1\2", result)
+    return result
 
 
 def normalize_for_matching(text: str) -> str:
@@ -1025,6 +1184,9 @@ def _render_text(text: str, data: dict) -> Optional[str]:
         value = data.get(placeholder)
         if value is None and placeholder in _UNIT_PLACEHOLDER_NAMES:
             value = ""
+        # sitename/facilitytype이 "%%"(전체 조회)이면 "전체"로 표시
+        if placeholder in ("sitename", "facilitytype") and value == "%%":
+            value = "전체"
         result = result.replace("{" + placeholder + "}", str(value))
 
     return result
@@ -1159,6 +1321,11 @@ def build_success_response(
     table_columns: Optional[list] = None,
     table_type: Optional[str] = None,
     session_id: Optional[str] = None,
+    csv_url: Optional[str] = None,
+    total_rows: Optional[int] = None,
+    data_truncated: bool = False,
+    chart_data_type: Optional[str] = None,
+    plot_type: Optional[str] = None,
 ) -> dict:
     """
     성공 응답을 생성한다.
@@ -1178,12 +1345,47 @@ def build_success_response(
         response["table_columns"] = table_columns
     if table_type is not None:
         response["table_type"] = table_type
+    if csv_url is not None:
+        response["csv_url"] = csv_url
+    if total_rows is not None:
+        response["total_rows"] = total_rows
+    if data_truncated:
+        response["data_truncated"] = True
+    if chart_data_type:
+        response["chart_data_type"] = chart_data_type
+    if plot_type:
+        response["plot_type"] = plot_type
     return response
+
+
+def classify_chart_data_type(rows: list, columns: list) -> str:
+    """
+    트렌드 데이터의 tagtype 분포를 분석하여 차트 데이터 타입을 반환한다.
+    - "analog": Analog Input/Output만 포함
+    - "digital": Digital Input/Output만 포함
+    - "mixed": 아나로그 + 디지털 혼합
+    """
+    if not rows or "tagtype" not in columns:
+        return "analog"
+    tag_idx = columns.index("tagtype")
+    tagtypes = set()
+    for row in rows:
+        tt = row[tag_idx] if isinstance(row, (list, tuple)) else row.get("tagtype")
+        if tt:
+            tagtypes.add(tt)
+    has_analog = any("Analog" in t for t in tagtypes)
+    has_digital = any("Digital" in t for t in tagtypes)
+    if has_analog and has_digital:
+        return "mixed"
+    elif has_digital:
+        return "digital"
+    return "analog"
 
 
 def build_no_data_response(
     intent: str,
     answer_template: dict,
+    params: dict = None,
     session_id: Optional[str] = None,
 ) -> dict:
     """
@@ -1197,7 +1399,17 @@ def build_no_data_response(
     }
 
     if "recommend_questions" in answer_template:
-        result["recommend_questions"] = answer_template["recommend_questions"]
+        import copy
+        rq = copy.deepcopy(answer_template["recommend_questions"])
+        # recommend_questions 내 플레이스홀더 치환
+        if params and "items" in rq:
+            for item in rq["items"]:
+                text = item.get("text", "")
+                for key, val in params.items():
+                    if val is not None:
+                        text = text.replace("{" + key + "}", str(val))
+                item["text"] = text
+        result["recommend_questions"] = rq
 
     response = {
         "status": "OK",
@@ -1350,15 +1562,22 @@ def build_pressure_detail_block(rows: list, columns: list) -> list:
     """
     FACILITY_PRESSURE_STATUS 다중 행을 압력 항목 리스트로 조립한다.
     반환 컬럼: datainfo, pressure_val, log_time, unit
+    - 설정압력(Analog Output 개념) 제외
+    - 동일 datainfo 중복 제거
     """
     items = []
+    seen = set()
     for row in rows:
         row_dict = dict(zip(columns, row))
         datainfo = row_dict.get("datainfo", "").strip()
+        if "설정" in datainfo:
+            continue
         val = row_dict.get("pressure_val")
         log_time = row_dict.get("log_time", "")
         unit = row_dict.get("unit", "")
-        if val is not None:
+        dedup_key = (datainfo, val, log_time)
+        if val is not None and dedup_key not in seen:
+            seen.add(dedup_key)
             items.append({"prefix": "•", "text": f"{log_time} 기준 {datainfo}: {val}{unit}"})
     return items
 
@@ -1367,18 +1586,26 @@ def build_pressure_reference_block(rows: list, columns: list) -> list:
     """
     FACILITY_PRESSURE_STATUS 다중 행을 평균 압력 참고 자료로 조립한다.
     반환 컬럼: datainfo, month_avg, year_avg, unit
+    - 설정압력(Analog Output 개념) 제외
+    - 동일 datainfo 중복 제거
     """
     items = []
+    seen = set()
     for row in rows:
         row_dict = dict(zip(columns, row))
         datainfo = row_dict.get("datainfo", "").strip()
+        if "설정" in datainfo:
+            continue
         month_avg = row_dict.get("month_avg")
         year_avg = row_dict.get("year_avg")
         unit = row_dict.get("unit", "")
-        if month_avg is not None:
-            items.append({"prefix": "-", "text": f"{datainfo} 금월 평균: {month_avg}{unit}"})
-        if year_avg is not None:
-            items.append({"prefix": "-", "text": f"{datainfo} 금년 평균: {year_avg}{unit}"})
+        dedup_key = (datainfo, month_avg, year_avg)
+        if dedup_key not in seen:
+            seen.add(dedup_key)
+            if month_avg is not None:
+                items.append({"prefix": "-", "text": f"{datainfo} 금월 평균: {month_avg}{unit}"})
+            if year_avg is not None:
+                items.append({"prefix": "-", "text": f"{datainfo} 금년 평균: {year_avg}{unit}"})
     return items
 
 
@@ -1624,6 +1851,40 @@ def process_sql_result(
         data["no_data_sitename_list"] = ", ".join(no_data_sites) if no_data_sites else None
 
     # -------------------------------------------------
+    # 진행중 알람: 다중 행 결과를 카테고리 요약 + 상세 리스트로 조립
+    # -------------------------------------------------
+    if intent == "ONGOING_ALARM_STATUS":
+        from collections import Counter
+        cat_counts = Counter()
+        detail_items = []
+        for row in rows:
+            rd = dict(zip(columns, row))
+            site = rd.get("sitename", "")
+            ftype = rd.get("facilitytype", "")
+            msg = rd.get("alarm_msg", "")
+            cat = rd.get("alarm_category", "")
+            atime = rd.get("alarm_start_time", "")
+            if cat:
+                cat_counts[cat] += 1
+            if msg:
+                detail_items.append({
+                    "prefix": "-",
+                    "text": f"{site} {ftype}: {msg} ({atime})"
+                })
+
+        data["total_alarm_count"] = len(rows)
+        if cat_counts:
+            data["category_summary"] = ", ".join(
+                f"{k} {v}건" for k, v in cat_counts.items()
+            )
+        else:
+            data["category_summary"] = "없음"
+
+        if detail_items:
+            data["ongoing_alarm_detail_block"] = _EXPAND_MARKER
+            data["_detail_blocks"]["ongoing_alarm_detail_block"] = detail_items
+
+    # -------------------------------------------------
     # 통신 구성: 홉 상세 데이터 조립
     # -------------------------------------------------
     if intent == "FACILITY_COMMUNICATION_TOPOLOGY":
@@ -1780,7 +2041,7 @@ async def ask(request: AskRequest):
     6. 질의 검증 → NEED_CORRECTION이면 정정 응답
     7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
     """
-    user_question = request.user_question
+    user_question = normalize_question(request.user_question)
     logger.info(f"질의 수신: {user_question}")
 
     # 1. 세션 로드/생성
@@ -1808,8 +2069,9 @@ async def ask(request: AskRequest):
         classify_method = "correction_reuse"
         logger.info(f"정정 턴 단축: intent={intent_name}")
     else:
-        # 신규 분류
-        classification = intent_classifier.classify(
+        # 신규 분류 (SLM 호출 가능 → 별도 스레드에서 실행)
+        classification = await asyncio.to_thread(
+            intent_classifier.classify,
             question=user_question,
             keyword_fallback_fn=match_intent,
         )
@@ -1822,7 +2084,64 @@ async def ask(request: AskRequest):
         )
 
     # 4. 하이브리드 파라미터 추출
-    new_params = param_extractor_instance.extract_all(user_question, intent_name)
+    new_params = await asyncio.to_thread(
+        param_extractor_instance.extract_all, user_question, intent_name
+    )
+
+    # 4.4. 다중 sitename 추출
+    extra_sitenames = new_params.pop("_extra_sitenames", None)
+
+    # 4.5. 월 단독 지정 시 년도 확인 요청
+    month_only = new_params.pop("_month_only", None)
+    if month_only is not None:
+        month_name = f"{month_only}월"
+        session_manager.update_session(
+            session,
+            intent_name=intent_name,
+            params=new_params,
+            status="NEED_CORRECTION",
+            pending_corrections=["from_ts", "to_ts"],
+        )
+        return build_correction_response(
+            message=f"'{month_name}' 조회 시 년도를 명시해 주세요. 예: '2025년 {month_name}'",
+            session_id=sid,
+            correction_hints=[
+                f"2025년 {month_name}",
+                f"2024년 {month_name}",
+                f"2026년 {month_name}",
+            ],
+            intent=intent_name,
+        )
+
+    # 4.6. 테이블/시계열 인텐트에서 sitename 없고 facilitytype 있으면 전체 조회
+    _TABLE_INTENTS_ALLOW_ALL = {
+        "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+        "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+        "FACILITY_ANALOG_TIMESERIES_TABLE",
+        "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+        "FACILITY_FLOW_CURRENT_TABLE",
+        "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+        "FACILITY_TAG_DATA_TABLE",
+        "FACILITY_ALARM_TOP_COUNT",
+        "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+        "FACILITY_ABNORMAL_STATUS_SUMMARY",
+    }
+    if (intent_name in _TABLE_INTENTS_ALLOW_ALL
+            and not new_params.get("sitename")
+            and new_params.get("facilitytype")):
+        new_params["sitename"] = "%%"
+
+    # 4.7. facilitytype 미추출 시 sitename에서 자동 해소
+    if not new_params.get("facilitytype") and not new_params.get("block_level"):
+        _site = new_params.get("sitename")
+        if _site and _site != "%%" and SITENAME_FACILITY_MAP:
+            _available_types = SITENAME_FACILITY_MAP.get(_site)
+            if _available_types and len(_available_types) == 1:
+                resolved_ft = next(iter(_available_types))
+                new_params["facilitytype"] = resolved_ft
+                if resolved_ft in ("소블록", "중블록", "대블록"):
+                    new_params["block_level"] = resolved_ft
+                logger.info(f"facilitytype 자동 해소: '{_site}' → '{resolved_ft}'")
 
     # 5. 세션 파라미터 병합
     params = session_manager.get_merged_params(session, new_params)
@@ -1889,6 +2208,34 @@ async def ask(request: AskRequest):
             session_id=sid,
         )
 
+    # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
+    if intent == "FACILITY_TREND" and "야간최소유량" in user_question:
+        sql_combined = (
+            "SELECT * FROM fn_night_min_flow_summary("
+            "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
+            ") ORDER BY log_time ASC;"
+        )
+
+    # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
+    if intent == "ONGOING_ALARM_STATUS":
+        where_parts = ["alarm_status = '진행중'"]
+        _site = params.get("sitename")
+        _category = params.get("datainfo")
+        if _site:
+            _site_esc = _site.replace("'", "''")
+            where_parts.append(f"sitename = '{_site_esc}'")
+        if _category:
+            _cat_esc = _category.replace("'", "''")
+            where_parts.append(f"alarm_category = '{_cat_esc}'")
+        where_clause = " AND ".join(where_parts)
+        sql_combined = (
+            f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+            f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time"
+            f" FROM tb_equipment_alarm_report"
+            f" WHERE {where_clause}"
+            f" ORDER BY alarm_start_time DESC;"
+        )
+
     # alarm_msg가 None이면 전체 알람 조회 (LIKE '%%')
     if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
         params["alarm_msg"] = ""
@@ -1916,9 +2263,30 @@ async def ask(request: AskRequest):
                 f"AND i.tagtype = '{_tagtype}'",
             )
 
+    # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
+    if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
+        if params.get("sitename") in (None, "%%"):
+            params["sitename"] = ""
+        if params.get("facilitytype") in (None, "%%"):
+            params["facilitytype"] = ""
+        if params.get("datainfo") in (None, "%%"):
+            params["datainfo"] = ""
+
+    # sitename이 "%%"(전체)인 경우: SQL의 = 비교를 LIKE로 변경
+    if params.get("sitename") == "%%":
+        sql_combined = sql_combined.replace(
+            "sitename = '{sitename}'", "sitename LIKE '{sitename}'"
+        )
+        # summary에서 "%%" 대신 "전체"로 표시
+        params["sitename"] = "%%"
+
     # FACILITY_TAG_DATA_TABLE: from_ts == to_ts(금일 등)이면 to_ts를 다음날로 보정
     if intent in ("FACILITY_TAG_DATA_TABLE", "FACILITY_ANALOG_TIMESERIES_TABLE",
-                   "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE"):
+                   "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+                   "FACILITY_FLOW_CURRENT_TABLE",
+                   "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+                   "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+                   "FACILITY_VALVE_STATUS_CURRENT_TABLE"):
         _ft = params.get("from_ts")
         _tt = params.get("to_ts")
         if _ft and _tt and len(_tt) == 10 and _ft == _tt:
@@ -1930,7 +2298,7 @@ async def ask(request: AskRequest):
                 pass
 
     try:
-        rows, columns = execute_sql(sql_combined, params)
+        rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
     except psycopg2.OperationalError as e:
         logger.error(f"DB 접속 오류: {e}")
         return build_error_response(
@@ -1944,10 +2312,40 @@ async def ask(request: AskRequest):
             session_id=sid,
         )
 
+    # 다중 sitename: 추가 sitename에 대해 SQL 실행 후 결과 병합
+    if extra_sitenames:
+        all_rows = list(rows) if rows else []
+        for extra_site in extra_sitenames:
+            extra_p = dict(params)
+            extra_p["sitename"] = extra_site
+            if SITENAME_FACILITY_MAP:
+                ft_set = SITENAME_FACILITY_MAP.get(extra_site)
+                if ft_set and len(ft_set) == 1:
+                    resolved = next(iter(ft_set))
+                    extra_p["facilitytype"] = resolved
+                    if resolved in ("소블록", "중블록", "대블록"):
+                        extra_p["block_level"] = resolved
+            try:
+                extra_rows, _ = await asyncio.to_thread(execute_sql, sql_combined, extra_p)
+                if extra_rows:
+                    all_rows.extend(extra_rows)
+                    logger.info(f"추가 sitename '{extra_site}': {len(extra_rows)}행 병합")
+            except Exception as e:
+                logger.warning(f"추가 sitename '{extra_site}' SQL 실행 실패: {e}")
+        rows = all_rows
+        # 렌더링용 sitename을 모든 현장명으로 업데이트
+        all_site_names = [params.get("sitename", "")] + list(extra_sitenames)
+        params["sitename"] = ", ".join(all_site_names)
+
     # 결과 확인
     if not rows:
         logger.info(f"조회 결과 없음: {intent}, params={params}")
-        return build_no_data_response(intent, answer_template, session_id=sid)
+        return build_no_data_response(intent, answer_template, params=params, session_id=sid)
+
+    # FACILITY_ABNORMAL_STATUS_SUMMARY: SQL 실행 후 빈 문자열을 렌더링용 "전체"로 변환
+    if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
+        if not params.get("datainfo"):
+            params["datainfo"] = "전체"
 
     # 데이터 후처리
     try:
@@ -1958,6 +2356,16 @@ async def ask(request: AskRequest):
             message="데이터 구조 오류가 발생했습니다.",
             session_id=sid,
         )
+
+    # 트렌드 인텐트: 템플릿 변수 보충
+    if intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND"):
+        _ft = params.get("from_ts", "")
+        _tt = params.get("to_ts", "")
+        if _ft and _tt:
+            processed_data["period_desc"] = f"{_ft} ~ {_tt}"
+        if intent == "FACILITY_MIXED_TREND":
+            processed_data["digital_label"] = params.get("digital_datainfo") or "밸브"
+            processed_data["analog_label"] = params.get("analog_datainfo") or "유량"
 
     # answer_template 렌더링
     rendered_answer = render_answer_template(answer_template, processed_data)
@@ -1991,6 +2399,14 @@ async def ask(request: AskRequest):
     if detail_blocks and "detail" in rendered_answer:
         rendered_answer["detail"] = _expand_section(rendered_answer["detail"])
 
+    # expand 후 소비되지 않은 detail_block이 있으면 detail에 추가
+    for bk, bv in detail_blocks.items():
+        if isinstance(bv, list) and bv:
+            if "detail" not in rendered_answer:
+                rendered_answer["detail"] = []
+            rendered_answer["detail"].extend(bv)
+            detail_blocks[bk] = []
+
     if detail_blocks and "reference" in rendered_answer and "items" in rendered_answer["reference"]:
         rendered_answer["reference"]["items"] = _expand_section(rendered_answer["reference"]["items"])
 
@@ -2015,11 +2431,44 @@ async def ask(request: AskRequest):
 
     # 응답 생성
     response_data = None
+    csv_url = None
+    total_rows = None
+    data_truncated = False
+
     if table_type == "equipment" and "equipment_table" in processed_data:
         response_data = processed_data["equipment_table"]
     elif table_type == "summary" and rows and columns:
-        # summary 테이블: SQL 결과 전체를 dict 리스트로 변환
-        response_data = [dict(zip(columns, row)) for row in rows]
+        # summary 테이블: CSV 저장 + 행 제한
+        csv_filename = save_csv(rows, columns, intent, sid)
+        csv_url = f"/csv/{csv_filename}"
+        total_rows = len(rows)
+
+        if len(rows) > MAX_TABLE_ROWS:
+            sampled = stratified_sample(rows, columns, MAX_TABLE_ROWS)
+            response_data = [dict(zip(columns, row)) for row in sampled]
+            data_truncated = True
+        else:
+            response_data = [dict(zip(columns, row)) for row in rows]
+    elif graph_type and graph_type != "none" and rows and columns:
+        # 그래프용 데이터 (plot, bar 등): 행 수 제한 + 다운샘플링
+        total_rows = len(rows)
+        if len(rows) > MAX_GRAPH_ROWS:
+            sampled = downsample_rows(rows, MAX_GRAPH_ROWS)
+            response_data = [dict(zip(columns, row)) for row in sampled]
+            data_truncated = True
+            logger.info(f"그래프 데이터 다운샘플링: {total_rows}행 → {len(sampled)}행")
+        else:
+            response_data = [dict(zip(columns, row)) for row in rows]
+
+    # 트렌드 차트: chart_data_type (analog/digital/mixed) + plot_type
+    _chart_data_type = None
+    _plot_type = intent_def.get("plot_type") if intent_def else None
+    if graph_type == "plot" and rows and columns:
+        _chart_data_type = classify_chart_data_type(rows, columns)
+        # plot_type 기본값: intent_def에 없으면 chart_data_type 기반 설정
+        if not _plot_type and _chart_data_type:
+            _PLOT_TYPE_DEFAULTS = {"analog": "line", "digital": "step", "mixed": "multi_axis_line"}
+            _plot_type = _PLOT_TYPE_DEFAULTS.get(_chart_data_type, "line")
 
     return build_success_response(
         intent=intent,
@@ -2029,8 +2478,520 @@ async def ask(request: AskRequest):
         table_columns=table_columns,
         table_type=table_type,
         session_id=sid,
+        csv_url=csv_url,
+        total_rows=total_rows,
+        data_truncated=data_truncated,
+        chart_data_type=_chart_data_type,
+        plot_type=_plot_type,
     )
 
+
+
+# =============================================================================
+# SSE 스트리밍 엔드포인트
+# =============================================================================
+
+def _sse_event(event: str, data: dict) -> str:
+    """SSE 이벤트 문자열을 생성한다."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.post("/ask/stream")
+async def ask_stream(request: AskRequest):
+    """
+    POST /ask/stream 엔드포인트 (Server-Sent Events)
+
+    /ask와 동일한 처리를 수행하되, 각 단계별 진행 상황을 SSE로 스트리밍한다.
+
+    SSE 이벤트 유형:
+    - event: progress  → 진행 상황 메시지 (UI에 표시)
+    - event: result    → 최종 응답 (기존 /ask 응답과 동일 구조)
+    - event: error     → 오류 발생
+
+    요청: { "user_question": "...", "session_id": "..." (선택) }
+    """
+    async def event_generator():
+        user_question = normalize_question(request.user_question)
+        logger.info(f"[SSE] 질의 수신: {user_question}")
+
+        # --- 진행 1: 질의 분석 ---
+        yield _sse_event("progress", {
+            "step": "classify",
+            "message": "질의를 분석 중입니다...",
+        })
+        await asyncio.sleep(0)  # yield 즉시 전송
+
+        # 1. 세션 로드/생성
+        session = session_manager.get_or_create(request.session_id)
+        sid = session.session_id
+
+        # 최대 턴 수 체크
+        if session_manager.is_max_turns(session):
+            logger.warning(f"[SSE] 세션 최대 턴 초과: {sid}")
+            yield _sse_event("result", build_correction_response(
+                message="대화 턴 수가 초과되었습니다. 새로운 질문을 시작해 주세요.",
+                session_id=sid,
+                correction_hints=["새 질문을 입력해 주세요."],
+            ))
+            return
+
+        # 2. 정정 턴 단축 체크
+        is_correction = session_manager.is_correction_turn(session, user_question)
+
+        # 3. SLM Intent 분류
+        if is_correction and session.last_intent:
+            intent_name = session.last_intent
+            intent_def = intent_index.get_definition(intent_name)
+            category = "정정"
+            classify_method = "correction_reuse"
+            logger.info(f"[SSE] 정정 턴 단축: intent={intent_name}")
+        else:
+            # 신규 분류 (SLM 호출 가능 → 별도 스레드에서 실행)
+            classification = await asyncio.to_thread(
+                intent_classifier.classify,
+                question=user_question,
+                keyword_fallback_fn=match_intent,
+            )
+            intent_name = classification["intent_name"]
+            intent_def = classification["intent_def"]
+            category = classification["category"]
+            classify_method = classification["method"]
+            logger.info(
+                f"[SSE] Intent 분류: name={intent_name}, category={category}, method={classify_method}"
+            )
+
+        # --- 진행 2: 파라미터 추출 ---
+        yield _sse_event("progress", {
+            "step": "extract",
+            "message": "파라미터를 추출 중입니다...",
+            "intent": intent_name,
+        })
+        await asyncio.sleep(0)
+
+        # 4. 하이브리드 파라미터 추출
+        new_params = await asyncio.to_thread(
+            param_extractor_instance.extract_all, user_question, intent_name
+        )
+
+        # 4.4. 다중 sitename 추출
+        extra_sitenames = new_params.pop("_extra_sitenames", None)
+
+        # 4.5. 월 단독 지정 시 년도 확인 요청
+        month_only = new_params.pop("_month_only", None)
+        if month_only is not None:
+            month_name = f"{month_only}월"
+            session_manager.update_session(
+                session,
+                intent_name=intent_name,
+                params=new_params,
+                status="NEED_CORRECTION",
+                pending_corrections=["from_ts", "to_ts"],
+            )
+            yield _sse_event("result", build_correction_response(
+                message=f"'{month_name}' 조회 시 년도를 명시해 주세요. 예: '2025년 {month_name}'",
+                session_id=sid,
+                correction_hints=[
+                    f"2025년 {month_name}",
+                    f"2024년 {month_name}",
+                    f"2026년 {month_name}",
+                ],
+                intent=intent_name,
+            ))
+            return
+
+        # 4.6. 테이블/시계열 인텐트에서 sitename 없고 facilitytype 있으면 전체 조회
+        if (intent_name in _TABLE_INTENTS_ALLOW_ALL
+                and not new_params.get("sitename")
+                and new_params.get("facilitytype")):
+            new_params["sitename"] = "%%"
+
+        # 4.7. facilitytype 미추출 시 sitename에서 자동 해소
+        if not new_params.get("facilitytype") and not new_params.get("block_level"):
+            _site = new_params.get("sitename")
+            if _site and _site != "%%" and SITENAME_FACILITY_MAP:
+                _available_types = SITENAME_FACILITY_MAP.get(_site)
+                if _available_types and len(_available_types) == 1:
+                    resolved_ft = next(iter(_available_types))
+                    new_params["facilitytype"] = resolved_ft
+                    if resolved_ft in ("소블록", "중블록", "대블록"):
+                        new_params["block_level"] = resolved_ft
+                    logger.info(f"facilitytype 자동 해소: '{_site}' → '{resolved_ft}'")
+
+        # 5. 세션 파라미터 병합
+        params = session_manager.get_merged_params(session, new_params)
+
+        # 6. 질의 검증
+        validation = query_validator.validate(
+            category=category,
+            intent_name=intent_name,
+            intent_def=intent_def,
+            params=params,
+        )
+
+        if not validation.is_valid:
+            session_manager.update_session(
+                session,
+                intent_name=intent_name,
+                params=new_params,
+                status="NEED_CORRECTION",
+                pending_corrections=validation.missing_params,
+            )
+            logger.info(
+                f"[SSE] 검증 실패: type={validation.error_type}, missing={validation.missing_params}"
+            )
+            yield _sse_event("result", build_correction_response(
+                message=validation.message,
+                session_id=sid,
+                correction_hints=validation.hints,
+                intent=intent_name,
+            ))
+            return
+
+        # 검증 통과
+        intent = intent_name
+        sql_template = intent_def.get("sql", "")
+        answer_template = intent_def.get("answer_template", {})
+        graph_type = intent_def.get("graph_type", "none")
+        table_columns = intent_def.get("table_columns")
+        table_type = intent_def.get("table_type")
+
+        logger.info(f"[SSE] INTENT 확정: {intent} (method={classify_method})")
+
+        session_manager.update_session(
+            session,
+            intent_name=intent,
+            params=new_params,
+            status="OK",
+        )
+
+        # SQL 준비
+        if isinstance(sql_template, list):
+            sql_combined = "\n".join(sql_template)
+        else:
+            sql_combined = sql_template or ""
+
+        # 빈 SQL 체크
+        if not sql_combined or not sql_combined.strip():
+            rendered_answer = render_answer_template(answer_template, params)
+            yield _sse_event("result", build_success_response(
+                intent=intent,
+                answer=rendered_answer,
+                graph_type=graph_type,
+                session_id=sid,
+            ))
+            return
+
+        # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
+        if intent == "FACILITY_TREND" and "야간최소유량" in user_question:
+            sql_combined = (
+                "SELECT * FROM fn_night_min_flow_summary("
+                "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
+                ") ORDER BY log_time ASC;"
+            )
+
+        # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
+        if intent == "ONGOING_ALARM_STATUS":
+            where_parts = ["alarm_status = '진행중'"]
+            _site = params.get("sitename")
+            _category = params.get("datainfo")
+            if _site:
+                _site_esc = _site.replace("'", "''")
+                where_parts.append(f"sitename = '{_site_esc}'")
+            if _category:
+                _cat_esc = _category.replace("'", "''")
+                where_parts.append(f"alarm_category = '{_cat_esc}'")
+            where_clause = " AND ".join(where_parts)
+            sql_combined = (
+                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time"
+                f" FROM tb_equipment_alarm_report"
+                f" WHERE {where_clause}"
+                f" ORDER BY alarm_start_time DESC;"
+            )
+
+        # alarm_msg 기본값
+        if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
+            params["alarm_msg"] = ""
+
+        # tagtype 필터 주입
+        if intent in ("FACILITY_TAG_LATEST_VALUE", "FACILITY_TAG_DATA_TABLE"):
+            _dk = params.get("datakey") or params.get("datainfo") or ""
+            if "밸브" in _dk:
+                _tagtype = "Digital Input"
+            elif "설정" in _dk:
+                _tagtype = "Analog Output"
+            else:
+                _tagtype = "Analog Input"
+            if intent == "FACILITY_TAG_LATEST_VALUE":
+                sql_combined = sql_combined.replace(
+                    "GROUP BY",
+                    f"  AND i.tagtype = '{_tagtype}'\nGROUP BY",
+                )
+            elif "AND i.tagtype = 'Analog Input'" in sql_combined:
+                sql_combined = sql_combined.replace(
+                    "AND i.tagtype = 'Analog Input'",
+                    f"AND i.tagtype = '{_tagtype}'",
+                )
+
+        # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
+        if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
+            if params.get("sitename") in (None, "%%"):
+                params["sitename"] = ""
+            if params.get("facilitytype") in (None, "%%"):
+                params["facilitytype"] = ""
+            if params.get("datainfo") in (None, "%%"):
+                params["datainfo"] = ""
+
+        # 전체 조회 LIKE 변환
+        if params.get("sitename") == "%%":
+            sql_combined = sql_combined.replace(
+                "sitename = '{sitename}'", "sitename LIKE '{sitename}'"
+            )
+            params["sitename"] = "%%"
+
+        # from_ts == to_ts 보정
+        if intent in ("FACILITY_TAG_DATA_TABLE", "FACILITY_ANALOG_TIMESERIES_TABLE",
+                       "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE"):
+            _ft = params.get("from_ts")
+            _tt = params.get("to_ts")
+            if _ft and _tt and len(_tt) == 10 and _ft == _tt:
+                try:
+                    to_date = datetime.strptime(_tt, "%Y-%m-%d")
+                    params["to_ts"] = (to_date + timedelta(days=1)).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
+
+        # --- 진행 3: 데이터 조회 ---
+        yield _sse_event("progress", {
+            "step": "query",
+            "message": "데이터를 조회 중입니다...",
+        })
+        await asyncio.sleep(0)
+
+        try:
+            rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
+        except psycopg2.OperationalError as e:
+            logger.error(f"[SSE] DB 접속 오류: {e}")
+            yield _sse_event("error", {
+                "status": "ERROR",
+                "message": "DB 장애 발생으로 점검이 필요합니다.",
+                "session_id": sid,
+            })
+            return
+        except psycopg2.Error as e:
+            logger.error(f"[SSE] SQL 실행 오류: {e}")
+            yield _sse_event("error", {
+                "status": "ERROR",
+                "message": "데이터베이스 연결 오류가 발생했습니다.",
+                "session_id": sid,
+            })
+            return
+
+        # 다중 sitename: 추가 sitename에 대해 SQL 실행 후 결과 병합
+        if extra_sitenames:
+            all_rows = list(rows) if rows else []
+            for extra_site in extra_sitenames:
+                extra_p = dict(params)
+                extra_p["sitename"] = extra_site
+                if SITENAME_FACILITY_MAP:
+                    ft_set = SITENAME_FACILITY_MAP.get(extra_site)
+                    if ft_set and len(ft_set) == 1:
+                        resolved = next(iter(ft_set))
+                        extra_p["facilitytype"] = resolved
+                        if resolved in ("소블록", "중블록", "대블록"):
+                            extra_p["block_level"] = resolved
+                try:
+                    extra_rows, _ = await asyncio.to_thread(execute_sql, sql_combined, extra_p)
+                    if extra_rows:
+                        all_rows.extend(extra_rows)
+                        logger.info(f"[SSE] 추가 sitename '{extra_site}': {len(extra_rows)}행 병합")
+                except Exception as e:
+                    logger.warning(f"[SSE] 추가 sitename '{extra_site}' SQL 실행 실패: {e}")
+            rows = all_rows
+            # 렌더링용 sitename을 모든 현장명으로 업데이트
+            all_site_names = [params.get("sitename", "")] + list(extra_sitenames)
+            params["sitename"] = ", ".join(all_site_names)
+
+        # 결과 확인
+        if not rows:
+            logger.info(f"[SSE] 조회 결과 없음: {intent}, params={params}")
+            yield _sse_event("result", build_no_data_response(
+                intent, answer_template, params=params, session_id=sid,
+            ))
+            return
+
+        # --- 진행 4: 결과 처리 ---
+        yield _sse_event("progress", {
+            "step": "render",
+            "message": "응답을 생성 중입니다...",
+        })
+        await asyncio.sleep(0)
+
+        # FACILITY_ABNORMAL_STATUS_SUMMARY: SQL 실행 후 빈 문자열을 렌더링용 "전체"로 변환
+        if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
+            if not params.get("datainfo"):
+                params["datainfo"] = "전체"
+
+        # 데이터 후처리
+        try:
+            processed_data = process_sql_result(rows, columns, intent_def, params)
+        except JsonbSchemaViolation as e:
+            logger.error(f"[SSE] JSONB 스키마 위반: {e.message}, path: {e.path}")
+            yield _sse_event("error", {
+                "status": "ERROR",
+                "message": "데이터 구조 오류가 발생했습니다.",
+                "session_id": sid,
+            })
+            return
+
+        # 트렌드 인텐트: 템플릿 변수 보충
+        if intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND"):
+            _ft = params.get("from_ts", "")
+            _tt = params.get("to_ts", "")
+            if _ft and _tt:
+                processed_data["period_desc"] = f"{_ft} ~ {_tt}"
+            if intent == "FACILITY_MIXED_TREND":
+                processed_data["digital_label"] = params.get("digital_datainfo") or "밸브"
+                processed_data["analog_label"] = params.get("analog_datainfo") or "유량"
+
+        # answer_template 렌더링
+        rendered_answer = render_answer_template(answer_template, processed_data)
+
+        # __EXPAND__ 마커 처리
+        detail_blocks = processed_data.get("_detail_blocks", {})
+
+        def _expand_section(section_items: list) -> list:
+            expanded = []
+            for item in section_items:
+                if not isinstance(item, dict):
+                    expanded.append(item)
+                    continue
+                text = item.get("text", "")
+                if text == "__EXPAND__":
+                    matched = False
+                    for bk, bv in detail_blocks.items():
+                        if isinstance(bv, list) and bv:
+                            expanded.extend(bv)
+                            detail_blocks[bk] = []
+                            matched = True
+                            break
+                    if not matched:
+                        expanded.append(item)
+                else:
+                    expanded.append(item)
+            return expanded
+
+        if detail_blocks and "detail" in rendered_answer:
+            rendered_answer["detail"] = _expand_section(rendered_answer["detail"])
+
+        if detail_blocks and "reference" in rendered_answer and "items" in rendered_answer["reference"]:
+            rendered_answer["reference"]["items"] = _expand_section(rendered_answer["reference"]["items"])
+
+        # UI 블록 삽입
+        ui_blocks = processed_data.get("_ui_blocks", {})
+        _UI_BLOCK_PREFIX = "__UI_BLOCK__"
+
+        if ui_blocks and "detail" in rendered_answer:
+            replaced_detail = []
+            for item in rendered_answer["detail"]:
+                replaced = False
+                if isinstance(item, dict):
+                    text = item.get("text", "")
+                    if isinstance(text, str) and text.startswith(_UI_BLOCK_PREFIX):
+                        block_key = text[len(_UI_BLOCK_PREFIX):]
+                        if block_key in ui_blocks:
+                            replaced_detail.append(ui_blocks[block_key])
+                            replaced = True
+                if not replaced:
+                    replaced_detail.append(item)
+            rendered_answer["detail"] = replaced_detail
+
+        # 응답 생성
+        response_data = None
+        csv_url = None
+        total_rows = None
+        data_truncated = False
+
+        if table_type == "equipment" and "equipment_table" in processed_data:
+            response_data = processed_data["equipment_table"]
+        elif table_type == "summary" and rows and columns:
+            csv_filename = save_csv(rows, columns, intent, sid)
+            csv_url = f"/csv/{csv_filename}"
+            total_rows = len(rows)
+
+            if len(rows) > MAX_TABLE_ROWS:
+                response_data = [dict(zip(columns, row)) for row in rows[:MAX_TABLE_ROWS]]
+                data_truncated = True
+            else:
+                response_data = [dict(zip(columns, row)) for row in rows]
+        elif graph_type and graph_type != "none" and rows and columns:
+            # 그래프용 데이터 (plot, bar 등): 행 수 제한 + 다운샘플링
+            total_rows = len(rows)
+            if len(rows) > MAX_GRAPH_ROWS:
+                sampled = downsample_rows(rows, MAX_GRAPH_ROWS)
+                response_data = [dict(zip(columns, row)) for row in sampled]
+                data_truncated = True
+                logger.info(f"그래프 데이터 다운샘플링: {total_rows}행 → {len(sampled)}행")
+            else:
+                response_data = [dict(zip(columns, row)) for row in rows]
+
+        # 트렌드 차트: chart_data_type (analog/digital/mixed) + plot_type
+        _chart_data_type = None
+        _plot_type = intent_def.get("plot_type") if intent_def else None
+        if graph_type == "plot" and rows and columns:
+            _chart_data_type = classify_chart_data_type(rows, columns)
+            if not _plot_type and _chart_data_type:
+                _PLOT_TYPE_DEFAULTS = {"analog": "line", "digital": "step", "mixed": "multi_axis_line"}
+                _plot_type = _PLOT_TYPE_DEFAULTS.get(_chart_data_type, "line")
+
+        final_response = build_success_response(
+            intent=intent,
+            answer=rendered_answer,
+            graph_type=graph_type,
+            data=response_data,
+            table_columns=table_columns,
+            table_type=table_type,
+            session_id=sid,
+            csv_url=csv_url,
+            total_rows=total_rows,
+            data_truncated=data_truncated,
+            chart_data_type=_chart_data_type,
+            plot_type=_plot_type,
+        )
+
+        yield _sse_event("result", final_response)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# =============================================================================
+# CSV 다운로드 엔드포인트
+# =============================================================================
+
+@app.get("/csv/{filename}")
+async def download_csv(filename: str):
+    """CSV 파일 다운로드 엔드포인트"""
+    # 경로 조작 방지
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return {"status": "ERROR", "message": "잘못된 파일명입니다."}
+
+    filepath = os.path.join(CSV_EXPORT_DIR, filename)
+    if not os.path.exists(filepath):
+        return {"status": "ERROR", "message": "파일을 찾을 수 없습니다."}
+
+    return FileResponse(
+        path=filepath,
+        media_type="text/csv; charset=utf-8-sig",
+        filename=filename,
+    )
 
 
 # =============================================================================

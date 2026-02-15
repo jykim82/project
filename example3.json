@@ -2158,19 +2158,19 @@
         ]
       },
       "recommend_questions": {
-        "title": "추가로 추천 질의입니다.",
+        "title": "다음은 추천질의입니다.",
         "items": [
           {
             "prefix": "1.",
-            "text": "최근 {alarm_msg} 알람 내역을 보여줘"
+            "text": "경보 발생 누적건수가 높은 순서대로 10개만 보여줘"
           },
           {
             "prefix": "2.",
-            "text": "{sitename} {facilitytype} 통신 상태를 알려줘"
+            "text": "{sitename} {facilitytype} 통신 경보 발생원인 진단 순위를 1순위부터 4순위까지 알려줘"
           },
           {
             "prefix": "3.",
-            "text": "동일 원인이 반복 발생한 설비를 알려줘"
+            "text": "삼봉 가압장 압력의 최근 알람을 알려줘"
           }
         ]
       }

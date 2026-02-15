@@ -80,6 +80,9 @@ class ParamExtractor:
             "digital_datainfo": str or None,
         }
         """
+        # 월 단독 지정 플래그 초기화
+        self._month_only = None
+
         # Phase 1: 프로그래밍적 추출
         block_level = self._extract_block_level(question)
         sitename = self._extract_sitename(question)
@@ -127,16 +130,16 @@ class ParamExtractor:
             from_ts = (today - timedelta(days=7)).strftime("%Y-%m-%d")
             to_ts = today.strftime("%Y-%m-%d")
 
-        # FACILITY_ABNORMAL_STATUS_SUMMARY: 전체 조회용 기본값 설정
+        # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
         if intent_name == "FACILITY_ABNORMAL_STATUS_SUMMARY":
             if not datainfo:
-                datainfo = "유량"
+                datainfo = ""
             if not facilitytype:
-                facilitytype = "%%"
+                facilitytype = ""
             if not sitename:
-                sitename = "%%"
+                sitename = ""
 
-        return {
+        result = {
             "sitename": sitename,
             "facilitytype": facilitytype,
             "block_level": block_level,
@@ -149,16 +152,69 @@ class ParamExtractor:
             "analog_datainfo": analog_datainfo,
             "digital_datainfo": digital_datainfo,
         }
+        if self._month_only is not None:
+            result["_month_only"] = self._month_only
+
+        # 다중 sitename 추출 (위치순, 메인 sitename 외 추가분)
+        all_sites = self._extract_all_sitenames(question)
+        if len(all_sites) > 1:
+            # 위치순 첫 번째를 메인 sitename으로 사용
+            result["sitename"] = all_sites[0]
+            result["_extra_sitenames"] = all_sites[1:]
+
+        return result
 
     # =========================================================================
     # Phase 1: 프로그래밍적 추출 (기존 로직 재사용)
     # =========================================================================
 
     def _extract_sitename(self, question: str) -> Optional[str]:
+        # 실제 sitename을 먼저 찾고, 없으면 "전체" → 와일드카드
         for site in self._sitenames:
-            if site in question:
+            idx = question.find(site)
+            if idx >= 0:
+                # 경계 검사: 매칭된 이름 뒤에 연속 문자(-, 숫자)가 있으면 부분 매칭 → 건너뜀
+                # 예: "남산1"이 "남산1-1"에 매칭되면 안 됨
+                end_idx = idx + len(site)
+                if end_idx < len(question):
+                    next_char = question[end_idx]
+                    if next_char == '-' or next_char.isdigit():
+                        continue
                 return site
+        # 실제 sitename 없으면 "전체" → 와일드카드
+        if "전체" in question:
+            return "%%"
         return None
+
+    def _extract_all_sitenames(self, question: str) -> list:
+        """질문에서 매칭되는 모든 sitename을 추출한다 (긴 이름 우선, 위치순 반환)."""
+        found = []
+        used_ranges = []
+        for site in self._sitenames:  # longest-first 정렬 상태
+            start = 0
+            while True:
+                idx = question.find(site, start)
+                if idx < 0:
+                    break
+                end_idx = idx + len(site)
+                # 경계 검사
+                if end_idx < len(question):
+                    next_char = question[end_idx]
+                    if next_char == '-' or next_char.isdigit():
+                        start = end_idx
+                        continue
+                # 중복 범위 검사
+                overlap = any(idx < ue and end_idx > us for us, ue in used_ranges)
+                if not overlap:
+                    found.append((idx, site))
+                    used_ranges.append((idx, end_idx))
+                start = end_idx
+        found.sort(key=lambda x: x[0])
+        result = [site for _, site in found]
+        # 실제 sitename 없으면 "전체" → 와일드카드
+        if not result and "전체" in question:
+            return ["%%"]
+        return result
 
     def _extract_block_level(self, question: str) -> Optional[str]:
         for level in self._block_levels:
@@ -291,6 +347,56 @@ class ParamExtractor:
         if "이번주" in question or "이번 주" in question:
             monday = today - timedelta(days=today.weekday())
             return monday.strftime("%Y-%m-%d"), today_str
+
+        # "YYYY년 M월 D일 ~ YYYY년 M월 D일" (부터/까지, ~, -, 에서)
+        match = re.search(
+            r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:부터|에서)?\s*"
+            r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:까지)?",
+            question,
+        )
+        if match:
+            y1, m1, d1 = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            y2, m2, d2 = int(match.group(4)), int(match.group(5)), int(match.group(6))
+            try:
+                from_date = datetime(y1, m1, d1)
+                to_date = datetime(y2, m2, d2)
+                return from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # "YYYY년 M월 D일" (단일 날짜)
+        match = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", question)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            day = int(match.group(3))
+            try:
+                target = datetime(year, month, day)
+                return target.strftime("%Y-%m-%d"), target.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        # "YYYY년 N월" (e.g., "2025년 12월") — 년도 명시된 월 기간
+        match = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", question)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            if 1 <= month <= 12:
+                from_date = datetime(year, month, 1)
+                if month == 12:
+                    to_date = datetime(year + 1, 1, 1)
+                else:
+                    to_date = datetime(year, month + 1, 1)
+                last_day = to_date - timedelta(days=1)
+                return from_date.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
+
+        # "N월" (년도 없음) — 년도 확인 필요 플래그 설정
+        match = re.search(r"(\d{1,2})\s*월", question)
+        if match:
+            month = int(match.group(1))
+            if 1 <= month <= 12:
+                self._month_only = month  # ai_server에서 확인용
+                return None, None
 
         # "오늘", "금일", "현재"
         if "오늘" in question or "금일" in question or "현재" in question:

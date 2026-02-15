@@ -30,6 +30,8 @@ _KEYWORD_TO_CATEGORY = {
     "소소블록": "블록",
     "블록": "블록",
     "트렌드": "트렌드",
+    "트랜드": "트렌드",
+    "그래프": "트렌드",
 }
 
 # Stage 1 SLM 프롬프트
@@ -144,9 +146,9 @@ class IntentClassifier:
         우선순위: 공통 키워드 → 시설 키워드 → SLM
         "야간최소유량", "알람" 등 공통 INTENT 키워드가 시설명보다 우선한다.
         """
-        # "트렌드"는 다른 공통 키워드보다 우선 (야간최소유량 트렌드 등)
-        if "트렌드" in question:
-            logger.info("Stage1 키워드 매칭: '트렌드' → 트렌드")
+        # "트렌드"/"트랜드"/"그래프"는 다른 공통 키워드보다 우선 (야간최소유량 트렌드 등)
+        if "트렌드" in question or "트랜드" in question or "그래프" in question:
+            logger.info("Stage1 키워드 매칭: '트렌드/그래프' → 트렌드")
             return "트렌드", "keyword"
 
         # 공통 키워드 체크 (시설 키워드보다 우선)
@@ -262,7 +264,7 @@ class IntentClassifier:
         # 키워드 단축: "공통" 카테고리
         if "결측" in question:
             return "TAG_DAILY_MISSING_SUMMARY", "keyword"
-        if "이상" in question and ("설비" in question or "현황" in question):
+        if ("이상" in question or "고장" in question) and ("설비" in question or "현황" in question):
             return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
         if "표준편차" in question:
             return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
