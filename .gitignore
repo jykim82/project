@@ -38,5 +38,9 @@ PROJECT_INDEX.md
 # CSV exports
 csv_exports/
 
+# Temp files
+_tmp_*
+test.md
+
 # Misc
 slm *.txt
