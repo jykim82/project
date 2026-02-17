@@ -2274,6 +2274,31 @@ async def ask(request: AskRequest):
             }
         }
 
+    # FACILITY_MIXED_TREND: answer_template 오버라이드
+    if intent == "FACILITY_MIXED_TREND":
+        _site = params.get("sitename", "")
+        _ftype = params.get("facilitytype", "")
+        _analog = params.get("analog_datainfo") or "유량"
+        _digital = params.get("digital_datainfo") or "밸브"
+        _user_period = params.get("user_specified_period", False)
+        _ft = params.get("from_ts", "")
+        _tt = params.get("to_ts", "")
+        if _user_period:
+            _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
+        else:
+            _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
+        answer_template = {
+            "summary": f"{_period_line}\n{_site} {_ftype}의 {_digital} 가동 상태와 {_analog} 데이터 트렌드는 다음과 같습니다.",
+            "recommend_questions": {
+                "title": "다음은 추천질의입니다.",
+                "items": [
+                    {"prefix": "1.", "text": f"{_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
+                    {"prefix": "2.", "text": f"1월 1일부터 1월 10일까지 {_site} {_ftype} 수위를 펌프 가동상태와 함께 트렌드로 보여줘"},
+                    {"prefix": "3.", "text": f"1월 1일부터 1월 10일까지 {_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
+                ]
+            }
+        }
+
     # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
     if intent == "ONGOING_ALARM_STATUS":
         where_parts = ["alarm_status = '진행중'"]
@@ -2812,6 +2837,31 @@ async def ask_stream(request: AskRequest):
                         {"prefix": "1.", "text": f"{_site} {_ftype} {_dinfo} 트렌드 그래프를 보여줘"},
                         {"prefix": "2.", "text": "한달간 송악1 배수지의 압력 트렌드를 보여줘"},
                         {"prefix": "3.", "text": f"2025년 9월 5일부터 2025년 10월 5일까지 {_site} {_ftype} {_dinfo} 트렌드를 보여줘"},
+                    ]
+                }
+            }
+
+        # FACILITY_MIXED_TREND: answer_template 오버라이드
+        if intent == "FACILITY_MIXED_TREND":
+            _site = params.get("sitename", "")
+            _ftype = params.get("facilitytype", "")
+            _analog = params.get("analog_datainfo") or "유량"
+            _digital = params.get("digital_datainfo") or "밸브"
+            _user_period = params.get("user_specified_period", False)
+            _ft = params.get("from_ts", "")
+            _tt = params.get("to_ts", "")
+            if _user_period:
+                _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
+            else:
+                _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
+            answer_template = {
+                "summary": f"{_period_line}\n{_site} {_ftype}의 {_digital} 가동 상태와 {_analog} 데이터 트렌드는 다음과 같습니다.",
+                "recommend_questions": {
+                    "title": "다음은 추천질의입니다.",
+                    "items": [
+                        {"prefix": "1.", "text": f"{_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
+                        {"prefix": "2.", "text": f"1월 1일부터 1월 10일까지 {_site} {_ftype} 수위를 펌프 가동상태와 함께 트렌드로 보여줘"},
+                        {"prefix": "3.", "text": f"1월 1일부터 1월 10일까지 {_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
                     ]
                 }
             }

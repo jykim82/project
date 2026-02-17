@@ -285,17 +285,30 @@ class ParamExtractor:
         return None
 
     def _extract_analog_datainfo(self, question: str) -> Optional[str]:
-        # FACILITY_MIXED_TREND용
-        analog_keywords = ["압력", "유량", "수위"]
-        for kw in analog_keywords:
+        # FACILITY_MIXED_TREND용 — 복합 키워드 우선 매칭
+        compound_keywords = [
+            "유입유량", "유출유량", "유량순시", "순시유량", "유량적산", "적산유량",
+            "유입압력", "유출압력", "배수지수위",
+        ]
+        for kw in compound_keywords:
+            if kw in question:
+                return kw
+        simple_keywords = ["압력", "유량", "수위"]
+        for kw in simple_keywords:
             if kw in question:
                 return kw
         return None
 
     def _extract_digital_datainfo(self, question: str) -> Optional[str]:
-        # FACILITY_MIXED_TREND용
-        digital_keywords = ["펌프", "밸브"]
-        for kw in digital_keywords:
+        # FACILITY_MIXED_TREND용 — 복합 키워드 우선 매칭
+        compound_keywords = [
+            "유입밸브", "유출밸브", "가압펌프", "배수펌프", "송수펌프",
+        ]
+        for kw in compound_keywords:
+            if kw in question:
+                return kw
+        simple_keywords = ["펌프", "밸브"]
+        for kw in simple_keywords:
             if kw in question:
                 return kw
         return None
