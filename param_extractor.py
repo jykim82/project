@@ -124,6 +124,9 @@ class ParamExtractor:
                 from_ts = None
                 to_ts = None
 
+        # 사용자가 기간을 명시했는지 추적
+        user_specified_period = from_ts is not None or to_ts is not None
+
         # 날짜 필요 INTENT인데 from_ts/to_ts 모두 없으면 기본 7일 적용
         if intent_name in DATE_REQUIRED_INTENTS and from_ts is None and to_ts is None:
             today = datetime.now()
@@ -151,6 +154,7 @@ class ParamExtractor:
             "datakey": datakey,
             "analog_datainfo": analog_datainfo,
             "digital_datainfo": digital_datainfo,
+            "user_specified_period": user_specified_period,
         }
         if self._month_only is not None:
             result["_month_only"] = self._month_only
@@ -238,12 +242,17 @@ class ParamExtractor:
     def _extract_datainfo(self, question: str) -> Optional[str]:
         if "압력" in question:
             return "압력"
+        # 유량 세분화: 유량순시/순시유량, 유량적산/적산유량 구분
+        if "유량순시" in question or "순시유량" in question:
+            return "유량순시"
+        if "유량적산" in question or "적산유량" in question:
+            return "유량적산"
         if "유량" in question:
             return "유량"
         if "수위" in question:
             return "수위"
         if "적산" in question:
-            return "유량"
+            return "유량적산"
         if "밸브" in question:
             return "밸브"
         return None

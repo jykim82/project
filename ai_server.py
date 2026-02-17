@@ -2209,12 +2209,70 @@ async def ask(request: AskRequest):
         )
 
     # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
-    if intent == "FACILITY_TREND" and "야간최소유량" in user_question:
+    _q_no_space = user_question.replace(" ", "")
+    _is_night_min_flow = intent == "FACILITY_TREND" and "야간최소유량" in _q_no_space
+    if _is_night_min_flow:
+        # 기본 기간: 1년 (from_ts/to_ts가 기본 7일로 설정된 경우 오버라이드)
+        _ft = params.get("from_ts", "")
+        _tt = params.get("to_ts", "")
+        if _ft and _tt:
+            try:
+                _ft_date = datetime.strptime(_ft.strip("'"), "%Y-%m-%d")
+                _tt_date = datetime.strptime(_tt.strip("'"), "%Y-%m-%d")
+                if (_tt_date - _ft_date).days <= 7:
+                    # 기본 7일이 적용된 경우 → 1년으로 확장
+                    _tt_date = datetime.now()
+                    _ft_date = _tt_date - timedelta(days=365)
+                    params["from_ts"] = _ft_date.strftime("%Y-%m-%d")
+                    params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
         sql_combined = (
             "SELECT * FROM fn_night_min_flow_summary("
             "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
             ") ORDER BY log_time ASC;"
         )
+        # answer_template 오버라이드
+        _site = params.get("sitename", "")
+        _ftype = params.get("facilitytype", "소블록")
+        answer_template = {
+            "summary": "기간 설정이 없는 경우는 최근 1년 기준으로 1달 단위 데이터를 표출합니다.\n{sitename} {facilitytype} 야간최소유량 트렌드는 다음과 같습니다.",
+            "detail": [
+                {"prefix": "•", "text": "야간 최소유량은 60분 단위 이동평균 계산법을 적용하여 계산됩니다."}
+            ],
+            "recommend_questions": {
+                "title": "다음은 추천 질의입니다.",
+                "items": [
+                    {"prefix": "1.", "text": f"{_site} {_ftype} 야간최소유량 트렌드 그래프를 보여줘"},
+                    {"prefix": "2.", "text": f"{_site} {_ftype} 야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"},
+                    {"prefix": "3.", "text": f"{_site} {_ftype} 데이터 결측분석결과를 알려줘"},
+                ]
+            }
+        }
+
+    # FACILITY_TREND (일반): answer_template 오버라이드
+    if intent == "FACILITY_TREND" and not _is_night_min_flow:
+        _site = params.get("sitename", "")
+        _ftype = params.get("facilitytype", "")
+        _dinfo = params.get("datainfo", "")
+        _user_period = params.get("user_specified_period", False)
+        _ft = params.get("from_ts", "")
+        _tt = params.get("to_ts", "")
+        if _user_period:
+            _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
+        else:
+            _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
+        answer_template = {
+            "summary": f"{_period_line}\n{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다.",
+            "recommend_questions": {
+                "title": "다음은 추천질의입니다.",
+                "items": [
+                    {"prefix": "1.", "text": f"{_site} {_ftype} {_dinfo} 트렌드 그래프를 보여줘"},
+                    {"prefix": "2.", "text": "한달간 송악1 배수지의 압력 트렌드를 보여줘"},
+                    {"prefix": "3.", "text": f"2025년 9월 5일부터 2025년 10월 5일까지 {_site} {_ftype} {_dinfo} 트렌드를 보여줘"},
+                ]
+            }
+        }
 
     # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
     if intent == "ONGOING_ALARM_STATUS":
@@ -2493,7 +2551,7 @@ async def ask(request: AskRequest):
 
 def _sse_event(event: str, data: dict) -> str:
     """SSE 이벤트 문자열을 생성한다."""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 @app.post("/ask/stream")
@@ -2600,7 +2658,19 @@ async def ask_stream(request: AskRequest):
             return
 
         # 4.6. 테이블/시계열 인텐트에서 sitename 없고 facilitytype 있으면 전체 조회
-        if (intent_name in _TABLE_INTENTS_ALLOW_ALL
+        _TABLE_INTENTS_ALLOW_ALL_STREAM = {
+            "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+            "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+            "FACILITY_ANALOG_TIMESERIES_TABLE",
+            "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+            "FACILITY_FLOW_CURRENT_TABLE",
+            "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+            "FACILITY_TAG_DATA_TABLE",
+            "FACILITY_ALARM_TOP_COUNT",
+            "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+            "FACILITY_ABNORMAL_STATUS_SUMMARY",
+        }
+        if (intent_name in _TABLE_INTENTS_ALLOW_ALL_STREAM
                 and not new_params.get("sitename")
                 and new_params.get("facilitytype")):
             new_params["sitename"] = "%%"
@@ -2682,12 +2752,69 @@ async def ask_stream(request: AskRequest):
             return
 
         # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
-        if intent == "FACILITY_TREND" and "야간최소유량" in user_question:
+        _q_no_space = user_question.replace(" ", "")
+        _is_night_min_flow = intent == "FACILITY_TREND" and "야간최소유량" in _q_no_space
+        if _is_night_min_flow:
+            # 기본 기간: 1년 (from_ts/to_ts가 기본 7일로 설정된 경우 오버라이드)
+            _ft = params.get("from_ts", "")
+            _tt = params.get("to_ts", "")
+            if _ft and _tt:
+                try:
+                    _ft_date = datetime.strptime(_ft.strip("'"), "%Y-%m-%d")
+                    _tt_date = datetime.strptime(_tt.strip("'"), "%Y-%m-%d")
+                    if (_tt_date - _ft_date).days <= 7:
+                        _tt_date = datetime.now()
+                        _ft_date = _tt_date - timedelta(days=365)
+                        params["from_ts"] = _ft_date.strftime("%Y-%m-%d")
+                        params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
+                except (ValueError, TypeError):
+                    pass
             sql_combined = (
                 "SELECT * FROM fn_night_min_flow_summary("
                 "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
                 ") ORDER BY log_time ASC;"
             )
+            # answer_template 오버라이드
+            _site = params.get("sitename", "")
+            _ftype = params.get("facilitytype", "소블록")
+            answer_template = {
+                "summary": "기간 설정이 없는 경우는 최근 1년 기준으로 1달 단위 데이터를 표출합니다.\n{sitename} {facilitytype} 야간최소유량 트렌드는 다음과 같습니다.",
+                "detail": [
+                    {"prefix": "•", "text": "야간 최소유량은 60분 단위 이동평균 계산법을 적용하여 계산됩니다."}
+                ],
+                "recommend_questions": {
+                    "title": "다음은 추천 질의입니다.",
+                    "items": [
+                        {"prefix": "1.", "text": f"{_site} {_ftype} 야간최소유량 트렌드 그래프를 보여줘"},
+                        {"prefix": "2.", "text": f"{_site} {_ftype} 야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"},
+                        {"prefix": "3.", "text": f"{_site} {_ftype} 데이터 결측분석결과를 알려줘"},
+                    ]
+                }
+            }
+
+        # FACILITY_TREND (일반): answer_template 오버라이드
+        if intent == "FACILITY_TREND" and not _is_night_min_flow:
+            _site = params.get("sitename", "")
+            _ftype = params.get("facilitytype", "")
+            _dinfo = params.get("datainfo", "")
+            _user_period = params.get("user_specified_period", False)
+            _ft = params.get("from_ts", "")
+            _tt = params.get("to_ts", "")
+            if _user_period:
+                _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
+            else:
+                _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
+            answer_template = {
+                "summary": f"{_period_line}\n{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다.",
+                "recommend_questions": {
+                    "title": "다음은 추천질의입니다.",
+                    "items": [
+                        {"prefix": "1.", "text": f"{_site} {_ftype} {_dinfo} 트렌드 그래프를 보여줘"},
+                        {"prefix": "2.", "text": "한달간 송악1 배수지의 압력 트렌드를 보여줘"},
+                        {"prefix": "3.", "text": f"2025년 9월 5일부터 2025년 10월 5일까지 {_site} {_ftype} {_dinfo} 트렌드를 보여줘"},
+                    ]
+                }
+            }
 
         # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
         if intent == "ONGOING_ALARM_STATUS":
