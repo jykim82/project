@@ -157,9 +157,11 @@ class IntentClassifier:
             "알람", "경보", "알림", "태그", "통신",
             "결측", "진행중",
             "표로",
-            "이상",
+            "이상", "위험", "예측", "이상감지",
+            "누수", "CUSUM", "cusum",
             "표준편차",
             "주소",
+            "위치도", "계통도", "초동대응", "매뉴얼",
         ]
         for kw in common_keywords:
             if kw in question:
@@ -228,6 +230,28 @@ class IntentClassifier:
             if "감압" in question:
                 return "FACILITY_ADDRESS_INFO_PRESSURE", "keyword"
 
+        # 키워드 단축: 위치도 → 시설별 LOCATION (facilitytype 기반 분기)
+        if "위치도" in question:
+            if "가압장" in question:
+                return "BOOSTER_STATION_LOCATION", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "BLOCK_LOCATION", "keyword"
+            if "감압" in question:
+                return "PRESSURE_REDUCING_FACILITY_LOCATION", "keyword"
+            if "배수지" in question:
+                return "RESERVOIR_LOCATION", "keyword"
+            # facilitytype 키워드 없음 → SITENAME_FACILITY_MAP 기반 자동 해소 후 Stage 2 SLM에 위임
+            # (query_validator에서 facilitytype 재질의 발생)
+
+        # 키워드 단축: 계통도 → 시설별 SYSTEM_DIAGRAM
+        if "계통도" in question:
+            if "가압장" in question:
+                return "BOOSTER_STATION_SYSTEM_DIAGRAM", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "BLOCK_SYSTEM_DIAGRAM", "keyword"
+            if "배수지" in question:
+                return "RESERVOIR_SYSTEM_DIAGRAM", "keyword"
+
         # 키워드 단축: 압력 현황
         if "압력" in question and ("현황" in question or "현항" in question):
             return "FACILITY_PRESSURE_STATUS", "keyword"
@@ -264,8 +288,32 @@ class IntentClassifier:
         # 키워드 단축: "공통" 카테고리
         if "결측" in question:
             return "TAG_DAILY_MISSING_SUMMARY", "keyword"
-        if ("이상" in question or "고장" in question) and ("설비" in question or "현황" in question):
-            return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
+        # 누수추정 CUSUM 분석 (야간최소유량 + 누수)
+        if "누수" in question or any(kw in question for kw in ["CUSUM", "cusum"]):
+            return "LEAK_CUSUM_ANALYSIS", "keyword"
+        # 이상감지 인텐트 ("이상" 없이도 매칭되는 키워드 우선)
+        if any(kw in question for kw in ["위험 예측", "이상 예측", "센서 예측"]):
+            return "ANOMALY_PREDICT", "keyword"
+        # "고장"/"장애" 계열 — 일상 용어로 이상탐지 접근
+        if any(kw in question for kw in ["고장 진단", "장애 진단", "고장 점검", "장애 점검"]):
+            return "ANOMALY_SCAN_ALL", "keyword"
+        if any(kw in question for kw in ["센서 점검", "설비 점검", "센서 상태", "설비 상태"]):
+            return "ANOMALY_SCAN_ALL", "keyword"
+        if "이상" in question or "고장" in question:
+            if any(kw in question for kw in ["스캔", "감지", "점검", "이상치", "전체"]):
+                return "ANOMALY_SCAN_ALL", "keyword"
+            if any(kw in question for kw in ["진단", "정밀", "분석"]):
+                return "ANOMALY_FACILITY_DETAIL", "keyword"
+            if any(kw in question for kw in ["이력", "히스토리", "기록"]):
+                return "ANOMALY_HISTORY", "keyword"
+            if any(kw in question for kw in ["예측", "예상", "전망"]):
+                return "ANOMALY_PREDICT", "keyword"
+            if any(kw in question for kw in ["비교", "대비"]):
+                return "ANOMALY_COMPARE", "keyword"
+            if any(kw in question for kw in ["패턴", "시간대", "주기"]):
+                return "ANOMALY_PATTERN", "keyword"
+            if any(kw in question for kw in ["설비", "현황"]):
+                return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
         if "표준편차" in question:
             return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
         if "진행중" in question or "진행 중" in question:

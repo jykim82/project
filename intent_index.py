@@ -40,6 +40,7 @@ FACILITY_CATEGORIES = {
         "ONGOING_",
         "NIGHT_MIN_",
         "TAG_",
+        "ANOMALY_",
     ],
     "트렌드": [
         "FACILITY_TREND",
@@ -101,6 +102,13 @@ INTENT_DESCRIPTIONS = {
     "NIGHT_MIN_FLOW_SUMMARY_TABLE": "야간최소유량 요약 표",
     "TAG_DAILY_MISSING_SUMMARY": "태그 일간 결측 요약",
     "ONGOING_ALARM_STATUS": "진행중 알람 현황",
+    "ANOMALY_SCAN_ALL": "전체 센서 이상 스캔",
+    "ANOMALY_FACILITY_DETAIL": "시설 이상 정밀 진단",
+    "ANOMALY_HISTORY": "이상 이력 조회",
+    "ANOMALY_PREDICT": "위험 예측 분석",
+    "ANOMALY_COMPARE": "시설간 이상 비교",
+    "ANOMALY_PATTERN": "시간대 이상 패턴",
+    "LEAK_CUSUM_ANALYSIS": "야간최소유량 CUSUM 누수추정",
 }
 
 

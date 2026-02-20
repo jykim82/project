@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+from korean_fuzzy import find_best_match
 from ollama_client import OllamaClient, OllamaConnectionError
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,43 @@ _DATE_EXTRACT_PROMPT = (
 )
 
 
+# 하드코딩 키워드 목록 — fuzzy 매칭 후보
+_FACILITYTYPE_CANDIDATES = ["배수지", "가압장", "감압시설", "소블록", "소소블록", "수압계실", "유량계실"]
+# fuzzy 매칭 후보 → (후보, 정규값) — 정규값이 None이면 후보 자체가 반환값
+_DATAINFO_CANDIDATES = [
+    "유량순시", "순시유량", "유량적산", "적산유량", "적산",
+    "유량", "수위", "압력", "밸브", "펌프",
+    "가압펌프", "배수펌프", "송수펌프", "유입밸브", "유출밸브",
+]
+
+# fuzzy 매칭 결과 → 정규 datainfo 매핑
+_DATAINFO_CANONICAL = {
+    "순시유량": "유량순시",
+    "적산유량": "유량적산",
+    "적산": "유량적산",
+}
+
+# fuzzy 매칭 임계값
+_FUZZY_THRESHOLD_SITE = 0.6       # 현장명 (2~3글자, 임계값 낮게)
+_FUZZY_THRESHOLD_KEYWORD = 0.65   # 시설유형/데이터 키워드
+
+# sitename fuzzy 매칭에서 제외할 일반 단어 (false positive 방지)
+_SITENAME_FUZZY_STOPWORDS = {
+    # 시설유형/블록
+    "배수지", "가압장", "감압", "소블록", "중블록", "대블록",
+    # 데이터 키워드
+    "유량", "압력", "수위", "밸브", "펌프", "가압", "유입", "유출", "적산", "순시",
+    # 일반 동사/명사
+    "출력", "데이터", "야간", "최소", "트렌드", "그래프", "현황", "상태",
+    "분석", "결과", "기간", "전체", "최근", "한달", "결측", "이상",
+    "알람", "진행", "요약", "표준", "편차", "합계", "평균", "건수",
+    # 이상감지 키워드 (fuzzy에서 제외)
+    "이력", "히스토리", "기록", "예측", "예상", "전망", "비교", "대비",
+    "패턴", "시간대", "주기", "스캔", "감지", "점검", "진단", "정밀",
+    "위험",
+}
+
+
 class ParamExtractor:
     def __init__(
         self,
@@ -60,6 +98,7 @@ class ParamExtractor:
         self._sitenames = known_sitenames
         self._block_levels = known_block_levels
         self._ollama = ollama
+        self._corrections: list[dict] = []  # 오타 보정 이력
 
     def extract_all(self, question: str, intent_name: Optional[str] = None) -> dict:
         """
@@ -80,8 +119,9 @@ class ParamExtractor:
             "digital_datainfo": str or None,
         }
         """
-        # 월 단독 지정 플래그 초기화
+        # 세션 상태 초기화
         self._month_only = None
+        self._corrections = []
 
         # Phase 1: 프로그래밍적 추출
         block_level = self._extract_block_level(question)
@@ -100,6 +140,9 @@ class ParamExtractor:
 
         # 프로그래밍적 날짜 추출 시도
         from_ts, to_ts = self._extract_date_programmatic(question)
+
+        # 사용자가 기간을 명시했는지 추적 (프로그래밍적 추출 기준, SLM 추출 전)
+        user_specified_period = from_ts is not None or to_ts is not None
 
         # 프로그래밍적으로 실패하고, 날짜 필요 INTENT이면 SLM 시도
         if (from_ts is None or to_ts is None) and intent_name in DATE_REQUIRED_INTENTS:
@@ -123,9 +166,6 @@ class ParamExtractor:
             except ValueError:
                 from_ts = None
                 to_ts = None
-
-        # 사용자가 기간을 명시했는지 추적
-        user_specified_period = from_ts is not None or to_ts is not None
 
         # 날짜 필요 INTENT인데 from_ts/to_ts 모두 없으면 기본 7일 적용
         if intent_name in DATE_REQUIRED_INTENTS and from_ts is None and to_ts is None:
@@ -156,6 +196,8 @@ class ParamExtractor:
             "digital_datainfo": digital_datainfo,
             "user_specified_period": user_specified_period,
         }
+        if self._corrections:
+            result["_corrections"] = self._corrections
         if self._month_only is not None:
             result["_month_only"] = self._month_only
 
@@ -166,6 +208,11 @@ class ParamExtractor:
             result["sitename"] = all_sites[0]
             result["_extra_sitenames"] = all_sites[1:]
 
+            # 시설별 datainfo 페어링 (MIXED_TREND 등에서 시설마다 다른 데이터 요청 시)
+            facility_pairs = self._extract_facility_datainfo_pairs(question)
+            if facility_pairs:
+                result["_facility_pairs"] = facility_pairs
+
         return result
 
     # =========================================================================
@@ -174,28 +221,51 @@ class ParamExtractor:
 
     def _extract_sitename(self, question: str) -> Optional[str]:
         # 실제 sitename을 먼저 찾고, 없으면 "전체" → 와일드카드
+        # 공백 제거 버전도 함께 검색 ("합덕 일반산단" → "합덕일반산단")
+        q_nospace = question.replace(" ", "")
         for site in self._sitenames:
-            idx = question.find(site)
-            if idx >= 0:
-                # 경계 검사: 매칭된 이름 뒤에 연속 문자(-, 숫자)가 있으면 부분 매칭 → 건너뜀
-                # 예: "남산1"이 "남산1-1"에 매칭되면 안 됨
-                end_idx = idx + len(site)
-                if end_idx < len(question):
-                    next_char = question[end_idx]
-                    if next_char == '-' or next_char.isdigit():
-                        continue
-                return site
-        # 실제 sitename 없으면 "전체" → 와일드카드
+            for q in (question, q_nospace):
+                idx = q.find(site)
+                if idx >= 0:
+                    # 경계 검사: 매칭된 이름 뒤에 연속 문자(-, 숫자)가 있으면 부분 매칭 → 건너뜀
+                    end_idx = idx + len(site)
+                    if end_idx < len(q):
+                        next_char = q[end_idx]
+                        if next_char == '-' or next_char.isdigit():
+                            continue
+                    return site
         if "전체" in question:
             return "%%"
+
+        # fuzzy fallback: 질문에서 2~4글자 한글 토큰을 추출하여 현장명 후보와 비교
+        tokens = re.findall(r"[가-힣]{2,4}", question)
+        for token in tokens:
+            if token in _SITENAME_FUZZY_STOPWORDS:
+                continue
+            match = find_best_match(token, self._sitenames, _FUZZY_THRESHOLD_SITE)
+            if match:
+                corrected, score = match
+                if corrected != token:  # exact match가 아닌 경우만 보정 기록
+                    self._corrections.append({
+                        "field": "sitename",
+                        "original": token,
+                        "corrected": corrected,
+                        "score": round(score, 3),
+                    })
+                    logger.info(f"sitename fuzzy 보정: '{token}' → '{corrected}' (score={score:.3f})")
+                return corrected
+
         return None
 
     def _extract_all_sitenames(self, question: str) -> list:
         """질문에서 매칭되는 모든 sitename을 추출한다 (긴 이름 우선, 위치순 반환)."""
         found = []
         used_ranges = []
+        # 공백 제거 버전도 시도 ("합덕 일반산단" → "합덕일반산단")
+        q_nospace = question.replace(" ", "")
         for site in self._sitenames:  # longest-first 정렬 상태
             start = 0
+            # 원본 question에서 먼저 검색
             while True:
                 idx = question.find(site, start)
                 if idx < 0:
@@ -213,6 +283,19 @@ class ParamExtractor:
                     found.append((idx, site))
                     used_ranges.append((idx, end_idx))
                 start = end_idx
+            # 공백 제거 버전에서 추가 검색 (원본에서 못 찾은 경우)
+            if not any(site == s for _, s in found):
+                idx = q_nospace.find(site)
+                if idx >= 0:
+                    end_idx = idx + len(site)
+                    if end_idx < len(q_nospace):
+                        next_char = q_nospace[end_idx]
+                        if next_char == '-' or next_char.isdigit():
+                            continue
+                    overlap = any(site == s for _, s in found)
+                    if not overlap:
+                        found.append((idx, site))
+                        used_ranges.append((idx, end_idx))
         found.sort(key=lambda x: x[0])
         result = [site for _, site in found]
         # 실제 sitename 없으면 "전체" → 와일드카드
@@ -220,9 +303,110 @@ class ParamExtractor:
             return ["%%"]
         return result
 
+    def _extract_facility_datainfo_pairs(self, question: str) -> list:
+        """
+        질문에서 시설별 (sitename, facilitytype, datainfo) 페어를 추출한다.
+        텍스트를 sitename 위치 기준으로 분할하여 각 시설에 어떤 데이터가 요청되었는지 파악.
+
+        예: "신평 배수지 수위와 천의리 가압장 가동펌프상태"
+        → [
+            {"sitename":"신평", "facilitytype":"배수지", "analog_datainfo":"수위", "digital_datainfo":None, "data_type":"analog"},
+            {"sitename":"천의리", "facilitytype":"가압장", "analog_datainfo":None, "digital_datainfo":"펌프", "data_type":"digital"},
+          ]
+        """
+        # 위치 기반 sitename 검색 (공백 제거 매칭 포함)
+        found: list[tuple[int, str]] = []
+        used_ranges: list[tuple[int, int]] = []
+        q_nospace = question.replace(" ", "")
+        for site in self._sitenames:
+            start = 0
+            matched = False
+            while True:
+                idx = question.find(site, start)
+                if idx < 0:
+                    break
+                end_idx = idx + len(site)
+                if end_idx < len(question):
+                    next_char = question[end_idx]
+                    if next_char == '-' or next_char.isdigit():
+                        start = end_idx
+                        continue
+                overlap = any(idx < ue and end_idx > us for us, ue in used_ranges)
+                if not overlap:
+                    found.append((idx, site))
+                    used_ranges.append((idx, end_idx))
+                    matched = True
+                start = end_idx
+            # 공백 제거 버전에서 추가 검색
+            if not matched:
+                idx = q_nospace.find(site)
+                if idx >= 0:
+                    end_idx = idx + len(site)
+                    ok = True
+                    if end_idx < len(q_nospace):
+                        next_char = q_nospace[end_idx]
+                        if next_char == '-' or next_char.isdigit():
+                            ok = False
+                    if ok and not any(site == s for _, s in found):
+                        found.append((idx, site))
+                        used_ranges.append((idx, end_idx))
+        found.sort(key=lambda x: x[0])
+
+        if len(found) < 2:
+            return []  # 단일 시설이면 기존 로직으로 충분
+
+        # 텍스트를 sitename 위치 기준으로 세그먼트 분할
+        pairs = []
+        for i, (pos, sitename) in enumerate(found):
+            seg_start = pos
+            seg_end = found[i + 1][0] if i + 1 < len(found) else len(question)
+            segment = question[seg_start:seg_end]
+
+            # 세그먼트에서 facilitytype 추출
+            facilitytype = None
+            if "배수지" in segment:
+                facilitytype = "배수지"
+            elif "가압장" in segment:
+                facilitytype = "가압장"
+            elif "감압시설" in segment or "감압설비" in segment:
+                facilitytype = "감압시설"
+
+            # 세그먼트에서 analog/digital datainfo 추출
+            analog = self._extract_analog_datainfo(segment)
+            digital = self._extract_digital_datainfo(segment)
+
+            if analog and digital:
+                data_type = "mixed"
+            elif analog:
+                data_type = "analog"
+            elif digital:
+                data_type = "digital"
+            else:
+                data_type = "unknown"
+
+            pairs.append({
+                "sitename": sitename,
+                "facilitytype": facilitytype,
+                "analog_datainfo": analog,
+                "digital_datainfo": digital,
+                "data_type": data_type,
+            })
+
+        # 모든 시설이 동일 data_type이면 페어링 불필요 (기존 로직으로 충분)
+        types = {p["data_type"] for p in pairs}
+        if len(types) == 1 and "unknown" not in types:
+            return []
+
+        logger.info(f"시설별 datainfo 페어링: {pairs}")
+        return pairs
+
     def _extract_block_level(self, question: str) -> Optional[str]:
         for level in self._block_levels:
             if level in question:
+                # "소소블록"에서 "소블록" 부분 매칭 방지
+                idx = question.index(level)
+                if idx > 0 and question[idx - 1] == "소" and level == "소블록":
+                    continue
                 return level
         return None
 
@@ -231,22 +415,58 @@ class ParamExtractor:
     ) -> Optional[str]:
         if block_level:
             return block_level
+        # 긴 키워드 먼저 매칭 (소소블록 → 소블록 오인 방지)
+        if "소소블록" in question:
+            return "소소블록"
+        if "소블록" in question:
+            return "소블록"
+        if "수압계실" in question:
+            return "수압계실"
+        if "유량계실" in question:
+            return "유량계실"
         if "배수지" in question:
             return "배수지"
         if "가압장" in question:
             return "가압장"
         if "감압시설" in question or "감압설비" in question or "감압밸브" in question:
             return "감압시설"
+
+        # fuzzy fallback: 2~4글자 한글 토큰에서 시설유형 매칭
+        tokens = re.findall(r"[가-힣]{2,4}", question)
+        for token in tokens:
+            match = find_best_match(token, _FACILITYTYPE_CANDIDATES, _FUZZY_THRESHOLD_KEYWORD)
+            if match:
+                corrected, score = match
+                if corrected != token:
+                    self._corrections.append({
+                        "field": "facilitytype",
+                        "original": token,
+                        "corrected": corrected,
+                        "score": round(score, 3),
+                    })
+                    logger.info(f"facilitytype fuzzy 보정: '{token}' → '{corrected}' (score={score:.3f})")
+                return corrected
+
         return None
 
     def _extract_datainfo(self, question: str) -> Optional[str]:
+        # 복합 키워드 우선 매칭 (analog + digital 공통)
+        _compound_keywords = [
+            "유입유량", "유출유량", "유량순시", "순시유량", "유량적산", "적산유량",
+            "유입압력", "유출압력", "배수지수위",
+            "유입밸브", "유출밸브", "가압펌프", "배수펌프", "송수펌프",
+        ]
+        _compound_canonical = {
+            "순시유량": "유량순시",
+            "적산유량": "유량적산",
+        }
+        for kw in _compound_keywords:
+            if kw in question:
+                return _compound_canonical.get(kw, kw)
+
+        # 단순 키워드 매칭
         if "압력" in question:
             return "압력"
-        # 유량 세분화: 유량순시/순시유량, 유량적산/적산유량 구분
-        if "유량순시" in question or "순시유량" in question:
-            return "유량순시"
-        if "유량적산" in question or "적산유량" in question:
-            return "유량적산"
         if "유량" in question:
             return "유량"
         if "수위" in question:
@@ -255,6 +475,29 @@ class ParamExtractor:
             return "유량적산"
         if "밸브" in question:
             return "밸브"
+        if "펌프" in question:
+            return "펌프"
+
+        # fuzzy fallback: 2~4글자 한글 토큰에서 데이터 키워드 매칭
+        tokens = re.findall(r"[가-힣]{2,4}", question)
+        for token in tokens:
+            if token in _SITENAME_FUZZY_STOPWORDS:
+                continue
+            match = find_best_match(token, _DATAINFO_CANDIDATES, _FUZZY_THRESHOLD_KEYWORD)
+            if match:
+                corrected, score = match
+                # 정규값 매핑 (적산→유량적산, 순시유량→유량순시 등)
+                canonical = _DATAINFO_CANONICAL.get(corrected, corrected)
+                if corrected != token:
+                    self._corrections.append({
+                        "field": "datainfo",
+                        "original": token,
+                        "corrected": canonical,
+                        "score": round(score, 3),
+                    })
+                    logger.info(f"datainfo fuzzy 보정: '{token}' → '{canonical}' (score={score:.3f})")
+                return canonical
+
         return None
 
     def _extract_limit(self, question: str) -> int:

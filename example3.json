@@ -2116,15 +2116,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "죽동 배수지의 최근 알람은 뭐야?"
+            "text": "전체 이상 스캔해줘"
           },
           {
             "prefix": "2.",
-            "text": "행정1-1 소블록 통신 경보 발생원인 진단 순위를 1순위부터 4순위까지 알려줘"
+            "text": "죽동 배수지의 최근 알람은 뭐야?"
           },
           {
             "prefix": "3.",
-            "text": "최근 일주일간 경보 발생 원인별 분류 결과를 알려줘"
+            "text": "위험 예측해줘"
           }
         ]
       }
@@ -2622,6 +2622,10 @@
         {
           "prefix": "•",
           "text": "{category_summary}"
+        },
+        {
+          "prefix": "",
+          "text": "{ongoing_alarm_detail_block}"
         }
       ]
     },
@@ -2637,15 +2641,15 @@
       "items": [
         {
           "prefix": "1.",
-          "text": "알람 발생 누적건수가 높은 순서대로 보여줘"
+          "text": "전체 이상 스캔해줘"
         },
         {
           "prefix": "2.",
-          "text": "통신 알람만 따로 보여줘"
+          "text": "위험 예측해줘"
         },
         {
           "prefix": "3.",
-          "text": "특정 현장의 진행중인 알람을 알려줘"
+          "text": "알람 발생 누적건수가 높은 순서대로 보여줘"
         }
       ]
     },
@@ -2663,7 +2667,29 @@
     "sql": "WITH base AS (\n    SELECT result_facilitytype, result_sitename, result_missing_pct\n    FROM public.fn_realtime_missing_summary('{sitename}', '{facilitytype}', '{datainfo}')\n)\nSELECT result_facilitytype AS facilitytype,\n       COUNT(*) AS cnt,\n       COUNT(CASE WHEN result_missing_pct > 50 THEN 1 END) AS missing_cnt,\n       STRING_AGG(CASE WHEN result_missing_pct > 50 THEN result_sitename END, ', ' ORDER BY result_sitename) AS missing_sites\nFROM base\nGROUP BY result_facilitytype\nORDER BY result_facilitytype;",
     "answer_template": {
       "summary": "{datainfo} 데이터 기준 시설 유형별 이상 설비 현황입니다. (결측률 50% 초과)",
-      "detail": []
+      "detail": [
+        {
+          "prefix": "",
+          "text": "{abnormal_summary_block}"
+        }
+      ]
+    },
+    "recommend_questions": {
+      "title": "이상탐지 추가 분석",
+      "items": [
+        {
+          "prefix": "1.",
+          "text": "전체 이상 스캔해줘"
+        },
+        {
+          "prefix": "2.",
+          "text": "위험 예측해줘"
+        },
+        {
+          "prefix": "3.",
+          "text": "시간대 이상 패턴 보여줘"
+        }
+      ]
     },
     "table_columns": [
       "facilitytype",
@@ -2818,5 +2844,760 @@
     },
     "graph_type": "plot",
     "plot_type": "multi_axis_line"
+  },
+  {
+    "intent": "ANOMALY_SCAN_ALL",
+    "questions": [
+      "전체 이상 스캔해줘",
+      "이상감지 현황 보여줘",
+      "센서 이상 점검해줘",
+      "현재 이상 센서 있어?",
+      "전체 센서 이상 여부를 확인해줘",
+      "이상 스캔",
+      "비정상 데이터를 찾아줘",
+      "이상치 확인해줘"
+    ],
+    "sql": [
+      "WITH raw_30d AS (",
+      "    SELECT tagsn, (min_val + max_val) / 2.0 AS approx_avg",
+      "    FROM cagg_5min_raw_stats_ai",
+      "    WHERE bucket >= now() - interval '30 days'",
+      "),",
+      "stats_30d AS (",
+      "    SELECT tagsn,",
+      "        AVG(approx_avg) FILTER (WHERE approx_avg > 0.001) AS mean_30d,",
+      "        STDDEV_POP(approx_avg) FILTER (WHERE approx_avg > 0.001) AS stddev_30d,",
+      "        COUNT(*) FILTER (WHERE approx_avg > 0.001) AS active_cnt,",
+      "        COUNT(*) AS total_cnt",
+      "    FROM raw_30d",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE approx_avg > 0.001) >= 50",
+      "),",
+      "latest AS (",
+      "    SELECT DISTINCT ON (tagsn)",
+      "        tagsn,",
+      "        (min_val + max_val) / 2.0 AS current_val,",
+      "        bucket AS latest_time",
+      "    FROM cagg_5min_raw_stats_ai",
+      "    WHERE bucket >= now() - interval '1 hour'",
+      "    ORDER BY tagsn, bucket DESC",
+      "),",
+      "comm_error AS (",
+      "    SELECT DISTINCT ci.sitename",
+      "    FROM tb_tag_info ci",
+      "    JOIN tb_tag_raw_data cr ON ci.tagsn = cr.tagsn",
+      "    WHERE ci.tagtype = 'Digital Input'",
+      "        AND ci.datainfo LIKE '%통신이상%'",
+      "        AND cr.logtime >= now() - interval '10 minutes'",
+      "        AND cr.val = 1",
+      ")",
+      "SELECT",
+      "    ti.tagsn,",
+      "    ti.sitename,",
+      "    ti.facilitytype,",
+      "    ti.datainfo,",
+      "    ROUND(l.current_val::numeric, 2) AS current_val,",
+      "    ROUND(s.mean_30d::numeric, 2) AS mean_30d,",
+      "    CASE",
+      "        WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "        WHEN s.stddev_30d > 0.001",
+      "            THEN ROUND(((l.current_val - s.mean_30d) / s.stddev_30d)::numeric, 2)",
+      "        ELSE 0",
+      "    END AS z_score,",
+      "    CASE",
+      "        WHEN ABS(l.current_val) < 0.001 OR ABS(s.mean_30d) < 0.001 THEN 0",
+      "        ELSE ROUND((ABS(l.current_val - s.mean_30d) / ABS(s.mean_30d) * 100)::numeric, 1)",
+      "    END AS deviation_pct,",
+      "    ROUND(s.active_cnt::numeric * 100 / NULLIF(s.total_cnt, 0), 0) AS active_pct,",
+      "    CASE WHEN ce.sitename IS NOT NULL THEN '통신장애' ELSE '정상' END AS comm_status,",
+      "    l.latest_time",
+      "FROM latest l",
+      "JOIN stats_30d s ON l.tagsn = s.tagsn",
+      "JOIN tb_tag_info ti ON l.tagsn = ti.tagsn",
+      "LEFT JOIN comm_error ce ON ti.sitename = ce.sitename",
+      "WHERE ti.tagtype = 'Analog Input'",
+      "    AND ti.datainfo NOT LIKE '%적산%'",
+      "    {anomaly_facility_filter}",
+      "ORDER BY ABS(CASE",
+      "    WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "    WHEN s.stddev_30d > 0.001",
+      "        THEN (l.current_val - s.mean_30d) / s.stddev_30d",
+      "    ELSE 0 END) DESC"
+    ],
+    "answer_template": {
+      "summary": "■ {anomaly_scope} Analog 센서 {total_tag_count}개 대상 이상 스캔 결과입니다. (30일 기준 Z-Score + ML 분석)",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "<<error:이상>> {error_count}건, <<warn:주의>> {warn_count}건, <<ok:정상>> {ok_count}건 | 통신장애 {comm_error_sites}건"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_scan_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "참고 사항",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "Z-Score는 30일 평균 대비 현재 값의 통계적 이탈 정도입니다."
+          },
+          {
+            "prefix": "•",
+            "text": "\"평소 대비 ±N%\"는 30일 평균 대비 현재 값의 변동 비율입니다."
+          },
+          {
+            "prefix": "•",
+            "text": "적산(누적) 데이터는 분석 대상에서 제외됩니다."
+          },
+          {
+            "prefix": "•",
+            "text": "간헐 가동 장비는 가동 중 데이터만으로 평균을 산출합니다. (가동률 표시)"
+          },
+          {
+            "prefix": "•",
+            "text": "통신장애는 해당 사이트의 통신이상 태그(10분 내)를 기준으로 판정합니다."
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "이상탐지 추가 분석",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "위험 예측해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "시간대 이상 패턴 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "배수지 이상 비교해줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["sitename", "facilitytype", "datainfo", "current_val", "mean_30d", "deviation_pct", "z_score", "active_pct", "comm_status"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_FACILITY_DETAIL",
+    "questions": [
+      "신평 배수지 이상 진단해줘",
+      "합덕 가압장 센서 이상 분석해줘",
+      "시설 정밀 진단 결과를 보여줘",
+      "이상 진단",
+      "기지시 가압장 이상 여부를 정밀 진단해줘",
+      "배수지 센서 진단 결과를 보여줘"
+    ],
+    "sql": [
+      "WITH facility_tags AS (",
+      "    SELECT tagsn",
+      "    FROM tb_tag_info",
+      "    WHERE sitename = '{sitename}'",
+      "        AND facilitytype = '{facilitytype}'",
+      "        AND tagtype = 'Analog Input'",
+      "        AND datainfo NOT LIKE '%적산%'",
+      "),",
+      "raw_30d AS (",
+      "    SELECT c.tagsn, (c.min_val + c.max_val) / 2.0 AS approx_avg",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    JOIN facility_tags ft ON c.tagsn = ft.tagsn",
+      "    WHERE c.bucket >= now() - interval '30 days'",
+      "),",
+      "stats_30d AS (",
+      "    SELECT tagsn,",
+      "        AVG(approx_avg) FILTER (WHERE approx_avg > 0.001) AS mean_30d,",
+      "        STDDEV_POP(approx_avg) FILTER (WHERE approx_avg > 0.001) AS stddev_30d,",
+      "        COUNT(*) FILTER (WHERE approx_avg > 0.001) AS active_cnt,",
+      "        COUNT(*) AS total_cnt",
+      "    FROM raw_30d",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE approx_avg > 0.001) >= 50",
+      "),",
+      "latest AS (",
+      "    SELECT DISTINCT ON (c.tagsn)",
+      "        c.tagsn,",
+      "        (c.min_val + c.max_val) / 2.0 AS current_val,",
+      "        c.bucket AS latest_time",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    JOIN facility_tags ft ON c.tagsn = ft.tagsn",
+      "    WHERE c.bucket >= now() - interval '1 hour'",
+      "    ORDER BY c.tagsn, c.bucket DESC",
+      "),",
+      "raw_recent AS (",
+      "    SELECT r.tagsn, r.logtime, r.val,",
+      "        LAG(r.val) OVER (PARTITION BY r.tagsn ORDER BY r.logtime) AS prev_val",
+      "    FROM tb_tag_raw_data r",
+      "    JOIN facility_tags ft ON r.tagsn = ft.tagsn",
+      "    WHERE r.logtime >= now() - interval '5 minutes'",
+      "),",
+      "with_diff AS (",
+      "    SELECT tagsn, logtime, val, prev_val,",
+      "        val - prev_val AS diff,",
+      "        LAG(val - prev_val) OVER (PARTITION BY tagsn ORDER BY logtime) AS prev_diff",
+      "    FROM raw_recent WHERE prev_val IS NOT NULL",
+      "),",
+      "dir_changes AS (",
+      "    SELECT tagsn,",
+      "        COUNT(*) FILTER (WHERE",
+      "            ABS(diff) > 0.001 AND ABS(prev_diff) > 0.001",
+      "            AND SIGN(diff) != SIGN(prev_diff)",
+      "        ) AS change_count",
+      "    FROM with_diff WHERE prev_diff IS NOT NULL",
+      "    GROUP BY tagsn",
+      ")",
+      "SELECT",
+      "    ti.tagsn,",
+      "    ti.sitename,",
+      "    ti.facilitytype,",
+      "    ti.datainfo,",
+      "    ROUND(l.current_val::numeric, 2) AS current_val,",
+      "    ROUND(s.mean_30d::numeric, 2) AS mean_30d,",
+      "    CASE",
+      "        WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "        WHEN s.stddev_30d > 0.001",
+      "            THEN ROUND(((l.current_val - s.mean_30d) / s.stddev_30d)::numeric, 2)",
+      "        ELSE 0",
+      "    END AS z_score,",
+      "    CASE",
+      "        WHEN ABS(l.current_val) < 0.001 OR ABS(s.mean_30d) < 0.001 THEN 0",
+      "        ELSE ROUND((ABS(l.current_val - s.mean_30d) / ABS(s.mean_30d) * 100)::numeric, 1)",
+      "    END AS deviation_pct,",
+      "    COALESCE(dc.change_count, 0) AS change_count,",
+      "    ROUND(s.active_cnt::numeric * 100 / NULLIF(s.total_cnt, 0), 0) AS active_pct,",
+      "    l.latest_time",
+      "FROM latest l",
+      "JOIN stats_30d s ON l.tagsn = s.tagsn",
+      "JOIN tb_tag_info ti ON l.tagsn = ti.tagsn",
+      "LEFT JOIN dir_changes dc ON l.tagsn = dc.tagsn",
+      "ORDER BY ABS(CASE",
+      "    WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "    WHEN s.stddev_30d > 0.001",
+      "        THEN (l.current_val - s.mean_30d) / s.stddev_30d",
+      "    ELSE 0 END) DESC"
+    ],
+    "answer_template": {
+      "summary": "■ {sitename} {facilitytype} 정밀 진단 결과입니다. (Z-Score + 진동패턴 복합분석)",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "분석 대상 Analog 센서: {total_tag_count}개"
+        },
+        {
+          "prefix": "•",
+          "text": "<<error:이상>> {error_count}건, <<warn:주의>> {warn_count}건, <<ok:정상>> {ok_count}건"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_facility_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "분석 기법 안내",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "값 분석(Z-Score): 30일 평균 대비 현재 값의 이탈 정도 판정"
+          },
+          {
+            "prefix": "•",
+            "text": "패턴 분석(진동): 최근 5분간 값의 방향 전환 횟수로 채터링 판정"
+          },
+          {
+            "prefix": "•",
+            "text": "복합 판정: 값정상+패턴정상=정상, 값이상+패턴정상=값이상, 값정상+패턴이상=패턴이상, 양쪽이상=심각"
+          },
+          {
+            "prefix": "•",
+            "text": "간헐 가동 장비는 가동 중 데이터만으로 평균을 산출합니다."
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "{sitename} {facilitytype} 수위 트렌드 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "{sitename} {facilitytype} 최근 알람을 보여줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["datainfo", "current_val", "mean_30d", "deviation_pct", "z_score", "change_count", "active_pct"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_HISTORY",
+    "questions": [
+      "이상 이력 보여줘",
+      "최근 알람 이력 조회해줘",
+      "이상 기록을 확인해줘",
+      "알람 히스토리를 보여줘",
+      "최근 7일 이상 이력은?",
+      "이상 발생 기록"
+    ],
+    "sql": [
+      "SELECT",
+      "    TO_CHAR(ar.alarm_start_time, 'YYYY-MM-DD HH24:MI') AS alarm_time,",
+      "    ar.sitename,",
+      "    ar.facilitytype,",
+      "    ar.alarm_category,",
+      "    ar.alarm_severity,",
+      "    ar.alarm_status,",
+      "    ar.alarm_msg",
+      "FROM tb_equipment_alarm_report ar",
+      "WHERE ar.alarm_start_time >= now() - interval '7 days'",
+      "    {anomaly_facility_filter}",
+      "ORDER BY ar.alarm_start_time DESC",
+      "LIMIT 100"
+    ],
+    "answer_template": {
+      "summary": "■ {anomaly_scope} 최근 7일 알람 이력입니다. (총 {total_alarm_count}건)",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "{alarm_severity_summary}"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_history_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "참고 사항",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "최근 7일간 발생한 알람을 시간 역순으로 최대 100건 표시합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "알람 상태: 진행중(미해제), 알람해제(자동 복구됨)"
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "경보 발생 누적건수가 높은 순서대로 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "위험 예측해줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["alarm_time", "sitename", "facilitytype", "alarm_category", "alarm_severity", "alarm_status"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_PREDICT",
+    "questions": [
+      "위험 예측해줘",
+      "이상 예측 분석 보여줘",
+      "센서 예측 알림",
+      "1시간 후 예측 결과는?",
+      "이상 예상되는 센서를 알려줘",
+      "이상 전망 분석"
+    ],
+    "sql": [
+      "WITH raw_24h AS (",
+      "    SELECT c.tagsn, c.bucket,",
+      "        (c.min_val + c.max_val) / 2.0 AS approx_avg",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    JOIN tb_tag_info ti ON c.tagsn = ti.tagsn",
+      "    WHERE c.bucket >= now() - interval '24 hours'",
+      "        AND ti.tagtype = 'Analog Input'",
+      "        AND ti.datainfo NOT LIKE '%적산%'",
+      "        {anomaly_facility_filter}",
+      "),",
+      "regression AS (",
+      "    SELECT tagsn,",
+      "        regr_slope(approx_avg, EXTRACT(EPOCH FROM bucket)) AS slope,",
+      "        regr_intercept(approx_avg, EXTRACT(EPOCH FROM bucket)) AS intercept,",
+      "        regr_r2(approx_avg, EXTRACT(EPOCH FROM bucket)) AS r_squared,",
+      "        COUNT(*) AS sample_cnt",
+      "    FROM raw_24h",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) >= 20",
+      "),",
+      "baseline_30d AS (",
+      "    SELECT tagsn,",
+      "        AVG((min_val + max_val) / 2.0) FILTER (WHERE (min_val + max_val) / 2.0 > 0.001) AS mean_30d,",
+      "        STDDEV_POP((min_val + max_val) / 2.0) FILTER (WHERE (min_val + max_val) / 2.0 > 0.001) AS stddev_30d",
+      "    FROM cagg_5min_raw_stats_ai",
+      "    WHERE bucket >= now() - interval '30 days'",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE (min_val + max_val) / 2.0 > 0.001) >= 50",
+      "),",
+      "predicted AS (",
+      "    SELECT r.tagsn,",
+      "        ROUND((r.slope * EXTRACT(EPOCH FROM now() + interval '1 hour') + r.intercept)::numeric, 2) AS predicted_1h,",
+      "        ROUND(r.r_squared::numeric, 3) AS r_squared,",
+      "        ROUND((r.slope * 3600)::numeric, 4) AS slope_per_hour",
+      "    FROM regression r",
+      "    WHERE ABS(r.r_squared) > 0.3",
+      ")",
+      "SELECT",
+      "    ti.sitename, ti.facilitytype, ti.datainfo,",
+      "    ROUND(b.mean_30d::numeric, 2) AS mean_30d,",
+      "    p.predicted_1h,",
+      "    p.slope_per_hour,",
+      "    CASE",
+      "        WHEN b.stddev_30d > 0.001",
+      "            THEN ROUND(((p.predicted_1h - b.mean_30d) / b.stddev_30d)::numeric, 2)",
+      "        ELSE 0",
+      "    END AS predicted_z,",
+      "    p.r_squared AS confidence",
+      "FROM predicted p",
+      "JOIN baseline_30d b ON p.tagsn = b.tagsn",
+      "JOIN tb_tag_info ti ON p.tagsn = ti.tagsn",
+      "WHERE b.stddev_30d > 0.001",
+      "    AND ABS((p.predicted_1h - b.mean_30d) / b.stddev_30d) >= 2.0",
+      "ORDER BY ABS((p.predicted_1h - b.mean_30d) / b.stddev_30d) DESC"
+    ],
+    "answer_template": {
+      "summary": "■ {anomaly_scope} 1시간 후 위험 예측 분석 결과입니다. (24시간 선형 회귀 기반)",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "이상 예측 {predict_error_count}건, 주의 예측 {predict_warn_count}건"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_predict_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "분석 기법 안내",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "24시간 데이터의 선형 회귀(regr_slope)로 1시간 후 값을 예측합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "예측값이 30일 평균 대비 Z-Score ≥ 2.0인 센서만 표시합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "신뢰도(R²): 0.7 이상=높음, 0.5 이상=보통, 그 외=낮음"
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "시간대 이상 패턴 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "이상 이력 보여줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["sitename", "facilitytype", "datainfo", "mean_30d", "predicted_1h", "slope_per_hour", "predicted_z", "confidence"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_COMPARE",
+    "questions": [
+      "배수지 이상 비교해줘",
+      "가압장 시설간 이상 비교",
+      "시설별 이상 현황 비교해줘",
+      "배수지 건강도 비교",
+      "시설간 센서 이상 비교 분석"
+    ],
+    "sql": [
+      "WITH raw_30d AS (",
+      "    SELECT c.tagsn, (c.min_val + c.max_val) / 2.0 AS approx_avg",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    WHERE c.bucket >= now() - interval '30 days'",
+      "),",
+      "stats_30d AS (",
+      "    SELECT tagsn,",
+      "        AVG(approx_avg) FILTER (WHERE approx_avg > 0.001) AS mean_30d,",
+      "        STDDEV_POP(approx_avg) FILTER (WHERE approx_avg > 0.001) AS stddev_30d",
+      "    FROM raw_30d",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE approx_avg > 0.001) >= 50",
+      "),",
+      "latest AS (",
+      "    SELECT DISTINCT ON (tagsn)",
+      "        tagsn, (min_val + max_val) / 2.0 AS current_val",
+      "    FROM cagg_5min_raw_stats_ai",
+      "    WHERE bucket >= now() - interval '1 hour'",
+      "    ORDER BY tagsn, bucket DESC",
+      "),",
+      "tag_z AS (",
+      "    SELECT l.tagsn,",
+      "        CASE",
+      "            WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "            WHEN s.stddev_30d > 0.001",
+      "                THEN (l.current_val - s.mean_30d) / s.stddev_30d",
+      "            ELSE 0",
+      "        END AS z_score",
+      "    FROM latest l",
+      "    JOIN stats_30d s ON l.tagsn = s.tagsn",
+      ")",
+      "SELECT",
+      "    ti.sitename,",
+      "    ti.facilitytype,",
+      "    COUNT(*) AS total_sensors,",
+      "    COUNT(*) FILTER (WHERE ABS(tz.z_score) >= 3.0) AS error_count,",
+      "    COUNT(*) FILTER (WHERE ABS(tz.z_score) >= 2.0 AND ABS(tz.z_score) < 3.0) AS warn_count,",
+      "    COUNT(*) FILTER (WHERE ABS(tz.z_score) < 2.0) AS ok_count,",
+      "    ROUND(AVG(ABS(tz.z_score))::numeric, 2) AS avg_z_score,",
+      "    ROUND(MAX(ABS(tz.z_score))::numeric, 2) AS max_z_score",
+      "FROM tag_z tz",
+      "JOIN tb_tag_info ti ON tz.tagsn = ti.tagsn",
+      "WHERE ti.tagtype = 'Analog Input'",
+      "    AND ti.datainfo NOT LIKE '%적산%'",
+      "    AND ti.facilitytype = '{facilitytype}'",
+      "GROUP BY ti.sitename, ti.facilitytype",
+      "ORDER BY avg_z_score DESC"
+    ],
+    "answer_template": {
+      "summary": "■ {facilitytype} 시설간 이상 비교 결과입니다. (30일 기준 Z-Score 집계)",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "비교 대상: {compare_site_count}개 시설, 총 {compare_total_sensors}개 센서"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_compare_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "분석 기법 안내",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "시설별 Analog 센서의 Z-Score를 집계하여 건강도를 비교합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "평균 Z-Score가 높을수록 전반적 이탈이 큰 시설입니다."
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "가압장 시설간 이상 비교해줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "위험 예측해줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["sitename", "facilitytype", "total_sensors", "error_count", "warn_count", "ok_count", "avg_z_score", "max_z_score"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_PATTERN",
+    "questions": [
+      "시간대별 이상 패턴 보여줘",
+      "이상 패턴 분석해줘",
+      "시간대 패턴 확인해줘",
+      "현재 시간대 이상 센서는?",
+      "주기적 이상 패턴 분석"
+    ],
+    "sql": [
+      "WITH hourly_baseline AS (",
+      "    SELECT c.tagsn,",
+      "        EXTRACT(HOUR FROM c.bucket) AS hour_of_day,",
+      "        AVG((c.min_val + c.max_val) / 2.0) FILTER (WHERE (c.min_val + c.max_val) / 2.0 > 0.001) AS hour_avg,",
+      "        STDDEV_POP((c.min_val + c.max_val) / 2.0) FILTER (WHERE (c.min_val + c.max_val) / 2.0 > 0.001) AS hour_stddev,",
+      "        COUNT(*) FILTER (WHERE (c.min_val + c.max_val) / 2.0 > 0.001) AS sample_cnt",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    WHERE c.bucket >= now() - interval '30 days'",
+      "    GROUP BY c.tagsn, EXTRACT(HOUR FROM c.bucket)",
+      "    HAVING COUNT(*) FILTER (WHERE (c.min_val + c.max_val) / 2.0 > 0.001) >= 10",
+      "),",
+      "current_hour_data AS (",
+      "    SELECT c.tagsn,",
+      "        AVG((c.min_val + c.max_val) / 2.0) AS current_avg",
+      "    FROM cagg_5min_raw_stats_ai c",
+      "    WHERE c.bucket >= now() - interval '1 hour'",
+      "    GROUP BY c.tagsn",
+      ")",
+      "SELECT",
+      "    ti.sitename, ti.facilitytype, ti.datainfo,",
+      "    ROUND(ch.current_avg::numeric, 2) AS current_avg,",
+      "    ROUND(hb.hour_avg::numeric, 2) AS hour_avg_30d,",
+      "    CASE",
+      "        WHEN hb.hour_stddev > 0.001",
+      "            THEN ROUND(((ch.current_avg - hb.hour_avg) / hb.hour_stddev)::numeric, 2)",
+      "        ELSE 0",
+      "    END AS hour_z_score,",
+      "    CASE",
+      "        WHEN ABS(hb.hour_avg) > 0.001",
+      "            THEN ROUND((ABS(ch.current_avg - hb.hour_avg) / ABS(hb.hour_avg) * 100)::numeric, 1)",
+      "        ELSE 0",
+      "    END AS hour_deviation_pct,",
+      "    EXTRACT(HOUR FROM now())::int AS current_hour",
+      "FROM current_hour_data ch",
+      "JOIN hourly_baseline hb ON ch.tagsn = hb.tagsn",
+      "    AND hb.hour_of_day = EXTRACT(HOUR FROM now())",
+      "JOIN tb_tag_info ti ON ch.tagsn = ti.tagsn",
+      "WHERE ti.tagtype = 'Analog Input'",
+      "    AND ti.datainfo NOT LIKE '%적산%'",
+      "    {anomaly_facility_filter}",
+      "    AND hb.hour_stddev > 0.001",
+      "    AND ABS((ch.current_avg - hb.hour_avg) / hb.hour_stddev) >= 2.0",
+      "ORDER BY ABS((ch.current_avg - hb.hour_avg) / hb.hour_stddev) DESC"
+    ],
+    "answer_template": {
+      "summary": "■ {anomaly_scope} 현재 {current_hour}시 기준 시간대 이상 패턴 분석 결과입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "30일간 같은 시간대 평균 대비 이탈 센서: {pattern_anomaly_count}건"
+        },
+        {
+          "prefix": "",
+          "text": "{anomaly_pattern_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "분석 기법 안내",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "30일간 같은 시간대(현재 시각 기준)의 평균·표준편차로 이탈을 판정합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "일반 Z-Score와 달리 시간대별 특성을 반영하여 주/야간 패턴 차이를 보정합니다."
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "위험 예측해줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "배수지 시설간 이상 비교해줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["sitename", "facilitytype", "datainfo", "current_avg", "hour_avg_30d", "hour_deviation_pct", "hour_z_score", "current_hour"],
+    "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "LEAK_CUSUM_ANALYSIS",
+    "questions": [
+      "야간최소유량 누수추정 분석해줘",
+      "CUSUM 누수 분석해줘",
+      "누수추정 분석 결과를 보여줘",
+      "야간최소유량 누수 감지 분석",
+      "소블록 누수추정 분석해줘",
+      "누수 추이 분석해줘"
+    ],
+    "sql": "SELECT * FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', {from_ts}::date, {to_ts}::date)",
+    "answer_template": {
+      "summary": "■ {sitename} {facilitytype} 야간최소유량 CUSUM 누수추정 분석 결과입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "분석 기간: {from_ts} ~ {to_ts}, 분석 태그 수: {cusum_tag_count}개"
+        },
+        {
+          "prefix": "•",
+          "text": "누수 의심: <<error:{cusum_alarm_count}건>>, 주의: <<warn:{cusum_warn_count}건>>, 정상: <<ok:{cusum_ok_count}건>>"
+        },
+        {
+          "prefix": "",
+          "text": "{leak_cusum_detail_block}"
+        }
+      ],
+      "reference": {
+        "title": "CUSUM 분석 기법 안내",
+        "items": [
+          {
+            "prefix": "•",
+            "text": "CUSUM(누적합)은 야간최소유량의 미세한 증가 추세를 누적하여 감지합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "기준선(μ) 대비 허용치(k=0.5σ)를 초과하는 편차가 누적되면 누수 의심 신호입니다."
+          },
+          {
+            "prefix": "•",
+            "text": "임계값(h=4σ) 초과 시 '누수 의심', 3σ 초과 시 '주의'로 판정합니다."
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "{sitename} {facilitytype} 야간최소유량 트렌드 그래프를 보여줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "{sitename} {facilitytype} 야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "전체 이상 스캔해줘"
+          }
+        ]
+      }
+    },
+    "table_columns": ["sitename", "label", "baseline_mean", "current_trend", "cusum_value", "cusum_max", "threshold", "leak_status", "trend_slope"],
+    "graph_type": "table",
+    "table_type": "summary"
   }
 ]

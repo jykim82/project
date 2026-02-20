@@ -144,6 +144,21 @@ class QueryValidator:
                 missing.append("to_ts")
 
             if missing:
+                # facilitytype 누락 + sitename 확보 → 해당 시설의 실제 옵션 안내
+                if "facilitytype" in missing:
+                    _site = params.get("sitename")
+                    if _site and _site != "%%" and self._sitename_facility_map:
+                        _available = self._sitename_facility_map.get(_site)
+                        if _available and len(_available) >= 2:
+                            avail_str = "/".join(sorted(_available))
+                            return ValidationResult(
+                                is_valid=False,
+                                error_type="missing_facilitytype",
+                                message=f"'{_site}'의 시설 유형을 선택해 주세요: {avail_str}",
+                                hints=[f"{_site} {ft}" for ft in sorted(_available)],
+                                missing_params=["facilitytype"],
+                            )
+
                 # 첫 번째 누락 파라미터 기준으로 메시지 생성
                 error_type = self._missing_param_to_error_type(missing[0])
                 return ValidationResult(
@@ -156,9 +171,9 @@ class QueryValidator:
                     missing_params=missing,
                 )
 
-        # 4. sitename 존재 검증 (와일드카드 %% 는 전체 조회용이므로 스킵)
+        # 4. sitename 존재 검증 (와일드카드 %%/'전체' 는 전체 조회용이므로 스킵)
         sitename = params.get("sitename")
-        if sitename and sitename != "%%" and sitename not in self._sitenames:
+        if sitename and sitename not in ("%%", "전체") and sitename not in self._sitenames:
             msg = CORRECTION_TEMPLATES["unknown_sitename"].format(sitename=sitename)
             return ValidationResult(
                 is_valid=False,
