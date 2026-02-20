@@ -1393,6 +1393,137 @@ def build_correction_response(
     return response
 
 
+def compute_anomaly_zones(
+    rows: list,
+    columns: list,
+    region: str,
+    conn,
+) -> Optional[list]:
+    """
+    트렌드 데이터에서 Z-Score 기반 이상 구간을 추출한다.
+    cagg_5min_raw_stats_ai 30일 baseline으로 각 포인트를 평가하고
+    연속 이상 포인트를 구간(zone)으로 병합하여 반환한다.
+    """
+    if not rows or not columns:
+        return None
+
+    # 컬럼 인덱스 매핑
+    col_idx = {c: i for i, c in enumerate(columns)}
+    tagsn_i = col_idx.get("tagsn")
+    time_i = col_idx.get("log_time") or col_idx.get("time") or col_idx.get("timestamp")
+    val_i = col_idx.get("val") or col_idx.get("value")
+    label_i = col_idx.get("label") or col_idx.get("datadesc")
+    tagtype_i = col_idx.get("tagtype")
+
+    if tagsn_i is None or time_i is None or val_i is None:
+        return None
+
+    # 아날로그 태그만 수집 (digital 제외)
+    tag_data = {}  # tagsn → [(time_str, val)]
+    tag_labels = {}  # tagsn → label
+    for row in rows:
+        if tagtype_i is not None:
+            tt = str(row[tagtype_i] or "")
+            if "digital" in tt.lower():
+                continue
+        tsn = str(row[tagsn_i])
+        v = row[val_i]
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        t = str(row[time_i])
+        tag_data.setdefault(tsn, []).append((t, fv))
+        if label_i is not None and tsn not in tag_labels:
+            tag_labels[tsn] = str(row[label_i] or tsn)
+
+    if not tag_data:
+        return None
+
+    # 30일 baseline 조회 (cagg_5min_raw_stats_ai)
+    tagsn_list = list(tag_data.keys())
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT tagsn,
+                   AVG((min_val + max_val) / 2.0) AS mean_val,
+                   STDDEV((min_val + max_val) / 2.0) AS stddev_val
+            FROM cagg_5min_raw_stats_ai
+            WHERE region = %s
+              AND tagsn = ANY(%s)
+              AND bucket >= NOW() - INTERVAL '30 days'
+              AND (min_val + max_val) / 2.0 > 0.001
+            GROUP BY tagsn
+            HAVING COUNT(*) >= 50
+        """, (region, tagsn_list))
+        baseline = {str(r[0]): (float(r[1]), float(r[2])) for r in cur.fetchall() if r[2] and r[2] > 0}
+        cur.close()
+    except Exception as e:
+        logger.warning(f"Anomaly zone baseline query failed: {e}")
+        return None
+
+    if not baseline:
+        return None
+
+    # Z-Score 계산 + 연속 이상 포인트를 구간으로 병합
+    all_zones = []
+    for tsn, points in tag_data.items():
+        if tsn not in baseline:
+            continue
+        mean, stddev = baseline[tsn]
+        label = tag_labels.get(tsn, tsn)
+
+        anomaly_points = []
+        for t, v in points:
+            z = abs(v - mean) / stddev
+            if z >= 3.0:
+                anomaly_points.append((t, "error"))
+            elif z >= 2.0:
+                anomaly_points.append((t, "warn"))
+
+        if not anomaly_points:
+            continue
+
+        # 연속 포인트 병합
+        current = {"start": anomaly_points[0][0], "end": anomaly_points[0][0], "sev": anomaly_points[0][1]}
+        for i in range(1, len(anomaly_points)):
+            t, sev = anomaly_points[i]
+            # 바로 다음 포인트이면 병합 (인덱스 연속성)
+            prev_t = anomaly_points[i - 1][0]
+            # 5분 이내 간격이면 연속으로 간주
+            try:
+                from datetime import datetime
+                dt_prev = datetime.fromisoformat(prev_t.replace("Z", "+00:00") if "Z" in prev_t else prev_t)
+                dt_cur = datetime.fromisoformat(t.replace("Z", "+00:00") if "Z" in t else t)
+                gap_minutes = abs((dt_cur - dt_prev).total_seconds()) / 60
+            except Exception:
+                gap_minutes = 999
+
+            if gap_minutes <= 15:  # 15분 이내 → 연속 구간
+                current["end"] = t
+                if sev == "error":
+                    current["sev"] = "error"
+            else:
+                all_zones.append({
+                    "start_time": current["start"],
+                    "end_time": current["end"],
+                    "severity": current["sev"],
+                    "tag_name": label,
+                })
+                current = {"start": t, "end": t, "sev": sev}
+
+        all_zones.append({
+            "start_time": current["start"],
+            "end_time": current["end"],
+            "severity": current["sev"],
+            "tag_name": label,
+        })
+
+    return all_zones if all_zones else None
+
+
 def build_success_response(
     intent: str,
     answer: dict,
@@ -1440,6 +1571,8 @@ def build_success_response(
         response["stddev_stats"] = kwargs["stddev_stats"]
     if kwargs.get("cusum_chart_data"):
         response["cusum_chart_data"] = kwargs["cusum_chart_data"]
+    if kwargs.get("anomaly_zones"):
+        response["anomaly_zones"] = kwargs["anomaly_zones"]
     return response
 
 
@@ -1649,16 +1782,32 @@ def build_level_detail_block(rows: list, columns: list) -> list:
     fn_reservoir_level_summary() 다중 행을 개별 수위 항목 리스트로 조립한다.
     반환 컬럼: log_time, out_sitename, out_facilitytype, out_datainfo,
               avg_latest, latest_val, avg_month, avg_year, unit
-    반환: [{"prefix": "-", "text": "1지 수위: 3.45m"}, ...]
     """
     items = []
     for row in rows:
         row_dict = dict(zip(columns, row))
         datainfo = row_dict.get("out_datainfo", "")
         latest_val = row_dict.get("latest_val")
+        avg_month = row_dict.get("avg_month")
         unit = row_dict.get("unit", "")
-        if latest_val is not None:
-            items.append({"prefix": "-", "text": f"{datainfo}: {latest_val}{unit}"})
+        if latest_val is None:
+            continue
+        # 월평균 대비 편차 기반 마커
+        marker_text = f"{latest_val}{unit}"
+        try:
+            lv = float(latest_val)
+            am = float(avg_month) if avg_month is not None else None
+            if am and am > 0:
+                dev_pct = abs(lv - am) / am * 100
+                if dev_pct >= 30:
+                    marker_text = f"<<error:{latest_val}{unit}>> (월평균 대비 {dev_pct:+.0f}%)"
+                elif dev_pct >= 15:
+                    marker_text = f"<<warn:{latest_val}{unit}>> (월평균 대비 {dev_pct:+.0f}%)"
+                else:
+                    marker_text = f"<<ok:{latest_val}{unit}>>"
+        except (ValueError, TypeError):
+            pass
+        items.append({"prefix": "-", "text": f"{datainfo}: {marker_text}"})
     return items
 
 
@@ -1666,7 +1815,6 @@ def build_today_flow_detail_block(rows: list, columns: list) -> list:
     """
     fn_today_outflow() 다중 행을 금일 적산 항목 리스트로 조립한다.
     반환 컬럼: sitename, facilitytype, datainfo, unit, today_outflow
-    반환: [{"prefix": "-", "text": "유출적산: 1234.5m3"}, ...]
     """
     items = []
     for row in rows:
@@ -1674,8 +1822,17 @@ def build_today_flow_detail_block(rows: list, columns: list) -> list:
         datainfo = row_dict.get("datainfo", "")
         today_outflow = row_dict.get("today_outflow")
         unit = row_dict.get("unit", "")
-        if today_outflow is not None:
-            items.append({"prefix": "-", "text": f"{datainfo}: {today_outflow}{unit}"})
+        if today_outflow is None:
+            continue
+        try:
+            val = float(today_outflow)
+            if val == 0:
+                val_text = f"<<warn:0{unit}>>"
+            else:
+                val_text = f"<<ok:{today_outflow}{unit}>>"
+        except (ValueError, TypeError):
+            val_text = f"{today_outflow}{unit}"
+        items.append({"prefix": "-", "text": f"{datainfo}: {val_text}"})
     return items
 
 
@@ -1683,7 +1840,6 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
     """
     fn_today_outflow_all() 다중 행을 전체 배수지 유출 현황 항목 리스트로 조립한다.
     반환 컬럼: result_sitename, result_facilitytype, result_today_outflow, result_is_total
-    반환: [{"prefix": "-", "text": "신평 배수지: 1234.5㎥"}, ...]
     """
     items = []
     for row in rows:
@@ -1694,8 +1850,17 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
         is_total = row_dict.get("result_is_total", 0)
         if is_total == 1:
             continue  # 합계 행은 별도 처리 (total_outflow)
-        if outflow is not None:
-            items.append({"prefix": "-", "text": f"{sitename} {facilitytype}: {outflow}㎥"})
+        if outflow is None:
+            continue
+        try:
+            val = float(outflow)
+            if val == 0:
+                val_text = f"<<error:0㎥>>"
+            else:
+                val_text = f"<<ok:{outflow}㎥>>"
+        except (ValueError, TypeError):
+            val_text = f"{outflow}㎥"
+        items.append({"prefix": "-", "text": f"{sitename} {facilitytype}: {val_text}"})
     return items
 
 
@@ -1718,6 +1883,21 @@ def build_alarm_list_block(rows: list, columns: list) -> list:
     return items
 
 
+def _format_latest_value(datadesc: str, val: Any) -> str:
+    """최신값을 datadesc 기반으로 시맨틱 마커 포맷팅한다."""
+    _DIGITAL_KEYWORDS = ("밸브", "펌프", "FAULT", "CLOSE", "OPEN", "자동")
+    is_digital = any(kw in datadesc for kw in _DIGITAL_KEYWORDS)
+    if is_digital:
+        try:
+            v = float(val)
+            if v >= 1:
+                return "<<ok:가동>>"
+            return "<<warn:정지>>"
+        except (ValueError, TypeError):
+            return wrap_status_marker(str(val))
+    return str(val)
+
+
 def build_latest_value_list_block(rows: list, columns: list) -> list:
     """
     FACILITY_TAG_LATEST_VALUE 다중 행을 최신값 리스트로 조립한다.
@@ -1730,9 +1910,10 @@ def build_latest_value_list_block(rows: list, columns: list) -> list:
         latest_val = row_dict.get("latest_val", "")
         latest_time = row_dict.get("latest_time", "")
         if datadesc and latest_val is not None:
+            formatted_val = _format_latest_value(datadesc, latest_val)
             items.append({
                 "prefix": "-",
-                "text": f"{datadesc}: {latest_val} ({latest_time})"
+                "text": f"{datadesc}: {formatted_val} ({latest_time})"
             })
     return items
 
@@ -1976,6 +2157,15 @@ def build_avg_usage_detail_block(rows: list, columns: list) -> list:
     return items
 
 
+def _mark_equipment_status(row: dict) -> dict:
+    """설비 행의 status 필드에 시맨틱 마커를 적용한다."""
+    _STATUS_KEYS = ("status", "상태", "운영상태", "status_code")
+    for key in _STATUS_KEYS:
+        if key in row and row[key]:
+            row[key] = wrap_status_marker(str(row[key]))
+    return row
+
+
 def build_equipment_table(meta: Any) -> list:
     """
     meta JSONB를 설비현황 테이블 데이터로 변환한다.
@@ -2003,15 +2193,15 @@ def build_equipment_table(meta: Any) -> list:
                     if isinstance(item, dict):
                         row = {"category": category}
                         row.update(item)
-                        result.append(row)
+                        result.append(_mark_equipment_status(row))
             elif isinstance(items, dict):
                 row = {"category": category}
                 row.update(items)
-                result.append(row)
+                result.append(_mark_equipment_status(row))
     elif isinstance(meta, list):
         for item in meta:
             if isinstance(item, dict):
-                result.append(item)
+                result.append(_mark_equipment_status(item))
 
     return result
 
@@ -2148,6 +2338,17 @@ def process_sql_result(
         if detail_items:
             data["ongoing_alarm_detail_block"] = _EXPAND_MARKER
             data["_detail_blocks"]["ongoing_alarm_detail_block"] = detail_items
+
+        # 테이블 데이터 alarm_msg에도 마커 적용 (DataTable 셀 색상용)
+        if columns and "alarm_msg" in columns:
+            msg_idx = columns.index("alarm_msg")
+            rows[:] = [
+                tuple(
+                    _alarm_msg_marker(str(v)) if i == msg_idx and v else v
+                    for i, v in enumerate(row)
+                )
+                for row in rows
+            ]
 
     # -------------------------------------------------
     # 통신 구성: 홉 상세 데이터 조립
@@ -2345,6 +2546,27 @@ def process_sql_result(
         data["abnormal_summary_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["abnormal_summary_block"] = \
             build_abnormal_summary_detail_block(rows, columns)
+
+    # -------------------------------------------------
+    # 야간최소유량 현황: 월평균 대비 편차 시맨틱 마커
+    # -------------------------------------------------
+    if intent == "NIGHT_MIN_FLOW_STATUS" and rows:
+        rd = dict(zip(columns, rows[0]))
+        try:
+            curr = float(rd.get("current_val") or 0)
+            avg_m = float(rd.get("avg_month") or 0)
+            if abs(avg_m) > 0.001:
+                dev_pct = (curr - avg_m) / abs(avg_m) * 100
+                if abs(dev_pct) >= 50:
+                    data["nmf_status"] = f"<<error:월평균 대비 {dev_pct:+.0f}%>>"
+                elif abs(dev_pct) >= 20:
+                    data["nmf_status"] = f"<<warn:월평균 대비 {dev_pct:+.0f}%>>"
+                else:
+                    data["nmf_status"] = "<<ok:정상 범위>>"
+            else:
+                data["nmf_status"] = ""
+        except (ValueError, TypeError):
+            data["nmf_status"] = ""
 
     # -------------------------------------------------
     # 설비현황 (배수지 / 가압장 / 감압시설 공통)
@@ -3170,6 +3392,16 @@ async def ask(request: AskRequest):
                 "leak_status": cr["leak_status"],
             }
 
+    # 트렌드 이상구간 강조: Z-Score 기반 anomaly zones
+    _anomaly_zones = None
+    if (graph_type == "plot"
+            and intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND")
+            and rows and columns):
+        try:
+            _anomaly_zones = compute_anomaly_zones(rows, columns, region, conn)
+        except Exception as e:
+            logger.warning(f"Anomaly zone computation failed: {e}")
+
     return build_success_response(
         intent=intent,
         answer=rendered_answer,
@@ -3185,6 +3417,7 @@ async def ask(request: AskRequest):
         plot_type=_plot_type,
         stddev_stats=_stddev_stats,
         cusum_chart_data=_cusum_chart_data,
+        anomaly_zones=_anomaly_zones,
     )
 
 
@@ -3941,6 +4174,16 @@ async def ask_stream(request: AskRequest):
                     "leak_status": cr["leak_status"],
                 }
 
+        # 트렌드 이상구간 강조: Z-Score 기반 anomaly zones
+        _anomaly_zones = None
+        if (graph_type == "plot"
+                and intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND")
+                and rows and columns):
+            try:
+                _anomaly_zones = compute_anomaly_zones(rows, columns, region, conn)
+            except Exception as e:
+                logger.warning(f"Anomaly zone computation failed (SSE): {e}")
+
         final_response = build_success_response(
             intent=intent,
             answer=rendered_answer,
@@ -3956,6 +4199,7 @@ async def ask_stream(request: AskRequest):
             plot_type=_plot_type,
             stddev_stats=_stddev_stats,
             cusum_chart_data=_cusum_chart_data,
+            anomaly_zones=_anomaly_zones,
         )
 
         yield _sse_event("result", final_response)
@@ -4384,6 +4628,163 @@ async def delete_facility_file(facility_file_id: int):
 
 
 # =============================================================================
+# 모니터링 대시보드 API
+# =============================================================================
+
+
+@app.get("/monitoring/dashboard")
+async def get_monitoring_dashboard():
+    """대시보드 요약 정보: 시설 카운트, 배수지 수위, 최근 알람, 7일 추세"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Q1: 시설 카운트 + 진행중 알람
+        cur.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM tb_service_reservoir_info) AS reservoir_cnt,
+                (SELECT COUNT(*) FROM tb_service_booster_station_info) AS booster_cnt,
+                (SELECT COUNT(*) FROM tb_pressure_reducing_facility_info) AS pressure_cnt,
+                (SELECT COUNT(*) FROM tb_block_info) AS block_cnt,
+                (SELECT COUNT(*) FROM tb_tag_info) AS tag_cnt,
+                (SELECT COUNT(*) FROM tb_equipment_alarm_report
+                 WHERE alarm_status = '진행중') AS ongoing_cnt,
+                (SELECT COUNT(*) FROM tb_equipment_alarm_report
+                 WHERE alarm_status = '진행중' AND alarm_severity = '경고') AS critical_cnt,
+                (SELECT COUNT(*) FROM tb_equipment_alarm_report
+                 WHERE alarm_status = '진행중' AND alarm_severity = '주의') AS warning_cnt
+        """)
+        r = cur.fetchone()
+        total_facility = (r[0] or 0) + (r[1] or 0) + (r[2] or 0) + (r[3] or 0)
+        summary_cards = [
+            {
+                "title": "총 시설수",
+                "value": str(total_facility),
+                "description": f"배수지 {r[0] or 0} / 가압장 {r[1] or 0} / 감압 {r[2] or 0} / 블록 {r[3] or 0}",
+            },
+            {
+                "title": "진행중 알람",
+                "value": str(r[5] or 0),
+                "description": f"경고 {r[6] or 0} / 주의 {r[7] or 0}",
+            },
+            {
+                "title": "센서 태그",
+                "value": str(r[4] or 0),
+                "description": "전체 등록 태그",
+            },
+            {
+                "title": "시스템 상태",
+                "value": "정상",
+                "description": "API 응답 정상",
+            },
+        ]
+
+        # Q2: 배수지 수위 (뷰 활용)
+        cur.execute("""
+            SELECT sitename,
+                   COALESCE(current_water_level, 0),
+                   COALESCE(alarm_high_water_level, 5.0)
+            FROM v_reservoir_info_status
+            ORDER BY sitename
+        """)
+        reservoir_summaries = [
+            {"name": row[0], "currentLevel": float(row[1]), "maxCapacity": float(row[2])}
+            for row in cur.fetchall()
+        ]
+
+        # Q3: 최근 알람 (24시간, 10건)
+        cur.execute("""
+            SELECT ar.tagsn,
+                   TO_CHAR(ar.alarm_start_time, 'YYYY-MM-DD HH24:MI') AS time,
+                   COALESCE(ti.sitename, '알 수 없음') AS facility,
+                   COALESCE(ar.alarm_severity, '정상') AS level,
+                   COALESCE(ar.alarm_msg, ar.alarm_category || ' 알람') AS message
+            FROM tb_equipment_alarm_report ar
+            LEFT JOIN tb_tag_info ti ON ar.tagsn = ti.tagsn
+            WHERE ar.alarm_start_time >= NOW() - INTERVAL '24 hours'
+            ORDER BY ar.alarm_start_time DESC
+            LIMIT 10
+        """)
+        recent_alarms = [
+            {"id": i + 1, "time": row[1], "facility": row[2], "level": row[3], "message": row[4]}
+            for i, row in enumerate(cur.fetchall())
+        ]
+
+        # Q4: 7일 알람 추세
+        cur.execute("""
+            SELECT alarm_start_time::date AS dt,
+                   COALESCE(alarm_severity, '정상') AS severity,
+                   COUNT(*) AS cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= NOW() - INTERVAL '7 days'
+            GROUP BY 1, 2
+            ORDER BY 1
+        """)
+        alarm_trend = [
+            {"date": row[0].isoformat(), "severity": row[1], "count": row[2]}
+            for row in cur.fetchall()
+        ]
+
+        cur.close()
+        return {
+            "summaryCards": summary_cards,
+            "reservoirSummaries": reservoir_summaries,
+            "recentAlarms": recent_alarms,
+            "alarmTrend": alarm_trend,
+        }
+    except psycopg2.Error as e:
+        logger.error(f"대시보드 조회 실패: {e}")
+        return {"summaryCards": [], "reservoirSummaries": [], "recentAlarms": [], "alarmTrend": []}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/monitoring/alarm-notifications")
+async def get_alarm_notifications():
+    """헤더 알람 벨용: 진행중 알람 건수 + 최근 5건"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT COUNT(*) FROM tb_equipment_alarm_report
+            WHERE alarm_status = '진행중'
+        """)
+        ongoing_count = cur.fetchone()[0] or 0
+
+        cur.execute("""
+            SELECT ar.tagsn,
+                   ar.alarm_start_time,
+                   COALESCE(ti.sitename, '알 수 없음') AS sitename,
+                   COALESCE(ti.facilitytype, '') AS facilitytype,
+                   COALESCE(ar.alarm_severity, '정상') AS severity,
+                   COALESCE(ar.alarm_msg, ar.alarm_category || ' 알람') AS message
+            FROM tb_equipment_alarm_report ar
+            LEFT JOIN tb_tag_info ti ON ar.tagsn = ti.tagsn
+            WHERE ar.alarm_status = '진행중'
+            ORDER BY ar.alarm_start_time DESC
+            LIMIT 5
+        """)
+        cols = ["tagsn", "alarm_start_time", "sitename", "facilitytype", "severity", "message"]
+        items = [dict(zip(cols, row)) for row in cur.fetchall()]
+        for item in items:
+            if item["alarm_start_time"]:
+                item["alarm_start_time"] = item["alarm_start_time"].isoformat()
+
+        cur.close()
+        return {"status": "OK", "data": {"ongoingCount": ongoing_count, "items": items}}
+    except psycopg2.Error as e:
+        logger.error(f"알람 알림 조회 실패: {e}")
+        return {"status": "OK", "data": {"ongoingCount": 0, "items": []}}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # 네트워크 모니터링 API
 # =============================================================================
 
@@ -4460,7 +4861,9 @@ async def get_network_topology():
                 e.sitename,
                 n.ip_address,
                 ns.status_code,
-                (n.ip_address IS NOT NULL) AS has_ip
+                (n.ip_address IS NOT NULL) AS has_ip,
+                ns.rtt_ms,
+                TO_CHAR(ns.check_time, 'HH24:MI:SS') AS check_time
             FROM tb_equipment_info e
             LEFT JOIN tb_network_info n ON e.equipment_id = n.equipment_id
             LEFT JOIN tb_network_status ns
@@ -4471,8 +4874,12 @@ async def get_network_topology():
         node_cols = [
             "id", "name", "category", "equipmenttype",
             "sitename", "ip_address", "status", "has_ip",
+            "rtt_ms", "check_time",
         ]
         nodes = [dict(zip(node_cols, row)) for row in cur.fetchall()]
+        for node in nodes:
+            if node.get("rtt_ms") is not None:
+                node["rtt_ms"] = float(node["rtt_ms"])
 
         # 엣지: 연결 관계
         cur.execute("""

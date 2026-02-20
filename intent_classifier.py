@@ -215,7 +215,12 @@ class IntentClassifier:
 
         # 키워드 단축: "트렌드" 카테고리
         if category == "트렌드":
-            if "함께" in question or "혼합" in question:
+            # 아날로그+디지털 키워드 동시 존재 → MIXED_TREND 자동 감지
+            _analog_kws = ["수위", "유량", "압력"]
+            _digital_kws = ["밸브", "펌프"]
+            _has_analog = any(kw in question for kw in _analog_kws)
+            _has_digital = any(kw in question for kw in _digital_kws)
+            if (_has_analog and _has_digital) or "함께" in question or "혼합" in question:
                 return "FACILITY_MIXED_TREND", "keyword"
             return "FACILITY_TREND", "keyword"
 
