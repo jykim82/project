@@ -12,7 +12,7 @@ import threading
 
 # Ollama 서버 설정
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "phi4-mini:3.8b")
 OLLAMA_TIMEOUT = 30  # seconds
 
 # 세션 설정

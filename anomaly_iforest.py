@@ -26,14 +26,18 @@ logger = logging.getLogger(__name__)
 # ── 학습 설정 ────────────────────────────────────────────
 RETRAIN_INTERVAL_HOURS = 24
 MIN_SAMPLES_PER_TAG = 100    # 학습에 필요한 최소 샘플 수
-CONTAMINATION = 0.05          # 이상치 비율 가정 (5%)
+CONTAMINATION = 0.05          # 이상치 비율 가정 (5%, 기본값)
 N_ESTIMATORS = 100
 RANDOM_STATE = 42
 
-# 학습용 SQL: 30일 cagg + Analog Input (적산 제외)
+# 그룹별 contamination (고부하-불안정은 완화, 저부하-불안정은 강화)
+GROUP_CONTAMINATION = {"A": 0.03, "B": 0.05, "C": 0.08, "D": 0.05}
+
+# 학습용 SQL: 30일 cagg + Analog Input (적산 제외) + 사이트 매핑
 _TRAIN_SQL = """
 SELECT c.tagsn, c.bucket,
-    (c.min_val + c.max_val) / 2.0 AS approx_avg
+    (c.min_val + c.max_val) / 2.0 AS approx_avg,
+    ti.sitename, ti.facilitytype
 FROM cagg_5min_raw_stats_ai c
 JOIN tb_tag_info ti ON c.tagsn = ti.tagsn
 WHERE c.bucket >= now() - interval '30 days'
@@ -62,16 +66,20 @@ class IForestManager:
     def is_trained(self) -> bool:
         return self.last_trained is not None and len(self.models) > 0
 
-    def ensure_trained(self, get_connection_fn) -> None:
+    def ensure_trained(self, get_connection_fn,
+                        site_profiles: Optional[dict] = None) -> None:
         """모델이 없거나 재학습 주기가 지나면 학습을 실행한다."""
         if not self._needs_retrain():
             return
         if self._is_training:
             return
-        self.train_all(get_connection_fn)
+        self.train_all(get_connection_fn, site_profiles=site_profiles)
 
-    def train_all(self, get_connection_fn) -> None:
-        """30일 cagg 데이터로 전 Analog 태그 모델을 학습한다."""
+    def train_all(self, get_connection_fn,
+                  site_profiles: Optional[dict] = None) -> None:
+        """30일 cagg 데이터로 전 Analog 태그 모델을 학습한다.
+        site_profiles가 제공되면 태그 소속 그룹의 contamination을 적용한다.
+        """
         with self._lock:
             if self._is_training:
                 return
@@ -87,14 +95,16 @@ class IForestManager:
             conn.close()
             logger.info(f"IForest 학습 데이터: {len(rows)}행 로드")
 
-            # 태그별로 시계열 그룹핑
+            # 태그별로 시계열 그룹핑 + 사이트 매핑
             tag_data: dict[str, list] = {}
-            for tagsn, bucket, avg_val in rows:
+            tag_site: dict[str, tuple] = {}  # tagsn → (sitename, facilitytype)
+            for tagsn, bucket, avg_val, sitename, facilitytype in rows:
                 if tagsn not in tag_data:
                     tag_data[tagsn] = []
+                    tag_site[tagsn] = (sitename or "", facilitytype or "")
                 tag_data[tagsn].append((bucket, float(avg_val or 0)))
 
-            # 태그별 모델 학습
+            # 태그별 모델 학습 (그룹별 contamination 적용)
             new_models = {}
             skipped = 0
             for tagsn, data_points in tag_data.items():
@@ -103,8 +113,18 @@ class IForestManager:
                     skipped += 1
                     continue
 
+                # 그룹별 contamination 결정
+                contam = CONTAMINATION
+                if site_profiles:
+                    site_key = tag_site.get(tagsn)
+                    if site_key:
+                        profile = site_profiles.get(site_key)
+                        if profile:
+                            group = profile.get("site_group", "B")
+                            contam = GROUP_CONTAMINATION.get(group, CONTAMINATION)
+
                 model = IsolationForest(
-                    contamination=CONTAMINATION,
+                    contamination=contam,
                     n_estimators=N_ESTIMATORS,
                     random_state=RANDOM_STATE,
                     n_jobs=1,

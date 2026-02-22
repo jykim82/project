@@ -1,9 +1,10 @@
 """
 intent_classifier.py
-2단계 SLM Intent 분류기
+3단계 SLM Intent 분류기
 
-Stage 1: 시설 유형 분류 (키워드 단축 + SLM 폴백)
-Stage 2: 카테고리 내 구체적 INTENT 분류 (SLM)
+Stage 0: 키워드 규칙 (프로그래밍적 단축 — ~70% 즉시 확정)
+Stage 1: 인메모리 벡터 유사도 검색 (numpy cosine — ~1ms)
+Stage 2: SLM 분류 (Phi-4-mini — 폴백)
 최종 폴백: 기존 match_intent() 키워드 매칭
 """
 
@@ -13,6 +14,12 @@ from typing import Optional
 
 from ollama_client import OllamaClient, OllamaConnectionError
 from intent_index import IntentIndex
+from intent_embeddings import (
+    IntentEmbeddingIndex,
+    embed_query,
+    VECTOR_THRESHOLD,
+    VECTOR_CANDIDATE_THRESHOLD,
+)
 from slm_config import ENABLE_KEYWORD_FALLBACK
 
 logger = logging.getLogger(__name__)
@@ -53,9 +60,15 @@ _STAGE2_PROMPT_TEMPLATE = (
 
 
 class IntentClassifier:
-    def __init__(self, ollama: OllamaClient, index: IntentIndex):
+    def __init__(
+        self,
+        ollama: OllamaClient,
+        index: IntentIndex,
+        embedding_index: Optional[IntentEmbeddingIndex] = None,
+    ):
         self._ollama = ollama
         self._index = index
+        self._embedding_index = embedding_index
 
     def classify(
         self,
@@ -65,42 +78,88 @@ class IntentClassifier:
         """
         질문을 분류하여 결과를 반환한다.
 
+        분류 순서:
+        1. 키워드 규칙 (Stage 0: _classify_category + _classify_intent)
+        2. 벡터 유사도 검색 (Stage 1: cosine ≥ 0.75 즉시 확정)
+        3. SLM 분류 (Stage 2: Phi-4-mini 폴백)
+
         반환:
         {
             "intent_name": str or None,
-            "category": str,           # "배수지", "블록", "범위외" 등
-            "intent_def": dict or None, # example3.json 원본
-            "method": str,              # "keyword", "slm", "fallback"
+            "category": str,
+            "intent_def": dict or None,
+            "method": str,  # "keyword", "vector", "slm", "fallback"
+            "vector_score": float or None,  # 벡터 검색 점수 (있을 때만)
+            "vector_candidates": list or None,  # 벡터 후보 목록 (SLM 폴백 시)
         }
         """
-        # Stage 1: 시설 유형 분류
-        category, stage1_method = self._classify_category(question)
+        # Stage 0: 키워드 기반 카테고리 + 인텐트 분류
+        category, stage0_method = self._classify_category(question)
 
+        # 벡터 후보 미리 조회 (사후 보정 UI용)
+        vector_candidates = self._get_vector_candidates(question)
+
+        def _with_candidates(result: dict) -> dict:
+            """확정된 인텐트를 제외한 벡터 후보를 결과에 첨부."""
+            chosen = result.get("intent_name")
+            alts = [c for c in vector_candidates if c["intent"] != chosen]
+            # 중복 인텐트 제거 (같은 인텐트의 다른 질문이 여러 개일 수 있음)
+            seen = set()
+            unique_alts = []
+            for c in alts:
+                if c["intent"] not in seen:
+                    seen.add(c["intent"])
+                    unique_alts.append(c)
+            result["intent_candidates"] = unique_alts[:3]
+            return result
+
+        # 키워드로 인텐트 확정 시도 (범위외가 아닌 경우에만)
+        intent_name = None
+        if category != "범위외":
+            intent_name, keyword_method = self._classify_intent(question, category)
+            if intent_name and keyword_method == "keyword":
+                intent_def = self._index.get_definition(intent_name)
+                if intent_def:
+                    return _with_candidates({
+                        "intent_name": intent_name,
+                        "category": category,
+                        "intent_def": intent_def,
+                        "method": "keyword",
+                    })
+
+        # Stage 1: 벡터 유사도 검색 (범위외 포함)
+        vector_result = self._classify_by_vector(question)
+        if vector_result:
+            return _with_candidates(vector_result)
+
+        # 범위외 판정 후 벡터도 미확정이면 종료
         if category == "범위외":
-            return {
+            return _with_candidates({
                 "intent_name": None,
                 "category": "범위외",
                 "intent_def": None,
-                "method": stage1_method,
-            }
+                "method": stage0_method,
+            })
 
-        # Stage 2: 구체적 INTENT 분류
-        intent_name, stage2_method = self._classify_intent(question, category)
-        slm_failed = (stage2_method == "slm_error")
+        # Stage 2: SLM 분류 (기존 로직)
+        if not intent_name:
+            intent_name, stage2_method = self._classify_intent_slm(question, category)
+            slm_failed = (stage2_method == "slm_error")
+        else:
+            stage2_method = "keyword"
+            slm_failed = False
 
         if intent_name:
             intent_def = self._index.get_definition(intent_name)
             if intent_def:
-                return {
+                return _with_candidates({
                     "intent_name": intent_name,
                     "category": category,
                     "intent_def": intent_def,
                     "method": stage2_method,
-                }
+                })
 
         # Stage 2 실패 시: 다른 카테고리도 시도
-        # - "공통"이면 시설별 카테고리 시도
-        # - 시설별 카테고리이면 "공통" 카테고리 시도
         fallback_categories = []
         if category == "공통":
             fallback_categories = [c for c in self._index.get_categories() if c != "공통"]
@@ -108,35 +167,127 @@ class IntentClassifier:
             fallback_categories = ["공통"]
 
         for alt_category in fallback_categories:
-            alt_name, alt_method = self._classify_intent(question, alt_category, skip_slm=slm_failed)
+            alt_name, alt_method = self._classify_intent(question, alt_category, skip_slm=True)
             if alt_name:
                 alt_def = self._index.get_definition(alt_name)
                 if alt_def:
-                    return {
+                    return _with_candidates({
                         "intent_name": alt_name,
                         "category": alt_category,
                         "intent_def": alt_def,
                         "method": alt_method,
-                    }
+                    })
 
         # 최종 폴백: 기존 키워드 매칭
         if ENABLE_KEYWORD_FALLBACK and keyword_fallback_fn:
             logger.info("SLM 분류 실패 → 기존 키워드 매칭 폴백")
             fallback_def = keyword_fallback_fn(question)
             if fallback_def:
-                return {
+                return _with_candidates({
                     "intent_name": fallback_def.get("intent"),
                     "category": category,
                     "intent_def": fallback_def,
                     "method": "fallback",
-                }
+                })
 
-        return {
+        return _with_candidates({
             "intent_name": None,
             "category": category,
             "intent_def": None,
-            "method": stage1_method,
-        }
+            "method": stage0_method,
+        })
+
+    def _classify_by_vector(self, question: str) -> Optional[dict]:
+        """
+        Stage 1: 인메모리 벡터 유사도 검색.
+        cosine ≥ VECTOR_THRESHOLD(0.75) → 즉시 확정.
+        cosine ≥ VECTOR_CANDIDATE_THRESHOLD(0.60) → 벡터 후보 로깅 (SLM에 위임).
+        반환: 확정 시 분류 결과 dict, 미확정 시 None.
+        """
+        if not self._embedding_index or not self._embedding_index.ready:
+            return None
+
+        query_vec = embed_query(question)
+        if query_vec is None:
+            logger.warning("벡터 임베딩 실패 → SLM 폴백")
+            return None
+
+        results = self._embedding_index.search(query_vec, top_k=5)
+        if not results:
+            return None
+
+        top = results[0]
+        logger.info(
+            f"벡터 검색 top: intent={top['intent_name']}, "
+            f"score={top['score']:.4f}, matched_q='{top['question']}'"
+        )
+
+        if top["score"] >= VECTOR_THRESHOLD:
+            intent_def = self._index.get_definition(top["intent_name"])
+            if intent_def:
+                logger.info(
+                    f"벡터 확정: {top['intent_name']} "
+                    f"(score={top['score']:.4f} ≥ {VECTOR_THRESHOLD})"
+                )
+                return {
+                    "intent_name": top["intent_name"],
+                    "category": self._get_category_for_intent(top["intent_name"]),
+                    "intent_def": intent_def,
+                    "method": "vector",
+                    "vector_score": top["score"],
+                }
+
+        # 후보 로깅 (SLM 폴백 시 참고용)
+        candidates = [r for r in results if r["score"] >= VECTOR_CANDIDATE_THRESHOLD]
+        if candidates:
+            logger.info(
+                f"벡터 후보 ({len(candidates)}개): "
+                + ", ".join(
+                    f"{c['intent_name']}({c['score']:.3f})"
+                    for c in candidates[:3]
+                )
+            )
+
+        return None
+
+    def _get_vector_candidates(self, question: str) -> list[dict]:
+        """
+        벡터 검색으로 상위 후보 인텐트 목록을 반환한다 (사후 보정 UI용).
+        반환: [{"intent": str, "description": str, "score": float}, ...]
+        """
+        if not self._embedding_index or not self._embedding_index.ready:
+            return []
+
+        query_vec = embed_query(question)
+        if query_vec is None:
+            return []
+
+        results = self._embedding_index.search(query_vec, top_k=10)
+        candidates = []
+        seen_intents = set()
+        for r in results:
+            if r["score"] < VECTOR_CANDIDATE_THRESHOLD:
+                break
+            if r["intent_name"] in seen_intents:
+                continue
+            seen_intents.add(r["intent_name"])
+            summary = self._index.get_intent_summary(r["intent_name"])
+            desc = summary.get("description", r["intent_name"]) if summary else r["intent_name"]
+            candidates.append({
+                "intent": r["intent_name"],
+                "description": desc,
+                "score": r["score"],
+            })
+            if len(candidates) >= 5:
+                break
+        return candidates
+
+    def _get_category_for_intent(self, intent_name: str) -> str:
+        """인텐트명으로 카테고리를 역조회."""
+        summary = self._index.get_intent_summary(intent_name)
+        if summary:
+            return summary.get("category", "공통")
+        return "공통"
 
     def _classify_category(self, question: str) -> tuple:
         """
@@ -146,9 +297,11 @@ class IntentClassifier:
         우선순위: 공통 키워드 → 시설 키워드 → SLM
         "야간최소유량", "알람" 등 공통 INTENT 키워드가 시설명보다 우선한다.
         """
-        # "트렌드"/"트랜드"/"그래프"는 다른 공통 키워드보다 우선 (야간최소유량 트렌드 등)
-        if "트렌드" in question or "트랜드" in question or "그래프" in question:
-            logger.info("Stage1 키워드 매칭: '트렌드/그래프' → 트렌드")
+        # "트렌드"/"트랜드"/"그래프"/"추이"/"같이 보"는 다른 공통 키워드보다 우선
+        if ("트렌드" in question or "트랜드" in question or "그래프" in question
+                or "추이" in question
+                or "같이 보" in question or "함께 보" in question):
+            logger.info("Stage1 키워드 매칭: '트렌드/그래프/추이/같이' → 트렌드")
             return "트렌드", "keyword"
 
         # 공통 키워드 체크 (시설 키워드보다 우선)
@@ -220,7 +373,7 @@ class IntentClassifier:
             _digital_kws = ["밸브", "펌프"]
             _has_analog = any(kw in question for kw in _analog_kws)
             _has_digital = any(kw in question for kw in _digital_kws)
-            if (_has_analog and _has_digital) or "함께" in question or "혼합" in question:
+            if (_has_analog and _has_digital) or "함께" in question or "혼합" in question or "같이" in question:
                 return "FACILITY_MIXED_TREND", "keyword"
             return "FACILITY_TREND", "keyword"
 
@@ -257,12 +410,24 @@ class IntentClassifier:
             if "배수지" in question:
                 return "RESERVOIR_SYSTEM_DIAGRAM", "keyword"
 
+        # 키워드 단축: 초동대응 매뉴얼
+        if "초동대응" in question or "매뉴얼" in question:
+            if "가압장" in question:
+                return "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "BLOCK_INITIAL_RESPONSE_MANUAL", "keyword"
+            if "감압" in question:
+                return "PRESSURE_REDUCING_INITIAL_RESPONSE_MANUAL", "keyword"
+            # 배수지 또는 기본값
+            return "RESERVOIR_INITIAL_RESPONSE_MANUAL", "keyword"
+
         # 키워드 단축: 압력 현황
         if "압력" in question and ("현황" in question or "현항" in question):
             return "FACILITY_PRESSURE_STATUS", "keyword"
 
-        # 키워드 단축: 알람 누적건수 / TOP / 순서
-        if ("누적" in question or "순서" in question or "TOP" in question.upper()) and \
+        # 키워드 단축: 알람 누적건수 / TOP / 순서 / 다발 / 빈번
+        if ("누적" in question or "순서" in question or "TOP" in question.upper()
+                or "다발" in question or "빈번" in question) and \
            ("알람" in question or "경보" in question or "알림" in question):
             return "FACILITY_ALARM_TOP_COUNT", "keyword"
 
@@ -274,7 +439,7 @@ class IntentClassifier:
         _TAG_LATEST_EXCLUDE = [
             "현황", "현항", "헌팅", "표", "적산", "순시",
             "알람", "경보", "알림", "통신", "주소", "이상",
-            "결측", "표준편차", "밸브", "트렌드",
+            "결측", "표준편차", "밸브", "트렌드", "추이", "같이",
         ]
         if not any(ek in question for ek in _TAG_LATEST_EXCLUDE):
             for dkw in ["수위", "압력"]:
@@ -299,6 +464,9 @@ class IntentClassifier:
         # 이상감지 인텐트 ("이상" 없이도 매칭되는 키워드 우선)
         if any(kw in question for kw in ["위험 예측", "이상 예측", "센서 예측"]):
             return "ANOMALY_PREDICT", "keyword"
+        # 표준편차 분석 — 이상감지보다 우선 (질문에 "이상"+"표준편차" 동시 포함 시 표준편차 우선)
+        if "표준편차" in question:
+            return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
         # "고장"/"장애" 계열 — 일상 용어로 이상탐지 접근
         if any(kw in question for kw in ["고장 진단", "장애 진단", "고장 점검", "장애 점검"]):
             return "ANOMALY_SCAN_ALL", "keyword"
@@ -319,8 +487,6 @@ class IntentClassifier:
                 return "ANOMALY_PATTERN", "keyword"
             if any(kw in question for kw in ["설비", "현황"]):
                 return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
-        if "표준편차" in question:
-            return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
         if "진행중" in question or "진행 중" in question:
             return "ONGOING_ALARM_STATUS", "keyword"
 
@@ -334,14 +500,18 @@ class IntentClassifier:
         if "순시" in question and "유량" in question:
             return "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "keyword"
 
+        return None, "keyword"
+
+    def _classify_intent_slm(self, question: str, category: str) -> tuple:
+        """
+        Stage 2: SLM(Phi-4-mini)으로 인텐트 분류.
+        키워드 매칭 실패 + 벡터 검색 미확정 시 호출.
+        반환: (intent_name or None, method)
+        """
         intent_list_str = self._index.build_category_prompt_segment(category)
         if not intent_list_str:
-            return None, "keyword"
+            return None, "slm"
 
-        if skip_slm:
-            return None, "keyword"
-
-        # SLM 호출
         try:
             prompt = _STAGE2_PROMPT_TEMPLATE.format(
                 category=category,
@@ -352,7 +522,6 @@ class IntentClassifier:
             response = response.strip().strip('"').strip("'")
             logger.info(f"Stage2 SLM 응답: '{response}' (category={category})")
 
-            # 응답에서 INTENT 이름 추출
             all_names = self._index.get_all_intent_names()
             for name in all_names:
                 if name in response:

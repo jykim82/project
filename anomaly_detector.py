@@ -10,13 +10,22 @@ Z-Score + 방향전환횟수 기반 이상 감지 모듈 + CUSUM 누수추정
 
 import logging
 from collections import defaultdict
+from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Z-Score 판정 임계값 ──────────────────────────────────────
+# ── Z-Score 판정 임계값 (기본 = B그룹) ──────────────────────
 Z_THRESHOLD_ERROR = 3.0   # |Z| >= 3.0 → 이상
 Z_THRESHOLD_WARN = 2.0    # |Z| >= 2.0 → 주의
+
+# ── 그룹별 Z-Score 임계값 ──────────────────────────────────
+GROUP_THRESHOLDS = {
+    "A": {"warn": 3.0, "error": 4.0},  # 고부하-불안정: 완화
+    "B": {"warn": 2.0, "error": 3.0},  # 고부하-안정: 기본
+    "C": {"warn": 1.5, "error": 2.0},  # 저부하-불안정: 강화
+    "D": {"warn": 2.0, "error": 3.0},  # 저부하-안정: 기본
+}
 
 # ── 방향전환 판정 임계값 (5분 윈도우, ~16 data points) ──────
 DIR_THRESHOLD_ERROR = 4   # >= 4회 → 이상
@@ -60,6 +69,213 @@ def classify_direction_level(change_count: int) -> str:
 def combined_judgment(z_level: str, dir_level: str) -> str:
     """Z-Score 판정과 방향전환 판정을 복합 판정한다."""
     return _COMBINED_MATRIX.get((z_level, dir_level), "정상")
+
+
+def classify_z_level_by_group(z_score: float, group: str = "B") -> str:
+    """그룹별 임계값을 적용하여 Z-Score 이상 수준을 판정한다."""
+    thresholds = GROUP_THRESHOLDS.get(group, GROUP_THRESHOLDS["B"])
+    abs_z = abs(z_score)
+    if abs_z >= thresholds["error"]:
+        return "이상"
+    if abs_z >= thresholds["warn"]:
+        return "주의"
+    return "정상"
+
+
+# ── 경보 등급 분류 ─────────────────────────────────────────
+
+def classify_alert_grade(
+    site_group: str,
+    z_level: str,
+    dir_level: str = "정상",
+    pattern_result: Optional[dict] = None,
+    info_count_7d: int = 0,
+) -> Optional[str]:
+    """
+    3단계 경보 등급을 결정한다.
+
+    Returns:
+        'critical' | 'warning' | 'info' | None
+    """
+    # Critical: C그룹 + 위험 패턴 (밸브 미작동/고착/공급중단)
+    if site_group == "C" and pattern_result:
+        if pattern_result.get("hh_no_reversal"):
+            return "critical"
+        if pattern_result.get("ll_no_recovery"):
+            return "critical"
+        if pattern_result.get("descending_hh_retouch"):
+            return "critical"
+
+    # Warning: 그룹 임계값 초과 ("이상"/"심각"/"복합이상" 등)
+    if z_level in ("이상", "심각", "값이상", "패턴이상", "복합이상"):
+        return "warning"
+
+    # Warning: Info 누적 격상 (7일 내 3건 이상 + 주의)
+    if info_count_7d >= 3 and z_level in ("주의", "값주의", "패턴주의", "복합주의"):
+        return "warning"
+
+    # Info: 주의 계열
+    if z_level in ("주의", "값주의", "패턴주의", "복합주의"):
+        return "info"
+
+    return None
+
+
+# ── C그룹 수위 패턴 분석 ───────────────────────────────────
+
+def analyze_level_pattern(
+    series: list[tuple[str, float]],
+    hh_value: Optional[float],
+    ll_value: Optional[float],
+    window_minutes: int = 30,
+) -> dict:
+    """
+    수위 시계열에서 위험 패턴을 분석한다 (C그룹 전용).
+
+    Args:
+        series: [(timestamp_str, value), ...] 시간순 정렬
+        hh_value: HH 임계값 (없으면 패턴 분석 제한)
+        ll_value: LL 임계값
+        window_minutes: HH 터치 후 반전 대기 시간(분)
+
+    Returns:
+        {
+            'trend_direction': 'rising'|'falling'|'stable',
+            'reversal_count': int,
+            'hh_no_reversal': bool,
+            'll_no_recovery': bool,
+            'descending_hh_retouch': bool,
+            'has_critical_pattern': bool,
+        }
+    """
+    result = {
+        "trend_direction": "stable",
+        "reversal_count": 0,
+        "hh_no_reversal": False,
+        "ll_no_recovery": False,
+        "descending_hh_retouch": False,
+        "has_critical_pattern": False,
+    }
+
+    if len(series) < 6:
+        return result
+
+    values = [v for _, v in series]
+
+    # 이동평균 기울기 (10포인트 = 약 50분 윈도우)
+    ma_window = min(10, len(values) // 2)
+    if ma_window < 2:
+        return result
+
+    ma = []
+    for i in range(len(values) - ma_window + 1):
+        ma.append(sum(values[i:i + ma_window]) / ma_window)
+
+    # 기울기 부호 시퀀스 → 반전 횟수
+    slopes = [ma[i + 1] - ma[i] for i in range(len(ma) - 1)]
+    signs = [1 if s > 0 else (-1 if s < 0 else 0) for s in slopes]
+    non_zero = [s for s in signs if s != 0]
+
+    reversal_count = 0
+    for i in range(1, len(non_zero)):
+        if non_zero[i] != non_zero[i - 1]:
+            reversal_count += 1
+    result["reversal_count"] = reversal_count
+
+    # 최근 추세 방향
+    recent_slopes = slopes[-5:] if len(slopes) >= 5 else slopes
+    avg_slope = sum(recent_slopes) / len(recent_slopes) if recent_slopes else 0
+    if avg_slope > 0.01:
+        result["trend_direction"] = "rising"
+    elif avg_slope < -0.01:
+        result["trend_direction"] = "falling"
+
+    # 5분 간격 가정 → window_minutes / 5 = 포인트 수
+    window_points = max(window_minutes // 5, 3)
+
+    # Pattern 6: HH 터치 후 반전 없음 (오버플로우 위험)
+    if hh_value is not None:
+        for i, (_, val) in enumerate(series):
+            if val >= hh_value:
+                # HH 터치 후 window_points 내에 하강(반전) 있는지
+                after = values[i + 1: i + 1 + window_points]
+                if after and all(v >= hh_value * 0.95 for v in after):
+                    result["hh_no_reversal"] = True
+                    break
+
+    # Pattern 7: 하강 중 HH 재터치 (밸브 고착)
+    if hh_value is not None and len(values) >= 10:
+        was_descending = False
+        for i in range(1, len(values)):
+            if values[i] < values[i - 1]:
+                was_descending = True
+            elif was_descending and values[i] >= hh_value:
+                result["descending_hh_retouch"] = True
+                break
+            if values[i] > values[i - 1]:
+                was_descending = False
+
+    # Pattern 8: LL 도달 후 60분 내 회복 없음 (공급 중단/누수)
+    ll_window = max(60 // 5, 6)
+    if ll_value is not None:
+        for i, (_, val) in enumerate(series):
+            if val <= ll_value:
+                after = values[i + 1: i + 1 + ll_window]
+                if after and all(v <= ll_value * 1.1 for v in after):
+                    result["ll_no_recovery"] = True
+                    break
+
+    result["has_critical_pattern"] = (
+        result["hh_no_reversal"]
+        or result["ll_no_recovery"]
+        or result["descending_hh_retouch"]
+    )
+
+    return result
+
+
+def get_hh_ll_for_site(
+    conn, sitename: str, facilitytype: str, tagsn: str,
+    site_profiles: dict,
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    태그의 HH/LL 값을 해석한다.
+
+    우선순위:
+    1. monitoring catalog의 alarm_limits (상수 hh/ll)
+    2. site_profiles의 P95/P05 (동적 임계값)
+    """
+    # 1. monitoring catalog에서 alarm_limits 조회
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT meta FROM tb_trend_catalog
+            WHERE sitename = %s AND facilitytype = %s
+              AND COALESCE((meta->>'monitoring')::boolean, false) = true
+        """, (sitename, facilitytype))
+        for (meta_row,) in cur.fetchall():
+            meta = meta_row if isinstance(meta_row, dict) else {}
+            for item in meta.get("items", []):
+                if item.get("tagsn") == tagsn:
+                    al = item.get("alarm_limits") or {}
+                    hh = al.get("hh")
+                    ll = al.get("ll")
+                    if hh is not None or ll is not None:
+                        cur.close()
+                        return (
+                            float(hh) if hh is not None else None,
+                            float(ll) if ll is not None else None,
+                        )
+        cur.close()
+    except Exception:
+        logger.debug("alarm_limits 조회 실패 (%s/%s)", sitename, tagsn)
+
+    # 2. P95/P05 폴백
+    profile = site_profiles.get((sitename, facilitytype))
+    if profile:
+        return profile.get("p95_level"), profile.get("p05_level")
+
+    return None, None
 
 
 # ── 포맷팅 함수 ──────────────────────────────────────────────
@@ -121,25 +337,46 @@ def count_comm_error_sites(rows: list, columns: list) -> int:
     return len(error_sites)
 
 
-def build_anomaly_scan_detail_block(rows: list, columns: list) -> list:
+def build_anomaly_scan_detail_block(
+    rows: list, columns: list,
+    site_profiles: Optional[dict] = None,
+) -> list:
     """
     ANOMALY_SCAN_ALL: SQL 결과를 이상 스캔 결과 리스트로 조립한다.
     이상/주의 항목만 표시 (정상은 생략). 통신장애 사이트는 별도 표시.
+    site_profiles가 제공되면 그룹별 임계값을 적용하고 경보 등급을 표시한다.
     """
     col_map = {c: i for i, c in enumerate(columns)}
     items = []
 
     has_active = "active_pct" in col_map
     has_comm = "comm_status" in col_map
+    use_profiles = site_profiles is not None and len(site_profiles) > 0
+
+    # 경보 등급 시맨틱 마커
+    _grade_marker = {
+        "critical": "<<error:[긴급]>>",
+        "warning": "<<warn:[주의]>>",
+        "info": "<<ok:[참고]>>",
+    }
 
     for row in rows:
         z_score = float(row[col_map["z_score"]] or 0)
-        level = classify_z_level(z_score)
+        sitename = row[col_map["sitename"]] or ""
+        facilitytype = row[col_map["facilitytype"]] or ""
+
+        # 그룹별 임계값 적용
+        if use_profiles:
+            profile = site_profiles.get((sitename, facilitytype))
+            group = profile.get("site_group", "B") if profile else "B"
+            level = classify_z_level_by_group(z_score, group)
+        else:
+            group = "B"
+            level = classify_z_level(z_score)
+
         if level == "정상":
             continue
 
-        sitename = row[col_map["sitename"]] or ""
-        facilitytype = row[col_map["facilitytype"]] or ""
         datainfo = row[col_map["datainfo"]] or ""
         deviation_pct = float(row[col_map["deviation_pct"]] or 0)
         active_pct = float(row[col_map["active_pct"]] or 100) if has_active else 100
@@ -148,8 +385,17 @@ def build_anomaly_scan_detail_block(rows: list, columns: list) -> list:
         dev_text = format_deviation_text(deviation_pct, z_score, active_pct)
         marked_level = _wrap_marker(level, level)
         comm_tag = " <<error:[통신장애]>>" if comm_status == "통신장애" else ""
-        text = f"{sitename} {facilitytype} {datainfo}: {marked_level} ({dev_text}){comm_tag}"
-        items.append({"prefix": "-", "text": text})
+
+        # 경보 등급 결정
+        grade_tag = ""
+        if use_profiles:
+            info_count = (profile or {}).get("info_count_7d", 0)
+            grade = classify_alert_grade(group, level, "정상", None, info_count)
+            if grade:
+                grade_tag = f" {_grade_marker[grade]}"
+
+        text = f"{sitename} {facilitytype} {datainfo}: {marked_level} ({dev_text}){comm_tag}{grade_tag}"
+        items.append({"prefix": "-", "text": text, "alertGrade": grade if use_profiles else None})
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:모든 센서가 정상 범위 내에 있습니다.>>"})
@@ -157,19 +403,47 @@ def build_anomaly_scan_detail_block(rows: list, columns: list) -> list:
     return items
 
 
-def build_anomaly_facility_detail_block(rows: list, columns: list) -> list:
+def build_anomaly_facility_detail_block(
+    rows: list, columns: list,
+    site_profiles: Optional[dict] = None,
+    sitename: str = "",
+    facilitytype: str = "",
+    pattern_result: Optional[dict] = None,
+) -> list:
     """
     ANOMALY_FACILITY_DETAIL: SQL 결과를 복합 진단 결과 리스트로 조립한다.
     Z-Score + Direction Change 복합 판정. 전 항목 표시.
+    site_profiles가 제공되면 그룹별 임계값을 적용하고 경보 등급을 표시한다.
     """
     col_map = {c: i for i, c in enumerate(columns)}
     has_dir = "change_count" in col_map
     has_active = "active_pct" in col_map
+    use_profiles = site_profiles is not None and len(site_profiles) > 0
     items = []
+
+    # 그룹 결정
+    group = "B"
+    info_count = 0
+    if use_profiles:
+        profile = site_profiles.get((sitename, facilitytype))
+        if profile:
+            group = profile.get("site_group", "B")
+            info_count = profile.get("info_count_7d", 0)
+
+    _grade_marker = {
+        "critical": "<<error:[긴급]>>",
+        "warning": "<<warn:[주의]>>",
+        "info": "<<ok:[참고]>>",
+    }
 
     for row in rows:
         z_score = float(row[col_map["z_score"]] or 0)
-        z_level = classify_z_level(z_score)
+
+        # 그룹별 Z-Score 판정
+        if use_profiles:
+            z_level = classify_z_level_by_group(z_score, group)
+        else:
+            z_level = classify_z_level(z_score)
 
         dir_level = "정상"
         change_count = 0
@@ -186,12 +460,20 @@ def build_anomaly_facility_detail_block(rows: list, columns: list) -> list:
         dev_text = format_deviation_text(deviation_pct, z_score, active_pct)
         marked_level = _wrap_marker(final, final)
 
-        if has_dir and dir_level != "정상":
-            text = f"{datainfo}: {marked_level} ({dev_text}, 진동 {change_count}회)"
-        else:
-            text = f"{datainfo}: {marked_level} ({dev_text})"
+        # 경보 등급
+        grade_tag = ""
+        grade = None
+        if use_profiles:
+            grade = classify_alert_grade(group, final, dir_level, pattern_result, info_count)
+            if grade:
+                grade_tag = f" {_grade_marker[grade]}"
 
-        items.append({"prefix": "-", "text": text})
+        if has_dir and dir_level != "정상":
+            text = f"{datainfo}: {marked_level} ({dev_text}, 진동 {change_count}회){grade_tag}"
+        else:
+            text = f"{datainfo}: {marked_level} ({dev_text}){grade_tag}"
+
+        items.append({"prefix": "-", "text": text, "alertGrade": grade})
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:분석 대상 센서가 없습니다.>>"})
@@ -368,6 +650,15 @@ CUSUM_MIN_DAYS = 14      # 최소 데이터 일수
 CUSUM_REF_DAYS = 20      # 기간 보정 기준일수 (20일 기준, 장기 분석 보정 강화)
 
 
+def _is_weekday(log_time) -> bool:
+    """log_time(str 또는 datetime)에서 평일 여부를 판별한다."""
+    if isinstance(log_time, str):
+        dt = datetime.fromisoformat(log_time.replace("Z", "+00:00"))
+    else:
+        dt = log_time
+    return dt.weekday() < 5  # Mon=0 ~ Fri=4
+
+
 def compute_cusum_for_tags(
     rows: list, columns: list
 ) -> dict:
@@ -426,15 +717,20 @@ def compute_cusum_for_tags(
         series.sort(key=lambda x: x[0])
         values = [v for _, v in series]
 
-        # MNF 기본 통계
+        # MNF 전체 통계 (stddev는 전체 기준 — 변동성은 공통)
         n = len(values)
         mean_val = sum(values) / n
         variance = sum((v - mean_val) ** 2 for v in values) / n
         stddev = variance ** 0.5
 
         if stddev < 0.001:
-            # 변동 없는 데이터는 CUSUM 무의미
             continue
+
+        # 평일/주말 분리 기준선 (최소 7건 미달 시 전체 폴백)
+        wd_vals = [v for t, v in series if _is_weekday(t)]
+        we_vals = [v for t, v in series if not _is_weekday(t)]
+        wd_mean = sum(wd_vals) / len(wd_vals) if len(wd_vals) >= 7 else mean_val
+        we_mean = sum(we_vals) / len(we_vals) if len(we_vals) >= 7 else mean_val
 
         # 최근 7일 평균 (MNF 현재 수준)
         recent_vals = values[-7:] if len(values) >= 7 else values
@@ -447,14 +743,15 @@ def compute_cusum_for_tags(
         slope_den = sum((i - x_mean) ** 2 for i in range(n))
         trend_slope = slope_num / slope_den if slope_den > 0 else 0.0
 
-        # CUSUM 상한 계산 (누수 = 야간유량 증가 감지)
+        # CUSUM 상한 계산 (요일별 기준선 적용)
         k = CUSUM_K_FACTOR * stddev
         cusum_upper = 0.0
         cusum_max = 0.0
         cusum_series = []
 
         for log_time, val in series:
-            cusum_upper = max(0, cusum_upper + (val - mean_val - k))
+            baseline = wd_mean if _is_weekday(log_time) else we_mean
+            cusum_upper = max(0, cusum_upper + (val - baseline - k))
             cusum_max = max(cusum_max, cusum_upper)
             cusum_series.append((log_time, val, round(cusum_upper, 2)))
 
@@ -475,6 +772,8 @@ def compute_cusum_for_tags(
             **tag_meta.get(tagsn, {}),
             "baseline_mean": round(mean_val, 2),
             "baseline_stddev": round(stddev, 2),
+            "baseline_wd_mean": round(wd_mean, 2),
+            "baseline_we_mean": round(we_mean, 2),
             "recent_mean": round(recent_mean, 2),
             "cusum_series": cusum_series,
             "cusum_max": round(cusum_max, 2),

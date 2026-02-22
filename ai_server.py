@@ -38,7 +38,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import psycopg2
-from fastapi import FastAPI, UploadFile, File, Form, Query
+from fastapi import FastAPI, Request, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -47,6 +47,7 @@ from slm_config import ENABLE_KEYWORD_FALLBACK, get_model, set_model
 from ollama_client import OllamaClient, OllamaConnectionError
 from intent_index import IntentIndex
 from intent_classifier import IntentClassifier
+from intent_embeddings import IntentEmbeddingIndex
 from param_extractor import ParamExtractor
 from query_validator import QueryValidator, CORRECTION_TEMPLATES, CORRECTION_HINTS
 from session_manager import SessionManager
@@ -60,12 +61,16 @@ from anomaly_detector import (
     build_anomaly_predict_detail_block,
     build_anomaly_compare_detail_block,
     build_anomaly_pattern_detail_block,
+    classify_z_level_by_group,
+    analyze_level_pattern,
+    get_hh_ll_for_site,
     compute_cusum_for_tags,
     count_cusum_status,
     build_cusum_summary_table,
     build_leak_cusum_detail_block,
 )
 from anomaly_iforest import IForestManager
+from site_profiler import SiteProfiler
 
 # =============================================================================
 # 로깅 설정
@@ -82,14 +87,17 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 ollama_client = OllamaClient()
 intent_index = IntentIndex()
+embedding_index = IntentEmbeddingIndex()
 session_manager = SessionManager()
 iforest_manager = IForestManager()
+site_profiler: Optional[SiteProfiler] = None  # startup에서 초기화 (get_db_connection 정의 이후)
 # intent_classifier, param_extractor, query_validator는 startup에서 초기화
 intent_classifier: Optional[IntentClassifier] = None
 param_extractor_instance: Optional[ParamExtractor] = None
 query_validator: Optional[QueryValidator] = None
 
 _cleanup_task: Optional[asyncio.Task] = None
+_profiling_task: Optional[asyncio.Task] = None
 
 # =============================================================================
 # CSV 내보내기 설정
@@ -190,6 +198,20 @@ def cleanup_old_csv_files():
         logger.info(f"CSV 파일 정리: {count}개 삭제")
 
 
+async def _site_profiling_loop():
+    """백그라운드: 서버 시작 60초 후 첫 실행, 이후 24시간마다 현장 프로파일링"""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            logger.info("현장 프로파일링 시작...")
+            await asyncio.to_thread(site_profiler.run_daily_profiling)
+            profile_count = len(site_profiler.profiles)
+            logger.info(f"현장 프로파일링 완료: {profile_count}개 현장 분류")
+        except Exception as e:
+            logger.error(f"현장 프로파일링 실패: {e}")
+        await asyncio.sleep(86400)
+
+
 async def _session_cleanup_loop():
     """백그라운드: 60초마다 만료 세션 정리 + CSV 파일 정리"""
     while True:
@@ -201,7 +223,10 @@ async def _session_cleanup_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
-    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task
+    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, site_profiler
+
+    # site_profiler 초기화 (get_db_connection 정의 후)
+    site_profiler = SiteProfiler(get_db_connection)
 
     # CSV 내보내기 디렉토리 생성
     os.makedirs(CSV_EXPORT_DIR, exist_ok=True)
@@ -209,8 +234,18 @@ async def lifespan(app: FastAPI):
     # Intent 인덱스 빌드
     intent_index.build(INTENT_DEFINITIONS)
 
+    # 임베딩 인덱스 로드/빌드 (인메모리 벡터 검색용)
+    example3_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example3.json")
+    try:
+        embedding_index.load_or_build(example3_path)
+    except Exception as e:
+        logger.warning(f"임베딩 인덱스 초기화 실패 (키워드+SLM 폴백 모드): {e}")
+
     # 분류기, 추출기, 검증기 초기화
-    intent_classifier = IntentClassifier(ollama_client, intent_index)
+    intent_classifier = IntentClassifier(
+        ollama_client, intent_index,
+        embedding_index=embedding_index if embedding_index.ready else None,
+    )
     param_extractor_instance = ParamExtractor(
         known_sitenames=KNOWN_SITENAMES,
         known_block_levels=KNOWN_BLOCK_LEVELS,
@@ -221,21 +256,33 @@ async def lifespan(app: FastAPI):
     # Ollama 연결 상태 로그
     if ollama_client.health_check():
         logger.info(f"Ollama 연결 성공: {get_model()}")
+        if embedding_index.ready:
+            logger.info(f"벡터 검색 활성화: {embedding_index.size}벡터")
     else:
         logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
 
     # 세션 정리 백그라운드 태스크
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
 
+    # 현장 프로파일링 백그라운드 태스크 (기존 DB 프로파일 로드 후 시작)
+    try:
+        site_profiler.load_from_db()
+        if site_profiler.profiles:
+            logger.info(f"기존 현장 프로파일 로드: {len(site_profiler.profiles)}개")
+    except Exception as e:
+        logger.warning(f"기존 프로파일 로드 실패 (서버 시작 후 재생성): {e}")
+    _profiling_task = asyncio.create_task(_site_profiling_loop())
+
     yield
 
     # shutdown
-    if _cleanup_task:
-        _cleanup_task.cancel()
-        try:
-            await _cleanup_task
-        except asyncio.CancelledError:
-            pass
+    for task in (_cleanup_task, _profiling_task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 # =============================================================================
@@ -271,6 +318,7 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "DJpost0827///")
 class AskRequest(BaseModel):
     user_question: str
     session_id: Optional[str] = None
+    force_intent: Optional[str] = None
 
 
 # =============================================================================
@@ -1273,7 +1321,69 @@ def render_answer_template(template: dict, data: dict) -> dict:
         if rec_result:
             result["recommend_questions"] = rec_result
 
-    return result
+    return _dedup_units_in_answer(result)
+
+
+# 중복 단위 제거 패턴: "2000년년" → "2000년", "1234명명" → "1234명"
+_DEDUP_UNIT_RE = re.compile(r"(년|명|개소|대|km|m|톤|%|개|건|초|분|시간|일|월|원|세대|호|곳|회)(\1)+")
+
+# 천 단위 콤마: 4자리 이상 정수에 콤마 삽입 (소수점 포함 숫자, 날짜/시간, 태그ID 제외)
+_COMMA_NUM_RE = re.compile(r"(?<!\d[.\-:/])(?<!\.)(\d{1,3}(?:,\d{3})*|\d+)(\.\d+)?(?![.\-:/]\d)")
+
+
+def _add_thousands_comma(text: str) -> str:
+    """텍스트 내 4자리 이상 정수에 천 단위 콤마를 삽입한다.
+    이미 콤마가 있거나, 소수점/날짜/시간 패턴은 건드리지 않는다."""
+    def _fmt(m: re.Match) -> str:
+        integer_part = m.group(1).replace(",", "")  # 이미 콤마 있으면 제거 후 재포맷
+        decimal_part = m.group(2) or ""
+        if len(integer_part) < 4:
+            return integer_part + decimal_part
+        return f"{int(integer_part):,}" + decimal_part
+
+    # 날짜/시간 패턴(2026-02-21, 12:30:00 등)은 보호
+    parts = re.split(r"(\d{4}[-/]\d{2}[-/]\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?|\d{1,2}:\d{2}(?::\d{2})?)", text)
+    result = []
+    for i, part in enumerate(parts):
+        if i % 2 == 0:  # 날짜/시간이 아닌 구간만 처리
+            result.append(_COMMA_NUM_RE.sub(_fmt, part))
+        else:
+            result.append(part)  # 날짜/시간은 그대로
+    return "".join(result)
+
+
+def _dedup_unit_text(text: str) -> str:
+    """텍스트 내 중복 단위 접미사를 제거한다."""
+    return _DEDUP_UNIT_RE.sub(r"\1", text)
+
+
+def _postprocess_text(text: str) -> str:
+    """렌더링된 텍스트에 후처리를 적용한다 (중복단위 제거 + 천단위 콤마)."""
+    text = _dedup_unit_text(text)
+    text = _add_thousands_comma(text)
+    return text
+
+
+def _dedup_units_in_answer(answer: dict) -> dict:
+    """렌더링된 answer dict 내 모든 텍스트를 후처리한다."""
+    if "summary" in answer:
+        answer["summary"] = _postprocess_text(answer["summary"])
+
+    if "detail" in answer:
+        for i, line in enumerate(answer["detail"]):
+            if isinstance(line, dict) and "text" in line:
+                line["text"] = _postprocess_text(line["text"])
+            elif isinstance(line, str):
+                answer["detail"][i] = _postprocess_text(line)
+
+    if "reference" in answer and "items" in answer["reference"]:
+        for i, item in enumerate(answer["reference"]["items"]):
+            if isinstance(item, dict) and "text" in item:
+                item["text"] = _postprocess_text(item["text"])
+            elif isinstance(item, str):
+                answer["reference"]["items"][i] = _postprocess_text(item)
+
+    return answer
 
 
 def apply_corrections_to_answer(rendered_answer: dict, params: dict) -> dict:
@@ -1367,6 +1477,7 @@ def build_correction_response(
     session_id: str,
     correction_hints: Optional[list] = None,
     intent: Optional[str] = None,
+    intent_candidates: Optional[list] = None,
 ) -> dict:
     """
     NEED_CORRECTION 응답을 생성한다.
@@ -1390,6 +1501,8 @@ def build_correction_response(
     }
     if intent:
         response["intent"] = intent
+    if intent_candidates:
+        response["intent_candidates"] = intent_candidates
     return response
 
 
@@ -1573,6 +1686,14 @@ def build_success_response(
         response["cusum_chart_data"] = kwargs["cusum_chart_data"]
     if kwargs.get("anomaly_zones"):
         response["anomaly_zones"] = kwargs["anomaly_zones"]
+    if kwargs.get("intent_candidates"):
+        response["intent_candidates"] = kwargs["intent_candidates"]
+    if kwargs.get("site_group_distribution"):
+        response["site_group_distribution"] = kwargs["site_group_distribution"]
+    if kwargs.get("site_group"):
+        response["site_group"] = kwargs["site_group"]
+    if kwargs.get("pattern_analysis"):
+        response["pattern_analysis"] = kwargs["pattern_analysis"]
     return response
 
 
@@ -2408,6 +2529,7 @@ def process_sql_result(
     # 이상 스캔: Z-Score + Isolation Forest 기반 전체 스캔
     # -------------------------------------------------
     if intent == "ANOMALY_SCAN_ALL":
+        _profiles = site_profiler.profiles if site_profiler.profiles else None
         counts = count_anomaly_levels(rows, columns)
         data["total_tag_count"] = len(rows)
         data["error_count"] = counts["이상"]
@@ -2417,7 +2539,7 @@ def process_sql_result(
 
         # Isolation Forest ML 보강
         try:
-            iforest_manager.ensure_trained(get_db_connection)
+            iforest_manager.ensure_trained(get_db_connection, site_profiles=_profiles)
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
                 data["ml_model_count"] = iforest_manager.model_count
@@ -2426,32 +2548,92 @@ def process_sql_result(
         except Exception as e:
             logger.warning(f"IForest enrichment 실패: {e}")
 
+        # 그룹 분포 요약 (프론트엔드 표시용)
+        if _profiles:
+            group_dist = {"A": 0, "B": 0, "C": 0, "D": 0}
+            for p in _profiles.values():
+                g = p.get("site_group", "B")
+                group_dist[g] = group_dist.get(g, 0) + 1
+            data["site_group_distribution"] = group_dist
+
         data["anomaly_scan_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_scan_detail_block"] = \
-            build_anomaly_scan_detail_block(rows, columns)
+            build_anomaly_scan_detail_block(rows, columns, site_profiles=_profiles)
 
     # -------------------------------------------------
     # 시설 정밀 진단: Z-Score + 방향전환 + IF 복합 판정
     # -------------------------------------------------
     if intent == "ANOMALY_FACILITY_DETAIL":
+        _profiles = site_profiler.profiles if site_profiler.profiles else None
+        _site = params.get("sitename", "")
+        _ft = params.get("facilitytype", "")
         counts = count_anomaly_levels(rows, columns)
         data["total_tag_count"] = len(rows)
         data["error_count"] = counts["이상"]
         data["warn_count"] = counts["주의"]
         data["ok_count"] = counts["정상"]
 
+        # 그룹 정보 표시
+        _group = "B"
+        if _profiles:
+            _profile = _profiles.get((_site, _ft))
+            if _profile:
+                _group = _profile.get("site_group", "B")
+                data["site_group"] = _group
+
         # Isolation Forest ML 보강
         try:
-            iforest_manager.ensure_trained(get_db_connection)
+            iforest_manager.ensure_trained(get_db_connection, site_profiles=_profiles)
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
                 data["ml_anomaly_count"] = if_result.get("if_anomaly_count", 0)
         except Exception as e:
             logger.warning(f"IForest enrichment 실패: {e}")
 
+        # C그룹 패턴 분석 (수위 태그 대상)
+        pattern_result = None
+        if _group == "C" and _profiles:
+            try:
+                col_map = {c: i for i, c in enumerate(columns)}
+                tagsn_idx = col_map.get("tagsn")
+                if tagsn_idx is not None:
+                    conn = get_db_connection()
+                    cur = conn.cursor()
+                    # 수위 태그 중 하나에 대해 6시간 시계열 조회
+                    for row in rows:
+                        tagsn = row[tagsn_idx]
+                        datainfo = row[col_map.get("datainfo", 0)] or ""
+                        if "수위" not in datainfo:
+                            continue
+                        hh, ll = get_hh_ll_for_site(conn, _site, _ft, tagsn, _profiles)
+                        if hh is None and ll is None:
+                            continue
+                        cur.execute("""
+                            SELECT bucket::text, (min_val + max_val) / 2.0
+                            FROM cagg_5min_raw_stats_ai
+                            WHERE tagsn = %s AND bucket >= now() - interval '6 hours'
+                            ORDER BY bucket
+                        """, (tagsn,))
+                        series = [(r[0], float(r[1])) for r in cur.fetchall()]
+                        if len(series) >= 6:
+                            pattern_result = analyze_level_pattern(series, hh, ll)
+                            if pattern_result.get("has_critical_pattern"):
+                                data["pattern_analysis"] = pattern_result
+                                break
+                    cur.close()
+                    conn.close()
+            except Exception as e:
+                logger.warning(f"C그룹 패턴 분석 실패: {e}")
+
         data["anomaly_facility_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_facility_detail_block"] = \
-            build_anomaly_facility_detail_block(rows, columns)
+            build_anomaly_facility_detail_block(
+                rows, columns,
+                site_profiles=_profiles,
+                sitename=_site,
+                facilitytype=_ft,
+                pattern_result=pattern_result,
+            )
 
     # -------------------------------------------------
     # 이상 이력: alarm_severity별 집계 + detail 블록
@@ -2691,7 +2873,15 @@ async def ask(request: AskRequest):
     is_correction = session_manager.is_correction_turn(session, user_question)
 
     # 3. SLM Intent 분류
-    if is_correction and session.last_intent:
+    intent_candidates = []
+    if request.force_intent:
+        # 사후 보정: 프론트엔드에서 지정한 인텐트 강제 사용
+        intent_name = request.force_intent
+        intent_def = intent_index.get_definition(intent_name)
+        category = intent_classifier._get_category_for_intent(intent_name) or "기타"
+        classify_method = "force_intent"
+        logger.info(f"강제 인텐트 지정: intent={intent_name}")
+    elif is_correction and session.last_intent:
         # 정정 턴: 이전 INTENT 재사용
         intent_name = session.last_intent
         intent_def = intent_index.get_definition(intent_name)
@@ -2709,6 +2899,7 @@ async def ask(request: AskRequest):
         intent_def = classification["intent_def"]
         category = classification["category"]
         classify_method = classification["method"]
+        intent_candidates = classification.get("intent_candidates", [])
         logger.info(
             f"Intent 분류: name={intent_name}, category={category}, method={classify_method}"
         )
@@ -2863,6 +3054,7 @@ async def ask(request: AskRequest):
             session_id=sid,
             correction_hints=validation.hints,
             intent=intent_name,
+            intent_candidates=intent_candidates,
         )
 
     # 검증 통과 — 기존 파이프라인 진행
@@ -3418,6 +3610,10 @@ async def ask(request: AskRequest):
         stddev_stats=_stddev_stats,
         cusum_chart_data=_cusum_chart_data,
         anomaly_zones=_anomaly_zones,
+        intent_candidates=intent_candidates,
+        site_group_distribution=processed_data.get("site_group_distribution"),
+        site_group=processed_data.get("site_group"),
+        pattern_analysis=processed_data.get("pattern_analysis"),
     )
 
 
@@ -3474,7 +3670,15 @@ async def ask_stream(request: AskRequest):
         is_correction = session_manager.is_correction_turn(session, user_question)
 
         # 3. SLM Intent 분류
-        if is_correction and session.last_intent:
+        intent_candidates = []
+        if request.force_intent:
+            # 사후 보정: 프론트엔드에서 지정한 인텐트 강제 사용
+            intent_name = request.force_intent
+            intent_def = intent_index.get_definition(intent_name)
+            category = intent_classifier._get_category_for_intent(intent_name) or "기타"
+            classify_method = "force_intent"
+            logger.info(f"[SSE] 강제 인텐트 지정: intent={intent_name}")
+        elif is_correction and session.last_intent:
             intent_name = session.last_intent
             intent_def = intent_index.get_definition(intent_name)
             category = "정정"
@@ -3491,6 +3695,7 @@ async def ask_stream(request: AskRequest):
             intent_def = classification["intent_def"]
             category = classification["category"]
             classify_method = classification["method"]
+            intent_candidates = classification.get("intent_candidates", [])
             logger.info(
                 f"[SSE] Intent 분류: name={intent_name}, category={category}, method={classify_method}"
             )
@@ -3652,6 +3857,7 @@ async def ask_stream(request: AskRequest):
                 session_id=sid,
                 correction_hints=validation.hints,
                 intent=intent_name,
+                intent_candidates=intent_candidates,
             ))
             return
 
@@ -4200,6 +4406,10 @@ async def ask_stream(request: AskRequest):
             stddev_stats=_stddev_stats,
             cusum_chart_data=_cusum_chart_data,
             anomaly_zones=_anomaly_zones,
+            intent_candidates=intent_candidates,
+            site_group_distribution=processed_data.get("site_group_distribution"),
+            site_group=processed_data.get("site_group"),
+            pattern_analysis=processed_data.get("pattern_analysis"),
         )
 
         yield _sse_event("result", final_response)
@@ -4250,6 +4460,37 @@ async def health_check():
         "ollama_available": ollama_ok,
         "current_model": get_model(),
         "active_sessions": session_manager.active_session_count(),
+    }
+
+
+# =============================================================================
+# 현장 프로파일 조회 엔드포인트
+# =============================================================================
+
+@app.get("/anomaly/profiles")
+async def get_anomaly_profiles():
+    """현재 현장 프로파일링 결과를 반환한다 (디버깅/모니터링용)."""
+    profiles = site_profiler.profiles
+    result = []
+    for (sitename, ft), p in sorted(profiles.items()):
+        result.append({
+            "sitename": sitename,
+            "facilitytype": ft,
+            "site_group": p.get("site_group", "B"),
+            "avg_outflow_7d": p.get("avg_outflow_7d"),
+            "alarm_freq_30d": p.get("alarm_freq_30d", 0),
+            "p95_level": p.get("p95_level"),
+            "p05_level": p.get("p05_level"),
+            "info_count_7d": p.get("info_count_7d", 0),
+        })
+    group_dist = {"A": 0, "B": 0, "C": 0, "D": 0}
+    for p in profiles.values():
+        g = p.get("site_group", "B")
+        group_dist[g] = group_dist.get(g, 0) + 1
+    return {
+        "total": len(profiles),
+        "group_distribution": group_dist,
+        "profiles": result,
     }
 
 
@@ -4628,117 +4869,79 @@ async def delete_facility_file(facility_file_id: int):
 
 
 # =============================================================================
-# 모니터링 대시보드 API
+# 사이트 설정 API (관리자용)
 # =============================================================================
 
-
-@app.get("/monitoring/dashboard")
-async def get_monitoring_dashboard():
-    """대시보드 요약 정보: 시설 카운트, 배수지 수위, 최근 알람, 7일 추세"""
+@app.get("/admin/site-settings")
+async def get_site_settings():
+    """사이트 설정 조회 (랜딩 페이지 활성화 등)"""
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-
-        # Q1: 시설 카운트 + 진행중 알람
-        cur.execute("""
-            SELECT
-                (SELECT COUNT(*) FROM tb_service_reservoir_info) AS reservoir_cnt,
-                (SELECT COUNT(*) FROM tb_service_booster_station_info) AS booster_cnt,
-                (SELECT COUNT(*) FROM tb_pressure_reducing_facility_info) AS pressure_cnt,
-                (SELECT COUNT(*) FROM tb_block_info) AS block_cnt,
-                (SELECT COUNT(*) FROM tb_tag_info) AS tag_cnt,
-                (SELECT COUNT(*) FROM tb_equipment_alarm_report
-                 WHERE alarm_status = '진행중') AS ongoing_cnt,
-                (SELECT COUNT(*) FROM tb_equipment_alarm_report
-                 WHERE alarm_status = '진행중' AND alarm_severity = '경고') AS critical_cnt,
-                (SELECT COUNT(*) FROM tb_equipment_alarm_report
-                 WHERE alarm_status = '진행중' AND alarm_severity = '주의') AS warning_cnt
-        """)
-        r = cur.fetchone()
-        total_facility = (r[0] or 0) + (r[1] or 0) + (r[2] or 0) + (r[3] or 0)
-        summary_cards = [
-            {
-                "title": "총 시설수",
-                "value": str(total_facility),
-                "description": f"배수지 {r[0] or 0} / 가압장 {r[1] or 0} / 감압 {r[2] or 0} / 블록 {r[3] or 0}",
-            },
-            {
-                "title": "진행중 알람",
-                "value": str(r[5] or 0),
-                "description": f"경고 {r[6] or 0} / 주의 {r[7] or 0}",
-            },
-            {
-                "title": "센서 태그",
-                "value": str(r[4] or 0),
-                "description": "전체 등록 태그",
-            },
-            {
-                "title": "시스템 상태",
-                "value": "정상",
-                "description": "API 응답 정상",
-            },
-        ]
-
-        # Q2: 배수지 수위 (뷰 활용)
-        cur.execute("""
-            SELECT sitename,
-                   COALESCE(current_water_level, 0),
-                   COALESCE(alarm_high_water_level, 5.0)
-            FROM v_reservoir_info_status
-            ORDER BY sitename
-        """)
-        reservoir_summaries = [
-            {"name": row[0], "currentLevel": float(row[1]), "maxCapacity": float(row[2])}
-            for row in cur.fetchall()
-        ]
-
-        # Q3: 최근 알람 (24시간, 10건)
-        cur.execute("""
-            SELECT ar.tagsn,
-                   TO_CHAR(ar.alarm_start_time, 'YYYY-MM-DD HH24:MI') AS time,
-                   COALESCE(ti.sitename, '알 수 없음') AS facility,
-                   COALESCE(ar.alarm_severity, '정상') AS level,
-                   COALESCE(ar.alarm_msg, ar.alarm_category || ' 알람') AS message
-            FROM tb_equipment_alarm_report ar
-            LEFT JOIN tb_tag_info ti ON ar.tagsn = ti.tagsn
-            WHERE ar.alarm_start_time >= NOW() - INTERVAL '24 hours'
-            ORDER BY ar.alarm_start_time DESC
-            LIMIT 10
-        """)
-        recent_alarms = [
-            {"id": i + 1, "time": row[1], "facility": row[2], "level": row[3], "message": row[4]}
-            for i, row in enumerate(cur.fetchall())
-        ]
-
-        # Q4: 7일 알람 추세
-        cur.execute("""
-            SELECT alarm_start_time::date AS dt,
-                   COALESCE(alarm_severity, '정상') AS severity,
-                   COUNT(*) AS cnt
-            FROM tb_equipment_alarm_report
-            WHERE alarm_start_time >= NOW() - INTERVAL '7 days'
-            GROUP BY 1, 2
-            ORDER BY 1
-        """)
-        alarm_trend = [
-            {"date": row[0].isoformat(), "severity": row[1], "count": row[2]}
-            for row in cur.fetchall()
-        ]
-
+        cur.execute(
+            "SELECT comm_cd, use_yn FROM tb_comm_code "
+            "WHERE region = 'R01' AND grp_cd = 'SITE_SETTING'"
+        )
+        rows = cur.fetchall()
         cur.close()
-        return {
-            "summaryCards": summary_cards,
-            "reservoirSummaries": reservoir_summaries,
-            "recentAlarms": recent_alarms,
-            "alarmTrend": alarm_trend,
-        }
-    except psycopg2.Error as e:
-        logger.error(f"대시보드 조회 실패: {e}")
-        return {"summaryCards": [], "reservoirSummaries": [], "recentAlarms": [], "alarmTrend": []}
+
+        settings = {}
+        for comm_cd, use_yn in rows:
+            if comm_cd == "LANDING_ENABLED":
+                settings["landing_enabled"] = use_yn == "Y"
+
+        # 레코드가 없으면 기본값
+        if "landing_enabled" not in settings:
+            settings["landing_enabled"] = True
+
+        return settings
+
+    except Exception as e:
+        logger.error(f"사이트 설정 조회 실패: {e}")
+        return {"landing_enabled": True}
     finally:
         if conn:
             conn.close()
+
+
+@app.put("/admin/site-settings")
+async def update_site_settings(request: Request):
+    """사이트 설정 업데이트"""
+    conn = None
+    try:
+        body = await request.json()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if "landing_enabled" in body:
+            use_yn = "Y" if body["landing_enabled"] else "N"
+            # UPSERT: 있으면 UPDATE, 없으면 INSERT
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn, create_dt)
+                VALUES ('R01', 'SITE_SETTING', 'LANDING_ENABLED', '랜딩 페이지 활성화', %s, NOW())
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET use_yn = %s, update_dt = NOW()
+                """,
+                (use_yn, use_yn),
+            )
+            conn.commit()
+
+        cur.close()
+        return {"status": "OK", "landing_enabled": body.get("landing_enabled", True)}
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"사이트 설정 업데이트 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# (기존 대시보드 API는 아래 /monitoring/dashboard로 이전됨)
 
 
 @app.get("/monitoring/alarm-notifications")
@@ -4970,6 +5173,1139 @@ async def get_autocomplete_candidates():
             "facility_map": facility_map,
         },
     }
+
+
+# =============================================================================
+# 위기대응 (경보) API
+# =============================================================================
+
+@app.get("/crisis/alarm-reports")
+async def get_alarm_reports(
+    date_from: str = "",
+    date_to: str = "",
+    sitename: str = "",
+    alarm_status: str = "",
+    alarm_severity: str = "",
+    alarm_category: str = "",
+):
+    """경보발생이력 목록 조회 (tb_equipment_alarm_report — 직접 컬럼)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        conditions = []
+        params_list: list = []
+
+        if date_from:
+            conditions.append("alarm_start_time >= %s::timestamp")
+            params_list.append(f"{date_from} 00:00:00")
+        if date_to:
+            conditions.append("alarm_start_time <= %s::timestamp")
+            params_list.append(f"{date_to} 23:59:59")
+        if sitename:
+            conditions.append("sitename LIKE %s")
+            params_list.append(f"%{sitename}%")
+        if alarm_status:
+            conditions.append("alarm_status = %s")
+            params_list.append(alarm_status)
+        if alarm_severity:
+            conditions.append("alarm_severity = %s")
+            params_list.append(alarm_severity)
+        if alarm_category:
+            conditions.append("alarm_category = %s")
+            params_list.append(alarm_category)
+
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        sql = f"""
+            SELECT
+                TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
+                TO_CHAR(alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
+                tagsn,
+                COALESCE(sitename, '') AS sitename,
+                COALESCE(facilitytype, '') AS facilitytype,
+                COALESCE(equipmenttype, '') AS equipmenttype,
+                COALESCE(equipment_id, '') AS equipment_id,
+                alarm_category,
+                alarm_msg,
+                alarm_value,
+                alarm_status,
+                alarm_severity,
+                diagnosed_cause,
+                action_plan,
+                user_cause_description,
+                meta,
+                COALESCE(alarm_confirm_yn, 'N') AS alarm_confirm_yn,
+                countermeasure,
+                COALESCE(off_alarm_confirm_yn, 'N') AS off_alarm_confirm_yn,
+                is_false_alarm,
+                false_alarm_notes,
+                info_updated,
+                COALESCE(tagtype, '') AS tagtype,
+                stat
+            FROM tb_equipment_alarm_report
+            {where_clause}
+            ORDER BY alarm_start_time DESC
+            LIMIT 500
+        """
+        cur.execute(sql, params_list)
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+        cur.close()
+
+        results = []
+        for row in rows:
+            rec = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if col == "meta" and val is not None:
+                    rec[col] = val if isinstance(val, dict) else {}
+                else:
+                    rec[col] = val
+            results.append(rec)
+
+        return results
+
+    except psycopg2.Error as e:
+        logger.error(f"경보발생이력 조회 실패: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/crisis/alarm-analysis")
+async def get_alarm_analysis():
+    """경보분석용 알람 목록 (diagnosed_msg 포함, 최근 30일)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
+                TO_CHAR(alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
+                tagsn,
+                COALESCE(sitename, '') AS sitename,
+                COALESCE(facilitytype, '') AS facilitytype,
+                COALESCE(equipmenttype, '') AS equipmenttype,
+                COALESCE(equipment_id, '') AS equipment_id,
+                alarm_category,
+                alarm_msg,
+                alarm_value,
+                alarm_status,
+                alarm_severity,
+                diagnosed_cause,
+                action_plan,
+                user_cause_description,
+                meta,
+                COALESCE(alarm_confirm_yn, 'N') AS alarm_confirm_yn,
+                countermeasure,
+                COALESCE(off_alarm_confirm_yn, 'N') AS off_alarm_confirm_yn,
+                is_false_alarm,
+                false_alarm_notes,
+                info_updated,
+                COALESCE(tagtype, '') AS tagtype,
+                stat,
+                diagnosed_msg
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY alarm_start_time DESC
+            LIMIT 500
+        """)
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+        cur.close()
+
+        results = []
+        for row in rows:
+            rec = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if col == "meta" and val is not None:
+                    rec[col] = val if isinstance(val, dict) else {}
+                else:
+                    rec[col] = val
+            results.append(rec)
+
+        return results
+
+    except psycopg2.Error as e:
+        logger.error(f"경보분석 조회 실패: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/crisis/alarm-dashboard")
+async def get_alarm_dashboard_summary():
+    """경보관리현황 대시보드 요약 (진행중 알람 집계)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 진행중 알람 요약
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total_ongoing,
+                COUNT(*) FILTER (WHERE alarm_severity = '경고') AS critical_cnt,
+                COUNT(*) FILTER (WHERE alarm_severity = '주의') AS warning_cnt,
+                COUNT(*) FILTER (WHERE alarm_severity = '정상' OR alarm_severity IS NULL) AS caution_cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_status = '진행중'
+        """)
+        r = cur.fetchone()
+
+        # 카테고리별 집계
+        cur.execute("""
+            SELECT COALESCE(alarm_category, '기타') AS category, COUNT(*) AS cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_status = '진행중'
+            GROUP BY alarm_category
+            ORDER BY cnt DESC
+        """)
+        category_summary = [
+            {"category": row[0], "count": row[1]}
+            for row in cur.fetchall()
+        ]
+
+        # 시설별 집계 (tb_equipment_alarm_report에 sitename/facilitytype 직접 존재)
+        cur.execute("""
+            SELECT COALESCE(sitename, '알 수 없음') AS sitename,
+                   COALESCE(facilitytype, '') AS facilitytype,
+                   COUNT(*) AS cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_status = '진행중'
+            GROUP BY sitename, facilitytype
+            ORDER BY cnt DESC
+        """)
+        facility_summary = [
+            {"sitename": row[0], "facilitytype": row[1], "count": row[2]}
+            for row in cur.fetchall()
+        ]
+
+        cur.close()
+
+        return {
+            "totalOngoing": r[0] or 0,
+            "criticalCount": r[1] or 0,
+            "warningCount": r[2] or 0,
+            "cautionCount": r[3] or 0,
+            "categorySummary": category_summary,
+            "facilitySummary": facility_summary,
+        }
+
+    except psycopg2.Error as e:
+        logger.error(f"경보관리현황 요약 조회 실패: {e}")
+        return {
+            "totalOngoing": 0, "criticalCount": 0, "warningCount": 0, "cautionCount": 0,
+            "categorySummary": [], "facilitySummary": [],
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/crisis/alarm-reports/confirm")
+async def confirm_alarm_report_api(request: Request):
+    """경보 확인 처리 (alarm_confirm_yn = 'Y')"""
+    conn = None
+    try:
+        body = await request.json()
+        tagsn = body.get("tagsn", "")
+        alarm_start_time = body.get("alarm_start_time", "")
+        if not tagsn or not alarm_start_time:
+            return {"status": "error", "message": "tagsn, alarm_start_time 필수"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tb_equipment_alarm_report
+            SET alarm_confirm_yn = 'Y', info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            WHERE tagsn = %s AND alarm_start_time = %s::timestamp
+        """, [tagsn, alarm_start_time])
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except psycopg2.Error as e:
+        logger.error(f"경보 확인 처리 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 태그 마스터 API
+# =============================================================================
+
+@app.get("/tags")
+async def get_tags(
+    sitename: str = Query("", description="현장명 필터"),
+    facilitytype: str = Query("", description="시설유형 필터"),
+    tagtype: str = Query("", description="태그유형 필터"),
+    keyword: str = Query("", description="태그SN/설명 검색"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """tb_tag_info 태그 마스터 목록 조회 (페이징+필터)"""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+
+        where_clauses = []
+        params: list = []
+
+        if sitename:
+            where_clauses.append("sitename = %s")
+            params.append(sitename)
+        if facilitytype:
+            where_clauses.append("facilitytype = %s")
+            params.append(facilitytype)
+        if tagtype:
+            where_clauses.append("tagtype = %s")
+            params.append(tagtype)
+        if keyword:
+            where_clauses.append("(tagsn ILIKE %s OR datadesc ILIKE %s OR datainfo ILIKE %s)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        # 전체 건수
+        cur.execute(f"SELECT count(*) FROM tb_tag_info{where_sql}", params)
+        total = cur.fetchone()[0]
+
+        # 페이징 데이터
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"""SELECT tagsn, tagtype, sitename, facilitytype, equipmenttype,
+                       datainfo, datadesc, unit, alarm_tag_yn
+                  FROM tb_tag_info{where_sql}
+                 ORDER BY sitename, facilitytype, tagsn
+                 LIMIT %s OFFSET %s""",
+            params + [page_size, offset],
+        )
+        cols = ["tagsn", "tagtype", "sitename", "facilitytype", "equipmenttype",
+                "datainfo", "datadesc", "unit", "alarm_tag_yn"]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        # alarm_tag_yn: Decimal → int
+        for row in rows:
+            if row["alarm_tag_yn"] is not None:
+                row["alarm_tag_yn"] = int(row["alarm_tag_yn"])
+
+        cur.close()
+        return {
+            "status": "OK",
+            "data": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    except psycopg2.Error as e:
+        logger.error(f"태그 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": [], "total": 0}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/tags/filters")
+async def get_tag_filters():
+    """태그 마스터 필터 옵션 (현장명/시설유형/태그유형/장비유형 목록)"""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        result = {}
+        for col_name in ["sitename", "facilitytype", "tagtype", "equipmenttype"]:
+            cur.execute(
+                f"SELECT DISTINCT {col_name} FROM tb_tag_info "
+                f"WHERE {col_name} IS NOT NULL ORDER BY {col_name}"
+            )
+            result[col_name] = [r[0] for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": result}
+    except psycopg2.Error as e:
+        logger.error(f"태그 필터 조회 실패: {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": {}}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 트렌드 시계열 데이터 조회
+# =============================================================================
+
+class TrendDataRequest(BaseModel):
+    tag_ids: list
+    from_ts: str
+    to_ts: str
+    max_points: Optional[int] = 2000
+
+
+@app.post("/trend/data")
+async def get_trend_data(req: TrendDataRequest):
+    """트렌드 시계열 데이터 조회 — time_bucket 집계"""
+    if not req.tag_ids or len(req.tag_ids) > 15:
+        return {"status": "ERROR", "message": "태그는 1~15개 선택 가능합니다."}
+
+    conn = None
+    try:
+        from datetime import datetime as dt_parse
+
+        # 시간범위 파싱
+        from_ts = req.from_ts.replace("T", " ").replace("Z", "")[:19]
+        to_ts = req.to_ts.replace("T", " ").replace("Z", "")[:19]
+
+        # 시간범위(분) 계산 → 버킷 크기 결정
+        t_from = dt_parse.strptime(from_ts, "%Y-%m-%d %H:%M:%S")
+        t_to = dt_parse.strptime(to_ts, "%Y-%m-%d %H:%M:%S")
+        total_minutes = max(1, int((t_to - t_from).total_seconds() / 60))
+        max_pts = min(max(req.max_points or 2000, 100), 5000)
+        bucket_mins = max(1, total_minutes // max_pts)
+
+        # 디지털 태그 목록 조회 (ROUND 처리용)
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tagsn FROM tb_tag_info WHERE tagsn = ANY(%s) "
+            "AND tagtype = 'Digital Input'",
+            (req.tag_ids,)
+        )
+        digital_tags = {r[0] for r in cur.fetchall()}
+
+        # time_bucket 집계 쿼리
+        bucket_interval = f"{bucket_mins} minutes"
+        cur.execute(
+            """
+            SELECT
+                to_char(time_bucket(%s::interval, logtime), 'YYYY-MM-DD HH24:MI') AS ts,
+                tagsn,
+                AVG(val) AS val
+            FROM tb_tag_raw_data
+            WHERE tagsn = ANY(%s)
+              AND logtime >= %s::timestamp
+              AND logtime < %s::timestamp
+            GROUP BY ts, tagsn
+            ORDER BY ts, tagsn
+            """,
+            (bucket_interval, req.tag_ids, from_ts, to_ts)
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        # 후처리: 공통 times + tagsn별 values 배열
+        from collections import OrderedDict
+        time_set = OrderedDict()
+        tag_data = {}
+        for ts, tagsn, val in rows:
+            time_set[ts] = True
+            if tagsn not in tag_data:
+                tag_data[tagsn] = {}
+            # 디지털 태그 → 0/1 반올림
+            if val is not None:
+                v = round(float(val)) if tagsn in digital_tags else round(float(val), 4)
+            else:
+                v = None
+            tag_data[tagsn][ts] = v
+
+        times = list(time_set.keys())
+        series = {}
+        for tag_id in req.tag_ids:
+            td = tag_data.get(tag_id, {})
+            series[tag_id] = [td.get(t) for t in times]
+
+        return {
+            "status": "OK",
+            "data": {"times": times, "series": series},
+            "bucket_mins": bucket_mins,
+            "total_points": len(times),
+        }
+
+    except Exception as e:
+        logger.error(f"트렌드 데이터 조회 실패: {e}")
+        return {"status": "ERROR", "message": f"조회에 실패했습니다: {str(e)}"}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 대시보드 요약 API
+# =============================================================================
+
+@app.get("/monitoring/dashboard")
+async def get_dashboard_summary():
+    """대시보드 요약 정보 (시설현황, 알람, 태그, 배수지 수위, 알람추세)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 시설유형별 현장 수
+        cur.execute("""
+            SELECT facilitytype, COUNT(DISTINCT sitename) as cnt
+            FROM tb_trend_catalog
+            GROUP BY facilitytype
+        """)
+        facility_counts = {}
+        total_sites = 0
+        for row in cur.fetchall():
+            ft, cnt = row[0], row[1]
+            facility_counts[ft] = cnt
+            total_sites += cnt
+        reservoir_cnt = facility_counts.get("배수지", 0)
+        booster_cnt = facility_counts.get("가압장", 0)
+        block_cnt = facility_counts.get("소블록", 0) + facility_counts.get("소소블록", 0)
+
+        # 2) 진행중 알람
+        cur.execute("""
+            SELECT alarm_severity, COUNT(*) as cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_status = '진행중'
+            GROUP BY alarm_severity
+        """)
+        alarm_counts = {}
+        total_alarms = 0
+        for row in cur.fetchall():
+            sev = row[0] or "기타"
+            cnt = row[1]
+            alarm_counts[sev] = cnt
+            total_alarms += cnt
+        alarm_desc_parts = [f"{k}: {v}" for k, v in sorted(alarm_counts.items(), key=lambda x: -x[1])]
+
+        # 3) 센서 태그 수
+        cur.execute("SELECT COUNT(*) FROM tb_tag_info")
+        tag_total = cur.fetchone()[0]
+
+        # 4) 관리 장비 수
+        cur.execute("SELECT COUNT(DISTINCT equipment_id) FROM tb_network_status")
+        equip_cnt = cur.fetchone()[0]
+
+        # 요약 카드 구성
+        summary_cards = [
+            {
+                "title": "관리 현장",
+                "value": str(total_sites),
+                "description": f"배수지 {reservoir_cnt} / 가압장 {booster_cnt} / 블록 {block_cnt}",
+            },
+            {
+                "title": "진행중 알람",
+                "value": str(total_alarms),
+                "description": " / ".join(alarm_desc_parts) if alarm_desc_parts else "없음",
+            },
+            {
+                "title": "센서 태그",
+                "value": f"{tag_total:,}",
+                "description": f"관리 장비 {equip_cnt}대",
+            },
+            {
+                "title": "시스템 상태",
+                "value": "정상",
+                "description": "AI 서버 + DB 연결 정상",
+            },
+        ]
+
+        # 5) 배수지 수위 현황 — 현장별 대표 수위 태그 최신값
+        cur.execute("""
+            WITH level_tags AS (
+                SELECT tagsn, sitename, datadesc
+                FROM tb_tag_info
+                WHERE facilitytype = '배수지'
+                  AND tagtype = 'Analog Input'
+                  AND datainfo LIKE '%%수위%%'
+                  AND datadesc NOT LIKE '%%설정%%'
+                  AND datadesc NOT LIKE '%%HH%%'
+                  AND datadesc NOT LIKE '%%LL%%'
+                  AND datadesc NOT LIKE '%%H설정%%'
+                  AND datadesc NOT LIKE '%%염소%%'
+            ),
+            latest AS (
+                SELECT DISTINCT ON (tagsn) tagsn, val, logtime
+                FROM tb_tag_raw_data
+                WHERE tagsn IN (SELECT tagsn FROM level_tags)
+                  AND logtime >= NOW() - INTERVAL '1 day'
+                ORDER BY tagsn, logtime DESC
+            ),
+            site_avg AS (
+                SELECT lt.sitename,
+                       ROUND(AVG(l.val)::numeric, 2) as avg_level,
+                       COUNT(*) as tag_cnt
+                FROM level_tags lt
+                JOIN latest l ON lt.tagsn = l.tagsn
+                WHERE l.val IS NOT NULL AND l.val > 0
+                GROUP BY lt.sitename
+            )
+            SELECT sitename, avg_level, tag_cnt FROM site_avg ORDER BY sitename
+        """)
+        reservoir_summaries = []
+        for row in cur.fetchall():
+            reservoir_summaries.append({
+                "name": row[0],
+                "currentLevel": float(row[1]),
+                "maxCapacity": 5.0,
+            })
+
+        # 6) 7일 알람 추세
+        cur.execute("""
+            SELECT alarm_start_time::date as d, COALESCE(alarm_severity, '기타') as sev, COUNT(*) as cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= NOW() - INTERVAL '7 days'
+            GROUP BY d, sev
+            ORDER BY d
+        """)
+        alarm_trend = []
+        for row in cur.fetchall():
+            alarm_trend.append({
+                "date": row[0].strftime("%m-%d"),
+                "severity": row[1],
+                "count": row[2],
+            })
+
+        # 7) 최근 알람 (24시간, 최대 20건)
+        cur.execute("""
+            SELECT r.alarm_start_time, r.tagsn, r.alarm_severity, r.alarm_status,
+                   t.sitename, t.datadesc
+            FROM tb_equipment_alarm_report r
+            LEFT JOIN tb_tag_info t ON r.tagsn = t.tagsn
+            WHERE r.alarm_start_time >= NOW() - INTERVAL '24 hours'
+            ORDER BY r.alarm_start_time DESC
+            LIMIT 20
+        """)
+        recent_alarms = []
+        for i, row in enumerate(cur.fetchall()):
+            alarm_time = row[0]
+            tagsn = row[1]
+            severity = row[2] or "기타"
+            status = row[3]
+            sitename = row[4] or ""
+            datadesc = row[5] or tagsn
+            recent_alarms.append({
+                "id": i + 1,
+                "time": alarm_time.strftime("%Y-%m-%d %H:%M"),
+                "facility": sitename,
+                "level": severity,
+                "message": f"{datadesc} ({status})",
+            })
+
+        return {
+            "summaryCards": summary_cards,
+            "reservoirSummaries": reservoir_summaries,
+            "recentAlarms": recent_alarms,
+            "alarmTrend": alarm_trend,
+        }
+
+    except Exception as e:
+        logger.error(f"대시보드 요약 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 모니터링 카탈로그 CRUD
+# =============================================================================
+
+@app.get("/monitoring/catalogs/sites")
+async def get_monitoring_catalog_sites(facilitytype: str = "", monitoring_only: bool = False):
+    """시설유형별 DISTINCT 사이트 목록 반환"""
+    if not facilitytype:
+        return {"status": "ERROR", "message": "facilitytype 필수"}
+    ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        placeholders = ",".join(["%s"] * len(ftypes))
+        monitoring_filter = " AND COALESCE((meta->>'monitoring')::boolean, false) = true" if monitoring_only else ""
+        cur.execute(
+            f"SELECT DISTINCT sitename FROM tb_trend_catalog WHERE facilitytype IN ({placeholders}){monitoring_filter} ORDER BY sitename",
+            ftypes,
+        )
+        sites = [r[0] for r in cur.fetchall()]
+        return {"status": "OK", "sites": sites}
+    except Exception as e:
+        logger.error(f"모니터링 사이트 목록 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/monitoring/catalogs")
+async def get_monitoring_catalogs(
+    facilitytype: str = "",
+    sitename: str = "",
+    monitoring_only: bool = False,
+):
+    """모니터링 카탈로그 목록 조회 (시설유형 + 사이트 필터)"""
+    if not facilitytype:
+        return {"status": "ERROR", "message": "facilitytype 필수"}
+    ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        conditions = [f"facilitytype IN ({','.join(['%s'] * len(ftypes))})"]
+        params = list(ftypes)
+        if sitename:
+            conditions.append("sitename = %s")
+            params.append(sitename)
+        if monitoring_only:
+            conditions.append("COALESCE((meta->>'monitoring')::boolean, false) = true")
+        where = " AND ".join(conditions)
+        cols = ["trend_id", "sitename", "facilitytype", "trend_name", "meta", "description", "created_at", "updated_at"]
+        cur.execute(
+            f"SELECT {', '.join(cols)} FROM tb_trend_catalog WHERE {where} "
+            f"ORDER BY sitename, (COALESCE(meta->>'display_order','999'))::int, trend_name",
+            params,
+        )
+        rows = cur.fetchall()
+        data = []
+        for r in rows:
+            item = dict(zip(cols, r))
+            if item.get("created_at"):
+                item["created_at"] = str(item["created_at"])
+            if item.get("updated_at"):
+                item["updated_at"] = str(item["updated_at"])
+            data.append(item)
+        # 사이트 목록도 함께 반환
+        sites = sorted(set(item["sitename"] for item in data))
+        return {"status": "OK", "data": data, "sites": sites}
+    except Exception as e:
+        logger.error(f"모니터링 카탈로그 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/monitoring/catalogs")
+async def create_monitoring_catalog(request: Request):
+    """모니터링 카탈로그 생성 — 이름 충돌 시 자동 접미사 부여"""
+    body = await request.json()
+    sitename = body.get("sitename", "")
+    facilitytype = body.get("facilitytype", "")
+    trend_name = body.get("trend_name", "")
+    meta = body.get("meta", {})
+    description = body.get("description", "")
+    if not sitename or not facilitytype or not trend_name:
+        return {"status": "ERROR", "message": "sitename, facilitytype, trend_name 필수"}
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # 이름 충돌 확인 → 자동 접미사 부여
+        final_name = trend_name
+        cur.execute(
+            "SELECT trend_name FROM tb_trend_catalog "
+            "WHERE sitename = %s AND facilitytype = %s AND trend_name LIKE %s",
+            (sitename, facilitytype, trend_name + "%"),
+        )
+        existing_names = {r[0] for r in cur.fetchall()}
+        if final_name in existing_names:
+            for i in range(2, 100):
+                candidate = f"{trend_name}({i})"
+                if candidate not in existing_names:
+                    final_name = candidate
+                    break
+        meta_json = json.dumps(meta, ensure_ascii=False)
+        cur.execute(
+            "INSERT INTO tb_trend_catalog (sitename, facilitytype, trend_name, meta, description) "
+            "VALUES (%s, %s, %s, %s::jsonb, %s) RETURNING trend_id",
+            (sitename, facilitytype, final_name, meta_json, description),
+        )
+        trend_id = cur.fetchone()[0]
+        conn.commit()
+        return {"status": "OK", "trend_id": trend_id, "trend_name": final_name}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"모니터링 카탈로그 생성 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/monitoring/catalogs/{trend_id}")
+async def update_monitoring_catalog(trend_id: int, request: Request):
+    """모니터링 카탈로그 수정"""
+    body = await request.json()
+    fields, params = [], []
+    if "trend_name" in body:
+        fields.append("trend_name = %s")
+        params.append(body["trend_name"])
+    if "meta" in body:
+        fields.append("meta = %s::jsonb")
+        params.append(json.dumps(body["meta"], ensure_ascii=False))
+    if "description" in body:
+        fields.append("description = %s")
+        params.append(body["description"])
+    if not fields:
+        return {"status": "ERROR", "message": "수정할 필드 없음"}
+    fields.append("updated_at = now()")
+    params.append(trend_id)
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE tb_trend_catalog SET {', '.join(fields)} WHERE trend_id = %s",
+            params,
+        )
+        conn.commit()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"모니터링 카탈로그 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/monitoring/catalogs/{trend_id}")
+async def delete_monitoring_catalog(trend_id: int):
+    """모니터링 카탈로그 삭제"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tb_trend_catalog WHERE trend_id = %s", (trend_id,))
+        conn.commit()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"모니터링 카탈로그 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 용수 흐름 관리 (tb_facility_flow_map)
+# =============================================================================
+
+
+@app.get("/flow-map")
+async def get_flow_maps():
+    """용수 흐름 전체 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype,
+                   relation_type, description
+            FROM tb_facility_flow_map
+            ORDER BY upstream_facilitytype, upstream_sitename,
+                     downstream_facilitytype, downstream_sitename
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        data = [
+            {
+                "upstream_sitename": r[0],
+                "upstream_facilitytype": r[1],
+                "downstream_sitename": r[2],
+                "downstream_facilitytype": r[3],
+                "relation_type": r[4],
+                "description": r[5],
+            }
+            for r in rows
+        ]
+        return {"status": "OK", "data": data, "total": len(data)}
+    except Exception as e:
+        logger.error(f"용수 흐름 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/flow-map/roots")
+async def get_flow_map_roots():
+    """최상위 노드 목록 (상류에만 존재하고 하류에는 없는 노드)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT upstream_sitename, upstream_facilitytype
+            FROM tb_facility_flow_map
+            WHERE (upstream_sitename, upstream_facilitytype) NOT IN (
+                SELECT downstream_sitename, downstream_facilitytype
+                FROM tb_facility_flow_map
+            )
+            ORDER BY upstream_facilitytype, upstream_sitename
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        data = [
+            {"sitename": r[0], "facilitytype": r[1]}
+            for r in rows
+        ]
+        return {"status": "OK", "data": data}
+    except Exception as e:
+        logger.error(f"용수 흐름 루트 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/flow-map/downstream")
+async def get_flow_map_downstream(sitename: str, facilitytype: str):
+    """특정 노드의 하류 전체 (재귀 CTE)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            WITH RECURSIVE downstream AS (
+                SELECT upstream_sitename, upstream_facilitytype,
+                       downstream_sitename, downstream_facilitytype,
+                       relation_type, description
+                FROM tb_facility_flow_map
+                WHERE upstream_sitename = %s AND upstream_facilitytype = %s
+                UNION
+                SELECT f.upstream_sitename, f.upstream_facilitytype,
+                       f.downstream_sitename, f.downstream_facilitytype,
+                       f.relation_type, f.description
+                FROM tb_facility_flow_map f
+                JOIN downstream d
+                  ON f.upstream_sitename = d.downstream_sitename
+                 AND f.upstream_facilitytype = d.downstream_facilitytype
+            )
+            SELECT * FROM downstream
+            ORDER BY upstream_facilitytype, upstream_sitename
+        """, (sitename, facilitytype))
+        rows = cur.fetchall()
+        cur.close()
+        data = [
+            {
+                "upstream_sitename": r[0],
+                "upstream_facilitytype": r[1],
+                "downstream_sitename": r[2],
+                "downstream_facilitytype": r[3],
+                "relation_type": r[4],
+                "description": r[5],
+            }
+            for r in rows
+        ]
+        return {"status": "OK", "data": data}
+    except Exception as e:
+        logger.error(f"용수 흐름 하류 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/flow-map")
+async def create_flow_map(req: dict):
+    """용수 흐름 연결 추가."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO tb_facility_flow_map
+                (upstream_sitename, upstream_facilitytype,
+                 downstream_sitename, downstream_facilitytype,
+                 relation_type, description)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (upstream_sitename, upstream_facilitytype,
+                         downstream_sitename, downstream_facilitytype)
+            DO UPDATE SET
+                relation_type = EXCLUDED.relation_type,
+                description = EXCLUDED.description
+        """, (
+            req["upstream_sitename"], req["upstream_facilitytype"],
+            req["downstream_sitename"], req["downstream_facilitytype"],
+            req.get("relation_type", "수계"),
+            req.get("description"),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"용수 흐름 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/flow-map")
+async def delete_flow_map(
+    upstream_sitename: str,
+    upstream_facilitytype: str,
+    downstream_sitename: str,
+    downstream_facilitytype: str,
+):
+    """용수 흐름 연결 삭제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM tb_facility_flow_map
+            WHERE upstream_sitename = %s AND upstream_facilitytype = %s
+              AND downstream_sitename = %s AND downstream_facilitytype = %s
+        """, (
+            upstream_sitename, upstream_facilitytype,
+            downstream_sitename, downstream_facilitytype,
+        ))
+        deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "deleted": deleted}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"용수 흐름 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/flow-map/export/csv")
+async def export_flow_map_csv():
+    """용수 흐름 CSV 다운로드."""
+    import io
+    import csv as csv_mod
+    from starlette.responses import StreamingResponse
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype,
+                   relation_type, COALESCE(description, '')
+            FROM tb_facility_flow_map
+            ORDER BY upstream_facilitytype, upstream_sitename
+        """)
+        rows = cur.fetchall()
+        cur.close()
+
+        buf = io.StringIO()
+        writer = csv_mod.writer(buf)
+        writer.writerow([
+            "상류현장명", "상류시설유형",
+            "하류현장명", "하류시설유형",
+            "관계유형", "설명",
+        ])
+        for r in rows:
+            writer.writerow(r)
+        buf.seek(0)
+
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={
+                "Content-Disposition":
+                    "attachment; filename=flow_map.csv"
+            },
+        )
+    except Exception as e:
+        logger.error(f"용수 흐름 CSV 내보내기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/flow-map/import/csv")
+async def import_flow_map_csv(file: UploadFile):
+    """용수 흐름 CSV 업로드 (일괄 입력)."""
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 4:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 4컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 4:
+                skipped += 1
+                continue
+            up_sn = row[0].strip()
+            up_ft = row[1].strip()
+            dn_sn = row[2].strip()
+            dn_ft = row[3].strip()
+            rel = row[4].strip() if len(row) > 4 and row[4].strip() else "수계"
+            desc = row[5].strip() if len(row) > 5 else None
+
+            if not up_sn or not up_ft or not dn_sn or not dn_ft:
+                skipped += 1
+                continue
+
+            cur.execute("""
+                INSERT INTO tb_facility_flow_map
+                    (upstream_sitename, upstream_facilitytype,
+                     downstream_sitename, downstream_facilitytype,
+                     relation_type, description)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (upstream_sitename, upstream_facilitytype,
+                             downstream_sitename, downstream_facilitytype)
+                DO UPDATE SET
+                    relation_type = EXCLUDED.relation_type,
+                    description = EXCLUDED.description
+            """, (up_sn, up_ft, dn_sn, dn_ft, rel, desc))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"용수 흐름 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
