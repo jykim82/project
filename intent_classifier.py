@@ -487,6 +487,9 @@ class IntentClassifier:
                 return "ANOMALY_PATTERN", "keyword"
             if any(kw in question for kw in ["설비", "현황"]):
                 return "FACILITY_ABNORMAL_STATUS_SUMMARY", "keyword"
+            # 일상 표현: "이상 있어?", "이상 없나?", "이상인가?" 등 → 이상감지 상세
+            if any(kw in question for kw in ["있어", "있나", "없어", "없나", "있는", "없는", "인가", "인지"]):
+                return "ANOMALY_FACILITY_DETAIL", "keyword"
         if "진행중" in question or "진행 중" in question:
             return "ONGOING_ALARM_STATUS", "keyword"
 

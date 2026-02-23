@@ -5155,13 +5155,29 @@ async def get_network_status_summary():
 
 @app.get("/autocomplete/candidates")
 async def get_autocomplete_candidates():
-    """자동완성 후보 목록 반환 (현장명, 시설유형, 데이터항목, 블록구분)"""
+    """자동완성 후보 목록 반환 (현장명, 시설유형, 데이터항목, 블록구분, 질의 템플릿)"""
     from param_extractor import _FACILITYTYPE_CANDIDATES, _DATAINFO_CANDIDATES
+    from intent_index import INTENT_DESCRIPTIONS
 
     facility_map = {
         site: sorted(ftypes)
         for site, ftypes in SITENAME_FACILITY_MAP.items()
     }
+
+    # 질의 템플릿: example3.json의 질문 목록을 인텐트별로 추출
+    query_templates = []
+    for intent_def in INTENT_DEFINITIONS:
+        intent_name = intent_def.get("intent", "")
+        questions = intent_def.get("questions", [])
+        if not intent_name or not questions:
+            continue
+        desc = INTENT_DESCRIPTIONS.get(intent_name, intent_name)
+        for q in questions:
+            query_templates.append({
+                "text": q,
+                "intent": intent_name,
+                "description": desc,
+            })
 
     return {
         "status": "OK",
@@ -5171,6 +5187,7 @@ async def get_autocomplete_candidates():
             "data_info": _DATAINFO_CANDIDATES,
             "block_levels": KNOWN_BLOCK_LEVELS,
             "facility_map": facility_map,
+            "query_templates": query_templates,
         },
     }
 
