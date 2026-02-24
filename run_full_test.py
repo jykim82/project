@@ -52,7 +52,7 @@ TEST_CASES = [
     ("합덕3 소블록 계통도는?", "BLOCK_NETWORK_DIAGRAM", "블록 계통도"),
     ("행정1-1 소블록 운영현황은?", "BLOCK_OPERATION_STATUS", "블록 운영현황"),
     # ---- 공통 시설 ----
-    ("신평 배수지 압력 현황은?", "FACILITY_PRESSURE_STATUS", "압력 현황"),
+    ("신평 가압장 압력 현황은?", "FACILITY_PRESSURE_STATUS", "압력 현황"),
     ("신평 배수지 야간최소유량 현황은?", "NIGHT_MIN_FLOW_STATUS", "야간최소유량"),
     ("신평 배수지 통신 구성을 알려줘", "FACILITY_COMMUNICATION_TOPOLOGY", "통신 구성"),
     ("신평 배수지 통신 상태를 알려줘", "FACILITY_COMMUNICATION_STATUS", "통신 상태"),

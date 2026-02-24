@@ -307,7 +307,7 @@ class IntentClassifier:
         # 공통 키워드 체크 (시설 키워드보다 우선)
         common_keywords = [
             "야간최소유량", "야간 최소유량", "최소유량", "야간",
-            "알람", "경보", "알림", "태그", "통신",
+            "알람", "경보", "알림", "태그", "통신", "네트워크",
             "결측", "진행중",
             "표로",
             "이상", "위험", "예측", "이상감지",
@@ -421,6 +421,28 @@ class IntentClassifier:
             # 배수지 또는 기본값
             return "RESERVOIR_INITIAL_RESPONSE_MANUAL", "keyword"
 
+        # 키워드 단축: 일반현황 / 운영현황 → 시설별 OVERVIEW / OPERATION_STATUS
+        if "일반현황" in question or "일반 현황" in question:
+            if "가압장" in question:
+                return "BOOSTER_STATION_OVERVIEW", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "BLOCK_OVERVIEW", "keyword"
+            if "감압" in question:
+                return "PRESSURE_REDUCING_FACILITY_OVERVIEW", "keyword"
+            return "RESERVOIR_OVERVIEW", "keyword"
+        if "운영현황" in question or "운영 현황" in question or "운영현항" in question:
+            if "가압장" in question:
+                return "BOOSTER_STATION_OPERATION_STATUS", "keyword"
+            if any(kw in question for kw in ["소블록", "중블록", "대블록", "블록"]):
+                return "BLOCK_OPERATION_STATUS", "keyword"
+            if "감압" in question:
+                return "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS", "keyword"
+            return "RESERVOIR_OPERATION_STATUS", "keyword"
+
+        # 키워드 단축: 통신/네트워크 상태 → 통신 상태 조회
+        if "통신" in question or "네트워크" in question:
+            return "FACILITY_COMMUNICATION_STATUS", "keyword"
+
         # 키워드 단축: 압력 현황
         if "압력" in question and ("현황" in question or "현항" in question):
             return "FACILITY_PRESSURE_STATUS", "keyword"
@@ -435,10 +457,14 @@ class IntentClassifier:
         if "최근" in question and ("알람" in question or "경보" in question or "알림" in question):
             return "FACILITY_RECENT_ALARM", "keyword"
 
+        # 키워드 단축: 경보 이력/발생/분석 (sitename 불필요 → 진행중 알람 전체 조회)
+        if any(kw in question for kw in ["경보 발생", "경보 이력", "경보 분석", "알람 이력", "알람 발생"]):
+            return "ONGOING_ALARM_STATUS", "keyword"
+
         # 키워드 단축: 수위/압력 단독 → 태그 최신값 (다른 INTENT 키워드 제외)
         _TAG_LATEST_EXCLUDE = [
             "현황", "현항", "헌팅", "표", "적산", "순시",
-            "알람", "경보", "알림", "통신", "주소", "이상",
+            "알람", "경보", "알림", "통신", "네트워크", "주소", "이상",
             "결측", "표준편차", "밸브", "트렌드", "추이", "같이",
         ]
         if not any(ek in question for ek in _TAG_LATEST_EXCLUDE):
@@ -454,6 +480,14 @@ class IntentClassifier:
         # 키워드 단축: 전체 평균사용량
         if "전체" in question and "평균사용량" in question:
             return "TODAY_RESERVOIR_AVG_USAGE_ALL", "keyword"
+
+        # 키워드 단축: 야간최소유량 — 세부 인텐트 분기
+        if "야간최소유량" in question or "야간 최소유량" in question or "최소유량" in question:
+            if "표준편차" in question or "분석" in question:
+                return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
+            if "표" in question or "표로" in question:
+                return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
+            return "FACILITY_TREND", "keyword"
 
         # 키워드 단축: "공통" 카테고리
         if "결측" in question:

@@ -1,0 +1,2013 @@
+{
+  "hash": "7bea3e860db07d9b670c00bbb74bf2e3",
+  "labels": [
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 일반현황은?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "신평 배수지 일반현황은?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "신평배수지 일반 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "신평 배수지의 일반 현황은 어때?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 기본정보는?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 시설개요는?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 시설정보를 알려줘"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 기본 사항은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "배수지 설비현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "신평 배수지 설비현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "신평배수지 설비 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "신평 배수지에 어떤 설비들이 있나요?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "배수지 장비현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "배수지 기기현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "배수지 장비 상태를 알려줘"
+    ],
+    [
+      "RESERVOIR_INITIAL_RESPONSE_MANUAL",
+      "배수지 초동대응 매뉴얼은?"
+    ],
+    [
+      "RESERVOIR_INITIAL_RESPONSE_MANUAL",
+      "신평 배수지 초동대응 매뉴얼은?"
+    ],
+    [
+      "RESERVOIR_INITIAL_RESPONSE_MANUAL",
+      "배수지 사고 발생 시 매뉴얼은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "배수지 운영현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "신평배수지 운영현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "신평 배수지 운영 상태는?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "신평배수지 현재 운영현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "배수지 가동상태는?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "배수지 운영 상태를 알려줘"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "배수지 작동현황은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "배수지 시설용량은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "신평배수지 시설용량은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "신평 배수지의 시설용량은 얼마인가요?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "신평배수지 저장 용량은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "배수지 저수용량은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "배수지 저류용량은?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "배수지 용량은 얼마야?"
+    ],
+    [
+      "RESERVOIR_FACILITY_CAPACITY",
+      "배수지 최대 저장량은?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 수위 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "신평 배수지 수위 현황은?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "신평배수지 수위는 어떻게 되나요?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "신평 배수지 현재 수위는?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 수위는?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 현재 수위를 알려줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 수위가 어떻게 되나요?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 수위 데이터는?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위가 높아요"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위가 낮아요"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위가 이상해요"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "배수지 수위가 올라가고 있어"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위가 떨어지고 있어"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위 상태가 어때?"
+    ],
+    [
+      "RESERVOIR_LEVEL_STATUS",
+      "수위가 정상인가요?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "행정 배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "신평 배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "금일 배수지 평균 사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 일공급량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 일일급수량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 하루 급수량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 일평균 사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "신평 배수지 일공급량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 급수량은 얼마야?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "전체 배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "금일 전체 배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "전체 배수지 일공급량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "전체 배수지 일일급수량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "전체 배수지 급수량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE_ALL",
+      "전체 일공급량을 알려줘"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 배수지 적산은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 배수지 유출 적산은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 행정 배수지 유출 적산은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 행정 배수지 적산은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 행정1-2 소블록 적산은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "오늘 배수지 적산량은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "배수지 누적유량은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "배수지 총유량은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "배수지 적산유량은?"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "금일 누적유량을 알려줘"
+    ],
+    [
+      "TODAY_FLOW_ACCUMULATION",
+      "오늘 적산유량은 얼마야?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "금일 배수지 유출 현황은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "금일 전체 배수지 유출 현황은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "오늘 전체 배수지 유출량은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "금일 배수지별 유출 현황을 알려줘"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "배수지 유출량은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "전체 유출현황은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "금일 유출량을 알려줘"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "배수지별 유출량은 얼마야?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "가압장 일반현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "행정 가압장 일반현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "행정가압장 일반 현황을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "행정 가압장 기본 정보는?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "가압장 기본정보는?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "가압장 시설개요는?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "가압장 시설정보를 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "가압장 운영현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "행정 가압장 운영현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "행정가압장 현재 운영상태는?"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "행정 가압장 가동 현황을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "가압장 가동상태는?"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "가압장 작동현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OPERATION_STATUS",
+      "가압장 운영 상태를 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장 설비현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "행정 가압장 설비현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "고대리 가압장 설비 현황을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장에 어떤 설비들이 있나요?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장 장비현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장 기기현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장 장비 목록을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
+      "가압장 초동대응 매뉴얼은?"
+    ],
+    [
+      "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
+      "고대리 가압장 초동대응 매뉴얼은?"
+    ],
+    [
+      "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
+      "행정 가압장 초동대응 매뉴얼은?"
+    ],
+    [
+      "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
+      "가압장 사고 발생 시 매뉴얼은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "감압시설 일반현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "행정 감압시설 일반현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "순성 감압시설 일반현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "감압시설 기본 정보는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "감압시설 기본정보는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "감압시설 시설개요는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OVERVIEW",
+      "감압설비 기본정보는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS",
+      "감압시설 운영현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS",
+      "행정 감압시설 운영현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS",
+      "순성 감압시설 운영현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS",
+      "감압시설 현재 운영상태는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+      "감압시설 설비현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+      "순성 감압시설 설비현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+      "행정 감압시설 설비현황은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_EQUIPMENT_STATUS",
+      "감압시설 주요 설비 상태는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL",
+      "감압시설 초동대응 매뉴얼은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL",
+      "순성 감압시설 초동대응 매뉴얼은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL",
+      "행정 감압시설 초동대응 매뉴얼은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_INITIAL_RESPONSE_MANUAL",
+      "감압시설 사고 발생 시 매뉴얼은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압시설 감압기준은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "순성 감압설비 감압기준은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "행정 감압시설 감압기준은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압시설 감압 패턴은 어떻게 되나요?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압 설정값은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압 기준값은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압밸브 설정기준은?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_CRITERIA",
+      "감압 설정을 알려줘"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "블록 일반현황은?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "합덕3 소블록 일반현황은?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "행정1-1 중블록 일반현황은?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "소블록 기본 정보는?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "블록 기본정보는?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "소블록 시설개요는?"
+    ],
+    [
+      "BLOCK_OVERVIEW",
+      "블록 시설정보를 알려줘"
+    ],
+    [
+      "BLOCK_LOCATION",
+      "블록 위치도는?"
+    ],
+    [
+      "BLOCK_LOCATION",
+      "합덕3 소블록 위치도는?"
+    ],
+    [
+      "BLOCK_LOCATION",
+      "행정1-2 중블록 위치도는?"
+    ],
+    [
+      "BLOCK_LOCATION",
+      "소블록 위치를 보여줘"
+    ],
+    [
+      "RESERVOIR_LOCATION",
+      "배수지 위치도는?"
+    ],
+    [
+      "RESERVOIR_LOCATION",
+      "신평 배수지 위치도는?"
+    ],
+    [
+      "RESERVOIR_LOCATION",
+      "송악1 배수지 위치도는?"
+    ],
+    [
+      "RESERVOIR_LOCATION",
+      "배수지 위치를 보여줘"
+    ],
+    [
+      "BOOSTER_STATION_LOCATION",
+      "가압장 위치도는?"
+    ],
+    [
+      "BOOSTER_STATION_LOCATION",
+      "신평 가압장 위치도는?"
+    ],
+    [
+      "BOOSTER_STATION_LOCATION",
+      "고대리 가압장 위치도는?"
+    ],
+    [
+      "BOOSTER_STATION_LOCATION",
+      "천의리 가압장 위치도는?"
+    ],
+    [
+      "BOOSTER_STATION_LOCATION",
+      "가압장 위치를 보여줘"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_LOCATION",
+      "감압설비 위치도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_LOCATION",
+      "감압시설 위치도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_LOCATION",
+      "순성 감압설비 위치도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_LOCATION",
+      "행정 감압시설 위치도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_LOCATION",
+      "감압시설 위치를 보여줘"
+    ],
+    [
+      "BLOCK_NETWORK_DIAGRAM",
+      "블록 계통도는?"
+    ],
+    [
+      "BLOCK_NETWORK_DIAGRAM",
+      "합덕3 소블록 계통도는?"
+    ],
+    [
+      "BLOCK_NETWORK_DIAGRAM",
+      "행정1-1 중블록 계통도는?"
+    ],
+    [
+      "BLOCK_NETWORK_DIAGRAM",
+      "소블록 계통도를 보여줘"
+    ],
+    [
+      "RESERVOIR_NETWORK_DIAGRAM",
+      "배수지 계통도는?"
+    ],
+    [
+      "RESERVOIR_NETWORK_DIAGRAM",
+      "합덕 배수지 계통도는?"
+    ],
+    [
+      "RESERVOIR_NETWORK_DIAGRAM",
+      "신평 배수지 계통도는?"
+    ],
+    [
+      "RESERVOIR_NETWORK_DIAGRAM",
+      "송악1 배수지 계통도는?"
+    ],
+    [
+      "RESERVOIR_NETWORK_DIAGRAM",
+      "배수지 계통도를 보여줘"
+    ],
+    [
+      "BOOSTER_STATION_NETWORK_DIAGRAM",
+      "가압장 계통도는?"
+    ],
+    [
+      "BOOSTER_STATION_NETWORK_DIAGRAM",
+      "우강 가압장 계통도는?"
+    ],
+    [
+      "BOOSTER_STATION_NETWORK_DIAGRAM",
+      "신평 가압장 계통도는?"
+    ],
+    [
+      "BOOSTER_STATION_NETWORK_DIAGRAM",
+      "고대리 가압장 계통도는?"
+    ],
+    [
+      "BOOSTER_STATION_NETWORK_DIAGRAM",
+      "가압장 계통도를 보여줘"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+      "감압설비 계통도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+      "감압시설 계통도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+      "순성 감압설비 계통도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+      "행정 감압설비 계통도는?"
+    ],
+    [
+      "PRESSURE_REDUCING_FACILITY_NETWORK_DIAGRAM",
+      "감압설비 계통도를 보여줘"
+    ],
+    [
+      "BLOCK_OPERATION_STATUS",
+      "블록 운영현황은?"
+    ],
+    [
+      "BLOCK_OPERATION_STATUS",
+      "행정1-1 소블록 운영현황은?"
+    ],
+    [
+      "BLOCK_OPERATION_STATUS",
+      "합덕3 소블록 운영현황은?"
+    ],
+    [
+      "BLOCK_OPERATION_STATUS",
+      "소블록 현재 운영상태는?"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "배수지 수위계 헌팅여부를 알려줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "신평배수지 수위계 헌팅여부를 알려줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "송악1 배수지 수위 헌팅 있어?"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "가압장 수위계 헌팅여부를 알려줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "수위 헌팅 있어?"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "수위계 헌팅 점검해줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "수위 데이터 헌팅 여부를 확인해줘"
+    ],
+    [
+      "RESERVOIR_LEVEL_HUNTING_CHECK",
+      "수위 변동이 심한지 확인해줘"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "압력 현황은?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "합덕3 소블록 압력 현황은?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "남산1 소블록 압력은?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "신평 가압장 압력 현황은?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "고대리 가압장 압력은?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "압력을 알려줘"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "현재 압력은 얼마야?"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "압력 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_PRESSURE_STATUS",
+      "수압 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "신평배수지 야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "소블록 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "가압장 야간최소유량 현황을 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "MNF 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "심야유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간 최소 유량을 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "최소야간유량은 얼마야?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "통신 구성을 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "소블록 통신 구성을 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "행정1-1 소블록의 통신 구성을 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "배수지 통신 경로는 어떻게 되나요?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "가압장 통신 구조를 설명해줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "통신 구조를 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "통신 토폴로지는?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "통신 연결 구성은?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_TOPOLOGY",
+      "네트워크 구성을 보여줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "통신 상태를 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "현재 소블록 통신 상태는?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "남산1 소블록 통신 상태를 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "배수지 통신 상태는 정상인가?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "가압장 통신 이상 여부를 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "네트워크 상태를 보여줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "네트워크 장애 있어?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "네트워크 이상 여부를 알려줘"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "통신 장애 현황은?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "네트워크 현황은?"
+    ],
+    [
+      "FACILITY_COMMUNICATION_STATUS",
+      "통신 끊긴 곳 있어?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "배수지 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "신평 배수지 주소는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "가압장 주소는 어디야?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "소블록 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "가압장 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "고대리 가압장 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "천의리 가압장 주소는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "행정 가압장 주소는 어디야?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BLOCK",
+      "소블록 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BLOCK",
+      "행정1-1 소블록 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BLOCK",
+      "대블록 주소는 어디야?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BLOCK",
+      "중블록 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_PRESSURE",
+      "감압시설 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_PRESSURE",
+      "행정 감압시설 주소를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_PRESSURE",
+      "순성 감압시설 주소는 어디야?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최근 알람은 뭐야?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "삼봉 가압장의 최근 펌프 알람은 뭐야?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "배수지 최근 수위 알람 알려줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "소블록 통신 알람 최근 내역은?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최근 경보는 뭐야?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최근 알림 내역은?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최신 알람을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최근 발생한 알람을 알려줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "경보 이력을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "알람 이력을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "경보 발생 이력은?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "알람 히스토리를 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "배수지 경보 이력은?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "가압장 알람 이력을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "경보 기록을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "최근 경보 이력은?"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "알람 발생 내역 조회해줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "경보 내역을 보여줘"
+    ],
+    [
+      "FACILITY_RECENT_ALARM",
+      "가압장 경보 분석"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보 발생 누적건수가 높은 순서대로 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 많이 발생한 순서대로 알려줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보 누적 TOP 10을 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 발생 건수 상위 5개만 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 많은 순서대로 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보 빈도 순위를 알려줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 발생 빈도가 높은 시설은?"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보 다발 시설을 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 다발 시설은?"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보 다발 순위는?"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 다발 현황"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "경보가 많이 발생하는 시설은?"
+    ],
+    [
+      "FACILITY_ALARM_TOP_COUNT",
+      "알람 빈번한 시설을 보여줘"
+    ],
+    [
+      "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+      "통신 경보 발생원인 진단 순위를 알려줘"
+    ],
+    [
+      "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+      "소블록 통신 경보 발생원인 순위를 알려줘"
+    ],
+    [
+      "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+      "행정1-1 소블록 통신 경보 원인 TOP 4는?"
+    ],
+    [
+      "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+      "가압장 고장 알람 발생원인 진단 순위를 알려줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 수위를 알려줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 압력을 조회해줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "배수지의 현재 수위를 알려줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "가압장의 현재 압력을 조회해줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 밸브 데이터는?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "실시간 수위는?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "실시간 압력은?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "최신 측정값을 알려줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "지금 수위 얼마야?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 측정값은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 용수공급가능 시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "송악1 배수지 용수공급가능 시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "신평 배수지 물 얼마나 공급 가능해?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 비상시 몇 시간 버텨?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 비상급수시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 공급가능시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "비상시 공급가능 시간을 알려줘"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 물이 얼마나 버틸 수 있어?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "현재 남산1 소블록 유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "현재 남산1 소블록 유량값을 표로 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "현재 남산1 소블록 유량 데이터를 표로 보여줘"
+    ],
+    [
+      "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+      "현재 우강 가압장 밸브 상태를 표로 보여줘"
+    ],
+    [
+      "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+      "우강 가압장 밸브 상태를 표로 보여줘"
+    ],
+    [
+      "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+      "현재 우강 가압장 유입밸브 상태를 보여줘"
+    ],
+    [
+      "FACILITY_VALVE_STATUS_CURRENT_TABLE",
+      "현재 우강 가압장 유출밸브 상태를 보여줘"
+    ],
+    [
+      "FACILITY_ANALOG_TIMESERIES_TABLE",
+      "7일간 남산1 소블록 유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_ANALOG_TIMESERIES_TABLE",
+      "한달간 남산1 소블록 유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_ANALOG_TIMESERIES_TABLE",
+      "최근 7일 남산1 소블록 유량 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_ANALOG_TIMESERIES_TABLE",
+      "최근 한달 남산1 소블록 유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+      "한달간 남산2 소블록 유량 순시 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+      "7일간 남산1 소블록 유량 순시를 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+      "최근 한달 소블록 유량 순시를 표로 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+      "한달간 남산2 소블록 유량 적산 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+      "7일간 남산1 소블록 유량 적산을 보여줘"
+    ],
+    [
+      "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+      "행정 배수지 유입밸브 상태 데이터를 표로 보여줘"
+    ],
+    [
+      "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+      "특정 기간 행정 배수지 유출밸브 상태를 보여줘"
+    ],
+    [
+      "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+      "2025년 12월 29일부터 2025년 12월 30일까지 행정 배수지 유입밸브 상태를 표로 보여줘"
+    ],
+    [
+      "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+      "최근 7일간 가압장 펌프 상태 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_TAG_DATA_TABLE",
+      "최근 10분간 신평 배수지의 수위는?"
+    ],
+    [
+      "FACILITY_TAG_DATA_TABLE",
+      "고대리 가압장 압력의 최근 10분 데이터를 조회해줘"
+    ],
+    [
+      "FACILITY_TAG_DATA_TABLE",
+      "금일 신평 배수지 수위를 표로 보여줘"
+    ],
+    [
+      "FACILITY_TAG_DATA_TABLE",
+      "최근 30분간 죽동 배수지 수위 데이터를 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "소블록 야간최소유량 데이터를 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "전체 소블록 야간최소유량을 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "합덕3 소블록 야간최소유량을 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "MNF 데이터를 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "야간유량 데이터를 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "심야유량을 표로 보여줘"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "한달간 송악1 배수지 유량데이터 중 결측구간 분석결과는?"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "신평 배수지 데이터 결측분석결과는?"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "배수지 데이터 결측률을 알려줘"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "소블록 데이터 결측분석결과를 보여줘"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "최근 한달간 배수지 데이터 결측분석결과는?"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "데이터 결측률은?"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "결측 데이터를 분석해줘"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "데이터 누락 현황은?"
+    ],
+    [
+      "TAG_DAILY_MISSING_SUMMARY",
+      "데이터 빠진 구간을 알려줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "현재 진행중인 알람은?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "현재 기준 진행중인 경보는?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "지금 알람 몇 건 있어?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "종료되지 않은 알람 현황을 알려줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "현재 살아있는 알람을 보여줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "활성 알람은?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "미해제 경보 현황은?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "해제되지 않은 알람을 보여줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "현재 경보 현황을 알려줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "경보 현황을 보여줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "알람 현황은?"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "경보 상태를 알려줘"
+    ],
+    [
+      "ONGOING_ALARM_STATUS",
+      "알람 상황은 어때?"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "현재 이상 설비 현황을 알려줘"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "유량 데이터 이상 설비 현황을 알려줘"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "수위 데이터 이상 설비 현황을 보여줘"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "압력 데이터 이상 설비가 있는지 알려줘"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "비정상 설비 현황은?"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "이상 설비가 있는지 알려줘"
+    ],
+    [
+      "FACILITY_ABNORMAL_STATUS_SUMMARY",
+      "설비 이상 현황을 보여줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "남산1 소블록 야간최소유량 표준편차분석 결과를 알려줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "신평 배수지 야간최소유량이 이상한지 분석해줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "야간최소유량 표준편차 기준으로 이상여부를 확인해줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "야간유량 표준편차 분석해줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "MNF 표준편차 분석 결과는?"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "야간최소유량이 정상인지 분석해줘"
+    ],
+    [
+      "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "유량 편차 분석을 해줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "유량 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "유량 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "수위 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "수위 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "압력 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "압력 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "신평 배수지 유량 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "신평 배수지 유량 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "기지시 가압장 압력 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 신평배수지 유량 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 신평배수지 유량 트렌드를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 신평배수지 수위 그래프 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 신평배수지 수위 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "일별 행정1-1 소블록 유량 트렌드를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "일별 행정1-1 소블록 유량 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "일별 행정1-1 소블록 유량 트렌드 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "소블록 야간최소유량 트렌드를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "소블록 야간최소유량 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "소블록 야간최소유량 트렌드 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 소블록 야간최소유량 트렌드를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 소블록 야간최소유량 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "한달간 소블록 야간최소유량 트렌드 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "최근 3년간 행정1-1 소블록 야간최소유량 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "최근 3년간 년도별로 행정1-1 소블록 야간최소유량 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "최근 3년간 행정1-1 소블록 야간최소유량 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "최근 3년간 행정1-1 소블록 야간최소유량 트렌드 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "9월 2일부터 9월 9일까지 신평 배수지 유출 유량과  및 기지시 가압장 압력 데이터 트랜드를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "데이터 추이를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "데이터 변화 추이는?"
+    ],
+    [
+      "FACILITY_TREND",
+      "시계열 그래프를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "배수지 수위 추이를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "수위 추이를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "유량 추이를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "압력 추이를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "수위 변화 추이는?"
+    ],
+    [
+      "FACILITY_TREND",
+      "유량 변화 추이는?"
+    ],
+    [
+      "FACILITY_TREND",
+      "배수지 수위 변화를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "가압장 압력 변화를 보여줘"
+    ],
+    [
+      "FACILITY_TREND",
+      "시간대별 수위 추이는?"
+    ],
+    [
+      "FACILITY_TREND",
+      "일주일간 수위 추이를 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "유입밸브 상태와 유입유량을 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "유입밸브 가동상태와 유입유량을 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "상태와 유량을 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "밸브 상태와 유량을 함께 그래프로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "펌프 가동상태와 수위를 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "12월 2일부터 12월 10일까지 신평 배수지 수위를 신평생활 가압장 가압펌프상태와 함께 트랜드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "12월 28일부터 12월 31일까지 신평 배수지 유입밸브상태와 유입유량을 함께 트랜드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "신평 배수지 데이터 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "아날로그 디지털 혼합 트렌드"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "밸브 상태와 유량을 같이 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "펌프와 수위를 함께 그래프로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위랑 유량이랑 같이 보고 싶어"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위와 유량을 같이 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위랑 밸브 상태를 함께 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "압력이랑 유량 같이 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위하고 유량하고 함께 트렌드 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "배수지 수위와 유입유량을 같이 그래프로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위 유량 함께 보기"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "두 가지 데이터를 같이 보여줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "전체 이상 스캔해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "이상감지 현황 보여줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "센서 이상 점검해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "현재 이상 센서 있어?"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "전체 센서 이상 여부를 확인해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "이상 스캔"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "비정상 데이터를 찾아줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "이상치 확인해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "전체 센서 점검해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "전체 이상 확인해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "센서 상태를 점검해줘"
+    ],
+    [
+      "ANOMALY_SCAN_ALL",
+      "이상 데이터가 있는지 확인해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "신평 배수지 이상 진단해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "합덕 가압장 센서 이상 분석해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "시설 정밀 진단 결과를 보여줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "이상 진단"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "기지시 가압장 이상 여부를 정밀 진단해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "배수지 센서 진단 결과를 보여줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "시설 이상 분석해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "센서 이상 정밀 분석해줘"
+    ],
+    [
+      "ANOMALY_FACILITY_DETAIL",
+      "시설 센서 상태를 진단해줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 이력 보여줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 기록을 확인해줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "최근 7일 이상 이력은?"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 발생 기록"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "과거 이상 기록을 보여줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 발생 내역을 조회해줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 로그를 보여줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 감지 이력을 보여줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "이상 탐지 히스토리를 보여줘"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "Z-Score 이상 이력은?"
+    ],
+    [
+      "ANOMALY_HISTORY",
+      "센서 이상 발생 기록은?"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "위험 예측해줘"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "이상 예측 분석 보여줘"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "센서 예측 알림"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "1시간 후 예측 결과는?"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "이상 예상되는 센서를 알려줘"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "이상 전망 분석"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "이상 발생 예측해줘"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "앞으로 이상이 발생할 가능성은?"
+    ],
+    [
+      "ANOMALY_PREDICT",
+      "위험 전망을 알려줘"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "배수지 이상 비교해줘"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "가압장 시설간 이상 비교"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "시설별 이상 현황 비교해줘"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "배수지 건강도 비교"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "시설간 센서 이상 비교 분석"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "시설별 이상 비교해줘"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "시설간 센서 상태 비교"
+    ],
+    [
+      "ANOMALY_COMPARE",
+      "시설 건강도를 비교해줘"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "시간대별 이상 패턴 보여줘"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "이상 패턴 분석해줘"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "시간대 패턴 확인해줘"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "현재 시간대 이상 센서는?"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "주기적 이상 패턴 분석"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "이상 발생 패턴을 분석해줘"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "시간대별 이상 현황은?"
+    ],
+    [
+      "ANOMALY_PATTERN",
+      "이상 발생 주기를 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "야간최소유량 누수추정 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "CUSUM 누수 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수추정 분석 결과를 보여줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "야간최소유량 누수 감지 분석"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "소블록 누수추정 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 추이 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 감지 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 탐지 결과를 보여줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "배수량 이상 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 여부를 확인해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 가능성을 분석해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "물이 새는 것 같아요"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 의심되는 곳이 있어?"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "물이 새나?"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수가 의심돼요"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "배관에서 물이 새는 것 같아"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "어디서 물이 새는지 확인해줘"
+    ],
+    [
+      "LEAK_CUSUM_ANALYSIS",
+      "누수 의심 지역은?"
+    ]
+  ],
+  "model": "snowflake-arctic-embed2",
+  "dim": 1024,
+  "count": 501,
+  "built_at": "2026-02-25 01:29:16"
+}

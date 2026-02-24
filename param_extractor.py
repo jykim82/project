@@ -81,6 +81,10 @@ _SITENAME_FUZZY_STOPWORDS = {
     "출력", "데이터", "야간", "최소", "트렌드", "그래프", "현황", "상태",
     "분석", "결과", "기간", "전체", "최근", "한달", "결측", "이상",
     "알람", "진행", "요약", "표준", "편차", "합계", "평균", "건수",
+    # 시설 관련 일반 용어
+    "전단", "후단", "가동", "계통", "설비", "통신", "네트워크", "매뉴얼",
+    # 동사형 (fuzzy에서 데이터 키워드로 오인 방지)
+    "알려", "보여", "해줘", "줘요", "일반", "운영", "정보", "얼마",
     # 이상감지 키워드 (fuzzy에서 제외)
     "이력", "히스토리", "기록", "예측", "예상", "전망", "비교", "대비",
     "패턴", "시간대", "주기", "스캔", "감지", "점검", "진단", "정밀",
@@ -172,6 +176,26 @@ class ParamExtractor:
             today = datetime.now()
             from_ts = (today - timedelta(days=7)).strftime("%Y-%m-%d")
             to_ts = today.strftime("%Y-%m-%d")
+
+        # FACILITY_TREND: datainfo 미추출 시 시설유형별 기본값 자동 지정
+        if intent_name in ("FACILITY_TREND",) and not datainfo:
+            _DEFAULT_DATAINFO = {
+                "배수지": "수위",
+                "가압장": "압력",
+                "감압시설": "압력",
+                "소블록": "유량",
+                "소소블록": "유량",
+                "중블록": "유량",
+                "대블록": "유량",
+            }
+            _ft = facilitytype or block_level
+            if _ft and _ft in _DEFAULT_DATAINFO:
+                datainfo = _DEFAULT_DATAINFO[_ft]
+                logger.info(f"datainfo 기본값 적용: {_ft} → {datainfo}")
+            else:
+                # 시설유형도 없으면 수위를 기본으로
+                datainfo = "수위"
+                logger.info("datainfo 기본값 적용: (미지정) → 수위")
 
         # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
         if intent_name == "FACILITY_ABNORMAL_STATUS_SUMMARY":
@@ -543,17 +567,30 @@ class ParamExtractor:
         return None
 
     def _extract_digital_datainfo(self, question: str) -> Optional[str]:
-        # FACILITY_MIXED_TREND용 — 복합 키워드 우선 매칭
-        compound_keywords = [
-            "유입밸브", "유출밸브", "가압펌프", "배수펌프", "송수펌프",
+        # FACILITY_MIXED_TREND용 — DB trend_name 일치 우선 (ex: "유입밸브상태")
+        # 1) "상태" 접미사 포함 키워드 우선 (DB trend_name 정확 일치)
+        full_keywords = [
+            "유입밸브상태", "유출밸브상태", "가압펌프상태", "배수펌프상태", "송수펌프상태",
         ]
-        for kw in compound_keywords:
+        for kw in full_keywords:
             if kw in question:
                 return kw
-        simple_keywords = ["펌프", "밸브"]
-        for kw in simple_keywords:
-            if kw in question:
-                return kw
+        # 2) "상태" 없는 경우 → 접미사 자동 보정
+        short_keywords = [
+            ("유입밸브", "유입밸브상태"),
+            ("유출밸브", "유출밸브상태"),
+            ("가압펌프", "가압펌프상태"),
+            ("배수펌프", "배수펌프상태"),
+            ("송수펌프", "송수펌프상태"),
+        ]
+        for short, full in short_keywords:
+            if short in question:
+                return full
+        # 3) 단순 키워드 → 디폴트 "상태" 접미사
+        if "펌프" in question:
+            return "가압펌프상태"
+        if "밸브" in question:
+            return "유입밸브상태"
         return None
 
     # =========================================================================

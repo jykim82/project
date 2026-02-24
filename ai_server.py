@@ -38,7 +38,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import psycopg2
-from fastapi import FastAPI, Request, UploadFile, File, Form, Query
+from fastapi import FastAPI, Request, UploadFile, File, Form, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -1772,6 +1772,12 @@ def classify_chart_data_type(rows: list, columns: list) -> str:
     return "analog"
 
 
+_NO_DATA_HINTS: dict[tuple[str, str], str] = {
+    ("FACILITY_PRESSURE_STATUS", "배수지"): "배수지에는 압력 계측 태그가 등록되어 있지 않습니다. 가압장 또는 소블록으로 조회해 보세요.",
+    ("FACILITY_PRESSURE_STATUS", ""): "해당 시설에 압력 계측 태그가 등록되어 있지 않습니다.",
+}
+
+
 def build_no_data_response(
     intent: str,
     answer_template: dict,
@@ -1784,8 +1790,11 @@ def build_no_data_response(
     - 상태: OK
     - 메시지: "조회된 데이터가 없습니다."
     """
+    ft = (params or {}).get("facilitytype", "")
+    hint = _NO_DATA_HINTS.get((intent, ft)) or _NO_DATA_HINTS.get((intent, ""))
+    summary = hint if hint else "조회된 데이터가 없습니다."
     result = {
-        "summary": "조회된 데이터가 없습니다.",
+        "summary": summary,
     }
 
     if "recommend_questions" in answer_template:
@@ -1803,7 +1812,7 @@ def build_no_data_response(
 
     response = {
         "status": "OK",
-        "message": "조회된 데이터가 없습니다.",
+        "message": summary,
         "intent": intent,
         "answer": result,
     }
@@ -5150,6 +5159,392 @@ async def get_network_status_summary():
 
 
 # =============================================================================
+# 네트워크 관리 CRUD API (구축 > 네트워크 관리)
+# =============================================================================
+
+@app.get("/network/infos")
+async def get_network_infos(
+    page: int = 1, page_size: int = 50,
+    sitename: str = "", facilitytype: str = "",
+    equipmenttype: str = "", keyword: str = "",
+):
+    """네트워크 장비 목록 (tb_network_info + tb_equipment_info JOIN)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        where, params = ["1=1"], []
+        if sitename:
+            where.append("e.sitename = %s"); params.append(sitename)
+        if facilitytype:
+            where.append("e.facilitytype = %s"); params.append(facilitytype)
+        if equipmenttype:
+            where.append("e.equipmenttype = %s"); params.append(equipmenttype)
+        if keyword:
+            where.append("(n.equipment_id ILIKE %s OR n.ip_address ILIKE %s OR e.sitename ILIKE %s)")
+            kw = f"%{keyword}%"; params.extend([kw, kw, kw])
+        w = " AND ".join(where)
+        cur.execute(f"SELECT COUNT(*) FROM tb_network_info n JOIN tb_equipment_info e ON n.equipment_id = e.equipment_id WHERE {w}", params)
+        total = cur.fetchone()[0]
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT n.equipment_id, n.ip_address, n.description, n.meta,
+                   n.created_at, n.updated_at,
+                   e.sitename, e.facilitytype, e.equipmenttype
+            FROM tb_network_info n
+            JOIN tb_equipment_info e ON n.equipment_id = e.equipment_id
+            WHERE {w}
+            ORDER BY e.sitename, e.facilitytype, n.equipment_id
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
+        data = []
+        for r in rows:
+            data.append({
+                "equipment_id": r[0], "ip_address": r[1], "description": r[2],
+                "meta": r[3] or {},
+                "created_at": r[4].isoformat() if r[4] else None,
+                "updated_at": r[5].isoformat() if r[5] else None,
+                "sitename": r[6], "facilitytype": r[7], "equipmenttype": r[8],
+            })
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"네트워크 장비 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.get("/network/infos/filters")
+async def get_network_info_filters():
+    """네트워크 장비 필터 옵션"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT e.sitename FROM tb_network_info n
+            JOIN tb_equipment_info e ON n.equipment_id = e.equipment_id ORDER BY 1
+        """)
+        sitenames = [r[0] for r in cur.fetchall()]
+        cur.execute("""
+            SELECT DISTINCT e.facilitytype FROM tb_network_info n
+            JOIN tb_equipment_info e ON n.equipment_id = e.equipment_id ORDER BY 1
+        """)
+        facilitytypes = [r[0] for r in cur.fetchall()]
+        cur.execute("""
+            SELECT DISTINCT e.equipmenttype FROM tb_network_info n
+            JOIN tb_equipment_info e ON n.equipment_id = e.equipment_id ORDER BY 1
+        """)
+        equipmenttypes = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT COALESCE(meta->>'network_role', '미지정') FROM tb_network_info ORDER BY 1")
+        roles = [r[0] for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": {
+            "sitenames": sitenames, "facilitytypes": facilitytypes,
+            "equipmenttypes": equipmenttypes, "roles": roles,
+        }}
+    except Exception as e:
+        logger.error(f"네트워크 필터 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.post("/network/infos")
+async def create_network_info(req: dict = Body(...)):
+    """네트워크 장비 추가 (equipment_id 필수, tb_equipment_info에 존재해야 함)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO tb_network_info (equipment_id, ip_address, description, meta)
+            VALUES (%s, %s, %s, %s::jsonb)
+        """, [req["equipment_id"], req.get("ip_address"), req.get("description"),
+              json.dumps(req.get("meta", {}))])
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "equipment_id": req["equipment_id"]}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"네트워크 장비 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.put("/network/infos/{equipment_id}")
+async def update_network_info(equipment_id: str, req: dict = Body(...)):
+    """네트워크 장비 수정"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tb_network_info SET ip_address=%s, description=%s, meta=%s::jsonb
+            WHERE equipment_id=%s
+        """, [req.get("ip_address"), req.get("description"),
+              json.dumps(req.get("meta", {})), equipment_id])
+        conn.commit()
+        affected = cur.rowcount
+        cur.close()
+        if affected == 0:
+            return {"status": "ERROR", "message": "해당 장비를 찾을 수 없습니다."}
+        return {"status": "OK"}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"네트워크 장비 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.delete("/network/infos/{equipment_id}")
+async def delete_network_info(equipment_id: str):
+    """네트워크 장비 삭제 (tb_network_link CASCADE 삭제)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tb_network_info WHERE equipment_id=%s", [equipment_id])
+        conn.commit()
+        affected = cur.rowcount
+        cur.close()
+        if affected == 0:
+            return {"status": "ERROR", "message": "해당 장비를 찾을 수 없습니다."}
+        return {"status": "OK"}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"네트워크 장비 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.get("/network/links")
+async def get_network_links(
+    page: int = 1, page_size: int = 50,
+    protocol: str = "", keyword: str = "",
+):
+    """네트워크 연결 목록 (tb_network_link + 양쪽 장비 JOIN)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        where, params = ["1=1"], []
+        if protocol:
+            where.append("l.link_protocol = %s"); params.append(protocol)
+        if keyword:
+            where.append("""(l.source_equipment_id ILIKE %s OR l.target_equipment_id ILIKE %s
+                OR l.link_role ILIKE %s
+                OR COALESCE(se.sitename,'') ILIKE %s OR COALESCE(te.sitename,'') ILIKE %s)""")
+            kw = f"%{keyword}%"; params.extend([kw, kw, kw, kw, kw])
+        w = " AND ".join(where)
+        cur.execute(f"""SELECT COUNT(*) FROM tb_network_link l
+            LEFT JOIN tb_equipment_info se ON l.source_equipment_id = se.equipment_id
+            LEFT JOIN tb_equipment_info te ON l.target_equipment_id = te.equipment_id
+            WHERE {w}""", params)
+        total = cur.fetchone()[0]
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT l.source_equipment_id, l.target_equipment_id,
+                   l.link_protocol, l.link_port, l.link_device_interface,
+                   l.link_role, l.description, l.meta,
+                   COALESCE(se.sitename,'') || ' ' || COALESCE(se.equipmenttype,'') AS source_name,
+                   COALESCE(te.sitename,'') || ' ' || COALESCE(te.equipmenttype,'') AS target_name
+            FROM tb_network_link l
+            LEFT JOIN tb_equipment_info se ON l.source_equipment_id = se.equipment_id
+            LEFT JOIN tb_equipment_info te ON l.target_equipment_id = te.equipment_id
+            WHERE {w}
+            ORDER BY l.source_equipment_id, l.target_equipment_id
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
+        data = []
+        for r in rows:
+            data.append({
+                "source_equipment_id": r[0], "target_equipment_id": r[1],
+                "link_protocol": r[2], "link_port": r[3],
+                "link_device_interface": r[4], "link_role": r[5],
+                "description": r[6], "meta": r[7] or {},
+                "source_name": r[8], "target_name": r[9],
+            })
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"네트워크 연결 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.get("/network/links/protocols")
+async def get_link_protocols():
+    """프로토콜 마스터 목록 (tb_protocol_lookup)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT protocol_code, display_name, protocol_type, description FROM tb_protocol_lookup ORDER BY display_name")
+        rows = cur.fetchall()
+        cur.close()
+        return {"status": "OK", "data": [
+            {"protocol_code": r[0], "display_name": r[1], "protocol_type": r[2], "description": r[3]}
+            for r in rows
+        ]}
+    except Exception as e:
+        logger.error(f"프로토콜 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.post("/network/links")
+async def create_network_link(req: dict = Body(...)):
+    """네트워크 연결 추가"""
+    conn = None
+    try:
+        src = req.get("source_equipment_id", "").strip()
+        tgt = req.get("target_equipment_id", "").strip()
+        proto = req.get("link_protocol", "").strip()
+        iface = req.get("link_device_interface", "").strip()
+        if not src or not tgt or not proto or not iface:
+            return {"status": "ERROR", "message": "출발장비, 도착장비, 프로토콜, 인터페이스는 필수입니다."}
+        if src == tgt:
+            return {"status": "ERROR", "message": "출발장비와 도착장비가 동일합니다."}
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # FK 검증
+        cur.execute("SELECT equipment_id FROM tb_equipment_info WHERE equipment_id IN (%s, %s)", [src, tgt])
+        found = {r[0] for r in cur.fetchall()}
+        if src not in found:
+            return {"status": "ERROR", "message": f"출발장비 '{src}'가 설비 마스터에 없습니다."}
+        if tgt not in found:
+            return {"status": "ERROR", "message": f"도착장비 '{tgt}'가 설비 마스터에 없습니다."}
+        port = req.get("link_port")
+        role = req.get("link_role", "").strip() or None
+        desc = req.get("description", "").strip() or None
+        meta = req.get("meta") or {}
+        cur.execute("""
+            INSERT INTO tb_network_link
+                (source_equipment_id, target_equipment_id, link_protocol, link_device_interface,
+                 link_port, link_role, description, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+        """, [src, tgt, proto, iface, port, role, desc, json.dumps(meta)])
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn: conn.rollback()
+        msg = str(e)
+        if "duplicate key" in msg or "already exists" in msg:
+            return {"status": "ERROR", "message": "이미 동일한 연결이 존재합니다."}
+        logger.error(f"네트워크 연결 추가 실패: {e}")
+        return {"status": "ERROR", "message": msg}
+    finally:
+        if conn: conn.close()
+
+
+@app.put("/network/links/{source}/{target}")
+async def update_network_link(source: str, target: str, req: dict = Body(...)):
+    """네트워크 연결 수정 (PK 변경 불가)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        sets, vals = [], []
+        for col in ["link_protocol", "link_device_interface", "link_port", "link_role", "description"]:
+            if col in req:
+                sets.append(f"{col} = %s")
+                v = req[col]
+                vals.append(v.strip() if isinstance(v, str) else v)
+        if "meta" in req:
+            sets.append("meta = %s::jsonb")
+            vals.append(json.dumps(req["meta"] or {}))
+        if not sets:
+            return {"status": "ERROR", "message": "수정할 항목이 없습니다."}
+        sets.append("updated_at = NOW()")
+        vals.extend([source, target])
+        cur.execute(f"""
+            UPDATE tb_network_link SET {', '.join(sets)}
+            WHERE source_equipment_id = %s AND target_equipment_id = %s
+        """, vals)
+        if cur.rowcount == 0:
+            return {"status": "ERROR", "message": "해당 연결을 찾을 수 없습니다."}
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"네트워크 연결 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.delete("/network/links/{source}/{target}")
+async def delete_network_link(source: str, target: str):
+    """네트워크 연결 삭제"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM tb_network_link
+            WHERE source_equipment_id = %s AND target_equipment_id = %s
+        """, [source, target])
+        if cur.rowcount == 0:
+            return {"status": "ERROR", "message": "해당 연결을 찾을 수 없습니다."}
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        if conn: conn.rollback()
+        logger.error(f"네트워크 연결 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn: conn.close()
+
+
+@app.get("/network/links/equipment-search")
+async def search_link_equipment(q: str = ""):
+    """연결 폼 장비 검색용 자동완성 (tb_equipment_info)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if q.strip():
+            kw = f"%{q.strip()}%"
+            cur.execute("""
+                SELECT equipment_id, sitename, facilitytype, equipmenttype
+                FROM tb_equipment_info
+                WHERE equipment_id ILIKE %s OR sitename ILIKE %s OR equipmenttype ILIKE %s
+                ORDER BY sitename, equipmenttype, equipment_id
+                LIMIT 30
+            """, [kw, kw, kw])
+        else:
+            cur.execute("""
+                SELECT equipment_id, sitename, facilitytype, equipmenttype
+                FROM tb_equipment_info
+                ORDER BY sitename, equipmenttype, equipment_id
+                LIMIT 30
+            """)
+        rows = cur.fetchall()
+        cur.close()
+        return {"status": "OK", "data": [
+            {"equipment_id": r[0], "sitename": r[1], "facilitytype": r[2], "equipmenttype": r[3]}
+            for r in rows
+        ]}
+    except Exception as e:
+        logger.error(f"장비 검색 실패: {e}")
+        return {"status": "ERROR", "data": []}
+    finally:
+        if conn: conn.close()
+
+
+# =============================================================================
 # 자동완성 후보 API
 # =============================================================================
 
@@ -5844,8 +6239,8 @@ async def get_dashboard_summary():
 # =============================================================================
 
 @app.get("/monitoring/catalogs/sites")
-async def get_monitoring_catalog_sites(facilitytype: str = "", monitoring_only: bool = False):
-    """시설유형별 DISTINCT 사이트 목록 반환"""
+async def get_monitoring_catalog_sites(facilitytype: str = ""):
+    """시설유형별 DISTINCT 사이트 목록 반환 (tb_monitoring_catalog)"""
     if not facilitytype:
         return {"status": "ERROR", "message": "facilitytype 필수"}
     ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
@@ -5854,9 +6249,8 @@ async def get_monitoring_catalog_sites(facilitytype: str = "", monitoring_only: 
         conn = get_db_connection()
         cur = conn.cursor()
         placeholders = ",".join(["%s"] * len(ftypes))
-        monitoring_filter = " AND COALESCE((meta->>'monitoring')::boolean, false) = true" if monitoring_only else ""
         cur.execute(
-            f"SELECT DISTINCT sitename FROM tb_trend_catalog WHERE facilitytype IN ({placeholders}){monitoring_filter} ORDER BY sitename",
+            f"SELECT DISTINCT sitename FROM tb_monitoring_catalog WHERE facilitytype IN ({placeholders}) ORDER BY sitename",
             ftypes,
         )
         sites = [r[0] for r in cur.fetchall()]
@@ -5873,9 +6267,8 @@ async def get_monitoring_catalog_sites(facilitytype: str = "", monitoring_only: 
 async def get_monitoring_catalogs(
     facilitytype: str = "",
     sitename: str = "",
-    monitoring_only: bool = False,
 ):
-    """모니터링 카탈로그 목록 조회 (시설유형 + 사이트 필터)"""
+    """모니터링 카탈로그 목록 조회 (tb_monitoring_catalog)"""
     if not facilitytype:
         return {"status": "ERROR", "message": "facilitytype 필수"}
     ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
@@ -5888,13 +6281,11 @@ async def get_monitoring_catalogs(
         if sitename:
             conditions.append("sitename = %s")
             params.append(sitename)
-        if monitoring_only:
-            conditions.append("COALESCE((meta->>'monitoring')::boolean, false) = true")
         where = " AND ".join(conditions)
-        cols = ["trend_id", "sitename", "facilitytype", "trend_name", "meta", "description", "created_at", "updated_at"]
+        cols = ["catalog_id", "sitename", "facilitytype", "catalog_name", "display_order", "items", "description", "created_at", "updated_at"]
         cur.execute(
-            f"SELECT {', '.join(cols)} FROM tb_trend_catalog WHERE {where} "
-            f"ORDER BY sitename, (COALESCE(meta->>'display_order','999'))::int, trend_name",
+            f"SELECT {', '.join(cols)} FROM tb_monitoring_catalog WHERE {where} "
+            f"ORDER BY sitename, display_order, catalog_name",
             params,
         )
         rows = cur.fetchall()
@@ -5906,7 +6297,6 @@ async def get_monitoring_catalogs(
             if item.get("updated_at"):
                 item["updated_at"] = str(item["updated_at"])
             data.append(item)
-        # 사이트 목록도 함께 반환
         sites = sorted(set(item["sitename"] for item in data))
         return {"status": "OK", "data": data, "sites": sites}
     except Exception as e:
@@ -5919,42 +6309,43 @@ async def get_monitoring_catalogs(
 
 @app.post("/monitoring/catalogs")
 async def create_monitoring_catalog(request: Request):
-    """모니터링 카탈로그 생성 — 이름 충돌 시 자동 접미사 부여"""
+    """모니터링 카탈로그 생성 (tb_monitoring_catalog) — 이름 충돌 시 자동 접미사"""
     body = await request.json()
     sitename = body.get("sitename", "")
     facilitytype = body.get("facilitytype", "")
-    trend_name = body.get("trend_name", "")
-    meta = body.get("meta", {})
+    catalog_name = body.get("catalog_name", "")
+    display_order = body.get("display_order", 999)
+    items = body.get("items", [])
     description = body.get("description", "")
-    if not sitename or not facilitytype or not trend_name:
-        return {"status": "ERROR", "message": "sitename, facilitytype, trend_name 필수"}
+    if not sitename or not facilitytype or not catalog_name:
+        return {"status": "ERROR", "message": "sitename, facilitytype, catalog_name 필수"}
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         # 이름 충돌 확인 → 자동 접미사 부여
-        final_name = trend_name
+        final_name = catalog_name
         cur.execute(
-            "SELECT trend_name FROM tb_trend_catalog "
-            "WHERE sitename = %s AND facilitytype = %s AND trend_name LIKE %s",
-            (sitename, facilitytype, trend_name + "%"),
+            "SELECT catalog_name FROM tb_monitoring_catalog "
+            "WHERE sitename = %s AND facilitytype = %s AND catalog_name LIKE %s",
+            (sitename, facilitytype, catalog_name + "%"),
         )
         existing_names = {r[0] for r in cur.fetchall()}
         if final_name in existing_names:
             for i in range(2, 100):
-                candidate = f"{trend_name}({i})"
+                candidate = f"{catalog_name}({i})"
                 if candidate not in existing_names:
                     final_name = candidate
                     break
-        meta_json = json.dumps(meta, ensure_ascii=False)
+        items_json = json.dumps(items, ensure_ascii=False)
         cur.execute(
-            "INSERT INTO tb_trend_catalog (sitename, facilitytype, trend_name, meta, description) "
-            "VALUES (%s, %s, %s, %s::jsonb, %s) RETURNING trend_id",
-            (sitename, facilitytype, final_name, meta_json, description),
+            "INSERT INTO tb_monitoring_catalog (sitename, facilitytype, catalog_name, display_order, items, description) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s) RETURNING catalog_id",
+            (sitename, facilitytype, final_name, display_order, items_json, description),
         )
-        trend_id = cur.fetchone()[0]
+        catalog_id = cur.fetchone()[0]
         conn.commit()
-        return {"status": "OK", "trend_id": trend_id, "trend_name": final_name}
+        return {"status": "OK", "catalog_id": catalog_id, "catalog_name": final_name}
     except Exception as e:
         if conn:
             conn.rollback()
@@ -5965,30 +6356,32 @@ async def create_monitoring_catalog(request: Request):
             conn.close()
 
 
-@app.put("/monitoring/catalogs/{trend_id}")
-async def update_monitoring_catalog(trend_id: int, request: Request):
-    """모니터링 카탈로그 수정"""
+@app.put("/monitoring/catalogs/{catalog_id}")
+async def update_monitoring_catalog(catalog_id: int, request: Request):
+    """모니터링 카탈로그 수정 (tb_monitoring_catalog)"""
     body = await request.json()
     fields, params = [], []
-    if "trend_name" in body:
-        fields.append("trend_name = %s")
-        params.append(body["trend_name"])
-    if "meta" in body:
-        fields.append("meta = %s::jsonb")
-        params.append(json.dumps(body["meta"], ensure_ascii=False))
+    if "catalog_name" in body:
+        fields.append("catalog_name = %s")
+        params.append(body["catalog_name"])
+    if "display_order" in body:
+        fields.append("display_order = %s")
+        params.append(body["display_order"])
+    if "items" in body:
+        fields.append("items = %s::jsonb")
+        params.append(json.dumps(body["items"], ensure_ascii=False))
     if "description" in body:
         fields.append("description = %s")
         params.append(body["description"])
     if not fields:
         return {"status": "ERROR", "message": "수정할 필드 없음"}
-    fields.append("updated_at = now()")
-    params.append(trend_id)
+    params.append(catalog_id)
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            f"UPDATE tb_trend_catalog SET {', '.join(fields)} WHERE trend_id = %s",
+            f"UPDATE tb_monitoring_catalog SET {', '.join(fields)} WHERE catalog_id = %s",
             params,
         )
         conn.commit()
@@ -6003,20 +6396,55 @@ async def update_monitoring_catalog(trend_id: int, request: Request):
             conn.close()
 
 
-@app.delete("/monitoring/catalogs/{trend_id}")
-async def delete_monitoring_catalog(trend_id: int):
-    """모니터링 카탈로그 삭제"""
+@app.delete("/monitoring/catalogs/{catalog_id}")
+async def delete_monitoring_catalog(catalog_id: int):
+    """모니터링 카탈로그 삭제 (tb_monitoring_catalog)"""
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("DELETE FROM tb_trend_catalog WHERE trend_id = %s", (trend_id,))
+        cur.execute("DELETE FROM tb_monitoring_catalog WHERE catalog_id = %s", (catalog_id,))
         conn.commit()
         return {"status": "OK"}
     except Exception as e:
         if conn:
             conn.rollback()
         logger.error(f"모니터링 카탈로그 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/monitoring/catalogs/reference")
+async def get_monitoring_catalog_reference(
+    facilitytype: str = "",
+    sitename: str = "",
+):
+    """기존 트렌드 카탈로그(tb_trend_catalog) 참조 조회 — 모니터링 설정에서 태그 가져오기용"""
+    if not facilitytype:
+        return {"status": "ERROR", "message": "facilitytype 필수"}
+    ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        conditions = [f"facilitytype IN ({','.join(['%s'] * len(ftypes))})"]
+        params = list(ftypes)
+        if sitename:
+            conditions.append("sitename = %s")
+            params.append(sitename)
+        where = " AND ".join(conditions)
+        cols = ["trend_id", "sitename", "facilitytype", "trend_name", "meta", "description"]
+        cur.execute(
+            f"SELECT {', '.join(cols)} FROM tb_trend_catalog WHERE {where} ORDER BY sitename, trend_name",
+            params,
+        )
+        rows = cur.fetchall()
+        data = [dict(zip(cols, r)) for r in rows]
+        return {"status": "OK", "data": data}
+    except Exception as e:
+        logger.error(f"카탈로그 참조 조회 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
@@ -6319,6 +6747,302 @@ async def import_flow_map_csv(file: UploadFile):
         if conn:
             conn.rollback()
         logger.error(f"용수 흐름 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 설비 관리 API (tb_equipment_info CRUD)
+# =============================================================================
+
+class EquipmentCreateRequest(BaseModel):
+    prefix: str                           # equipment_id 접두사 (예: "booster_pump")
+    sitename: str
+    facilitytype: str
+    equipmenttype: str
+    status: str = "operational"
+    commissioned_at: Optional[str] = None  # "YYYY-MM-DD" or None
+    decommissioned_at: Optional[str] = None
+    description: Optional[str] = None
+    meta: Optional[dict] = None
+
+
+class EquipmentUpdateRequest(BaseModel):
+    sitename: Optional[str] = None
+    facilitytype: Optional[str] = None
+    equipmenttype: Optional[str] = None
+    status: Optional[str] = None
+    commissioned_at: Optional[str] = None
+    decommissioned_at: Optional[str] = None
+    description: Optional[str] = None
+    meta: Optional[dict] = None
+
+
+def _next_equipment_number(cur, prefix: str) -> int:
+    """주어진 접두사의 다음 순번 계산."""
+    cur.execute("""
+        SELECT COALESCE(MAX(
+            CAST(SUBSTRING(equipment_id FROM LENGTH(%s) + 2) AS INTEGER)
+        ), 0) + 1
+        FROM tb_equipment_info
+        WHERE LEFT(equipment_id, LENGTH(%s) + 1) = %s || '_'
+          AND SUBSTRING(equipment_id FROM LENGTH(%s) + 2) ~ '^\\d+$'
+    """, (prefix, prefix, prefix, prefix))
+    return cur.fetchone()[0]
+
+
+def _serialize_equipment_row(r) -> dict:
+    """설비 행을 JSON 직렬화."""
+    return {
+        "equipment_id": r[0],
+        "sitename": r[1],
+        "facilitytype": r[2],
+        "equipmenttype": r[3],
+        "status": r[4],
+        "commissioned_at": r[5].isoformat() if r[5] else None,
+        "decommissioned_at": r[6].isoformat() if r[6] else None,
+        "description": r[7],
+        "meta": r[8] if isinstance(r[8], dict) else (json.loads(r[8]) if r[8] else {}),
+        "created_at": r[9].isoformat() if r[9] else None,
+        "updated_at": r[10].isoformat() if r[10] else None,
+    }
+
+
+@app.get("/equipments")
+async def get_equipments(
+    sitename: Optional[str] = Query(None),
+    facilitytype: Optional[str] = Query(None),
+    equipmenttype: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """설비 목록 조회 (페이징+필터)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        wheres, params = [], []
+        if sitename:
+            wheres.append("sitename = %s")
+            params.append(sitename)
+        if facilitytype:
+            wheres.append("facilitytype = %s")
+            params.append(facilitytype)
+        if equipmenttype:
+            wheres.append("equipmenttype = %s")
+            params.append(equipmenttype)
+        if keyword:
+            wheres.append("(equipment_id ILIKE %s OR description ILIKE %s OR meta::text ILIKE %s)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
+
+        where_sql = " AND ".join(wheres) if wheres else "TRUE"
+
+        # 총 건수
+        cur.execute(f"SELECT COUNT(*) FROM tb_equipment_info WHERE {where_sql}", params)
+        total = cur.fetchone()[0]
+
+        # 데이터 조회
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT equipment_id, sitename, facilitytype, equipmenttype, status,
+                   commissioned_at, decommissioned_at, description, meta,
+                   created_at, updated_at
+            FROM tb_equipment_info
+            WHERE {where_sql}
+            ORDER BY sitename, facilitytype, equipment_id
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
+
+        data = [_serialize_equipment_row(r) for r in rows]
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"설비 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/equipments/filters")
+async def get_equipment_filters():
+    """설비 필터 옵션 조회 (distinct 값)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        result = {}
+        for col in ["sitename", "facilitytype", "equipmenttype"]:
+            cur.execute(f"SELECT DISTINCT {col} FROM tb_equipment_info WHERE {col} IS NOT NULL ORDER BY {col}")
+            result[col] = [r[0] for r in cur.fetchall()]
+
+        # status 참조 테이블
+        cur.execute("SELECT code, display_name FROM tb_equipment_status ORDER BY code")
+        result["status"] = [{"value": r[0], "label": r[1]} for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": result}
+    except Exception as e:
+        logger.error(f"설비 필터 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/equipments/next-id")
+async def get_next_equipment_id(prefix: str = Query(..., min_length=1)):
+    """다음 설비 ID 조회 (접두사 기준 다음 순번)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        next_num = _next_equipment_number(cur, prefix.strip())
+        cur.close()
+        next_id = f"{prefix.strip()}_{next_num}"
+        return {"status": "OK", "next_id": next_id, "next_number": next_num}
+    except Exception as e:
+        logger.error(f"다음 설비 ID 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/equipments")
+async def create_equipment(req: EquipmentCreateRequest):
+    """설비 추가 (equipment_id 자동 생성)."""
+    conn = None
+    try:
+        prefix = req.prefix.strip()
+        if not prefix:
+            return {"status": "ERROR", "message": "접두사(prefix)가 비어 있습니다."}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        next_num = _next_equipment_number(cur, prefix)
+        equipment_id = f"{prefix}_{next_num}"
+
+        meta_json = json.dumps(req.meta or {}, ensure_ascii=False)
+
+        cur.execute("""
+            INSERT INTO tb_equipment_info
+                (equipment_id, sitename, facilitytype, equipmenttype, status,
+                 commissioned_at, decommissioned_at, description, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            equipment_id, req.sitename.strip(), req.facilitytype,
+            req.equipmenttype, req.status,
+            req.commissioned_at or None, req.decommissioned_at or None,
+            req.description or None, meta_json,
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "equipment_id": equipment_id}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"설비 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/equipments/{equipment_id}")
+async def update_equipment(equipment_id: str, req: EquipmentUpdateRequest):
+    """설비 수정 (equipment_id는 불변)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        set_parts, params = [], []
+        if req.sitename is not None:
+            set_parts.append("sitename = %s")
+            params.append(req.sitename.strip())
+        if req.facilitytype is not None:
+            set_parts.append("facilitytype = %s")
+            params.append(req.facilitytype)
+        if req.equipmenttype is not None:
+            set_parts.append("equipmenttype = %s")
+            params.append(req.equipmenttype)
+        if req.status is not None:
+            set_parts.append("status = %s")
+            params.append(req.status)
+        if req.commissioned_at is not None:
+            set_parts.append("commissioned_at = %s")
+            params.append(req.commissioned_at if req.commissioned_at else None)
+        if req.decommissioned_at is not None:
+            set_parts.append("decommissioned_at = %s")
+            params.append(req.decommissioned_at if req.decommissioned_at else None)
+        if req.description is not None:
+            set_parts.append("description = %s")
+            params.append(req.description if req.description else None)
+        if req.meta is not None:
+            set_parts.append("meta = %s")
+            params.append(json.dumps(req.meta, ensure_ascii=False))
+
+        if not set_parts:
+            return {"status": "OK", "updated": 0, "message": "변경할 항목이 없습니다."}
+
+        params.append(equipment_id)
+        cur.execute(
+            f"UPDATE tb_equipment_info SET {', '.join(set_parts)} WHERE equipment_id = %s",
+            params,
+        )
+        conn.commit()
+        updated = cur.rowcount
+        cur.close()
+        return {"status": "OK", "updated": updated}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"설비 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/equipments/{equipment_id}")
+async def delete_equipment(equipment_id: str, dry_run: bool = Query(False)):
+    """설비 삭제 (dry_run=true → cascade 영향만 확인)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # cascade 영향 확인
+        cur.execute("SELECT COUNT(*) FROM tb_network_info WHERE equipment_id = %s", (equipment_id,))
+        net_info_cnt = cur.fetchone()[0]
+        cur.execute(
+            "SELECT COUNT(*) FROM tb_network_link WHERE source_equipment_id = %s OR target_equipment_id = %s",
+            (equipment_id, equipment_id),
+        )
+        net_link_cnt = cur.fetchone()[0]
+
+        cascade = {"network_info": net_info_cnt, "network_link": net_link_cnt}
+
+        if dry_run:
+            cur.close()
+            return {"status": "OK", "dry_run": True, "cascade": cascade}
+
+        cur.execute("DELETE FROM tb_equipment_info WHERE equipment_id = %s", (equipment_id,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        return {"status": "OK", "deleted": deleted, "cascade": cascade}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"설비 삭제 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
