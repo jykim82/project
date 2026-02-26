@@ -41,6 +41,7 @@ FACILITY_CATEGORIES = {
         "NIGHT_MIN_",
         "TAG_",
         "ANOMALY_",
+        "ALARM_",
     ],
     "트렌드": [
         "FACILITY_TREND",
@@ -102,6 +103,7 @@ INTENT_DESCRIPTIONS = {
     "NIGHT_MIN_FLOW_SUMMARY_TABLE": "야간최소유량 요약 표",
     "TAG_DAILY_MISSING_SUMMARY": "태그 일간 결측 요약",
     "ONGOING_ALARM_STATUS": "진행중 알람 현황",
+    "ALARM_ABNORMAL_LOCATIONS": "경보 이상 발생 지점",
     "ANOMALY_SCAN_ALL": "전체 센서 이상 스캔",
     "ANOMALY_FACILITY_DETAIL": "시설 이상 정밀 진단",
     "ANOMALY_HISTORY": "이상 이력 조회",
@@ -116,6 +118,7 @@ INTENT_DESCRIPTIONS = {
     "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE": "순시유량 시계열 표",
     "FACILITY_TAG_DATA_TABLE": "태그 데이터 표",
     "FACILITY_VALVE_STATUS_CURRENT_TABLE": "밸브 상태 현황 표",
+    "FACILITY_CATALOG_TREND_TABLE": "시설 카탈로그 트렌드 표",
 }
 
 

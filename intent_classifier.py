@@ -351,6 +351,17 @@ class IntentClassifier:
         Stage 2: 카테고리 내 구체적 INTENT 분류
         반환: (intent_name or None, method)
         """
+        # 키워드 단축: 이상/알람/고장 발생 지점 → ALARM_ABNORMAL_LOCATIONS
+        # 반드시 다른 알람/이상 인텐트보다 먼저 체크 (통신상태, 이상감지 등과 경합 방지)
+        if "지점" in question:
+            _abnormal_loc_ctx = [
+                "이상", "알람", "경보", "고장", "FAULT", "fault",
+                "HH", "LL", "수위", "압력", "펌프", "밸브", "유량",
+                "통신", "네트워크", "전원", "UPS", "ups",
+            ]
+            if any(kw in question for kw in _abnormal_loc_ctx):
+                return "ALARM_ABNORMAL_LOCATIONS", "keyword"
+
         # 키워드 단축: 기간 키워드 + 데이터 키워드 → FACILITY_TAG_DATA_TABLE (cross-category)
         # 금일/오늘/최근/N분/N시간/N일 등 기간이 있으면 테이블 형식
         # 유량은 전용 인텐트(적산/순시 등)가 많으므로 제외
@@ -439,8 +450,20 @@ class IntentClassifier:
                 return "PRESSURE_REDUCING_FACILITY_OPERATION_STATUS", "keyword"
             return "RESERVOIR_OPERATION_STATUS", "keyword"
 
+        # 키워드 단축: 경보 발생원인 진단 순위 / 경보 분석 결과
+        if ("발생원인" in question or "원인 진단" in question or "진단 순위" in question) and \
+           ("알람" in question or "경보" in question or "알림" in question or "통신" in question):
+            return "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "keyword"
+        if "경보 분석 결과" in question or "알람 분석 결과" in question:
+            return "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "keyword"
+
         # 키워드 단축: 통신/네트워크 상태 → 통신 상태 조회
-        if "통신" in question or "네트워크" in question:
+        # 경보 순위 키워드와 결합 시 제외 (→ FACILITY_ALARM_TOP_COUNT로 분류)
+        _alarm_rank_kws = {"누적", "순서", "다발", "빈번"}
+        if ("통신" in question or "네트워크" in question) and \
+           "발생원인" not in question and "진단" not in question and \
+           "TOP" not in question.upper() and \
+           not any(kw in question for kw in _alarm_rank_kws):
             return "FACILITY_COMMUNICATION_STATUS", "keyword"
 
         # 키워드 단축: 압력 현황
@@ -458,7 +481,9 @@ class IntentClassifier:
             return "FACILITY_RECENT_ALARM", "keyword"
 
         # 키워드 단축: 경보 이력/발생/분석 (sitename 불필요 → 진행중 알람 전체 조회)
-        if any(kw in question for kw in ["경보 발생", "경보 이력", "경보 분석", "알람 이력", "알람 발생"]):
+        # "경보 발생원인"은 FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK이므로 제외
+        if any(kw in question for kw in ["경보 발생", "경보 이력", "경보 분석", "알람 이력", "알람 발생"]) and \
+           "발생원인" not in question:
             return "ONGOING_ALARM_STATUS", "keyword"
 
         # 키워드 단축: 수위/압력 단독 → 태그 최신값 (다른 INTENT 키워드 제외)
@@ -536,6 +561,14 @@ class IntentClassifier:
         # 키워드 단축: 순시 관련
         if "순시" in question and "유량" in question:
             return "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "keyword"
+
+        # 카탈로그 트렌드 표 — "표" + 데이터 키워드 (야간/적산/순시/표준편차 제외)
+        if ("표" in question or "표로" in question) and not any(
+            x in question for x in ["야간최소유량", "최소유량", "적산", "순시", "표준편차"]
+        ):
+            for dkw in ["수위", "압력", "유량", "밸브", "펌프"]:
+                if dkw in question:
+                    return "FACILITY_CATALOG_TREND_TABLE", "keyword"
 
         return None, "keyword"
 

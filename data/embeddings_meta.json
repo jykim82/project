@@ -1,5 +1,5 @@
 {
-  "hash": "7bea3e860db07d9b670c00bbb74bf2e3",
+  "hash": "36dcff736f3172edaf2fbcbc93707fc6",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -1410,6 +1410,78 @@
       "알람 상황은 어때?"
     ],
     [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "통신 이상지점을 알려줘"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "가압장 중 통신 이상 지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "소블록 통신 이상지점은?"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "배수지 통신 이상 지점을 알려줘"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "수위 이상지점 알려줘"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "수위 HH 알람지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "수위 LL 발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "압력 이상지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "압력 HH 알람발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "압력 LL 알람발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "펌프 FAULT 발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "펌프 고장 발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "배수지 유입밸브 고장 발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "배수지 유입밸브 FAULT 발생지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "가압장 수위 HH 알람 발생지점을 알려줘"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "전원 이상지점"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "유량 이상 발생지점은?"
+    ],
+    [
+      "ALARM_ABNORMAL_LOCATIONS",
+      "경보 발생지점 알려줘"
+    ],
+    [
       "FACILITY_ABNORMAL_STATUS_SUMMARY",
       "현재 이상 설비 현황을 알려줘"
     ],
@@ -2004,10 +2076,50 @@
     [
       "LEAK_CUSUM_ANALYSIS",
       "누수 의심 지역은?"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "한달간 전체 배수지 수위를 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "전체 배수지의 유출유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "일주일간 전체 가압장 압력을 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "전체 배수지 밸브 현황을 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "한달간 전체 가압장 펌프를 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "6개월간 전체 소블록 유량을 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "신평 배수지 수위를 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "전체 감압시설 압력을 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "전체 소소블록 수위를 표로 보여줘"
+    ],
+    [
+      "FACILITY_CATALOG_TREND_TABLE",
+      "1년간 전체 배수지 압력을 표로 보여줘"
     ]
   ],
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
-  "count": 501,
-  "built_at": "2026-02-25 01:29:16"
+  "count": 529,
+  "built_at": "2026-02-27 00:19:46"
 }

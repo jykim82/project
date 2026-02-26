@@ -348,7 +348,7 @@
           },
           {
             "prefix": "2.",
-            "text": "용수공급 계통도 및 전단 가압장 설비 가동현황은?"
+            "text": "{sitename} 가압장 설비 가동현황은?"
           },
           {
             "prefix": "3.",
@@ -1687,15 +1687,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "수위 트렌드를 보여줘"
+            "text": "{sitename} {facilitytype} 수위 트렌드를 보여줘"
           },
           {
             "prefix": "2.",
-            "text": "전단 가압장 및 감압시설 가동현황을 알려줘"
+            "text": "{sitename} {facilitytype} 계통도를 보여줘"
           },
           {
             "prefix": "3.",
-            "text": "수위계 헌팅여부를 다시 확인해줘"
+            "text": "{sitename} {facilitytype} 수위계 헌팅여부를 확인해줘"
           }
         ]
       }
@@ -1793,15 +1793,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "야간최소유량 트렌드 그래프를 보여줘"
+            "text": "{sitename} {facilitytype} 야간최소유량 트렌드 그래프를 보여줘"
           },
           {
             "prefix": "2.",
-            "text": "야간최소유량 표준편차 분석 결과를 알려줘"
+            "text": "{sitename} {facilitytype} 야간최소유량 표준편차 분석 결과를 알려줘"
           },
           {
             "prefix": "3.",
-            "text": "데이터 결측 분석 결과를 알려줘"
+            "text": "{sitename} {facilitytype} 데이터 결측 분석 결과를 알려줘"
           }
         ]
       }
@@ -1856,7 +1856,7 @@
           },
           {
             "prefix": "2.",
-            "text": "통신 이상 지점을 알려줘"
+            "text": "{sitename} {facilitytype} 통신 상태를 알려줘"
           }
         ]
       }
@@ -1905,7 +1905,7 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "당진시청 네트워크 상태를 알려줘"
+            "text": "{sitename} {facilitytype} 네트워크 상태를 알려줘"
           },
           {
             "prefix": "2.",
@@ -1913,7 +1913,7 @@
           },
           {
             "prefix": "3.",
-            "text": "통신 이상 지점을 알려줘"
+            "text": "{sitename} {facilitytype} 최근 알람을 알려줘"
           }
         ]
       }
@@ -1964,7 +1964,7 @@
           },
           {
             "prefix": "3.",
-            "text": "다른 설비 주소를 알려줘"
+            "text": "가압장 주소를 알려줘"
           }
         ]
       }
@@ -2014,7 +2014,7 @@
           },
           {
             "prefix": "3.",
-            "text": "다른 설비 주소를 알려줘"
+            "text": "배수지 주소를 알려줘"
           }
         ]
       }
@@ -2064,7 +2064,7 @@
           },
           {
             "prefix": "3.",
-            "text": "다른 블록 주소를 알려줘"
+            "text": "{sitename} 소블록 주소를 알려줘"
           }
         ]
       }
@@ -2202,9 +2202,9 @@
       "경보가 많이 발생하는 시설은?",
       "알람 빈번한 시설을 보여줘"
     ],
-    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count\nFROM tb_equipment_alarm_report\nWHERE alarm_start_time >= {from_ts}\n  AND alarm_start_time < {to_ts}::date + 1\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
+    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count,\n  COALESCE(string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause), '') AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE alarm_start_time >= {from_ts}\n  AND alarm_start_time < {to_ts}::date + 1\n  AND ('{sitename}' = '' OR sitename = '{sitename}')\n  AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n  {alarm_filter_clause}\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
     "answer_template": {
-      "summary": "경보 발생 누적건수가 높은 순서는 다음과 같습니다.",
+      "summary": "{sitename} {facilitytype} {alarm_label} 경보 발생 누적건수가 높은 순서는 다음과 같습니다.",
       "detail": [
         {
           "prefix": "",
@@ -2238,7 +2238,7 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "pie"
   },
   {
     "intent": "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
@@ -2248,9 +2248,9 @@
       "행정1-1 소블록 통신 경보 원인 TOP 4는?",
       "가압장 고장 알람 발생원인 진단 순위를 알려줘"
     ],
-    "sql": "SELECT\n  sitename,\n  facilitytype,\n  COUNT(*) AS alarm_count,\n  string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause) AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE diagnosed_cause IS NOT NULL\n  AND alarm_msg LIKE '%{alarm_msg}%'\n  AND sitename = '{sitename}'\n  AND facilitytype = '{facilitytype}'\nGROUP BY equipment_id, equipmenttype, sitename, facilitytype\nORDER BY alarm_count DESC\nLIMIT {limit};",
+    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count,\n  COALESCE(string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause), '') AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE ('{sitename}' = '' OR sitename = '{sitename}')\n  AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n  {alarm_filter_clause}\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
     "answer_template": {
-      "summary": "{sitename} {facilitytype} {alarm_msg} 경보 발생원인 진단 순위는 다음과 같습니다.",
+      "summary": "{sitename} {facilitytype} {alarm_label} 경보 발생원인 진단 순위는 다음과 같습니다.",
       "detail": [
         {
           "prefix": "",
@@ -2284,7 +2284,7 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "pie"
   },
   {
     "intent": "FACILITY_TAG_LATEST_VALUE",
@@ -2323,15 +2323,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "해당 데이터의 트렌드를 보여줘"
+            "text": "{sitename} {facilitytype} 트렌드를 보여줘"
           },
           {
             "prefix": "2.",
-            "text": "데이터 결측 여부를 확인해줘"
+            "text": "{sitename} {facilitytype} 데이터 결측 분석 결과를 알려줘"
           },
           {
             "prefix": "3.",
-            "text": "동일 설비의 다른 계측값을 조회해줘"
+            "text": "{sitename} {facilitytype} 수위 현황을 알려줘"
           }
         ]
       }
@@ -2401,7 +2401,7 @@
           },
           {
             "prefix": "3.",
-            "text": "배수지 비상 급수 계획을 알려줘"
+            "text": "{sitename} {facilitytype} 초동대응 매뉴얼을 보여줘"
           }
         ]
       }
@@ -2790,6 +2790,51 @@
     "table_type": "summary"
   },
   {
+    "intent": "ALARM_ABNORMAL_LOCATIONS",
+    "questions": [
+      "통신 이상지점을 알려줘",
+      "가압장 중 통신 이상 지점",
+      "소블록 통신 이상지점은?",
+      "배수지 통신 이상 지점을 알려줘",
+      "수위 이상지점 알려줘",
+      "수위 HH 알람지점",
+      "수위 LL 발생지점",
+      "압력 이상지점",
+      "압력 HH 알람발생지점",
+      "압력 LL 알람발생지점",
+      "펌프 FAULT 발생지점",
+      "펌프 고장 발생지점",
+      "배수지 유입밸브 고장 발생지점",
+      "배수지 유입밸브 FAULT 발생지점",
+      "가압장 수위 HH 알람 발생지점을 알려줘",
+      "전원 이상지점",
+      "유량 이상 발생지점은?",
+      "경보 발생지점 알려줘"
+    ],
+    "sql": "",
+    "table_columns": [
+      "sitename", "facilitytype", "alarm_msg", "alarm_category", "alarm_start_time", "alarm_status"
+    ],
+    "table_type": "summary",
+    "answer_template": {
+      "summary": "{facilitytype} {alarm_label} {alarm_level_label} 경보 발생 지점은 다음과 같습니다. (총 {total_alarm_count}건)",
+      "detail": [
+        {"prefix": "", "text": "{_fallback_note}"},
+        {"prefix": "•", "text": "{category_summary}"},
+        {"prefix": "", "text": "{alarm_location_detail_block}"}
+      ],
+      "recommend_questions": {
+        "title": "다음은 추천질의입니다.",
+        "items": [
+          {"prefix": "1.", "text": "현재 진행중인 알람은?"},
+          {"prefix": "2.", "text": "{alarm_label} 경보 발생원인 진단 순위를 알려줘"},
+          {"prefix": "3.", "text": "전체 이상 스캔해줘"}
+        ]
+      }
+    },
+    "graph_type": "table"
+  },
+  {
     "intent": "FACILITY_ABNORMAL_STATUS_SUMMARY",
     "questions": [
       "현재 이상 설비 현황을 알려줘",
@@ -2997,11 +3042,11 @@
           },
           {
             "prefix": "2.",
-            "text": "1월 1일부터 1월 10일까지 {sitename} {facilitytype} 수위를 펌프 가동상태와 함께 트렌드로 보여줘"
+            "text": "최근 1주일간 {sitename} {facilitytype} 수위를 펌프 가동상태와 함께 트렌드로 보여줘"
           },
           {
             "prefix": "3.",
-            "text": "1월 1일부터 1월 10일까지 {sitename} {facilitytype} 유입밸브 가동상태와 유입유량을 함께 트렌드로 보여줘"
+            "text": "최근 1주일간 {sitename} {facilitytype} 유입밸브 가동상태와 유입유량을 함께 트렌드로 보여줘"
           }
         ]
       }
@@ -3909,6 +3954,35 @@
       "trend_slope"
     ],
     "graph_type": "table",
+    "table_type": "summary"
+  },
+  {
+    "intent": "FACILITY_CATALOG_TREND_TABLE",
+    "questions": [
+      "한달간 전체 배수지 수위를 표로 보여줘",
+      "전체 배수지의 유출유량을 표로 보여줘",
+      "일주일간 전체 가압장 압력을 표로 보여줘",
+      "전체 배수지 밸브 현황을 표로 보여줘",
+      "한달간 전체 가압장 펌프를 표로 보여줘",
+      "6개월간 전체 소블록 유량을 표로 보여줘",
+      "신평 배수지 수위를 표로 보여줘",
+      "전체 감압시설 압력을 표로 보여줘",
+      "전체 소소블록 수위를 표로 보여줘",
+      "1년간 전체 배수지 압력을 표로 보여줘"
+    ],
+    "sql": "",
+    "graph_type": "table",
+    "default_period": "7 days",
+    "table_columns": ["현장명", "항목", "날짜", "평균", "최대", "최소", "단위"],
+    "answer_template": {
+      "summary": "{facilitytype} {datainfo} 현황 ({from_ts} ~ {to_ts}, {total_count}건)",
+      "detail": ""
+    },
+    "recommend_questions": [
+      "{sitename} {facilitytype} 수위 트렌드 보여줘",
+      "전체 {facilitytype} 압력을 표로 보여줘",
+      "{sitename} {facilitytype} 밸브를 표로 보여줘"
+    ],
     "table_type": "summary"
   }
 ]

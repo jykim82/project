@@ -911,7 +911,7 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
         return [], []
 
     # 사전 치환: 이미 완성된 SQL 조각 (이스케이프 불필요)
-    _RAW_SQL_PARAMS = {"anomaly_facility_filter", "anomaly_scope"}
+    _RAW_SQL_PARAMS = {"anomaly_facility_filter", "anomaly_scope", "alarm_filter_clause"}
     sql = sql_template
     for raw_key in _RAW_SQL_PARAMS:
         placeholder = "{" + raw_key + "}"
@@ -1230,6 +1230,7 @@ def render_template_line(line, data: dict):
 _UNIT_PLACEHOLDER_NAMES = {
     "unit", "water_level_unit", "pressure_unit",
     "avg_outflow_unit", "avg_inflow_unit", "usage_unit",
+    "alarm_label",
 }
 
 
@@ -1261,6 +1262,8 @@ def _render_text(text: str, data: dict) -> Optional[str]:
             value = "전체"
         result = result.replace("{" + placeholder + "}", str(value))
 
+    # 빈 placeholder 치환으로 생긴 이중 공백 정리
+    result = re.sub(r" {2,}", " ", result).strip()
     return result
 
 
@@ -2078,6 +2081,248 @@ def build_alarm_rank_block(rows: list, columns: list) -> list:
     return items
 
 
+# -----------------------------------------------------------------------------
+# 경보 카테고리 필터 매핑
+# (질문 키워드, DB alarm_category 값, alarm_msg ILIKE 키워드, 표시 라벨)
+# -----------------------------------------------------------------------------
+_ALARM_FILTER_RULES: list[tuple[list[str], list[str], list[str], str]] = [
+    # (질문 키워드,  alarm_category 정확매칭,  alarm_msg ILIKE 폴백,  표시라벨)
+    # alarm_category가 DB에 존재하는 항목 → category만 사용 (msg 폴백 없음)
+    (["수위"],              ["수위"],       [],                 "수위"),
+    (["압력"],              ["압력"],       [],                 "압력"),
+    (["전원", "ups"],       ["UPS"],        [],                 "전원"),
+    (["펌프"],              ["펌프"],       [],                 "펌프"),
+    (["밸브"],              ["밸브"],       [],                 "밸브"),
+    (["유량"],              ["유량"],       [],                 "유량"),
+    # 통신: category='네트워크' + msg ILIKE '%통신%' 병용
+    (["통신", "네트워크"],  ["네트워크"],   ["통신"],           "통신"),
+    # 수질: alarm_category 없음 → msg ILIKE만
+    (["수질", "탁도"],      [],             ["수질", "탁도"],   "수질"),
+]
+
+
+def _execute_catalog_trend_query(
+    facilitytype: str,
+    sitename: str,
+    trend_name_filter: str,
+    label_pattern: str,
+    from_ts: str,
+    to_ts: str,
+) -> tuple[list, list]:
+    """tb_trend_catalog + tb_tag_raw_data 2단계 청크 직접 쿼리.
+
+    TimescaleDB ChunkAppend가 (tagsn, logtime) 인덱스를 사용하지 못하는 문제를
+    우회하기 위해, 카탈로그에서 tagsn 리스트를 먼저 추출한 후
+    각 청크를 직접 쿼리하여 인덱스 스캔을 강제한다.
+
+    Returns:
+        (rows, columns) — columns: ["현장명","항목","날짜","평균","최대","최소","단위"]
+    """
+    conn = get_db_connection()
+    try:
+        return _execute_catalog_trend_query_inner(
+            conn, facilitytype, sitename, trend_name_filter, label_pattern, from_ts, to_ts,
+        )
+    finally:
+        conn.close()
+
+
+def _execute_catalog_trend_query_inner(
+    conn,
+    facilitytype: str,
+    sitename: str,
+    trend_name_filter: str,
+    label_pattern: str,
+    from_ts: str,
+    to_ts: str,
+) -> tuple[list, list]:
+    cur = conn.cursor()
+
+    # Step1: 카탈로그에서 태그 + 메타 추출
+    sn_clause = f"tc.sitename = '{sitename}'" if sitename and sitename != "%%" else "1=1"
+    tn_clause = f"tc.trend_name = '{trend_name_filter}'" if trend_name_filter and trend_name_filter != "%%" else "1=1"
+    lbl_clause = f"(i->>'label') LIKE '{label_pattern}'" if label_pattern and label_pattern != "%%" else "1=1"
+
+    cur.execute(f"""
+        SELECT tc.sitename,
+            (i->>'tagsn')::text AS tagsn,
+            (i->>'label')::text AS label,
+            COALESCE(i->>'unit', '') AS unit
+        FROM tb_trend_catalog tc
+        CROSS JOIN LATERAL jsonb_array_elements(tc.meta->'items') AS i
+        WHERE {sn_clause}
+            AND tc.facilitytype = '{facilitytype}'
+            AND {tn_clause}
+            AND {lbl_clause}
+    """)
+    catalog_rows = cur.fetchall()
+    if not catalog_rows:
+        return [], []
+
+    tag_meta: dict[str, tuple[str, str, str]] = {}
+    for sn, tagsn, label, unit in catalog_rows:
+        if tagsn not in tag_meta:
+            tag_meta[tagsn] = (sn, label, unit)
+    tagsn_list = list(tag_meta.keys())
+    logger.info(f"카탈로그 태그: {len(tagsn_list)}개 (facilitytype={facilitytype})")
+
+    # Step2: 해당 시간 범위의 청크 목록
+    cur.execute("""
+        SELECT c.schema_name || '.' || c.table_name
+        FROM _timescaledb_catalog.chunk c
+        JOIN _timescaledb_catalog.hypertable h ON c.hypertable_id = h.id
+        JOIN _timescaledb_catalog.chunk_constraint cc ON cc.chunk_id = c.id
+        JOIN _timescaledb_catalog.dimension_slice ds ON ds.id = cc.dimension_slice_id
+        WHERE h.table_name = 'tb_tag_raw_data'
+          AND ds.range_start <= extract(epoch from %s::timestamptz) * 1000000
+          AND ds.range_end > extract(epoch from %s::timestamptz) * 1000000
+        ORDER BY ds.range_start
+    """, (to_ts, from_ts))
+    chunks = [r[0] for r in cur.fetchall()]
+    if not chunks:
+        return [], []
+    logger.info(f"대상 청크: {len(chunks)}개")
+
+    # Step3: 각 청크에서 tagsn 직접 인덱스 스캔
+    all_raw: list[tuple] = []
+    for chunk_name in chunks:
+        cur.execute(f"""
+            SELECT tagsn,
+                time_bucket('1 day', logtime) AS bucket,
+                SUM(val) AS sum_val,
+                COUNT(*) AS cnt,
+                MAX(val) AS max_val,
+                MIN(val) AS min_val
+            FROM {chunk_name}
+            WHERE tagsn = ANY(%s)
+              AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
+            GROUP BY tagsn, time_bucket('1 day', logtime)
+        """, (tagsn_list, from_ts, to_ts))
+        all_raw.extend(cur.fetchall())
+
+    if not all_raw:
+        return [], []
+
+    # Step4: 청크간 재집계 (같은 tagsn+bucket이 여러 청크에 걸칠 수 있음)
+    from collections import defaultdict
+    agg: dict[tuple[str, object], list] = defaultdict(list)
+    for tagsn, bucket, sum_val, cnt, max_val, min_val in all_raw:
+        agg[(tagsn, bucket)].append((float(sum_val), int(cnt), float(max_val), float(min_val)))
+
+    columns = ["현장명", "항목", "날짜", "평균", "최대", "최소", "단위"]
+    rows = []
+    for (tagsn, bucket), vals in sorted(agg.items(), key=lambda x: (tag_meta.get(x[0][0], ("",))[0], tag_meta.get(x[0][0], ("",))[1], x[0][1])):
+        meta = tag_meta.get(tagsn)
+        if not meta:
+            continue
+        total_sum = sum(v[0] for v in vals)
+        total_cnt = sum(v[1] for v in vals)
+        avg_val = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0
+        max_val = round(max(v[2] for v in vals), 2)
+        min_val = round(min(v[3] for v in vals), 2)
+        date_str = bucket.strftime("%Y-%m-%d") if hasattr(bucket, "strftime") else str(bucket)[:10]
+        rows.append((meta[0], meta[1], date_str, avg_val, max_val, min_val, meta[2]))
+
+    return rows, columns
+
+
+def _get_catalog_trend_filter(question: str, datainfo: str) -> tuple[str, str, str]:
+    """질문에서 카탈로그 필터 (trend_name, label_pattern, display_name)를 추출한다.
+
+    compound 키워드(유출유량, 유입유량) 우선 매칭 후 단순 키워드 폴백.
+    Returns:
+        (trend_name_filter, label_pattern, display_name)
+    """
+    _COMPOUND = [
+        ("유출유량", "유량", "%%유출%%적산%%", "유출유량"),
+        ("유출 유량", "유량", "%%유출%%적산%%", "유출유량"),
+        ("유입유량", "유량", "%%유입%%", "유입유량"),
+        ("유입 유량", "유량", "%%유입%%", "유입유량"),
+    ]
+    for kw, tn, lp, dn in _COMPOUND:
+        if kw in question:
+            return tn, lp, dn
+
+    _SIMPLE = {
+        "수위": ("수위", "%%", "수위"),
+        "압력": ("압력", "%%", "압력"),
+        "유량": ("유량", "%%", "유량"),
+        "밸브": ("%%", "%%밸브%%", "밸브"),
+        "펌프": ("%%", "%%펌프%%", "펌프"),
+    }
+    if datainfo in _SIMPLE:
+        return _SIMPLE[datainfo]
+    return ("%%", "%%", datainfo or "전체")
+
+
+def _extract_alarm_filter(question: str) -> tuple[str, str]:
+    """질문에서 경보 카테고리 필터 SQL 절과 라벨을 추출한다.
+
+    Returns:
+        (alarm_filter_clause, alarm_label)
+        - alarm_filter_clause: "AND (...)" SQL 절 또는 빈 문자열
+        - alarm_label: "통신", "수위" 등 표시용 또는 빈 문자열
+    """
+    q = question.lower()
+    for q_keywords, categories, msg_keywords, label in _ALARM_FILTER_RULES:
+        if any(kw in q for kw in q_keywords):
+            conditions: list[str] = []
+            for cat in categories:
+                conditions.append(f"alarm_category = '{cat}'")
+            for kw in msg_keywords:
+                conditions.append(f"alarm_msg ILIKE '%{kw}%'")
+            clause = "AND (" + " OR ".join(conditions) + ")"
+            return clause, label
+    return "", ""
+
+
+def _extract_alarm_level(question: str) -> tuple[str, str]:
+    """질문에서 알람 수준(HH/LL/FAULT) SQL 절과 라벨을 추출한다.
+
+    Returns:
+        (alarm_level_clause, alarm_level_label)
+    """
+    q = question.upper()
+    if "HH" in q:
+        return "AND alarm_msg ILIKE '%HH%'", "HH"
+    if "LL" in q:
+        return "AND alarm_msg ILIKE '%LL%'", "LL"
+    q_lower = question.lower()
+    if "fault" in q_lower or "고장" in question:
+        return "AND (alarm_msg ILIKE '%FAULT%' OR alarm_msg ILIKE '%고장%')", "FAULT/고장"
+    return "", ""
+
+
+def build_alarm_cause_rank_block(rows: list, columns: list) -> list:
+    """
+    FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK 다중 행을 발생원인 순위 리스트로 조립한다.
+    반환 컬럼: alarm_msg, alarm_count, diagnosed_causes
+    """
+    items = []
+    for idx, row in enumerate(rows):
+        row_dict = dict(zip(columns, row))
+        alarm_msg = row_dict.get("alarm_msg", "")
+        alarm_count = row_dict.get("alarm_count", 0)
+        diagnosed_causes = row_dict.get("diagnosed_causes", "")
+        if alarm_msg:
+            try:
+                cnt = int(alarm_count)
+            except (ValueError, TypeError):
+                cnt = 0
+            if idx < 3:
+                level = "error"
+            elif idx < 6:
+                level = "warn"
+            else:
+                level = "ok"
+            count_marker = f"<<{level}:{alarm_count}건>>"
+            text = f"{alarm_msg} {count_marker}"
+            if diagnosed_causes:
+                text += f" (진단: {diagnosed_causes})"
+            items.append({"prefix": f"{idx + 1}.", "text": text})
+    return items
+
+
 def build_pressure_detail_block(rows: list, columns: list) -> list:
     """
     FACILITY_PRESSURE_STATUS 다중 행을 압력 항목 리스트로 조립한다.
@@ -2481,6 +2726,58 @@ def process_sql_result(
             ]
 
     # -------------------------------------------------
+    # 경보 이상 발생 지점: 카테고리 요약 + 상세 리스트 조립
+    # -------------------------------------------------
+    if intent == "ALARM_ABNORMAL_LOCATIONS":
+        from collections import Counter
+        cat_counts = Counter()
+        detail_items = []
+        for row in rows:
+            rd = dict(zip(columns, row))
+            site = rd.get("sitename", "")
+            ftype = rd.get("facilitytype", "")
+            msg = rd.get("alarm_msg", "")
+            cat = rd.get("alarm_category", "")
+            atime = rd.get("alarm_start_time", "")
+            status = rd.get("alarm_status", "")
+            if cat:
+                cat_counts[cat] += 1
+            if msg:
+                marked_msg = _alarm_msg_marker(msg)
+                cat_tag = f" [{_alarm_category_marker(cat)}]" if cat else ""
+                status_marker = " <<ok:해제>>" if status == "알람해제" else ""
+                detail_items.append({
+                    "prefix": "-",
+                    "text": f"{site} {ftype}: {marked_msg}{cat_tag}{status_marker} ({atime})"
+                })
+
+        data["total_alarm_count"] = len(rows)
+
+        if cat_counts:
+            cat_parts = []
+            for k, v in cat_counts.items():
+                level = _ALARM_CATEGORY_SEVERITY.get(k, "warn")
+                cat_parts.append(f"<<{level}:{k} {v}건>>")
+            data["category_summary"] = ", ".join(cat_parts)
+        else:
+            data["category_summary"] = "<<ok:없음>>"
+
+        if detail_items:
+            data["alarm_location_detail_block"] = _EXPAND_MARKER
+            data["_detail_blocks"]["alarm_location_detail_block"] = detail_items
+
+        # 테이블 데이터 alarm_msg에도 마커 적용
+        if columns and "alarm_msg" in columns:
+            msg_idx = columns.index("alarm_msg")
+            rows[:] = [
+                tuple(
+                    _alarm_msg_marker(str(v)) if i == msg_idx and v else v
+                    for i, v in enumerate(row)
+                )
+                for row in rows
+            ]
+
+    # -------------------------------------------------
     # 통신 구성: 홉 상세 데이터 조립
     # -------------------------------------------------
     if intent == "FACILITY_COMMUNICATION_TOPOLOGY":
@@ -2515,8 +2812,33 @@ def process_sql_result(
     # 알람 누적건수 TOP: 다중 행 순위 조립
     # -------------------------------------------------
     if intent == "FACILITY_ALARM_TOP_COUNT":
+        # sitename/facilitytype 미추출 시 "전체" 기본값
+        if not data.get("sitename"):
+            data["sitename"] = "전체"
+        if not data.get("facilitytype"):
+            data["facilitytype"] = "시설"
+        if not data.get("alarm_label"):
+            data["alarm_label"] = ""
         data["alarm_rank_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["alarm_rank_block"] = build_alarm_rank_block(rows, columns)
+        # 파이차트용 블록도 함께 조립
+        data["alarm_cause_rank_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["alarm_cause_rank_block"] = build_alarm_cause_rank_block(rows, columns)
+
+    # -------------------------------------------------
+    # 경보 발생원인 진단 순위: 다중 행 원인별 순위 조립
+    # -------------------------------------------------
+    if intent == "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK":
+        # sitename/facilitytype 미추출 시 "전체" 기본값
+        if not data.get("sitename"):
+            data["sitename"] = "전체"
+        if not data.get("facilitytype"):
+            data["facilitytype"] = "시설"
+        # alarm_label 기본값 (통신 필터 여부)
+        if not data.get("alarm_label"):
+            data["alarm_label"] = ""
+        data["alarm_cause_rank_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["alarm_cause_rank_block"] = build_alarm_cause_rank_block(rows, columns)
 
     # -------------------------------------------------
     # 압력 현황: 복수 압력 포인트 결과 조립
@@ -2956,6 +3278,8 @@ async def ask(request: AskRequest):
         "FACILITY_ALARM_TOP_COUNT",
         "NIGHT_MIN_FLOW_SUMMARY_TABLE",
         "FACILITY_ABNORMAL_STATUS_SUMMARY",
+        "ALARM_ABNORMAL_LOCATIONS",
+        "FACILITY_CATALOG_TREND_TABLE",
     }
     if (intent_name in _TABLE_INTENTS_ALLOW_ALL
             and not new_params.get("sitename")
@@ -3076,6 +3400,18 @@ async def ask(request: AskRequest):
 
     logger.info(f"INTENT 확정: {intent} (method={classify_method})")
 
+    # 경보 순위 인텐트: sitename/facilitytype 선택적 + 카테고리 필터
+    _ALARM_PIE_INTENTS = {"FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT"}
+    if intent in _ALARM_PIE_INTENTS:
+        if not params.get("sitename") or params.get("sitename") == "%%":
+            params["sitename"] = ""
+        if not params.get("facilitytype") or params.get("facilitytype") == "%%":
+            params["facilitytype"] = ""
+        # 경보 카테고리 필터 (수위/압력/통신/전원/펌프/밸브/수질/유량)
+        clause, label = _extract_alarm_filter(request.user_question or "")
+        params["alarm_filter_clause"] = clause
+        params["alarm_label"] = label
+
     # 세션 업데이트 (OK)
     session_manager.update_session(
         session,
@@ -3091,8 +3427,9 @@ async def ask(request: AskRequest):
     else:
         sql_combined = sql_template or ""
 
-    # 빈 SQL 체크
-    if not sql_combined or not sql_combined.strip():
+    # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE"}
+    if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
         return build_success_response(
@@ -3285,6 +3622,81 @@ async def ask(request: AskRequest):
             f" ORDER BY alarm_start_time DESC;"
         )
 
+    # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
+    if intent == "ALARM_ABNORMAL_LOCATIONS":
+        alarm_filter_clause, alarm_label = _extract_alarm_filter(user_question)
+        alarm_level_clause, alarm_level_label = _extract_alarm_level(user_question)
+        _ftype = params.get("facilitytype", "")
+
+        where_parts = ["alarm_status = '진행중'"]
+        if _ftype:
+            _ftype_esc = _ftype.replace("'", "''")
+            where_parts.append(f"facilitytype = '{_ftype_esc}'")
+        where_base = " AND ".join(where_parts)
+        if alarm_filter_clause:
+            where_base += f" {alarm_filter_clause}"
+        if alarm_level_clause:
+            where_base += f" {alarm_level_clause}"
+
+        sql_combined = (
+            f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+            f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
+            f" alarm_status"
+            f" FROM tb_equipment_alarm_report"
+            f" WHERE {where_base}"
+            f" ORDER BY alarm_start_time DESC"
+            f" LIMIT 100;"
+        )
+        # 폴백용 필터 정보를 params에 저장
+        params["_alarm_where_filter"] = alarm_filter_clause
+        params["_alarm_where_level"] = alarm_level_clause
+        params["_alarm_where_ftype"] = f"facilitytype = '{_ftype_esc}'" if _ftype else ""
+        params["_alarm_label"] = alarm_label
+        params["_alarm_level_label"] = alarm_level_label
+
+        # answer_template 오버라이드 (빈 필터 placeholder 문제 방지)
+        _filter_desc = " ".join(p for p in [_ftype, alarm_label, alarm_level_label] if p)
+        _subject = f"{_filter_desc} 경보" if _filter_desc else "경보"
+        answer_template = {
+            "summary": _subject + " 발생 지점은 다음과 같습니다. (총 {total_alarm_count}건)",
+            "detail": [
+                {"prefix": "•", "text": "{category_summary}"},
+                {"prefix": "", "text": "{alarm_location_detail_block}"},
+            ],
+            "recommend_questions": {
+                "title": "다음은 추천질의입니다.",
+                "items": [
+                    {"prefix": "1.", "text": "현재 진행중인 알람은?"},
+                    {"prefix": "2.", "text": "경보 발생원인 진단 순위를 알려줘"},
+                    {"prefix": "3.", "text": "전체 이상 스캔해줘"},
+                ]
+            }
+        }
+
+    # FACILITY_CATALOG_TREND_TABLE: 2단계 청크 직접 쿼리 (성능 최적화)
+    if intent == "FACILITY_CATALOG_TREND_TABLE":
+        _ft = params.get("facilitytype", "배수지")
+        _sn = params.get("sitename", "%%")
+        _di = params.get("datainfo", "")
+        _from = params.get("from_ts", "")
+        _to = params.get("to_ts", "")
+
+        trend_name_filter, label_pattern, display_name = _get_catalog_trend_filter(user_question, _di)
+        params["datainfo"] = display_name
+        logger.info(f"FACILITY_CATALOG_TREND_TABLE SQL: ft={_ft}, sn={_sn}, tn={trend_name_filter}, lbl={label_pattern}")
+
+        try:
+            _cat_rows, _cat_cols = await asyncio.to_thread(
+                _execute_catalog_trend_query,
+                _ft, _sn, trend_name_filter, label_pattern, _from, _to,
+            )
+            if _cat_rows:
+                rows = _cat_rows
+                columns = _cat_cols
+        except Exception as e:
+            logger.error(f"FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
+        # sql_combined은 빈 상태 — 아래 execute_sql 단계를 건너뜀
+
     # alarm_msg가 None이면 전체 알람 조회 (LIKE '%%')
     if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
         params["alarm_msg"] = ""
@@ -3346,20 +3758,22 @@ async def ask(request: AskRequest):
             except ValueError:
                 pass
 
-    try:
-        rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
-    except psycopg2.OperationalError as e:
-        logger.error(f"DB 접속 오류: {e}")
-        return build_error_response(
-            message="데이터베이스 연결 오류가 발생했습니다.",
-            session_id=sid,
-        )
-    except psycopg2.Error as e:
-        logger.error(f"SQL 실행 오류: {e}")
-        return build_error_response(
-            message="데이터베이스 연결 오류가 발생했습니다.",
-            session_id=sid,
-        )
+    # 커스텀 핸들러에서 rows/columns가 이미 채워진 경우 SQL 실행 건너뜀
+    if not rows:
+        try:
+            rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
+        except psycopg2.OperationalError as e:
+            logger.error(f"DB 접속 오류: {e}")
+            return build_error_response(
+                message="데이터베이스 연결 오류가 발생했습니다.",
+                session_id=sid,
+            )
+        except psycopg2.Error as e:
+            logger.error(f"SQL 실행 오류: {e}")
+            return build_error_response(
+                message="데이터베이스 연결 오류가 발생했습니다.",
+                session_id=sid,
+            )
 
     # 다중 sitename: 시설별 datainfo 페어링이 있으면 개별 SQL 실행
     if facility_pairs and len(facility_pairs) > 1:
@@ -3432,6 +3846,37 @@ async def ask(request: AskRequest):
         all_site_names = [params.get("sitename", "")] + list(extra_sitenames)
         params["sitename"] = ", ".join(all_site_names)
 
+    # ALARM_ABNORMAL_LOCATIONS: 진행중 0건 → 최근 7일 폴백
+    if intent == "ALARM_ABNORMAL_LOCATIONS" and not rows:
+        fb_where_parts = ["alarm_start_time >= NOW() - INTERVAL '7 days'"]
+        _fb_ftype = params.get("_alarm_where_ftype", "")
+        if _fb_ftype:
+            fb_where_parts.append(_fb_ftype)
+        fb_where = " AND ".join(fb_where_parts)
+        _fb_filter = params.get("_alarm_where_filter", "")
+        _fb_level = params.get("_alarm_where_level", "")
+        if _fb_filter:
+            fb_where += f" {_fb_filter}"
+        if _fb_level:
+            fb_where += f" {_fb_level}"
+        fb_sql = (
+            f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+            f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
+            f" alarm_status"
+            f" FROM tb_equipment_alarm_report"
+            f" WHERE {fb_where}"
+            f" ORDER BY alarm_start_time DESC"
+            f" LIMIT 100;"
+        )
+        try:
+            rows, columns = await asyncio.to_thread(execute_sql, fb_sql, {})
+            if rows:
+                params["_alarm_fallback"] = True
+                answer_template["summary"] = "현재 진행중인 해당 알람이 없어 최근 7일 이력을 표시합니다. ({total_alarm_count}건)"
+                logger.info(f"ALARM_ABNORMAL_LOCATIONS 폴백: 최근 7일 {len(rows)}건")
+        except Exception as e:
+            logger.warning(f"ALARM_ABNORMAL_LOCATIONS 폴백 SQL 실행 실패: {e}")
+
     # 결과 확인
     if not rows:
         logger.info(f"조회 결과 없음: {intent}, params={params}")
@@ -3441,6 +3886,9 @@ async def ask(request: AskRequest):
     if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
         if not params.get("datainfo"):
             params["datainfo"] = "전체"
+
+    # total_count: 템플릿 {total_count} 렌더링용
+    params["total_count"] = str(len(rows))
 
     # 데이터 후처리
     try:
@@ -3761,6 +4209,8 @@ async def ask_stream(request: AskRequest):
             "FACILITY_ALARM_TOP_COUNT",
             "NIGHT_MIN_FLOW_SUMMARY_TABLE",
             "FACILITY_ABNORMAL_STATUS_SUMMARY",
+            "ALARM_ABNORMAL_LOCATIONS",
+            "FACILITY_CATALOG_TREND_TABLE",
         }
         if (intent_name in _TABLE_INTENTS_ALLOW_ALL_STREAM
                 and not new_params.get("sitename")
@@ -3880,6 +4330,18 @@ async def ask_stream(request: AskRequest):
 
         logger.info(f"[SSE] INTENT 확정: {intent} (method={classify_method})")
 
+        # 경보 순위 인텐트: sitename/facilitytype 선택적 + 카테고리 필터
+        _ALARM_PIE_INTENTS_SSE = {"FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT"}
+        if intent in _ALARM_PIE_INTENTS_SSE:
+            if not params.get("sitename") or params.get("sitename") == "%%":
+                params["sitename"] = ""
+            if not params.get("facilitytype") or params.get("facilitytype") == "%%":
+                params["facilitytype"] = ""
+            # 경보 카테고리 필터 (수위/압력/통신/전원/펌프/밸브/수질/유량)
+            clause, label = _extract_alarm_filter(request.user_question or "")
+            params["alarm_filter_clause"] = clause
+            params["alarm_label"] = label
+
         session_manager.update_session(
             session,
             intent_name=intent,
@@ -3893,8 +4355,9 @@ async def ask_stream(request: AskRequest):
         else:
             sql_combined = sql_template or ""
 
-        # 빈 SQL 체크
-        if not sql_combined or not sql_combined.strip():
+        # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE"}
+        if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
             yield _sse_event("result", build_success_response(
@@ -4085,6 +4548,80 @@ async def ask_stream(request: AskRequest):
                 f" ORDER BY alarm_start_time DESC;"
             )
 
+        # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
+        if intent == "ALARM_ABNORMAL_LOCATIONS":
+            alarm_filter_clause, alarm_label = _extract_alarm_filter(user_question)
+            alarm_level_clause, alarm_level_label = _extract_alarm_level(user_question)
+            _ftype = params.get("facilitytype", "")
+
+            where_parts = ["alarm_status = '진행중'"]
+            if _ftype:
+                _ftype_esc = _ftype.replace("'", "''")
+                where_parts.append(f"facilitytype = '{_ftype_esc}'")
+            where_base = " AND ".join(where_parts)
+            if alarm_filter_clause:
+                where_base += f" {alarm_filter_clause}"
+            if alarm_level_clause:
+                where_base += f" {alarm_level_clause}"
+
+            sql_combined = (
+                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
+                f" alarm_status"
+                f" FROM tb_equipment_alarm_report"
+                f" WHERE {where_base}"
+                f" ORDER BY alarm_start_time DESC"
+                f" LIMIT 100;"
+            )
+            # 폴백용 필터 정보를 params에 저장
+            params["_alarm_where_filter"] = alarm_filter_clause
+            params["_alarm_where_level"] = alarm_level_clause
+            params["_alarm_where_ftype"] = f"facilitytype = '{_ftype_esc}'" if _ftype else ""
+            params["_alarm_label"] = alarm_label
+            params["_alarm_level_label"] = alarm_level_label
+
+            # answer_template 오버라이드
+            _filter_desc = " ".join(p for p in [_ftype, alarm_label, alarm_level_label] if p)
+            _subject = f"{_filter_desc} 경보" if _filter_desc else "경보"
+            answer_template = {
+                "summary": _subject + " 발생 지점은 다음과 같습니다. (총 {total_alarm_count}건)",
+                "detail": [
+                    {"prefix": "•", "text": "{category_summary}"},
+                    {"prefix": "", "text": "{alarm_location_detail_block}"},
+                ],
+                "recommend_questions": {
+                    "title": "다음은 추천질의입니다.",
+                    "items": [
+                        {"prefix": "1.", "text": "현재 진행중인 알람은?"},
+                        {"prefix": "2.", "text": "경보 발생원인 진단 순위를 알려줘"},
+                        {"prefix": "3.", "text": "전체 이상 스캔해줘"},
+                    ]
+                }
+            }
+
+        # FACILITY_CATALOG_TREND_TABLE: 2단계 청크 직접 쿼리 (성능 최적화)
+        if intent == "FACILITY_CATALOG_TREND_TABLE":
+            _ft = params.get("facilitytype", "배수지")
+            _sn = params.get("sitename", "%%")
+            _di = params.get("datainfo", "")
+            _from = params.get("from_ts", "")
+            _to = params.get("to_ts", "")
+
+            trend_name_filter, label_pattern, display_name = _get_catalog_trend_filter(user_question, _di)
+            params["datainfo"] = display_name
+            logger.info(f"FACILITY_CATALOG_TREND_TABLE SQL: ft={_ft}, sn={_sn}, tn={trend_name_filter}, lbl={label_pattern}")
+
+            try:
+                _cat_rows, _cat_cols = await asyncio.to_thread(
+                    _execute_catalog_trend_query,
+                    conn, _ft, _sn, trend_name_filter, label_pattern, _from, _to,
+                )
+                if _cat_rows:
+                    rows = _cat_rows
+                    columns = _cat_cols
+            except Exception as e:
+                logger.error(f"[SSE] FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
+
         # alarm_msg 기본값
         if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
             params["alarm_msg"] = ""
@@ -4144,24 +4681,26 @@ async def ask_stream(request: AskRequest):
         })
         await asyncio.sleep(0)
 
-        try:
-            rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
-        except psycopg2.OperationalError as e:
-            logger.error(f"[SSE] DB 접속 오류: {e}")
-            yield _sse_event("error", {
-                "status": "ERROR",
-                "message": "DB 장애 발생으로 점검이 필요합니다.",
-                "session_id": sid,
-            })
-            return
-        except psycopg2.Error as e:
-            logger.error(f"[SSE] SQL 실행 오류: {e}")
-            yield _sse_event("error", {
-                "status": "ERROR",
-                "message": "데이터베이스 연결 오류가 발생했습니다.",
-                "session_id": sid,
-            })
-            return
+        # 커스텀 핸들러에서 rows/columns가 이미 채워진 경우 SQL 실행 건너뜀
+        if not rows:
+            try:
+                rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
+            except psycopg2.OperationalError as e:
+                logger.error(f"[SSE] DB 접속 오류: {e}")
+                yield _sse_event("error", {
+                    "status": "ERROR",
+                    "message": "DB 장애 발생으로 점검이 필요합니다.",
+                    "session_id": sid,
+                })
+                return
+            except psycopg2.Error as e:
+                logger.error(f"[SSE] SQL 실행 오류: {e}")
+                yield _sse_event("error", {
+                    "status": "ERROR",
+                    "message": "데이터베이스 연결 오류가 발생했습니다.",
+                    "session_id": sid,
+                })
+                return
 
         # 다중 sitename: 시설별 datainfo 페어링이 있으면 개별 SQL 실행
         if facility_pairs and len(facility_pairs) > 1:
@@ -4229,6 +4768,37 @@ async def ask_stream(request: AskRequest):
             all_site_names = [params.get("sitename", "")] + list(extra_sitenames)
             params["sitename"] = ", ".join(all_site_names)
 
+        # ALARM_ABNORMAL_LOCATIONS: 진행중 0건 → 최근 7일 폴백
+        if intent == "ALARM_ABNORMAL_LOCATIONS" and not rows:
+            fb_where_parts = ["alarm_start_time >= NOW() - INTERVAL '7 days'"]
+            _fb_ftype = params.get("_alarm_where_ftype", "")
+            if _fb_ftype:
+                fb_where_parts.append(_fb_ftype)
+            fb_where = " AND ".join(fb_where_parts)
+            _fb_filter = params.get("_alarm_where_filter", "")
+            _fb_level = params.get("_alarm_where_level", "")
+            if _fb_filter:
+                fb_where += f" {_fb_filter}"
+            if _fb_level:
+                fb_where += f" {_fb_level}"
+            fb_sql = (
+                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
+                f" alarm_status"
+                f" FROM tb_equipment_alarm_report"
+                f" WHERE {fb_where}"
+                f" ORDER BY alarm_start_time DESC"
+                f" LIMIT 100;"
+            )
+            try:
+                rows, columns = await asyncio.to_thread(execute_sql, fb_sql, {})
+                if rows:
+                    params["_alarm_fallback"] = True
+                    answer_template["summary"] = "현재 진행중인 해당 알람이 없어 최근 7일 이력을 표시합니다. ({total_alarm_count}건)"
+                    logger.info(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백: 최근 7일 {len(rows)}건")
+            except Exception as e:
+                logger.warning(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백 SQL 실행 실패: {e}")
+
         # 결과 확인
         if not rows:
             logger.info(f"[SSE] 조회 결과 없음: {intent}, params={params}")
@@ -4248,6 +4818,9 @@ async def ask_stream(request: AskRequest):
         if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
             if not params.get("datainfo"):
                 params["datainfo"] = "전체"
+
+        # total_count: 템플릿 {total_count} 렌더링용
+        params["total_count"] = str(len(rows))
 
         # 데이터 후처리
         try:
@@ -7043,6 +7616,348 @@ async def delete_equipment(equipment_id: str, dry_run: bool = Query(False)):
         if conn:
             conn.rollback()
         logger.error(f"설비 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 배수지 관리 API
+# =============================================================================
+
+def _serialize_reservoir_info(r: tuple) -> dict:
+    """tb_service_reservoir_info row → dict (general_overview flat 변환).
+    SELECT 순서: sitename, general_overview, install_year, service_area,
+                 zone_count, zone_1_area..zone_5_height (10 cols)
+    """
+    go = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+    spec = go.get("reservoir_spec", {}) if isinstance(go.get("reservoir_spec"), dict) else {}
+    return {
+        "sitename": r[0],
+        "install_year": r[2],
+        "service_area": r[3],
+        "zone_count": r[4],
+        "zone_1_area": float(r[5]) if r[5] is not None else None,
+        "zone_1_height": float(r[6]) if r[6] is not None else None,
+        "zone_2_area": float(r[7]) if r[7] is not None else None,
+        "zone_2_height": float(r[8]) if r[8] is not None else None,
+        "zone_3_area": float(r[9]) if r[9] is not None else None,
+        "zone_3_height": float(r[10]) if r[10] is not None else None,
+        "zone_4_area": float(r[11]) if r[11] is not None else None,
+        "zone_4_height": float(r[12]) if r[12] is not None else None,
+        "zone_5_area": float(r[13]) if r[13] is not None else None,
+        "zone_5_height": float(r[14]) if r[14] is not None else None,
+        # general_overview flat
+        "install_location": go.get("install_location"),
+        "operating_status": go.get("operating_status"),
+        "supply_population": go.get("supply_population"),
+        "facility_capacity_m3": go.get("facility_capacity_m3"),
+        "reservoir_count": spec.get("count"),
+        "hwl": spec.get("H.W.L"),
+        "lwl": spec.get("L.W.L"),
+        "emergency_water_plan": go.get("emergency_water_plan"),
+        "water_truck_accessible": go.get("water_truck_accessible"),
+        "water_truck_turning_possible": go.get("water_truck_turning_possible"),
+        "pump_required": go.get("pump_required"),
+        "supply_position": go.get("supply_position"),
+        "supply_time_hours": go.get("supply_time_hours"),
+    }
+
+
+def _serialize_reservoir_status(r: tuple) -> dict:
+    """tb_service_reservoir_status row → dict.
+    SELECT 순서: sitename, total_supply_time, supply_time_status,
+                 supply_time_reason, meta
+    """
+    meta_raw = r[4]
+    if isinstance(meta_raw, str):
+        meta_raw = json.loads(meta_raw)
+    meta = meta_raw if isinstance(meta_raw, list) else []
+    return {
+        "sitename": r[0],
+        "total_supply_time": float(r[1]) if r[1] is not None else None,
+        "supply_time_status": r[2],
+        "supply_time_reason": r[3],
+        "equipment_meta": meta,
+    }
+
+
+_RESERVOIR_GO_KEYS = (
+    "install_location", "operating_status", "supply_population",
+    "facility_capacity_m3", "pump_required", "supply_position",
+    "supply_time_hours",
+)
+
+
+def _build_reservoir_general_overview(body: dict) -> dict:
+    """프론트엔드 flat 필드 → general_overview JSONB 조립."""
+    go: dict = {}
+    for key in _RESERVOIR_GO_KEYS:
+        val = body.get(key)
+        if val is not None:
+            go[key] = val
+    spec: dict = {}
+    if body.get("reservoir_count") is not None:
+        spec["count"] = body["reservoir_count"]
+    if body.get("hwl") is not None:
+        spec["H.W.L"] = body["hwl"]
+    if body.get("lwl") is not None:
+        spec["L.W.L"] = body["lwl"]
+    if spec:
+        go["reservoir_spec"] = spec
+    if body.get("emergency_water_plan") is not None:
+        go["emergency_water_plan"] = body["emergency_water_plan"]
+    if body.get("water_truck_accessible") is not None:
+        go["water_truck_accessible"] = body["water_truck_accessible"]
+    if body.get("water_truck_turning_possible") is not None:
+        go["water_truck_turning_possible"] = body["water_truck_turning_possible"]
+    return go
+
+
+@app.get("/reservoirs")
+async def get_reservoirs(
+    keyword: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """배수지 목록 조회 (페이징+키워드 검색)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        wheres, params = [], []
+        if keyword:
+            wheres.append("(i.sitename ILIKE %s OR i.service_area ILIKE %s)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw])
+
+        where_sql = " AND ".join(wheres) if wheres else "TRUE"
+
+        cur.execute(f"SELECT COUNT(*) FROM tb_service_reservoir_info i WHERE {where_sql}", params)
+        total = cur.fetchone()[0]
+
+        offset = (page - 1) * page_size
+        cur.execute(f"""
+            SELECT i.sitename, i.general_overview, i.install_year, i.service_area,
+                   i.zone_count, i.zone_1_area, i.zone_1_height,
+                   i.zone_2_area, i.zone_2_height, i.zone_3_area, i.zone_3_height,
+                   i.zone_4_area, i.zone_4_height, i.zone_5_area, i.zone_5_height
+            FROM tb_service_reservoir_info i
+            WHERE {where_sql}
+            ORDER BY i.sitename
+            LIMIT %s OFFSET %s
+        """, params + [page_size, offset])
+        rows = cur.fetchall()
+        cur.close()
+
+        data = [_serialize_reservoir_info(r) for r in rows]
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"배수지 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/reservoirs/{sitename}")
+async def get_reservoir_detail(sitename: str):
+    """배수지 상세 조회 (info + status)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT sitename, general_overview, install_year, service_area,
+                   zone_count, zone_1_area, zone_1_height,
+                   zone_2_area, zone_2_height, zone_3_area, zone_3_height,
+                   zone_4_area, zone_4_height, zone_5_area, zone_5_height
+            FROM tb_service_reservoir_info
+            WHERE sitename = %s
+        """, (sitename,))
+        info_row = cur.fetchone()
+        if not info_row:
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 배수지를 찾을 수 없습니다."}
+
+        cur.execute("""
+            SELECT sitename, total_supply_time, supply_time_status,
+                   supply_time_reason, meta
+            FROM tb_service_reservoir_status
+            WHERE sitename = %s
+        """, (sitename,))
+        status_row = cur.fetchone()
+        cur.close()
+
+        info = _serialize_reservoir_info(info_row)
+        status = _serialize_reservoir_status(status_row) if status_row else None
+        return {"status": "OK", "info": info, "reservoir_status": status}
+    except Exception as e:
+        logger.error(f"배수지 상세 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/reservoirs")
+async def create_reservoir(request: Request):
+    """배수지 추가 (info + status 양쪽 INSERT)."""
+    conn = None
+    try:
+        body = await request.json()
+        sitename = body.get("sitename", "").strip()
+        if not sitename:
+            return {"status": "ERROR", "message": "현장명은 필수입니다."}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT 1 FROM tb_service_reservoir_info WHERE sitename = %s", (sitename,))
+        if cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 배수지가 이미 존재합니다."}
+
+        go = _build_reservoir_general_overview(body)
+
+        cur.execute("""
+            INSERT INTO tb_service_reservoir_info
+                (sitename, general_overview, install_year, service_area, zone_count,
+                 zone_1_area, zone_1_height, zone_2_area, zone_2_height,
+                 zone_3_area, zone_3_height, zone_4_area, zone_4_height,
+                 zone_5_area, zone_5_height,
+                 water_level_unit, reservoir_area_unit)
+            VALUES (%s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    'm', '㎥')
+        """, (
+            sitename, json.dumps(go, ensure_ascii=False),
+            body.get("install_year"), body.get("service_area"), body.get("zone_count"),
+            body.get("zone_1_area"), body.get("zone_1_height"),
+            body.get("zone_2_area"), body.get("zone_2_height"),
+            body.get("zone_3_area"), body.get("zone_3_height"),
+            body.get("zone_4_area"), body.get("zone_4_height"),
+            body.get("zone_5_area"), body.get("zone_5_height"),
+        ))
+
+        # status INSERT (equipment_meta 배열)
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_service_reservoir_status
+                (sitename, total_supply_time, water_level_unit, meta)
+            VALUES (%s, %s, 'm', %s)
+        """, (
+            sitename,
+            body.get("total_supply_time"),
+            json.dumps(eq_meta, ensure_ascii=False),
+        ))
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "sitename": sitename}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"배수지 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/reservoirs/{sitename}")
+async def update_reservoir(sitename: str, request: Request):
+    """배수지 수정 (info UPDATE + status UPSERT)."""
+    conn = None
+    try:
+        body = await request.json()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT 1 FROM tb_service_reservoir_info WHERE sitename = %s", (sitename,))
+        if not cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 배수지를 찾을 수 없습니다."}
+
+        go = _build_reservoir_general_overview(body)
+
+        cur.execute("""
+            UPDATE tb_service_reservoir_info SET
+                general_overview = %s, install_year = %s, service_area = %s,
+                zone_count = %s,
+                zone_1_area = %s, zone_1_height = %s,
+                zone_2_area = %s, zone_2_height = %s,
+                zone_3_area = %s, zone_3_height = %s,
+                zone_4_area = %s, zone_4_height = %s,
+                zone_5_area = %s, zone_5_height = %s
+            WHERE sitename = %s
+        """, (
+            json.dumps(go, ensure_ascii=False),
+            body.get("install_year"), body.get("service_area"), body.get("zone_count"),
+            body.get("zone_1_area"), body.get("zone_1_height"),
+            body.get("zone_2_area"), body.get("zone_2_height"),
+            body.get("zone_3_area"), body.get("zone_3_height"),
+            body.get("zone_4_area"), body.get("zone_4_height"),
+            body.get("zone_5_area"), body.get("zone_5_height"),
+            sitename,
+        ))
+
+        # status UPSERT (equipment_meta 배열 + total_supply_time)
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_service_reservoir_status
+                (sitename, total_supply_time, water_level_unit, meta)
+            VALUES (%s, %s, 'm', %s)
+            ON CONFLICT (sitename) DO UPDATE SET
+                total_supply_time = EXCLUDED.total_supply_time,
+                meta = EXCLUDED.meta
+        """, (
+            sitename,
+            body.get("total_supply_time"),
+            json.dumps(eq_meta, ensure_ascii=False),
+        ))
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "updated": 1}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"배수지 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/reservoirs/{sitename}")
+async def delete_reservoir(sitename: str, dry_run: bool = Query(False)):
+    """배수지 삭제 (dry_run=true → 영향만 확인)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) FROM tb_service_reservoir_status WHERE sitename = %s", (sitename,))
+        status_cnt = cur.fetchone()[0]
+
+        if dry_run:
+            cur.close()
+            return {"status": "OK", "dry_run": True, "related": {"status_rows": status_cnt}}
+
+        cur.execute("DELETE FROM tb_service_reservoir_status WHERE sitename = %s", (sitename,))
+        cur.execute("DELETE FROM tb_service_reservoir_info WHERE sitename = %s", (sitename,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        return {"status": "OK", "deleted": deleted}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"배수지 삭제 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
