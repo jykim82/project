@@ -3622,6 +3622,10 @@ async def ask(request: AskRequest):
             f" ORDER BY alarm_start_time DESC;"
         )
 
+    # 커스텀 핸들러용 rows/columns 초기화
+    rows: list = []
+    columns: list = []
+
     # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
     if intent == "ALARM_ABNORMAL_LOCATIONS":
         alarm_filter_clause, alarm_label = _extract_alarm_filter(user_question)
@@ -4548,6 +4552,10 @@ async def ask_stream(request: AskRequest):
                 f" ORDER BY alarm_start_time DESC;"
             )
 
+        # 커스텀 핸들러용 rows/columns 초기화
+        rows: list = []
+        columns: list = []
+
         # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
         if intent == "ALARM_ABNORMAL_LOCATIONS":
             alarm_filter_clause, alarm_label = _extract_alarm_filter(user_question)
@@ -4614,7 +4622,7 @@ async def ask_stream(request: AskRequest):
             try:
                 _cat_rows, _cat_cols = await asyncio.to_thread(
                     _execute_catalog_trend_query,
-                    conn, _ft, _sn, trend_name_filter, label_pattern, _from, _to,
+                    _ft, _sn, trend_name_filter, label_pattern, _from, _to,
                 )
                 if _cat_rows:
                     rows = _cat_rows
