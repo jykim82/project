@@ -2101,6 +2101,196 @@ _ALARM_FILTER_RULES: list[tuple[list[str], list[str], list[str], str]] = [
 ]
 
 
+# ── 청크 직접 쿼리 공용 유틸 ──────────────────────────────────
+# TimescaleDB ChunkAppend가 (tagsn, logtime) 인덱스를 사용하지 못하는 문제를
+# 우회하기 위해 각 청크를 직접 쿼리하여 Bitmap Index Scan을 강제한다.
+
+
+def _get_chunks_for_range(cur, from_ts: str, to_ts: str) -> list[str]:
+    """시간 범위에 해당하는 tb_tag_raw_data 청크 목록 반환 (schema.table)."""
+    cur.execute("""
+        SELECT c.schema_name || '.' || c.table_name
+        FROM _timescaledb_catalog.chunk c
+        JOIN _timescaledb_catalog.hypertable h ON c.hypertable_id = h.id
+        JOIN _timescaledb_catalog.chunk_constraint cc ON cc.chunk_id = c.id
+        JOIN _timescaledb_catalog.dimension_slice ds ON ds.id = cc.dimension_slice_id
+        WHERE h.table_name = 'tb_tag_raw_data'
+          AND ds.range_start <= extract(epoch from %s::timestamptz) * 1000000
+          AND ds.range_end > extract(epoch from %s::timestamptz) * 1000000
+        ORDER BY ds.range_start
+    """, (to_ts, from_ts))
+    return [r[0] for r in cur.fetchall()]
+
+
+def _query_chunks_agg(
+    cur,
+    chunks: list[str],
+    tagsn_list: list[str],
+    from_ts: str,
+    to_ts: str,
+    bucket_interval: str = "1 day",
+) -> dict[tuple[str, object], list[tuple[float, int, float, float]]]:
+    """청크별 time_bucket 집계 → cross-chunk 재집계용 dict 반환.
+
+    key: (tagsn, bucket_timestamp)
+    value: list of (sum_val, count, max_val, min_val) per chunk
+    """
+    from collections import defaultdict
+    agg: dict[tuple[str, object], list] = defaultdict(list)
+    for chunk_name in chunks:
+        cur.execute(f"""
+            SELECT tagsn,
+                time_bucket('{bucket_interval}', logtime) AS bucket,
+                SUM(val) AS sum_val,
+                COUNT(*) AS cnt,
+                MAX(val) AS max_val,
+                MIN(val) AS min_val
+            FROM {chunk_name}
+            WHERE tagsn = ANY(%s)
+              AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
+            GROUP BY tagsn, time_bucket('{bucket_interval}', logtime)
+        """, (tagsn_list, from_ts, to_ts))
+        for tagsn, bucket, sum_val, cnt, max_val, min_val in cur.fetchall():
+            agg[(tagsn, bucket)].append(
+                (float(sum_val), int(cnt), float(max_val), float(min_val)))
+    return agg
+
+
+def _reaggregate(
+    agg: dict[tuple[str, object], list[tuple[float, int, float, float]]],
+) -> dict[tuple[str, object], tuple[float, float, float, int]]:
+    """cross-chunk 재집계 → (avg, max, min, total_count) dict."""
+    result = {}
+    for key, vals in agg.items():
+        total_sum = sum(v[0] for v in vals)
+        total_cnt = sum(v[1] for v in vals)
+        avg_val = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0
+        max_val = round(max(v[2] for v in vals), 2)
+        min_val = round(min(v[3] for v in vals), 2)
+        result[key] = (avg_val, max_val, min_val, total_cnt)
+    return result
+
+
+def _query_chunks_raw(
+    cur,
+    chunks: list[str],
+    tagsn_list: list[str],
+    from_ts: str,
+    to_ts: str,
+    hour_filter: tuple[int, int] | None = None,
+) -> list[tuple]:
+    """청크별 raw 행(tagsn, logtime, val) 반환.
+
+    hour_filter: (start_hour, end_hour) — 시간대 필터 (야간 등)
+    """
+    all_rows: list[tuple] = []
+    hour_clause = ""
+    if hour_filter:
+        hour_clause = (
+            f" AND EXTRACT(HOUR FROM logtime) >= {hour_filter[0]}"
+            f" AND EXTRACT(HOUR FROM logtime) < {hour_filter[1]}"
+        )
+    for chunk_name in chunks:
+        cur.execute(f"""
+            SELECT tagsn, logtime, val
+            FROM {chunk_name}
+            WHERE tagsn = ANY(%s)
+              AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
+              {hour_clause}
+            ORDER BY tagsn, logtime
+        """, (tagsn_list, from_ts, to_ts))
+        all_rows.extend(cur.fetchall())
+    return all_rows
+
+
+# ── TIMESERIES 인텐트 청크 직접 쿼리 ──────────────────────────
+# tb_tag_raw_data JOIN tb_tag_info 패턴의 Hash Join → 116M행 스캔 문제를
+# 2단계(tb_tag_info 조회 → 청크별 raw 쿼리)로 분리하여 우회한다.
+
+_TIMESERIES_CHUNK_INTENTS = frozenset({
+    "FACILITY_ANALOG_TIMESERIES_TABLE",
+    "FACILITY_TAG_DATA_TABLE",
+    "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+    "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+    "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+})
+
+_TIMESERIES_COLUMNS = [
+    "sitename", "facilitytype", "tagsn", "val",
+    "datainfo", "logtime", "datadesc",
+]
+
+
+def _execute_timeseries_query(
+    sitename: str, facilitytype: str, tagtype: str,
+    datainfo_pattern: str, from_ts: str, to_ts: str,
+) -> tuple[list, list]:
+    """tb_tag_info → 청크 직접 쿼리로 시계열 raw 데이터 반환.
+
+    JOIN을 Python 측에서 수행하여 ChunkAppend 플래너의
+    Hash Join + 전체 스캔 문제를 우회한다.
+    """
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Step 1: tb_tag_info에서 매칭 태그 + 메타 추출
+        conditions = ["tagtype = %s"]
+        qp: list = [tagtype]
+        if sitename and sitename != "%%":
+            conditions.append("sitename = %s")
+            qp.append(sitename)
+        if facilitytype and facilitytype != "%%":
+            conditions.append("facilitytype = %s")
+            qp.append(facilitytype)
+        if datainfo_pattern:
+            conditions.append("datainfo ~ %s")
+            qp.append(datainfo_pattern)
+
+        cur.execute(
+            "SELECT tagsn, sitename, facilitytype, datainfo,"
+            " COALESCE(datadesc, '') FROM tb_tag_info"
+            f" WHERE {' AND '.join(conditions)}",
+            qp,
+        )
+        tag_meta: dict[str, tuple] = {}
+        tagsn_list: list[str] = []
+        for tagsn, sn, ft, di, dd in cur.fetchall():
+            tag_meta[tagsn] = (sn, ft, di, dd)
+            tagsn_list.append(tagsn)
+
+        if not tagsn_list:
+            cur.close()
+            return [], _TIMESERIES_COLUMNS
+
+        # Step 2: 청크 직접 쿼리
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+        if not chunks:
+            cur.close()
+            return [], _TIMESERIES_COLUMNS
+
+        raw_rows = _query_chunks_raw(cur, chunks, tagsn_list, from_ts, to_ts)
+
+        # Step 3: Python JOIN + 정렬 (원본 SQL과 동일: tagsn, logtime ASC)
+        result: list[tuple] = []
+        for tagsn, logtime, val in raw_rows:
+            meta = tag_meta.get(tagsn)
+            if meta:
+                sn, ft, di, dd = meta
+                lt = (logtime.strftime("%Y-%m-%d %H:%M:%S")
+                      if hasattr(logtime, "strftime") else str(logtime))
+                result.append((sn, ft, tagsn, val, di, lt, dd))
+        result.sort(key=lambda r: (r[2], r[5]))
+
+        cur.close()
+        return result, _TIMESERIES_COLUMNS
+    finally:
+        conn.close()
+
+
+# ── FACILITY_CATALOG_TREND_TABLE 청크 직접 쿼리 ───────────────
+
+
 def _execute_catalog_trend_query(
     facilitytype: str,
     sitename: str,
@@ -2109,15 +2299,7 @@ def _execute_catalog_trend_query(
     from_ts: str,
     to_ts: str,
 ) -> tuple[list, list]:
-    """tb_trend_catalog + tb_tag_raw_data 2단계 청크 직접 쿼리.
-
-    TimescaleDB ChunkAppend가 (tagsn, logtime) 인덱스를 사용하지 못하는 문제를
-    우회하기 위해, 카탈로그에서 tagsn 리스트를 먼저 추출한 후
-    각 청크를 직접 쿼리하여 인덱스 스캔을 강제한다.
-
-    Returns:
-        (rows, columns) — columns: ["현장명","항목","날짜","평균","최대","최소","단위"]
-    """
+    """tb_trend_catalog + tb_tag_raw_data 청크 직접 쿼리."""
     conn = get_db_connection()
     try:
         return _execute_catalog_trend_query_inner(
@@ -2166,60 +2348,28 @@ def _execute_catalog_trend_query_inner(
     tagsn_list = list(tag_meta.keys())
     logger.info(f"카탈로그 태그: {len(tagsn_list)}개 (facilitytype={facilitytype})")
 
-    # Step2: 해당 시간 범위의 청크 목록
-    cur.execute("""
-        SELECT c.schema_name || '.' || c.table_name
-        FROM _timescaledb_catalog.chunk c
-        JOIN _timescaledb_catalog.hypertable h ON c.hypertable_id = h.id
-        JOIN _timescaledb_catalog.chunk_constraint cc ON cc.chunk_id = c.id
-        JOIN _timescaledb_catalog.dimension_slice ds ON ds.id = cc.dimension_slice_id
-        WHERE h.table_name = 'tb_tag_raw_data'
-          AND ds.range_start <= extract(epoch from %s::timestamptz) * 1000000
-          AND ds.range_end > extract(epoch from %s::timestamptz) * 1000000
-        ORDER BY ds.range_start
-    """, (to_ts, from_ts))
-    chunks = [r[0] for r in cur.fetchall()]
+    # Step2+3: 공용 유틸로 청크 직접 쿼리
+    chunks = _get_chunks_for_range(cur, from_ts, to_ts)
     if not chunks:
         return [], []
     logger.info(f"대상 청크: {len(chunks)}개")
 
-    # Step3: 각 청크에서 tagsn 직접 인덱스 스캔
-    all_raw: list[tuple] = []
-    for chunk_name in chunks:
-        cur.execute(f"""
-            SELECT tagsn,
-                time_bucket('1 day', logtime) AS bucket,
-                SUM(val) AS sum_val,
-                COUNT(*) AS cnt,
-                MAX(val) AS max_val,
-                MIN(val) AS min_val
-            FROM {chunk_name}
-            WHERE tagsn = ANY(%s)
-              AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
-            GROUP BY tagsn, time_bucket('1 day', logtime)
-        """, (tagsn_list, from_ts, to_ts))
-        all_raw.extend(cur.fetchall())
-
-    if not all_raw:
+    agg = _query_chunks_agg(cur, chunks, tagsn_list, from_ts, to_ts, "1 day")
+    if not agg:
         return [], []
 
-    # Step4: 청크간 재집계 (같은 tagsn+bucket이 여러 청크에 걸칠 수 있음)
-    from collections import defaultdict
-    agg: dict[tuple[str, object], list] = defaultdict(list)
-    for tagsn, bucket, sum_val, cnt, max_val, min_val in all_raw:
-        agg[(tagsn, bucket)].append((float(sum_val), int(cnt), float(max_val), float(min_val)))
-
+    # Step4: 재집계 + 행 변환
+    reagg = _reaggregate(agg)
     columns = ["현장명", "항목", "날짜", "평균", "최대", "최소", "단위"]
     rows = []
-    for (tagsn, bucket), vals in sorted(agg.items(), key=lambda x: (tag_meta.get(x[0][0], ("",))[0], tag_meta.get(x[0][0], ("",))[1], x[0][1])):
+    for (tagsn, bucket) in sorted(
+        reagg.keys(),
+        key=lambda x: (tag_meta.get(x[0], ("",))[0], tag_meta.get(x[0], ("",))[1], x[1]),
+    ):
         meta = tag_meta.get(tagsn)
         if not meta:
             continue
-        total_sum = sum(v[0] for v in vals)
-        total_cnt = sum(v[1] for v in vals)
-        avg_val = round(total_sum / total_cnt, 2) if total_cnt > 0 else 0
-        max_val = round(max(v[2] for v in vals), 2)
-        min_val = round(min(v[3] for v in vals), 2)
+        avg_val, max_val, min_val, _ = reagg[(tagsn, bucket)]
         date_str = bucket.strftime("%Y-%m-%d") if hasattr(bucket, "strftime") else str(bucket)[:10]
         rows.append((meta[0], meta[1], date_str, avg_val, max_val, min_val, meta[2]))
 
@@ -3762,6 +3912,44 @@ async def ask(request: AskRequest):
             except ValueError:
                 pass
 
+    # TIMESERIES 인텐트: 2단계 청크 직접 쿼리 (JOIN 플래너 우회)
+    if intent in _TIMESERIES_CHUNK_INTENTS:
+        _sn = params.get("sitename", "%%")
+        _ft_ts = params.get("facilitytype", "%%")
+        _from = params.get("from_ts", "")
+        _to = params.get("to_ts", "")
+
+        # tagtype 결정 (tagtype 주입 블록과 동일 로직)
+        if intent == "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE":
+            _tagtype = "Digital Input"
+        elif intent == "FACILITY_TAG_DATA_TABLE":
+            _dk = params.get("datakey") or params.get("datainfo") or ""
+            _tagtype = ("Digital Input" if "밸브" in _dk
+                        else "Analog Output" if "설정" in _dk
+                        else "Analog Input")
+        else:
+            _tagtype = "Analog Input"
+
+        # datainfo 패턴 결정
+        if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
+            _di_pat = "(유량.*순시|순시.*유량)"
+        elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
+            _di_pat = "유량.*적산"
+        else:
+            _di_pat = params.get("datainfo", ".*")
+
+        try:
+            _ts_rows, _ts_cols = await asyncio.to_thread(
+                _execute_timeseries_query,
+                _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
+            )
+            if _ts_rows:
+                rows = _ts_rows
+                columns = _ts_cols
+                logger.info(f"TIMESERIES 청크 쿼리: {len(_ts_rows)}행 ({intent})")
+        except Exception as e:
+            logger.error(f"TIMESERIES 청크 쿼리 실패 ({intent}): {e}")
+
     # 커스텀 핸들러에서 rows/columns가 이미 채워진 경우 SQL 실행 건너뜀
     if not rows:
         try:
@@ -4672,7 +4860,11 @@ async def ask_stream(request: AskRequest):
 
         # from_ts == to_ts 보정
         if intent in ("FACILITY_TAG_DATA_TABLE", "FACILITY_ANALOG_TIMESERIES_TABLE",
-                       "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE"):
+                       "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
+                       "FACILITY_FLOW_CURRENT_TABLE",
+                       "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+                       "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
+                       "FACILITY_VALVE_STATUS_CURRENT_TABLE"):
             _ft = params.get("from_ts")
             _tt = params.get("to_ts")
             if _ft and _tt and len(_tt) == 10 and _ft == _tt:
@@ -4681,6 +4873,43 @@ async def ask_stream(request: AskRequest):
                     params["to_ts"] = (to_date + timedelta(days=1)).strftime("%Y-%m-%d")
                 except ValueError:
                     pass
+
+        # TIMESERIES 인텐트: 2단계 청크 직접 쿼리 (JOIN 플래너 우회)
+        if intent in _TIMESERIES_CHUNK_INTENTS:
+            _sn = params.get("sitename", "%%")
+            _ft_ts = params.get("facilitytype", "%%")
+            _from = params.get("from_ts", "")
+            _to = params.get("to_ts", "")
+
+            # tagtype 결정
+            if intent == "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE":
+                _tagtype = "Digital Input"
+            elif intent == "FACILITY_TAG_DATA_TABLE":
+                _dk = params.get("datakey") or params.get("datainfo") or ""
+                _tagtype = ("Digital Input" if "밸브" in _dk
+                            else "Analog Output" if "설정" in _dk
+                            else "Analog Input")
+            else:
+                _tagtype = "Analog Input"
+
+            # datainfo 패턴 결정
+            if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
+                _di_pat = "(유량.*순시|순시.*유량)"
+            elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
+                _di_pat = "유량.*적산"
+            else:
+                _di_pat = params.get("datainfo", ".*")
+
+            try:
+                _ts_rows, _ts_cols = await asyncio.to_thread(
+                    _execute_timeseries_query,
+                    _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
+                )
+                if _ts_rows:
+                    rows = _ts_rows
+                    columns = _ts_cols
+            except Exception as e:
+                logger.error(f"[SSE] TIMESERIES 청크 쿼리 실패 ({intent}): {e}")
 
         # --- 진행 3: 데이터 조회 ---
         yield _sse_event("progress", {
@@ -6586,37 +6815,32 @@ async def get_trend_data(req: TrendDataRequest):
         )
         digital_tags = {r[0] for r in cur.fetchall()}
 
-        # time_bucket 집계 쿼리
+        # 청크 직접 쿼리로 time_bucket 집계 (ChunkAppend 플래너 우회)
         bucket_interval = f"{bucket_mins} minutes"
-        cur.execute(
-            """
-            SELECT
-                to_char(time_bucket(%s::interval, logtime), 'YYYY-MM-DD HH24:MI') AS ts,
-                tagsn,
-                AVG(val) AS val
-            FROM tb_tag_raw_data
-            WHERE tagsn = ANY(%s)
-              AND logtime >= %s::timestamp
-              AND logtime < %s::timestamp
-            GROUP BY ts, tagsn
-            ORDER BY ts, tagsn
-            """,
-            (bucket_interval, req.tag_ids, from_ts, to_ts)
-        )
-        rows = cur.fetchall()
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+
+        if chunks:
+            agg = _query_chunks_agg(
+                cur, chunks, req.tag_ids, from_ts, to_ts, bucket_interval)
+            reagg = _reaggregate(agg)
+        else:
+            reagg = {}
         cur.close()
 
         # 후처리: 공통 times + tagsn별 values 배열
         from collections import OrderedDict
         time_set = OrderedDict()
-        tag_data = {}
-        for ts, tagsn, val in rows:
+        tag_data: dict[str, dict] = {}
+        for (tagsn, bucket), (avg_val, _, _, _) in sorted(
+            reagg.items(), key=lambda x: (x[0][1], x[0][0]),
+        ):
+            ts = bucket.strftime("%Y-%m-%d %H:%M") if hasattr(bucket, "strftime") else str(bucket)[:16]
             time_set[ts] = True
             if tagsn not in tag_data:
                 tag_data[tagsn] = {}
             # 디지털 태그 → 0/1 반올림
-            if val is not None:
-                v = round(float(val)) if tagsn in digital_tags else round(float(val), 4)
+            if avg_val is not None:
+                v = round(avg_val) if tagsn in digital_tags else round(avg_val, 4)
             else:
                 v = None
             tag_data[tagsn][ts] = v
