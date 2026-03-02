@@ -1652,13 +1652,17 @@
       "수위 데이터 헌팅 여부를 확인해줘",
       "수위 변동이 심한지 확인해줘"
     ],
-    "sql": "WITH variance AS (\n    SELECT\n        sitename,\n        datainfo,\n        variance_status,\n        diff_percent\n    FROM v_reservoir_status_variance_5min\n    WHERE sitename = '{sitename}'\n      AND facilitytype = '{facilitytype}'\n),\nlevel_avg AS (\n    SELECT \n        sitename,\n        datainfo,\n        ROUND(\n            AVG(CASE WHEN bucket_day >= now() - interval '1 month'\n                     THEN avg_daily_level END)::numeric, 2\n        ) AS avg_month,\n        ROUND(\n            AVG(CASE WHEN bucket_day >= now() - interval '1 year'\n                     THEN avg_daily_level END)::numeric, 2\n        ) AS avg_year\n    FROM public.mv_reservoir_level_stats_all\n    WHERE sitename = '{sitename}'\n    GROUP BY sitename, datainfo\n),\nalarm AS (\n    SELECT\n        sitename,\n        alarm_high_water_level,\n        alarm_low_water_level\n    FROM v_reservoir_info_status\n    WHERE sitename = '{sitename}'\n)\nSELECT\n    v.sitename,\n    v.datainfo,\n    v.variance_status,\n    v.diff_percent,\n    a.avg_month,\n    a.avg_year,\n    al.alarm_high_water_level,\n    al.alarm_low_water_level\nFROM variance v\nLEFT JOIN level_avg a\n       ON v.sitename = a.sitename\n      AND v.datainfo = a.datainfo\nCROSS JOIN alarm al\nORDER BY v.datainfo;",
+    "sql": "",
     "answer_template": {
-      "summary": "{sitename}{facilitytype} 수위계 헌팅여부 점검 결과는 다음과 같습니다.",
+      "summary": "{sitename} 배수지 수위 헌팅 점검 결과입니다. (듀얼 알고리즘 비교)",
       "detail": [
         {
           "prefix": "•",
-          "text": "최근 5분 데이터 분산값 기준으로 헌팅 여부를 점검한 결과입니다."
+          "text": "[A] 방향전환 분석: 3시간 윈도우, 1분 버킷, ±0.05m 방향 전환 감지"
+        },
+        {
+          "prefix": "•",
+          "text": "[B] 5분 분산 분석: 최근 5분간 max/min/avg 변동률 기반 판정"
         },
         {
           "prefix": "",
@@ -1666,19 +1670,35 @@
         }
       ],
       "reference": {
-        "title": "참고 자료",
+        "title": "판정 기준",
         "items": [
           {
+            "prefix": "",
+            "text": "**[A] 방향전환 분석**"
+          },
+          {
             "prefix": "1.",
-            "text": "한달 평균 수위는 {avg_month}m입니다."
+            "text": "헌팅 확인: 반전 4회 이상 + 진동폭 0.3m 이상"
           },
           {
             "prefix": "2.",
-            "text": "일년 평균 수위는 {avg_year}m입니다."
+            "text": "헌팅 의심: 반전 2회 이상 + 진동폭 0.2m 이상"
           },
           {
             "prefix": "3.",
-            "text": "수위 경보 기준은 HH {alarm_high_water_level}m, LL {alarm_low_water_level}m입니다."
+            "text": "정상: 위 조건 미충족"
+          },
+          {
+            "prefix": "",
+            "text": "**[B] 5분 분산 분석**"
+          },
+          {
+            "prefix": "4.",
+            "text": "이상: (max-min)/avg × 100 ≥ 10%"
+          },
+          {
+            "prefix": "5.",
+            "text": "정상: 변동률 < 10%"
           }
         ]
       },

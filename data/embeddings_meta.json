@@ -1,5 +1,5 @@
 {
-  "hash": "36dcff736f3172edaf2fbcbc93707fc6",
+  "hash": "a8032fb2d6284e27c9bcb35c5437c2d8",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -2121,5 +2121,5 @@
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
   "count": 529,
-  "built_at": "2026-02-27 00:19:46"
+  "built_at": "2026-02-28 12:44:41"
 }

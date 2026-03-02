@@ -71,6 +71,7 @@ from anomaly_detector import (
 )
 from anomaly_iforest import IForestManager
 from site_profiler import SiteProfiler
+from db_sync import DbSyncWorker  # [임시] 개발 완료 후 제거 예정
 
 # =============================================================================
 # 로깅 설정
@@ -223,7 +224,7 @@ async def _session_cleanup_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
-    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, site_profiler
+    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, _sync_task, site_profiler, _sync_worker
 
     # site_profiler 초기화 (get_db_connection 정의 후)
     site_profiler = SiteProfiler(get_db_connection)
@@ -261,6 +262,35 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
 
+    # 캔버스 노드 위치 테이블 자동 생성
+    try:
+        _conn = get_db_connection()
+        _cur = _conn.cursor()
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_canvas_node_position (
+                sitename     VARCHAR(100)       NOT NULL,
+                facilitytype VARCHAR(50)        NOT NULL,
+                pos_x        DOUBLE PRECISION   NOT NULL DEFAULT 0,
+                pos_y        DOUBLE PRECISION   NOT NULL DEFAULT 0,
+                updated_at   TIMESTAMPTZ        DEFAULT now(),
+                PRIMARY KEY (sitename, facilitytype)
+            )
+        """)
+        _conn.commit()
+        _cur.close()
+        _conn.close()
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_equipment_tag_map (
+                equipment_id VARCHAR(64)  NOT NULL,
+                tagsn        VARCHAR(64)  NOT NULL,
+                PRIMARY KEY (equipment_id, tagsn)
+            )
+        """)
+        _conn.commit()
+        logger.info("tb_canvas_node_position / tb_equipment_tag_map 테이블 확인/생성 완료")
+    except Exception as e:
+        logger.warning(f"캔버스 테이블 생성 실패 (무시): {e}")
+
     # 세션 정리 백그라운드 태스크
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
 
@@ -273,10 +303,26 @@ async def lifespan(app: FastAPI):
         logger.warning(f"기존 프로파일 로드 실패 (서버 시작 후 재생성): {e}")
     _profiling_task = asyncio.create_task(_site_profiling_loop())
 
+    # [임시] 로컬 DB 사용 시 원격→로컬 실시간 동기화 (개발 완료 후 제거 예정)
+    _sync_task = None
+    _sync_worker = None
+    if DB_HOST in ("localhost", "127.0.0.1"):
+        _sync_worker = DbSyncWorker(
+            local_db={"host": DB_HOST, "port": int(DB_PORT), "dbname": DB_NAME,
+                       "user": DB_USER, "password": DB_PASSWORD},
+            interval=60,
+            batch_size=50000,
+            initial_days=30,
+        )
+        _sync_task = asyncio.create_task(_sync_worker.run_loop())
+        logger.info("[임시] 원격→로컬 DB 동기화 태스크 등록 (30초 후 시작)")
+
     yield
 
     # shutdown
-    for task in (_cleanup_task, _profiling_task):
+    if _sync_worker:
+        _sync_worker.stop()
+    for task in (_cleanup_task, _profiling_task, _sync_task):
         if task:
             task.cancel()
             try:
@@ -305,11 +351,11 @@ app.add_middleware(
 # 환경변수 기반 DB 접속 정보
 # docs/ai_server_task.md 참조: 접속 정보는 환경변수 기반으로 처리
 # =============================================================================
-DB_HOST = os.environ.get("DB_HOST", "112.166.183.65")
-DB_PORT = os.environ.get("DB_PORT", "25479")
-DB_NAME = os.environ.get("DB_NAME", "postgres")
-DB_USER = os.environ.get("DB_USER", "postgres")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "DJpost0827///")
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = os.environ.get("DB_PORT", "5433")
+DB_NAME = os.environ.get("DB_NAME", "slm")
+DB_USER = os.environ.get("DB_USER", "slm_dev")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
 
 
 # =============================================================================
@@ -1891,22 +1937,50 @@ def _alarm_msg_marker(msg: str) -> str:
 
 def build_hunting_result_block(rows: list, columns: list) -> list:
     """
-    v_reservoir_status_variance_5min 다중 행을 헌팅 점검 결과 리스트로 조립한다.
-    반환 컬럼: datainfo, variance_status, diff_percent
-    반환: [{"prefix": "-", "text": "수위(m) 계측1: <<ok:정상>> (변동률 1.1%)"}, ...]
+    헌팅 점검 결과를 시맨틱 마커 리스트로 조립한다.
+    듀얼 알고리즘: A(3h 방향전환) + B(5m 분산 뷰) 비교.
     """
     items = []
     for row in rows:
-        row_dict = dict(zip(columns, row))
-        datainfo = row_dict.get("datainfo", "").strip()
-        status = row_dict.get("variance_status", "")
-        diff_pct = row_dict.get("diff_percent")
-        if datainfo and status:
-            marked_status = wrap_status_marker(status)
-            if diff_pct is not None:
-                items.append({"prefix": "-", "text": f"{datainfo}: {marked_status} (변동률 {diff_pct}%)"})
-            else:
-                items.append({"prefix": "-", "text": f"{datainfo}: {marked_status}"})
+        rd = dict(zip(columns, row))
+        site = rd.get("sitename", "")
+        reversals = rd.get("reversal_count", 0)
+        level_range = rd.get("level_range_3h", 0)
+        status = rd.get("hunting_status", "STABLE")
+
+        # 알고리즘 A 마커
+        if status == "CONFIRMED_HUNTING":
+            marker_a = "<<error:헌팅 확인>>"
+        elif status == "SUSPECTED":
+            marker_a = "<<warn:헌팅 의심>>"
+        else:
+            marker_a = "<<ok:정상>>"
+
+        # 알고리즘 B (5분 분산)
+        diff_pct = rd.get("diff_percent_5m", 0)
+        var_status = rd.get("variance_status_5m", "-")
+        max_5m = rd.get("max_val_5m", 0)
+        min_5m = rd.get("min_val_5m", 0)
+
+        if var_status == "이상":
+            marker_b = f"<<warn:이상>> (변동률 {diff_pct}%)"
+        elif var_status == "정상":
+            marker_b = f"<<ok:정상>> (변동률 {diff_pct}%)"
+        else:
+            marker_b = "데이터 없음"
+
+        items.append({
+            "prefix": "###",
+            "text": f"{site}",
+        })
+        items.append({
+            "prefix": "-",
+            "text": f"**[A] 방향전환 분석 (3시간)**: {marker_a} — 반전 {reversals}회, 진동폭 {level_range}m",
+        })
+        items.append({
+            "prefix": "-",
+            "text": f"**[B] 5분 분산 분석**: {marker_b} — 최대 {max_5m}m, 최소 {min_5m}m",
+        })
     return items
 
 
@@ -2284,6 +2358,207 @@ def _execute_timeseries_query(
 
         cur.close()
         return result, _TIMESERIES_COLUMNS
+    finally:
+        conn.close()
+
+
+# ── RESERVOIR_LEVEL_HUNTING_CHECK 청크 직접 쿼리 ───────────────
+
+
+def _execute_hunting_check(sitename: str) -> tuple[list, list]:
+    """
+    배수지 수위 헌팅 점검 — 듀얼 알고리즘 비교.
+
+    알고리즘 A: 3시간 윈도우, 1분 버킷, 방향 전환 분석 (커스텀)
+    알고리즘 B: 5분 분산 뷰 (v_reservoir_status_variance_5min)
+    """
+    from collections import defaultdict
+    from datetime import timedelta
+
+    COLUMNS = [
+        "sitename",
+        # 알고리즘 A: 방향전환
+        "reversal_count", "level_range_3h", "hunting_status",
+        # 알고리즘 B: 5분 분산
+        "max_val_5m", "min_val_5m", "diff_percent_5m", "variance_status_5m",
+    ]
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # 1. 배수지 수위 태그 조회
+        site_clause = ""
+        site_params: list = []
+        if sitename and sitename != "%%":
+            site_clause = "AND ti.sitename = %s"
+            site_params = [sitename]
+
+        cur.execute(f"""
+            SELECT ti.tagsn, ti.sitename
+            FROM tb_tag_info ti
+            WHERE ti.facilitytype = '배수지'
+              AND ti.datainfo LIKE '%%수위%%'
+              AND ti.tagtype = 'Analog Input'
+              {site_clause}
+        """, site_params)
+        tag_rows = cur.fetchall()
+        if not tag_rows:
+            cur.close()
+            return [], COLUMNS
+
+        tagsn_list = [r[0] for r in tag_rows]
+        tagsn_to_site: dict[str, str] = {r[0]: r[1] for r in tag_rows}
+        target_sites = set(tagsn_to_site.values())
+
+        # ---------- 알고리즘 B: 5분 분산 뷰 쿼리 ----------
+        variance_map: dict[str, dict] = {}
+        try:
+            v_clause = ""
+            v_params: list = []
+            if sitename and sitename != "%%":
+                v_clause = "WHERE v.sitename = %s"
+                v_params = [sitename]
+            cur.execute(f"""
+                SELECT v.sitename,
+                       COALESCE(v.max_val, 0),
+                       COALESCE(v.min_val, 0),
+                       COALESCE(v.diff_percent, 0),
+                       COALESCE(v.variance_status, '정상')
+                FROM v_reservoir_status_variance_5min v
+                {v_clause}
+            """, v_params)
+            for r in cur.fetchall():
+                sn = r[0]
+                # 동일 사이트 복수 태그 → diff_percent 최대값 우선
+                existing = variance_map.get(sn)
+                if existing is None or float(r[3]) > float(existing["diff_percent"]):
+                    variance_map[sn] = {
+                        "max_val": float(r[1]),
+                        "min_val": float(r[2]),
+                        "diff_percent": float(r[3]),
+                        "variance_status": r[4],
+                    }
+        except Exception as e:
+            logger.warning(f"5분 분산 뷰 조회 실패 (무시): {e}")
+            conn.rollback()
+
+        # ---------- 알고리즘 A: 3시간 방향전환 분석 ----------
+        now = datetime.now()
+        from_ts = (now - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        to_ts = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+        if not chunks:
+            cur.close()
+            # 청크 없으면 B 결과만 반환
+            results = []
+            for sn in sorted(target_sites):
+                vd = variance_map.get(sn, {})
+                results.append((
+                    sn, 0, 0.0, "STABLE",
+                    vd.get("max_val", 0), vd.get("min_val", 0),
+                    vd.get("diff_percent", 0), vd.get("variance_status", "-"),
+                ))
+            return results, COLUMNS
+
+        raw_rows = _query_chunks_raw(cur, chunks, tagsn_list, from_ts, to_ts)
+        cur.close()
+
+        if not raw_rows:
+            results = []
+            for sn in sorted(target_sites):
+                vd = variance_map.get(sn, {})
+                results.append((
+                    sn, 0, 0.0, "STABLE",
+                    vd.get("max_val", 0), vd.get("min_val", 0),
+                    vd.get("diff_percent", 0), vd.get("variance_status", "-"),
+                ))
+            return results, COLUMNS
+
+        # 3. 사이트별 1분 버킷 평균
+        site_buckets: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+        for tagsn, logtime, val in raw_rows:
+            sn = tagsn_to_site.get(tagsn)
+            if not sn or val is None:
+                continue
+            ts = logtime if isinstance(logtime, datetime) else datetime.fromisoformat(str(logtime))
+            bucket_key = int(ts.timestamp()) // 60
+            site_buckets[sn][bucket_key].append(float(val))
+
+        # 4. 사이트별 분석 + B 결과 병합
+        results = []
+        all_sites = target_sites | set(site_buckets.keys())
+        for sn in all_sites:
+            buckets = site_buckets.get(sn, {})
+            vd = variance_map.get(sn, {})
+
+            if len(buckets) < 3:
+                results.append((
+                    sn, 0, 0.0, "STABLE",
+                    vd.get("max_val", 0), vd.get("min_val", 0),
+                    vd.get("diff_percent", 0), vd.get("variance_status", "-"),
+                ))
+                continue
+
+            sorted_keys = sorted(buckets.keys())
+            avg_levels = [(k, sum(buckets[k]) / len(buckets[k])) for k in sorted_keys]
+
+            # 진동폭
+            all_vals = [lv for _, lv in avg_levels]
+            level_range = round(max(all_vals) - min(all_vals), 3)
+
+            # 방향 감지
+            directions: list[tuple[int, int]] = []
+            for i in range(1, len(avg_levels)):
+                delta = avg_levels[i][1] - avg_levels[i - 1][1]
+                if delta > 0.05:
+                    directions.append((avg_levels[i][0], 1))
+                elif delta < -0.05:
+                    directions.append((avg_levels[i][0], -1))
+
+            if not directions:
+                results.append((
+                    sn, 0, level_range, "STABLE",
+                    vd.get("max_val", 0), vd.get("min_val", 0),
+                    vd.get("diff_percent", 0), vd.get("variance_status", "-"),
+                ))
+                continue
+
+            # 유효 방향 구간 (동일 방향 ≥3분 지속)
+            valid_cycles = []
+            cur_dir = directions[0][1]
+            cur_count = 1
+
+            for j in range(1, len(directions)):
+                if directions[j][1] == cur_dir:
+                    cur_count += 1
+                else:
+                    if cur_count >= 3:
+                        valid_cycles.append(cur_dir)
+                    cur_dir = directions[j][1]
+                    cur_count = 1
+            if cur_count >= 3:
+                valid_cycles.append(cur_dir)
+
+            reversal_count = max(len(valid_cycles) - 1, 0) if valid_cycles else 0
+
+            if reversal_count >= 4 and level_range >= 0.3:
+                status = "CONFIRMED_HUNTING"
+            elif reversal_count >= 2 and level_range >= 0.2:
+                status = "SUSPECTED"
+            else:
+                status = "STABLE"
+
+            results.append((
+                sn, reversal_count, level_range, status,
+                vd.get("max_val", 0), vd.get("min_val", 0),
+                vd.get("diff_percent", 0), vd.get("variance_status", "-"),
+            ))
+
+        results.sort(key=lambda r: (-r[1], r[0]))
+        return results, COLUMNS
+
     finally:
         conn.close()
 
@@ -3578,7 +3853,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK"}
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -3826,6 +4101,19 @@ async def ask(request: AskRequest):
                 ]
             }
         }
+
+    # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
+    if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
+        _sn = params.get("sitename", "")
+        try:
+            _hunt_rows, _hunt_cols = await asyncio.to_thread(
+                _execute_hunting_check, _sn,
+            )
+            if _hunt_rows:
+                rows = _hunt_rows
+                columns = _hunt_cols
+        except Exception as e:
+            logger.error(f"HUNTING_CHECK 쿼리 실패: {e}")
 
     # FACILITY_CATALOG_TREND_TABLE: 2단계 청크 직접 쿼리 (성능 최적화)
     if intent == "FACILITY_CATALOG_TREND_TABLE":
@@ -4548,7 +4836,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK"}
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -4794,6 +5082,19 @@ async def ask_stream(request: AskRequest):
                     ]
                 }
             }
+
+        # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
+        if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
+            _sn = params.get("sitename", "")
+            try:
+                _hunt_rows, _hunt_cols = await asyncio.to_thread(
+                    _execute_hunting_check, _sn,
+                )
+                if _hunt_rows:
+                    rows = _hunt_rows
+                    columns = _hunt_cols
+            except Exception as e:
+                logger.error(f"[SSE] HUNTING_CHECK 쿼리 실패: {e}")
 
         # FACILITY_CATALOG_TREND_TABLE: 2단계 청크 직접 쿼리 (성능 최적화)
         if intent == "FACILITY_CATALOG_TREND_TABLE":
@@ -7559,6 +7860,793 @@ async def import_flow_map_csv(file: UploadFile):
 
 
 # =============================================================================
+# CSV 일괄 가져오기 (Import) 엔드포인트
+# =============================================================================
+
+
+@app.post("/tags/import/csv")
+async def import_tags_csv(file: UploadFile):
+    """태그 마스터 CSV 업로드 (일괄 입력)."""
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 6:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 6컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 6:
+                skipped += 1
+                continue
+            tagsn = row[0].strip()
+            if not tagsn:
+                skipped += 1
+                continue
+
+            tagtype = row[1].strip() or None
+            sitename = row[2].strip() or None
+            facilitytype = row[3].strip() or None
+            equipmenttype = row[4].strip() or None
+            datainfo = row[5].strip() or None
+            datadesc = row[6].strip() if len(row) > 6 and row[6].strip() else None
+            unit = row[7].strip() if len(row) > 7 and row[7].strip() else None
+            alarm_tag_yn = int(row[8].strip()) if len(row) > 8 and row[8].strip().isdigit() else 0
+
+            cur.execute("""
+                INSERT INTO tb_tag_info
+                    (tagsn, tagtype, sitename, facilitytype, equipmenttype,
+                     datainfo, datadesc, unit, alarm_tag_yn)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tagsn) DO UPDATE SET
+                    tagtype = EXCLUDED.tagtype,
+                    sitename = EXCLUDED.sitename,
+                    facilitytype = EXCLUDED.facilitytype,
+                    equipmenttype = EXCLUDED.equipmenttype,
+                    datainfo = EXCLUDED.datainfo,
+                    datadesc = EXCLUDED.datadesc,
+                    unit = EXCLUDED.unit,
+                    alarm_tag_yn = EXCLUDED.alarm_tag_yn
+            """, (tagsn, tagtype, sitename, facilitytype, equipmenttype,
+                  datainfo, datadesc, unit, alarm_tag_yn))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"태그 마스터 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/equipments/import/csv")
+async def import_equipments_csv(file: UploadFile):
+    """설비 정보 CSV 업로드 (일괄 입력)."""
+    import io
+    import csv as csv_mod
+
+    STATUS_MAP = {"운영중": "operational", "점검중": "maintenance", "폐기": "decommissioned"}
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 4:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 4컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 4:
+                skipped += 1
+                continue
+            equipment_id = row[0].strip()
+            sitename = row[1].strip()
+            facilitytype = row[2].strip()
+            equipmenttype = row[3].strip()
+            if not equipment_id or not sitename or not facilitytype or not equipmenttype:
+                skipped += 1
+                continue
+
+            status_raw = row[4].strip() if len(row) > 4 and row[4].strip() else ""
+            status = STATUS_MAP.get(status_raw, "operational")
+
+            meta_raw = {
+                "model": row[5].strip() if len(row) > 5 else "",
+                "manufacturer": row[6].strip() if len(row) > 6 else "",
+                "role": row[10].strip() if len(row) > 10 else "",
+                "note": row[11].strip() if len(row) > 11 else "",
+            }
+            meta = {k: v for k, v in meta_raw.items() if v}
+
+            commissioned_at = row[7].strip() if len(row) > 7 and row[7].strip() else None
+            decommissioned_at = row[8].strip() if len(row) > 8 and row[8].strip() else None
+            description = row[9].strip() if len(row) > 9 and row[9].strip() else None
+
+            cur.execute("""
+                INSERT INTO tb_equipment_info
+                    (equipment_id, sitename, facilitytype, equipmenttype,
+                     status, commissioned_at, decommissioned_at, description, meta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (equipment_id) DO UPDATE SET
+                    sitename = EXCLUDED.sitename,
+                    facilitytype = EXCLUDED.facilitytype,
+                    equipmenttype = EXCLUDED.equipmenttype,
+                    status = EXCLUDED.status,
+                    commissioned_at = EXCLUDED.commissioned_at,
+                    decommissioned_at = EXCLUDED.decommissioned_at,
+                    description = EXCLUDED.description,
+                    meta = EXCLUDED.meta,
+                    updated_at = NOW()
+            """, (equipment_id, sitename, facilitytype, equipmenttype,
+                  status, commissioned_at, decommissioned_at, description,
+                  json.dumps(meta)))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"설비 정보 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+def _csv_cell(row: list, idx: int) -> str:
+    """CSV 행에서 안전하게 셀 값을 추출 (strip 포함)."""
+    return row[idx].strip() if len(row) > idx else ""
+
+
+def _csv_float(row: list, idx: int):
+    """CSV 셀을 float로 변환. 빈 문자열/비숫자는 None 반환."""
+    v = _csv_cell(row, idx)
+    if not v:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _csv_int(row: list, idx: int):
+    """CSV 셀을 int로 변환. 빈 문자열/비숫자는 None 반환."""
+    v = _csv_cell(row, idx)
+    if not v:
+        return None
+    try:
+        return int(float(v))
+    except (ValueError, TypeError):
+        return None
+
+
+def _csv_bool(row: list, idx: int):
+    """CSV 셀을 bool로 변환. '유'→True, '무'→False, 빈값→None."""
+    v = _csv_cell(row, idx)
+    if not v:
+        return None
+    return v.strip() in ("유", "Y", "y", "true", "True", "1", "예")
+
+
+def _csv_json_array(row: list, idx: int):
+    """CSV 셀을 세미콜론 구분 JSON 배열로 변환. 빈값→None."""
+    v = _csv_cell(row, idx)
+    if not v:
+        return None
+    parts = [p.strip() for p in v.split(";") if p.strip()]
+    return parts if parts else None
+
+
+@app.post("/reservoirs/import/csv")
+async def import_reservoirs_csv(file: UploadFile):
+    """배수지 정보 CSV 업로드 (일괄 입력).
+    CSV 컬럼 순서 (27열):
+      0:현장명, 1:설치위치, 2:운영현황, 3:시설용량(㎥), 4:급수인구(명), 5:설치연도,
+      6:급수지역, 7:배수지수, 8:고수위HWL(m), 9:저수위LWL(m), 10:급수위치,
+      11:공급시간(시간), 12:급수차접근, 13:급수차회전, 14:펌프필요, 15:비상급수계획,
+      16:구역수, 17:1구역면적(㎡), 18:1구역높이(m), 19:2구역면적(㎡), 20:2구역높이(m),
+      21:3구역면적(㎡), 22:3구역높이(m), 23:4구역면적(㎡), 24:4구역높이(m),
+      25:5구역면적(㎡), 26:5구역높이(m)
+    """
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 1:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 1컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 1:
+                skipped += 1
+                continue
+            sitename = _csv_cell(row, 0)
+            if not sitename:
+                skipped += 1
+                continue
+
+            # general_overview JSONB 필드 구성
+            overview = {}
+            v = _csv_cell(row, 1)
+            if v:
+                overview["install_location"] = v
+            v = _csv_cell(row, 2)
+            if v:
+                overview["operating_status"] = v
+            v = _csv_cell(row, 3)
+            if v:
+                overview["facility_capacity_m3"] = v
+            v = _csv_cell(row, 4)
+            if v:
+                overview["supply_population"] = v
+            v = _csv_cell(row, 5)
+            if v:
+                overview["install_year"] = v
+            v = _csv_cell(row, 6)
+            if v:
+                overview["service_area"] = v
+            v = _csv_cell(row, 7)
+            if v:
+                overview["reservoir_count"] = v
+            fv = _csv_float(row, 8)
+            if fv is not None:
+                overview["hwl"] = fv
+            fv = _csv_float(row, 9)
+            if fv is not None:
+                overview["lwl"] = fv
+            v = _csv_cell(row, 10)
+            if v:
+                overview["supply_position"] = v
+            v = _csv_cell(row, 11)
+            if v:
+                overview["supply_time_hours"] = v
+            bv = _csv_bool(row, 12)
+            if bv is not None:
+                overview["water_truck_accessible"] = bv
+            bv = _csv_bool(row, 13)
+            if bv is not None:
+                overview["water_truck_turning_possible"] = bv
+            bv = _csv_bool(row, 14)
+            if bv is not None:
+                overview["pump_required"] = bv
+            av = _csv_json_array(row, 15)
+            if av is not None:
+                overview["emergency_water_plan"] = av
+
+            # 직접 컬럼 (zone_count + zone_*_area/height)
+            zone_count = _csv_int(row, 16)
+            zone_1_area = _csv_float(row, 17)
+            zone_1_height = _csv_float(row, 18)
+            zone_2_area = _csv_float(row, 19)
+            zone_2_height = _csv_float(row, 20)
+            zone_3_area = _csv_float(row, 21)
+            zone_3_height = _csv_float(row, 22)
+            zone_4_area = _csv_float(row, 23)
+            zone_4_height = _csv_float(row, 24)
+            zone_5_area = _csv_float(row, 25)
+            zone_5_height = _csv_float(row, 26)
+
+            cur.execute("""
+                INSERT INTO tb_service_reservoir_info (
+                    sitename, general_overview,
+                    zone_count, zone_1_area, zone_1_height, zone_2_area, zone_2_height,
+                    zone_3_area, zone_3_height, zone_4_area, zone_4_height,
+                    zone_5_area, zone_5_height
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (sitename) DO UPDATE SET
+                    general_overview = EXCLUDED.general_overview,
+                    zone_count = EXCLUDED.zone_count,
+                    zone_1_area = EXCLUDED.zone_1_area,
+                    zone_1_height = EXCLUDED.zone_1_height,
+                    zone_2_area = EXCLUDED.zone_2_area,
+                    zone_2_height = EXCLUDED.zone_2_height,
+                    zone_3_area = EXCLUDED.zone_3_area,
+                    zone_3_height = EXCLUDED.zone_3_height,
+                    zone_4_area = EXCLUDED.zone_4_area,
+                    zone_4_height = EXCLUDED.zone_4_height,
+                    zone_5_area = EXCLUDED.zone_5_area,
+                    zone_5_height = EXCLUDED.zone_5_height
+            """, (
+                sitename, json.dumps(overview),
+                zone_count, zone_1_area, zone_1_height, zone_2_area, zone_2_height,
+                zone_3_area, zone_3_height, zone_4_area, zone_4_height,
+                zone_5_area, zone_5_height,
+            ))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"배수지 정보 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/boosters/import/csv")
+async def import_boosters_csv(file: UploadFile):
+    """가압장 정보 CSV 업로드 (일괄 입력).
+    CSV 컬럼 순서 (18열):
+      0:현장명, 1:설치위치, 2:운영현황, 3:시설용량(㎥), 4:가압장유형, 5:설치연도,
+      6:펌프대수, 7:펌프양정(m), 8:펌프시공사, 9:펌프제조사, 10:펌프유형,
+      11:정상운전펌프수, 12:집수정수, 13:연계배수지,
+      14:1구역면적(㎡), 15:1구역높이(m), 16:2구역면적(㎡), 17:2구역높이(m)
+    """
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 1:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 1컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 1:
+                skipped += 1
+                continue
+            sitename = _csv_cell(row, 0)
+            if not sitename:
+                skipped += 1
+                continue
+
+            # general_overview JSONB 필드 구성
+            overview = {}
+            v = _csv_cell(row, 1)
+            if v:
+                overview["install_location"] = v
+            v = _csv_cell(row, 2)
+            if v:
+                overview["operating_status"] = v
+            v = _csv_cell(row, 3)
+            if v:
+                overview["facility_capacity_m3"] = v
+            v = _csv_cell(row, 4)
+            if v:
+                overview["booster_type"] = v
+            v = _csv_cell(row, 5)
+            if v:
+                overview["install_year"] = v
+            v = _csv_cell(row, 6)
+            if v:
+                overview["pump_count"] = v
+            v = _csv_cell(row, 7)
+            if v:
+                overview["pump_head_m"] = v
+            v = _csv_cell(row, 8)
+            if v:
+                overview["pump_contractor"] = v
+            v = _csv_cell(row, 9)
+            if v:
+                overview["pump_manufacturer"] = v
+            v = _csv_cell(row, 10)
+            if v:
+                overview["pump_type"] = v
+            v = _csv_cell(row, 11)
+            if v:
+                overview["normal_operation_pump_count"] = v
+            v = _csv_cell(row, 12)
+            if v:
+                overview["infiltration_well_count"] = v
+            v = _csv_cell(row, 13)
+            if v:
+                overview["reservoir_linked"] = v
+
+            # 직접 컬럼 (zone_*_area/height)
+            zone_1_area = _csv_float(row, 14)
+            zone_1_height = _csv_float(row, 15)
+            zone_2_area = _csv_float(row, 16)
+            zone_2_height = _csv_float(row, 17)
+
+            cur.execute("""
+                INSERT INTO tb_service_booster_info (
+                    sitename, general_overview,
+                    zone_1_area, zone_1_height, zone_2_area, zone_2_height
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (sitename) DO UPDATE SET
+                    general_overview = EXCLUDED.general_overview,
+                    zone_1_area = EXCLUDED.zone_1_area,
+                    zone_1_height = EXCLUDED.zone_1_height,
+                    zone_2_area = EXCLUDED.zone_2_area,
+                    zone_2_height = EXCLUDED.zone_2_height
+            """, (
+                sitename, json.dumps(overview),
+                zone_1_area, zone_1_height, zone_2_area, zone_2_height,
+            ))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"가압장 정보 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/pressure-reducing/import/csv")
+async def import_pressure_reducing_csv(file: UploadFile):
+    """감압시설 정보 CSV 업로드 (일괄 입력).
+    CSV 컬럼 순서 (9열):
+      0:현장명, 1:설치위치, 2:운영현황, 3:PRV제조사, 4:PRV관경,
+      5:PRV제어방식, 6:압력단위, 7:감압패턴, 8:감압기준
+    """
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 1:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 1컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 1:
+                skipped += 1
+                continue
+            sitename = _csv_cell(row, 0)
+            if not sitename:
+                skipped += 1
+                continue
+
+            # general_overview JSONB — 모든 필드가 JSONB 내부
+            overview = {}
+            v = _csv_cell(row, 1)
+            if v:
+                overview["install_location"] = v
+            v = _csv_cell(row, 2)
+            if v:
+                overview["operating_status"] = v
+            v = _csv_cell(row, 3)
+            if v:
+                overview["prv_manufacturer"] = v
+            v = _csv_cell(row, 4)
+            if v:
+                overview["prv_pipe_diameter"] = v
+            v = _csv_cell(row, 5)
+            if v:
+                overview["prv_control_method"] = v
+            v = _csv_cell(row, 6)
+            if v:
+                overview["pressure_unit"] = v
+            v = _csv_cell(row, 7)
+            if v:
+                overview["pressure_reduction_pattern"] = v
+            v = _csv_cell(row, 8)
+            if v:
+                overview["pressure_reduction_criteria"] = v
+
+            cur.execute("""
+                INSERT INTO tb_service_pressure_info (sitename, general_overview)
+                VALUES (%s, %s)
+                ON CONFLICT (sitename) DO UPDATE SET
+                    general_overview = EXCLUDED.general_overview
+            """, (sitename, json.dumps(overview)))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"감압시설 정보 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/blocks/import/csv")
+async def import_blocks_csv(file: UploadFile):
+    """블록 정보 CSV 업로드 (일괄 입력).
+    CSV 컬럼 순서 (11열):
+      0:현장명, 1:블록레벨, 2:설치위치, 3:수용가수, 4:유수율(%),
+      5:관로연장(km), 6:노후관로(km), 7:대량수용가수, 8:대량수용가기준월사용량,
+      9:임계압력, 10:압력단위
+    """
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 2:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 2컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 2:
+                skipped += 1
+                continue
+            sitename = _csv_cell(row, 0)
+            block_level = _csv_cell(row, 1)
+            if not sitename or not block_level:
+                skipped += 1
+                continue
+
+            # general_overview JSONB 필드 구성
+            overview = {}
+            v = _csv_cell(row, 2)
+            if v:
+                overview["install_location"] = v
+            v = _csv_cell(row, 3)
+            if v:
+                overview["customer_count"] = v
+            v = _csv_cell(row, 4)
+            if v:
+                overview["non_revenue_water_rate"] = v
+            v = _csv_cell(row, 5)
+            if v:
+                overview["pipeline_total"] = v
+            v = _csv_cell(row, 6)
+            if v:
+                overview["pipeline_old"] = v
+            v = _csv_cell(row, 7)
+            if v:
+                overview["large_customer_count"] = v
+            v = _csv_cell(row, 8)
+            if v:
+                overview["large_customer_base_month_usage"] = v
+
+            # 직접 컬럼 (critical_pressure, pressure_unit)
+            critical_pressure = _csv_float(row, 9)
+            pressure_unit = _csv_cell(row, 10)
+
+            cur.execute("""
+                INSERT INTO tb_service_block_info (
+                    sitename, block_level, general_overview,
+                    critical_pressure, pressure_unit
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (sitename, block_level) DO UPDATE SET
+                    general_overview = EXCLUDED.general_overview,
+                    critical_pressure = EXCLUDED.critical_pressure,
+                    pressure_unit = EXCLUDED.pressure_unit
+            """, (
+                sitename, block_level, json.dumps(overview),
+                critical_pressure, pressure_unit or None,
+            ))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"블록 정보 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/network/devices/import/csv")
+async def import_network_devices_csv(file: UploadFile):
+    """네트워크 장비 CSV 업로드 (tb_equipment_info + tb_network_info 일괄 입력)."""
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 4:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 4컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 4:
+                skipped += 1
+                continue
+            equipment_id = row[0].strip()
+            sitename = row[1].strip()
+            facilitytype = row[2].strip()
+            equipmenttype = row[3].strip()
+            if not equipment_id or not sitename or not facilitytype or not equipmenttype:
+                skipped += 1
+                continue
+
+            ip_address = row[4].strip() if len(row) > 4 and row[4].strip() else None
+            description = row[10].strip() if len(row) > 10 and row[10].strip() else None
+
+            # tb_equipment_info UPSERT
+            cur.execute("""
+                INSERT INTO tb_equipment_info
+                    (equipment_id, sitename, facilitytype, equipmenttype, description)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (equipment_id) DO UPDATE SET
+                    sitename = EXCLUDED.sitename,
+                    facilitytype = EXCLUDED.facilitytype,
+                    equipmenttype = EXCLUDED.equipmenttype,
+                    description = EXCLUDED.description,
+                    updated_at = NOW()
+            """, (equipment_id, sitename, facilitytype, equipmenttype, description))
+
+            # tb_network_info meta JSONB
+            net_meta_raw = {
+                "gateway": row[5].strip() if len(row) > 5 else "",
+                "subnet_mask": row[6].strip() if len(row) > 6 else "",
+                "mac_address": row[7].strip() if len(row) > 7 else "",
+                "network_role": row[8].strip() if len(row) > 8 else "",
+                "ip_assign_method": row[9].strip() if len(row) > 9 else "",
+            }
+            net_meta = {k: v for k, v in net_meta_raw.items() if v}
+
+            # tb_network_info UPSERT
+            cur.execute("""
+                INSERT INTO tb_network_info
+                    (equipment_id, ip_address, description, meta)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (equipment_id) DO UPDATE SET
+                    ip_address = EXCLUDED.ip_address,
+                    description = EXCLUDED.description,
+                    meta = EXCLUDED.meta,
+                    updated_at = NOW()
+            """, (equipment_id, ip_address, description, json.dumps(net_meta)))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"네트워크 장비 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/network/links/import/csv")
+async def import_network_links_csv(file: UploadFile):
+    """네트워크 연결 CSV 업로드 (일괄 입력)."""
+    import io
+    import csv as csv_mod
+
+    conn = None
+    try:
+        content = await file.read()
+        text = content.decode("utf-8-sig")
+        reader = csv_mod.reader(io.StringIO(text))
+        header = next(reader, None)
+        if not header or len(header) < 3:
+            return {"status": "ERROR", "message": "CSV 헤더 부족 (최소 3컬럼)"}
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        created = 0
+        skipped = 0
+
+        for row in reader:
+            if len(row) < 3:
+                skipped += 1
+                continue
+            source_equipment_id = row[0].strip()
+            # row[1] = 출발현장 (ignored)
+            target_equipment_id = row[2].strip()
+            # row[3] = 도착현장 (ignored)
+            link_protocol = row[4].strip() if len(row) > 4 and row[4].strip() else None
+            if not source_equipment_id or not target_equipment_id:
+                skipped += 1
+                continue
+
+            link_port_str = row[5].strip() if len(row) > 5 else ""
+            link_port = int(link_port_str) if link_port_str.isdigit() else None
+            link_device_interface = row[6].strip() if len(row) > 6 and row[6].strip() else None
+            link_role = row[7].strip() if len(row) > 7 and row[7].strip() else None
+            direction = row[8].strip() if len(row) > 8 and row[8].strip() else ""
+            description = row[9].strip() if len(row) > 9 and row[9].strip() else None
+
+            meta_raw = {"direction": direction} if direction else {}
+            meta = {k: v for k, v in meta_raw.items() if v}
+
+            cur.execute("""
+                INSERT INTO tb_network_link
+                    (source_equipment_id, target_equipment_id,
+                     link_protocol, link_port, link_device_interface,
+                     link_role, description, meta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_equipment_id, target_equipment_id) DO UPDATE SET
+                    link_protocol = EXCLUDED.link_protocol,
+                    link_port = EXCLUDED.link_port,
+                    link_device_interface = EXCLUDED.link_device_interface,
+                    link_role = EXCLUDED.link_role,
+                    description = EXCLUDED.description,
+                    meta = EXCLUDED.meta,
+                    updated_at = NOW()
+            """, (source_equipment_id, target_equipment_id,
+                  link_protocol, link_port, link_device_interface,
+                  link_role, description,
+                  json.dumps(meta) if meta else None))
+            created += 1
+
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "created": created, "skipped": skipped}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"네트워크 연결 CSV 가져오기 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # 설비 관리 API (tb_equipment_info CRUD)
 # =============================================================================
 
@@ -8190,6 +9278,1262 @@ async def delete_reservoir(sitename: str, dry_run: bool = Query(False)):
         if conn:
             conn.rollback()
         logger.error(f"배수지 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 가압장 관리 (Booster Station)
+# =============================================================================
+
+
+def _serialize_booster_info(r: tuple) -> dict:
+    """tb_service_booster_station_info row → flat dict."""
+    go = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+    pump = go.get("pump", {}) if isinstance(go.get("pump"), dict) else {}
+    return {
+        "sitename": r[0],
+        "install_location": go.get("install_location"),
+        "operating_status": go.get("operating_status"),
+        "facility_capacity_m3": go.get("facility_capacity_m3"),
+        "booster_type": go.get("booster_type"),
+        "install_year": go.get("install_year"),
+        "pump_count": pump.get("count"),
+        "pump_head_m": pump.get("head_m"),
+        "pump_contractor": pump.get("contractor"),
+        "pump_manufacturer": pump.get("manufacturer"),
+        "reservoir_linked": pump.get("reservoir_linked"),
+        "linked_reservoirs": pump.get("linked_reservoirs"),
+        "infiltration_well_count": r[2],
+        "zone_1_area": float(r[3]) if r[3] is not None else None,
+        "zone_1_height": float(r[4]) if r[4] is not None else None,
+        "zone_2_area": float(r[5]) if r[5] is not None else None,
+        "zone_2_height": float(r[6]) if r[6] is not None else None,
+        "pump_type": r[9],
+        "normal_operation_pump_count": r[10],
+    }
+
+
+def _serialize_booster_status(r: tuple) -> dict:
+    """tb_service_booster_station_status row → dict."""
+    meta_raw = r[11]
+    if isinstance(meta_raw, str):
+        meta_raw = json.loads(meta_raw)
+    meta = meta_raw if isinstance(meta_raw, list) else []
+    return {
+        "sitename": r[0],
+        "pump_control_mode": r[1],
+        "pump_start_threshold": float(r[2]) if r[2] is not None else None,
+        "pump_stop_threshold": float(r[3]) if r[3] is not None else None,
+        "pump_start_pressure": float(r[4]) if r[4] is not None else None,
+        "booster_inlet_pressure": float(r[5]) if r[5] is not None else None,
+        "booster_outlet_pressure": float(r[6]) if r[6] is not None else None,
+        "booster_avg_pressure": float(r[7]) if r[7] is not None else None,
+        "level_unit": r[8],
+        "pressure_unit": r[9],
+        "running_pump_count": r[10],
+        "equipment_meta": meta,
+        "linked_reservoir_name": r[12],
+        "normal_operation_pump_count": r[13],
+    }
+
+
+_BOOSTER_GO_KEYS = (
+    "install_location", "operating_status", "facility_capacity_m3",
+    "booster_type", "install_year",
+)
+
+
+def _build_booster_general_overview(body: dict) -> dict:
+    """flat 필드 → general_overview JSONB 조립."""
+    go: dict = {}
+    for key in _BOOSTER_GO_KEYS:
+        val = body.get(key)
+        if val is not None:
+            go[key] = val
+    pump: dict = {}
+    for pk in ("pump_count", "pump_head_m", "pump_contractor",
+               "pump_manufacturer", "reservoir_linked", "linked_reservoirs"):
+        val = body.get(pk)
+        if val is not None:
+            # remove "pump_" prefix for JSONB key
+            jk = pk.replace("pump_", "") if pk.startswith("pump_") else pk
+            pump[jk] = val
+    if pump:
+        go["pump"] = pump
+    return go
+
+
+_BOOSTER_INFO_COLS = (
+    "sitename, general_overview, infiltration_well_count, "
+    "zone_1_area, zone_1_height, zone_2_area, zone_2_height, "
+    "infiltration_well_unit, infiltration_well_level_unit, "
+    "pump_type, normal_operation_pump_count"
+)
+
+_BOOSTER_STATUS_COLS = (
+    "sitename, pump_control_mode, pump_start_threshold, pump_stop_threshold, "
+    "pump_start_pressure, booster_inlet_pressure, booster_outlet_pressure, "
+    "booster_avg_pressure, level_unit, pressure_unit, running_pump_count, "
+    "meta, linked_reservoir_name, normal_operation_pump_count"
+)
+
+
+@app.get("/boosters")
+async def get_boosters(
+    keyword: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """가압장 목록 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        wheres, params = [], []
+        if keyword:
+            wheres.append("(sitename ILIKE %s)")
+            params.append(f"%{keyword}%")
+        where_sql = " AND ".join(wheres) if wheres else "TRUE"
+        cur.execute(f"SELECT COUNT(*) FROM tb_service_booster_station_info WHERE {where_sql}", params)
+        total = cur.fetchone()[0]
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"SELECT {_BOOSTER_INFO_COLS} FROM tb_service_booster_station_info "
+            f"WHERE {where_sql} ORDER BY sitename LIMIT %s OFFSET %s",
+            params + [page_size, offset],
+        )
+        data = [_serialize_booster_info(r) for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"가압장 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/boosters/{sitename}")
+async def get_booster_detail(sitename: str):
+    """가압장 상세 조회 (info + status)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"SELECT {_BOOSTER_INFO_COLS} FROM tb_service_booster_station_info WHERE sitename = %s", (sitename,))
+        info_row = cur.fetchone()
+        if not info_row:
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 가압장을 찾을 수 없습니다."}
+        cur.execute(f"SELECT {_BOOSTER_STATUS_COLS} FROM tb_service_booster_station_status WHERE sitename = %s", (sitename,))
+        status_row = cur.fetchone()
+        cur.close()
+        return {
+            "status": "OK",
+            "info": _serialize_booster_info(info_row),
+            "booster_status": _serialize_booster_status(status_row) if status_row else None,
+        }
+    except Exception as e:
+        logger.error(f"가압장 상세 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/boosters")
+async def create_booster(request: Request):
+    """가압장 추가."""
+    conn = None
+    try:
+        body = await request.json()
+        sitename = body.get("sitename", "").strip()
+        if not sitename:
+            return {"status": "ERROR", "message": "현장명은 필수입니다."}
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_service_booster_station_info WHERE sitename = %s", (sitename,))
+        if cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 가압장이 이미 존재합니다."}
+        go = _build_booster_general_overview(body)
+        cur.execute("""
+            INSERT INTO tb_service_booster_station_info
+                (sitename, general_overview, infiltration_well_count,
+                 zone_1_area, zone_1_height, zone_2_area, zone_2_height,
+                 pump_type, normal_operation_pump_count)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            sitename, json.dumps(go, ensure_ascii=False),
+            body.get("infiltration_well_count"),
+            body.get("zone_1_area"), body.get("zone_1_height"),
+            body.get("zone_2_area"), body.get("zone_2_height"),
+            body.get("pump_type"), body.get("normal_operation_pump_count"),
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_service_booster_station_status
+                (sitename, pump_control_mode, pump_start_threshold, pump_stop_threshold,
+                 pump_start_pressure, booster_inlet_pressure, booster_outlet_pressure,
+                 booster_avg_pressure, running_pump_count, linked_reservoir_name,
+                 normal_operation_pump_count, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            sitename, body.get("pump_control_mode"),
+            body.get("pump_start_threshold"), body.get("pump_stop_threshold"),
+            body.get("pump_start_pressure"),
+            body.get("booster_inlet_pressure"), body.get("booster_outlet_pressure"),
+            body.get("booster_avg_pressure"), body.get("running_pump_count"),
+            body.get("linked_reservoir_name"), body.get("normal_operation_pump_count"),
+            json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "sitename": sitename}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"가압장 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/boosters/{sitename}")
+async def update_booster(sitename: str, request: Request):
+    """가압장 수정."""
+    conn = None
+    try:
+        body = await request.json()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_service_booster_station_info WHERE sitename = %s", (sitename,))
+        if not cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 가압장을 찾을 수 없습니다."}
+        go = _build_booster_general_overview(body)
+        cur.execute("""
+            UPDATE tb_service_booster_station_info SET
+                general_overview = %s, infiltration_well_count = %s,
+                zone_1_area = %s, zone_1_height = %s,
+                zone_2_area = %s, zone_2_height = %s,
+                pump_type = %s, normal_operation_pump_count = %s
+            WHERE sitename = %s
+        """, (
+            json.dumps(go, ensure_ascii=False), body.get("infiltration_well_count"),
+            body.get("zone_1_area"), body.get("zone_1_height"),
+            body.get("zone_2_area"), body.get("zone_2_height"),
+            body.get("pump_type"), body.get("normal_operation_pump_count"),
+            sitename,
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_service_booster_station_status
+                (sitename, pump_control_mode, pump_start_threshold, pump_stop_threshold,
+                 pump_start_pressure, booster_inlet_pressure, booster_outlet_pressure,
+                 booster_avg_pressure, running_pump_count, linked_reservoir_name,
+                 normal_operation_pump_count, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sitename) DO UPDATE SET
+                pump_control_mode = EXCLUDED.pump_control_mode,
+                pump_start_threshold = EXCLUDED.pump_start_threshold,
+                pump_stop_threshold = EXCLUDED.pump_stop_threshold,
+                pump_start_pressure = EXCLUDED.pump_start_pressure,
+                booster_inlet_pressure = EXCLUDED.booster_inlet_pressure,
+                booster_outlet_pressure = EXCLUDED.booster_outlet_pressure,
+                booster_avg_pressure = EXCLUDED.booster_avg_pressure,
+                running_pump_count = EXCLUDED.running_pump_count,
+                linked_reservoir_name = EXCLUDED.linked_reservoir_name,
+                normal_operation_pump_count = EXCLUDED.normal_operation_pump_count,
+                meta = EXCLUDED.meta
+        """, (
+            sitename, body.get("pump_control_mode"),
+            body.get("pump_start_threshold"), body.get("pump_stop_threshold"),
+            body.get("pump_start_pressure"),
+            body.get("booster_inlet_pressure"), body.get("booster_outlet_pressure"),
+            body.get("booster_avg_pressure"), body.get("running_pump_count"),
+            body.get("linked_reservoir_name"), body.get("normal_operation_pump_count"),
+            json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "updated": 1}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"가압장 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/boosters/{sitename}")
+async def delete_booster(sitename: str, dry_run: bool = Query(False)):
+    """가압장 삭제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM tb_service_booster_station_status WHERE sitename = %s", (sitename,))
+        status_cnt = cur.fetchone()[0]
+        if dry_run:
+            cur.close()
+            return {"status": "OK", "dry_run": True, "related": {"status_rows": status_cnt}}
+        cur.execute("DELETE FROM tb_service_booster_station_status WHERE sitename = %s", (sitename,))
+        cur.execute("DELETE FROM tb_service_booster_station_info WHERE sitename = %s", (sitename,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        return {"status": "OK", "deleted": deleted}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"가압장 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 감압시설 관리 (Pressure Reducing Facility)
+# =============================================================================
+
+
+def _serialize_pressure_info(r: tuple) -> dict:
+    """tb_pressure_reducing_facility_info row → flat dict."""
+    go = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+    prv = go.get("pressure_reducing_valve", {}) if isinstance(go.get("pressure_reducing_valve"), dict) else {}
+    return {
+        "sitename": r[0],
+        "install_location": go.get("install_location"),
+        "operating_status": go.get("operating_status"),
+        "prv_manufacturer": prv.get("manufacturer"),
+        "prv_pipe_diameter": prv.get("pipe_diameter"),
+        "prv_control_method": prv.get("control_method"),
+        "pressure_unit": r[2],
+        "pressure_reduction_pattern": r[3],
+        "pressure_reduction_criteria": r[4],
+    }
+
+
+def _serialize_pressure_status(r: tuple) -> dict:
+    """tb_pressure_reducing_facility_status row → dict."""
+    meta_raw = r[7]
+    if isinstance(meta_raw, str):
+        meta_raw = json.loads(meta_raw)
+    meta = meta_raw if isinstance(meta_raw, list) else []
+    return {
+        "sitename": r[0],
+        "avg_inlet_pressure": float(r[1]) if r[1] is not None else None,
+        "avg_outlet_pressure": float(r[2]) if r[2] is not None else None,
+        "avg_pressure_reduction": float(r[3]) if r[3] is not None else None,
+        "pressure_unit": r[4],
+        "status": r[6],
+        "equipment_meta": meta,
+    }
+
+
+_PRESSURE_GO_KEYS = ("install_location", "operating_status")
+
+
+def _build_pressure_general_overview(body: dict) -> dict:
+    """flat 필드 → general_overview JSONB 조립."""
+    go: dict = {}
+    for key in _PRESSURE_GO_KEYS:
+        val = body.get(key)
+        if val is not None:
+            go[key] = val
+    prv: dict = {}
+    for pk in ("prv_manufacturer", "prv_pipe_diameter", "prv_control_method"):
+        val = body.get(pk)
+        if val is not None:
+            prv[pk.replace("prv_", "")] = val
+    if prv:
+        go["pressure_reducing_valve"] = prv
+    return go
+
+
+_PRESSURE_INFO_COLS = (
+    "sitename, general_overview, pressure_unit, "
+    "pressure_reduction_pattern, pressure_reduction_criteria"
+)
+
+_PRESSURE_STATUS_COLS = (
+    "sitename, avg_inlet_pressure, avg_outlet_pressure, "
+    "avg_pressure_reduction, pressure_unit, updated_at, status, meta"
+)
+
+
+@app.get("/pressure-reducing")
+async def get_pressure_facilities(
+    keyword: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """감압시설 목록 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        wheres, params = [], []
+        if keyword:
+            wheres.append("(sitename ILIKE %s)")
+            params.append(f"%{keyword}%")
+        where_sql = " AND ".join(wheres) if wheres else "TRUE"
+        cur.execute(f"SELECT COUNT(*) FROM tb_pressure_reducing_facility_info WHERE {where_sql}", params)
+        total = cur.fetchone()[0]
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"SELECT {_PRESSURE_INFO_COLS} FROM tb_pressure_reducing_facility_info "
+            f"WHERE {where_sql} ORDER BY sitename LIMIT %s OFFSET %s",
+            params + [page_size, offset],
+        )
+        data = [_serialize_pressure_info(r) for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"감압시설 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/pressure-reducing/{sitename}")
+async def get_pressure_detail(sitename: str):
+    """감압시설 상세 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"SELECT {_PRESSURE_INFO_COLS} FROM tb_pressure_reducing_facility_info WHERE sitename = %s", (sitename,))
+        info_row = cur.fetchone()
+        if not info_row:
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 감압시설을 찾을 수 없습니다."}
+        cur.execute(f"SELECT {_PRESSURE_STATUS_COLS} FROM tb_pressure_reducing_facility_status WHERE sitename = %s", (sitename,))
+        status_row = cur.fetchone()
+        cur.close()
+        return {
+            "status": "OK",
+            "info": _serialize_pressure_info(info_row),
+            "pressure_status": _serialize_pressure_status(status_row) if status_row else None,
+        }
+    except Exception as e:
+        logger.error(f"감압시설 상세 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/pressure-reducing")
+async def create_pressure(request: Request):
+    """감압시설 추가."""
+    conn = None
+    try:
+        body = await request.json()
+        sitename = body.get("sitename", "").strip()
+        if not sitename:
+            return {"status": "ERROR", "message": "현장명은 필수입니다."}
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_pressure_reducing_facility_info WHERE sitename = %s", (sitename,))
+        if cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 감압시설이 이미 존재합니다."}
+        go = _build_pressure_general_overview(body)
+        cur.execute("""
+            INSERT INTO tb_pressure_reducing_facility_info
+                (sitename, general_overview, pressure_unit,
+                 pressure_reduction_pattern, pressure_reduction_criteria)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            sitename, json.dumps(go, ensure_ascii=False),
+            body.get("pressure_unit", "kgf/㎠"),
+            body.get("pressure_reduction_pattern"),
+            body.get("pressure_reduction_criteria"),
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_pressure_reducing_facility_status
+                (sitename, avg_inlet_pressure, avg_outlet_pressure,
+                 avg_pressure_reduction, pressure_unit, status, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            sitename, body.get("avg_inlet_pressure"), body.get("avg_outlet_pressure"),
+            body.get("avg_pressure_reduction"), body.get("pressure_unit", "kgf/㎠"),
+            body.get("status"), json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "sitename": sitename}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"감압시설 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/pressure-reducing/{sitename}")
+async def update_pressure(sitename: str, request: Request):
+    """감압시설 수정."""
+    conn = None
+    try:
+        body = await request.json()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_pressure_reducing_facility_info WHERE sitename = %s", (sitename,))
+        if not cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 감압시설을 찾을 수 없습니다."}
+        go = _build_pressure_general_overview(body)
+        cur.execute("""
+            UPDATE tb_pressure_reducing_facility_info SET
+                general_overview = %s, pressure_unit = %s,
+                pressure_reduction_pattern = %s, pressure_reduction_criteria = %s
+            WHERE sitename = %s
+        """, (
+            json.dumps(go, ensure_ascii=False), body.get("pressure_unit"),
+            body.get("pressure_reduction_pattern"), body.get("pressure_reduction_criteria"),
+            sitename,
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_pressure_reducing_facility_status
+                (sitename, avg_inlet_pressure, avg_outlet_pressure,
+                 avg_pressure_reduction, pressure_unit, status, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sitename) DO UPDATE SET
+                avg_inlet_pressure = EXCLUDED.avg_inlet_pressure,
+                avg_outlet_pressure = EXCLUDED.avg_outlet_pressure,
+                avg_pressure_reduction = EXCLUDED.avg_pressure_reduction,
+                pressure_unit = EXCLUDED.pressure_unit,
+                status = EXCLUDED.status,
+                meta = EXCLUDED.meta
+        """, (
+            sitename, body.get("avg_inlet_pressure"), body.get("avg_outlet_pressure"),
+            body.get("avg_pressure_reduction"), body.get("pressure_unit"),
+            body.get("status"), json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "updated": 1}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"감압시설 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/pressure-reducing/{sitename}")
+async def delete_pressure(sitename: str, dry_run: bool = Query(False)):
+    """감압시설 삭제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM tb_pressure_reducing_facility_status WHERE sitename = %s", (sitename,))
+        status_cnt = cur.fetchone()[0]
+        if dry_run:
+            cur.close()
+            return {"status": "OK", "dry_run": True, "related": {"status_rows": status_cnt}}
+        cur.execute("DELETE FROM tb_pressure_reducing_facility_status WHERE sitename = %s", (sitename,))
+        cur.execute("DELETE FROM tb_pressure_reducing_facility_info WHERE sitename = %s", (sitename,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        return {"status": "OK", "deleted": deleted}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"감압시설 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 블록 관리 (Block)
+# =============================================================================
+
+
+def _serialize_block_info(r: tuple) -> dict:
+    """tb_block_info row → flat dict."""
+    go = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+    pl = go.get("pipeline_length", {}) if isinstance(go.get("pipeline_length"), dict) else {}
+    lcs = go.get("large_customer_status", {}) if isinstance(go.get("large_customer_status"), dict) else {}
+    return {
+        "sitename": r[0],
+        "install_location": go.get("install_location"),
+        "customer_count": go.get("customer_count"),
+        "non_revenue_water_rate": go.get("non_revenue_water_rate"),
+        "pipeline_total": pl.get("total"),
+        "pipeline_old": pl.get("old"),
+        "large_customer_count": lcs.get("count"),
+        "large_customer_base_month_usage": lcs.get("base_month_usage"),
+        "critical_pressure": float(r[2]) if r[2] is not None else None,
+        "pressure_unit": r[3],
+        "block_level": r[7],
+    }
+
+
+def _serialize_block_status(r: tuple) -> dict:
+    """tb_block_status row → dict."""
+    meta_raw = r[13]
+    if isinstance(meta_raw, str):
+        meta_raw = json.loads(meta_raw)
+    meta = meta_raw if isinstance(meta_raw, list) else []
+    return {
+        "sitename": r[0],
+        "flow_missing_rate": float(r[1]) if r[1] is not None else None,
+        "flow_missing_rate_unit": r[2],
+        "block_avg_daily_flow": float(r[3]) if r[3] is not None else None,
+        "block_avg_daily_flow_ratio": float(r[4]) if r[4] is not None else None,
+        "block_pressure": float(r[5]) if r[5] is not None else None,
+        "block_inlet_pressure": float(r[6]) if r[6] is not None else None,
+        "block_outlet_pressure": float(r[7]) if r[7] is not None else None,
+        "inlet_pressure_variation_rate": float(r[8]) if r[8] is not None else None,
+        "outlet_pressure_variation_rate": float(r[9]) if r[9] is not None else None,
+        "flow_unit": r[10],
+        "pressure_unit": r[11],
+        "block_level": r[14],
+        "equipment_meta": meta,
+    }
+
+
+def _build_block_general_overview(body: dict) -> dict:
+    """flat 필드 → general_overview JSONB 조립."""
+    go: dict = {}
+    for key in ("install_location", "customer_count", "non_revenue_water_rate"):
+        val = body.get(key)
+        if val is not None:
+            go[key] = val
+    pl: dict = {}
+    if body.get("pipeline_total") is not None:
+        pl["total"] = body["pipeline_total"]
+    if body.get("pipeline_old") is not None:
+        pl["old"] = body["pipeline_old"]
+    if pl:
+        go["pipeline_length"] = pl
+    lcs: dict = {}
+    if body.get("large_customer_count") is not None:
+        lcs["count"] = body["large_customer_count"]
+    if body.get("large_customer_base_month_usage") is not None:
+        lcs["base_month_usage"] = body["large_customer_base_month_usage"]
+    if lcs:
+        go["large_customer_status"] = lcs
+    return go
+
+
+_BLOCK_INFO_COLS = (
+    "sitename, general_overview, critical_pressure, pressure_unit, "
+    "site_photo_url, manual_url, system_diagram_url, block_level"
+)
+
+_BLOCK_STATUS_COLS = (
+    "sitename, flow_missing_rate, flow_missing_rate_unit, "
+    "block_avg_daily_flow, block_avg_daily_flow_ratio, block_pressure, "
+    "block_inlet_pressure, block_outlet_pressure, "
+    "inlet_pressure_variation_rate, outlet_pressure_variation_rate, "
+    "flow_unit, pressure_unit, updated_at, meta, block_level"
+)
+
+
+@app.get("/blocks")
+async def get_blocks(
+    keyword: Optional[str] = Query(None),
+    block_level: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+):
+    """블록 목록 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        wheres, params = [], []
+        if keyword:
+            wheres.append("(sitename ILIKE %s)")
+            params.append(f"%{keyword}%")
+        if block_level:
+            wheres.append("(block_level = %s)")
+            params.append(block_level)
+        where_sql = " AND ".join(wheres) if wheres else "TRUE"
+        cur.execute(f"SELECT COUNT(*) FROM tb_block_info WHERE {where_sql}", params)
+        total = cur.fetchone()[0]
+        offset = (page - 1) * page_size
+        cur.execute(
+            f"SELECT {_BLOCK_INFO_COLS} FROM tb_block_info "
+            f"WHERE {where_sql} ORDER BY sitename LIMIT %s OFFSET %s",
+            params + [page_size, offset],
+        )
+        data = [_serialize_block_info(r) for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": data, "total": total, "page": page, "page_size": page_size}
+    except Exception as e:
+        logger.error(f"블록 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/blocks/{sitename}")
+async def get_block_detail(sitename: str):
+    """블록 상세 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"SELECT {_BLOCK_INFO_COLS} FROM tb_block_info WHERE sitename = %s", (sitename,))
+        info_row = cur.fetchone()
+        if not info_row:
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 블록을 찾을 수 없습니다."}
+        cur.execute(f"SELECT {_BLOCK_STATUS_COLS} FROM tb_block_status WHERE sitename = %s", (sitename,))
+        status_row = cur.fetchone()
+        cur.close()
+        return {
+            "status": "OK",
+            "info": _serialize_block_info(info_row),
+            "block_status": _serialize_block_status(status_row) if status_row else None,
+        }
+    except Exception as e:
+        logger.error(f"블록 상세 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/blocks")
+async def create_block(request: Request):
+    """블록 추가."""
+    conn = None
+    try:
+        body = await request.json()
+        sitename = body.get("sitename", "").strip()
+        if not sitename:
+            return {"status": "ERROR", "message": "블록명은 필수입니다."}
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_block_info WHERE sitename = %s", (sitename,))
+        if cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 블록이 이미 존재합니다."}
+        go = _build_block_general_overview(body)
+        block_level = body.get("block_level", "소블록")
+        cur.execute("""
+            INSERT INTO tb_block_info
+                (sitename, general_overview, critical_pressure,
+                 pressure_unit, block_level)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            sitename, json.dumps(go, ensure_ascii=False),
+            body.get("critical_pressure"),
+            body.get("pressure_unit", "kg/cm2"), block_level,
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_block_status
+                (sitename, flow_missing_rate, block_avg_daily_flow,
+                 block_avg_daily_flow_ratio, block_pressure,
+                 block_inlet_pressure, block_outlet_pressure,
+                 inlet_pressure_variation_rate, outlet_pressure_variation_rate,
+                 block_level, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            sitename, body.get("flow_missing_rate"),
+            body.get("block_avg_daily_flow"), body.get("block_avg_daily_flow_ratio"),
+            body.get("block_pressure"),
+            body.get("block_inlet_pressure"), body.get("block_outlet_pressure"),
+            body.get("inlet_pressure_variation_rate"), body.get("outlet_pressure_variation_rate"),
+            block_level, json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "sitename": sitename}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"블록 추가 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/blocks/{sitename}")
+async def update_block(sitename: str, request: Request):
+    """블록 수정."""
+    conn = None
+    try:
+        body = await request.json()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM tb_block_info WHERE sitename = %s", (sitename,))
+        if not cur.fetchone():
+            cur.close()
+            return {"status": "ERROR", "message": f"'{sitename}' 블록을 찾을 수 없습니다."}
+        go = _build_block_general_overview(body)
+        block_level = body.get("block_level", "소블록")
+        cur.execute("""
+            UPDATE tb_block_info SET
+                general_overview = %s, critical_pressure = %s,
+                pressure_unit = %s, block_level = %s
+            WHERE sitename = %s
+        """, (
+            json.dumps(go, ensure_ascii=False), body.get("critical_pressure"),
+            body.get("pressure_unit"), block_level, sitename,
+        ))
+        eq_meta = body.get("equipment_meta", [])
+        cur.execute("""
+            INSERT INTO tb_block_status
+                (sitename, flow_missing_rate, block_avg_daily_flow,
+                 block_avg_daily_flow_ratio, block_pressure,
+                 block_inlet_pressure, block_outlet_pressure,
+                 inlet_pressure_variation_rate, outlet_pressure_variation_rate,
+                 block_level, meta)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sitename) DO UPDATE SET
+                flow_missing_rate = EXCLUDED.flow_missing_rate,
+                block_avg_daily_flow = EXCLUDED.block_avg_daily_flow,
+                block_avg_daily_flow_ratio = EXCLUDED.block_avg_daily_flow_ratio,
+                block_pressure = EXCLUDED.block_pressure,
+                block_inlet_pressure = EXCLUDED.block_inlet_pressure,
+                block_outlet_pressure = EXCLUDED.block_outlet_pressure,
+                inlet_pressure_variation_rate = EXCLUDED.inlet_pressure_variation_rate,
+                outlet_pressure_variation_rate = EXCLUDED.outlet_pressure_variation_rate,
+                block_level = EXCLUDED.block_level,
+                meta = EXCLUDED.meta
+        """, (
+            sitename, body.get("flow_missing_rate"),
+            body.get("block_avg_daily_flow"), body.get("block_avg_daily_flow_ratio"),
+            body.get("block_pressure"),
+            body.get("block_inlet_pressure"), body.get("block_outlet_pressure"),
+            body.get("inlet_pressure_variation_rate"), body.get("outlet_pressure_variation_rate"),
+            block_level, json.dumps(eq_meta, ensure_ascii=False),
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "updated": 1}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"블록 수정 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/blocks/{sitename}")
+async def delete_block(sitename: str, dry_run: bool = Query(False)):
+    """블록 삭제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM tb_block_status WHERE sitename = %s", (sitename,))
+        status_cnt = cur.fetchone()[0]
+        if dry_run:
+            cur.close()
+            return {"status": "OK", "dry_run": True, "related": {"status_rows": status_cnt}}
+        cur.execute("DELETE FROM tb_block_status WHERE sitename = %s", (sitename,))
+        cur.execute("DELETE FROM tb_block_info WHERE sitename = %s", (sitename,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        return {"status": "OK", "deleted": deleted}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"블록 삭제 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 캔버스 레이아웃 관리 (Canvas Layout)
+# =============================================================================
+
+
+@app.get("/canvas/layout")
+async def get_canvas_layout():
+    """캔버스 노드 위치 + 엣지 + 설비/태그 카운트 일괄 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 엣지 (기존 flow-map)
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype,
+                   relation_type
+            FROM tb_facility_flow_map
+            ORDER BY upstream_facilitytype, upstream_sitename
+        """)
+        edges = [
+            {
+                "upstream_sitename": r[0], "upstream_facilitytype": r[1],
+                "downstream_sitename": r[2], "downstream_facilitytype": r[3],
+                "relation_type": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+        # 2) 엣지에서 고유 노드 추출
+        node_set: set[tuple[str, str]] = set()
+        for e in edges:
+            node_set.add((e["upstream_sitename"], e["upstream_facilitytype"]))
+            node_set.add((e["downstream_sitename"], e["downstream_facilitytype"]))
+
+        # 3) 저장된 위치 조회
+        cur.execute("SELECT sitename, facilitytype, pos_x, pos_y FROM tb_canvas_node_position")
+        pos_map = {(r[0], r[1]): (r[2], r[3]) for r in cur.fetchall()}
+        # 위치 테이블에만 있는 노드도 추가
+        for key in pos_map:
+            node_set.add(key)
+
+        # 4) 설비 카운트 (테이블 없으면 빈 맵)
+        equip_counts: dict[tuple, int] = {}
+        try:
+            cur.execute("""
+                SELECT sitename, facilitytype, COUNT(*) as cnt
+                FROM tb_equipment_info
+                GROUP BY sitename, facilitytype
+            """)
+            equip_counts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+        except Exception:
+            conn.rollback()
+
+        # 5) 카탈로그 카운트 (테이블 없으면 빈 맵)
+        catalog_counts: dict[tuple, int] = {}
+        try:
+            cur.execute("""
+                SELECT sitename, facilitytype, COUNT(*) as cnt
+                FROM tb_monitoring_catalog
+                GROUP BY sitename, facilitytype
+            """)
+            catalog_counts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+        except Exception:
+            conn.rollback()
+
+        # 6) 모니터링 플래그 (테이블 없으면 빈 맵)
+        monitoring_map: dict[str, bool] = {}
+        try:
+            cur.execute("""
+                SELECT sitename, COALESCE((meta->>'monitoring')::boolean, false)
+                FROM tb_admin_site_settings
+            """)
+            monitoring_map = {r[0]: r[1] for r in cur.fetchall()}
+        except Exception:
+            conn.rollback()
+
+        cur.close()
+
+        # 노드 응답 조합
+        nodes = []
+        for sn, ft in sorted(node_set):
+            px, py = pos_map.get((sn, ft), (0.0, 0.0))
+            nodes.append({
+                "sitename": sn,
+                "facilitytype": ft,
+                "pos_x": px,
+                "pos_y": py,
+                "equipment_count": equip_counts.get((sn, ft), 0),
+                "tag_group_count": catalog_counts.get((sn, ft), 0),
+                "monitoring": monitoring_map.get(sn, False),
+            })
+
+        return {"status": "OK", "nodes": nodes, "edges": edges}
+    except Exception as e:
+        logger.error(f"캔버스 레이아웃 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+class CanvasNodePos(BaseModel):
+    sitename: str
+    facilitytype: str
+    pos_x: float
+    pos_y: float
+
+
+class CanvasEdgePayload(BaseModel):
+    upstream_sitename: str
+    upstream_facilitytype: str
+    downstream_sitename: str
+    downstream_facilitytype: str
+    relation_type: str = "수계"
+
+
+class CanvasLayoutPayload(BaseModel):
+    nodes: list[CanvasNodePos]
+    edges: list[CanvasEdgePayload]
+
+
+@app.put("/canvas/layout")
+async def save_canvas_layout(body: CanvasLayoutPayload):
+    """캔버스 노드 위치 UPSERT + 엣지 diff (추가/삭제)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 노드 위치 UPSERT
+        if body.nodes:
+            from psycopg2.extras import execute_values
+            execute_values(
+                cur,
+                """
+                INSERT INTO tb_canvas_node_position (sitename, facilitytype, pos_x, pos_y)
+                VALUES %s
+                ON CONFLICT (sitename, facilitytype) DO UPDATE
+                SET pos_x = EXCLUDED.pos_x, pos_y = EXCLUDED.pos_y, updated_at = now()
+                """,
+                [(n.sitename, n.facilitytype, n.pos_x, n.pos_y) for n in body.nodes],
+            )
+
+        # 기존에 있지만 body에 없는 노드 위치 삭제
+        new_node_keys = {(n.sitename, n.facilitytype) for n in body.nodes}
+        cur.execute("SELECT sitename, facilitytype FROM tb_canvas_node_position")
+        db_node_keys = {(r[0], r[1]) for r in cur.fetchall()}
+        orphan_keys = db_node_keys - new_node_keys
+        for sn, ft in orphan_keys:
+            cur.execute(
+                "DELETE FROM tb_canvas_node_position WHERE sitename=%s AND facilitytype=%s",
+                (sn, ft),
+            )
+
+        # 2) 엣지 diff
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype
+            FROM tb_facility_flow_map
+        """)
+        db_edges = {(r[0], r[1], r[2], r[3]) for r in cur.fetchall()}
+        new_edges = {
+            (e.upstream_sitename, e.upstream_facilitytype,
+             e.downstream_sitename, e.downstream_facilitytype)
+            for e in body.edges
+        }
+
+        # 추가할 엣지
+        added = 0
+        for e_key in new_edges - db_edges:
+            edge_data = next(
+                e for e in body.edges
+                if (e.upstream_sitename, e.upstream_facilitytype,
+                    e.downstream_sitename, e.downstream_facilitytype) == e_key
+            )
+            cur.execute(
+                """INSERT INTO tb_facility_flow_map
+                   (upstream_sitename, upstream_facilitytype,
+                    downstream_sitename, downstream_facilitytype, relation_type)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (*e_key, edge_data.relation_type),
+            )
+            added += 1
+
+        # 삭제할 엣지
+        removed = 0
+        for e_key in db_edges - new_edges:
+            cur.execute(
+                """DELETE FROM tb_facility_flow_map
+                   WHERE upstream_sitename=%s AND upstream_facilitytype=%s
+                   AND downstream_sitename=%s AND downstream_facilitytype=%s""",
+                e_key,
+            )
+            removed += 1
+
+        conn.commit()
+        cur.close()
+        return {
+            "status": "OK",
+            "nodes_saved": len(body.nodes),
+            "edges_added": added,
+            "edges_removed": removed,
+        }
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"캔버스 레이아웃 저장 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/canvas/node-detail/{sitename}/{facilitytype}")
+async def get_canvas_node_detail(sitename: str, facilitytype: str):
+    """선택 노드 상세 (설비 목록, 카탈로그, 사이트 메타)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 설비 목록
+        cur.execute("""
+            SELECT equipment_id, equipmenttype, status,
+                   COALESCE(meta->>'note','') as note,
+                   COALESCE(meta->>'model','') as model
+            FROM tb_equipment_info
+            WHERE sitename=%s AND facilitytype=%s
+            ORDER BY equipment_id
+        """, (sitename, facilitytype))
+        equipment = [
+            {"equipment_id": r[0], "equipmenttype": r[1], "status": r[2],
+             "note": r[3], "model": r[4]}
+            for r in cur.fetchall()
+        ]
+
+        # 카탈로그 목록
+        cur.execute("""
+            SELECT catalog_id, catalog_name, display_order, items
+            FROM tb_monitoring_catalog
+            WHERE sitename=%s AND facilitytype=%s
+            ORDER BY display_order
+        """, (sitename, facilitytype))
+        catalogs = [
+            {"catalog_id": r[0], "catalog_name": r[1],
+             "display_order": r[2], "items": r[3]}
+            for r in cur.fetchall()
+        ]
+
+        # 사이트 메타 (테이블 없으면 빈 딕셔너리)
+        site_meta: dict = {}
+        try:
+            cur.execute("""
+                SELECT meta FROM tb_admin_site_settings WHERE sitename=%s
+            """, (sitename,))
+            row = cur.fetchone()
+            site_meta = row[0] if row else {}
+        except Exception:
+            conn.rollback()
+
+        cur.close()
+        return {
+            "status": "OK",
+            "equipment": equipment,
+            "catalogs": catalogs,
+            "site_meta": site_meta,
+        }
+    except Exception as e:
+        logger.error(f"캔버스 노드 상세 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# 설비↔태그 링크 (tb_equipment_tag_map)
+# =============================================================================
+
+@app.get("/canvas/equipment-tags/{sitename}/{facilitytype}")
+async def get_equipment_tags(sitename: str, facilitytype: str):
+    """설비별 연결 태그 목록 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT m.equipment_id, m.tagsn,
+                   COALESCE(t.datainfo, '') as datainfo,
+                   COALESCE(t.unit, '') as unit,
+                   COALESCE(t.datadesc, '') as datadesc
+            FROM tb_equipment_tag_map m
+            JOIN tb_equipment_info e ON e.equipment_id = m.equipment_id
+            LEFT JOIN tb_tag_info t ON t.tagsn = m.tagsn
+            WHERE e.sitename = %s AND e.facilitytype = %s
+            ORDER BY m.equipment_id, m.tagsn
+        """, (sitename, facilitytype))
+        rows = cur.fetchall()
+        cur.close()
+
+        result: dict[str, list] = {}
+        for r in rows:
+            eid = r[0]
+            if eid not in result:
+                result[eid] = []
+            result[eid].append({
+                "tagsn": r[1], "datainfo": r[2],
+                "unit": r[3], "datadesc": r[4],
+            })
+
+        return {"status": "OK", "equipment_tags": result}
+    except Exception as e:
+        logger.error(f"설비 태그 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+class EquipmentTagLinkBody(BaseModel):
+    equipment_id: str
+    tagsn: str
+
+
+@app.post("/canvas/equipment-tag-link")
+async def create_equipment_tag_link(body: EquipmentTagLinkBody):
+    """설비↔태그 연결."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO tb_equipment_tag_map (equipment_id, tagsn)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """, (body.equipment_id, body.tagsn))
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        logger.error(f"설비 태그 연결 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/canvas/equipment-tag-link")
+async def delete_equipment_tag_link(equipment_id: str, tagsn: str):
+    """설비↔태그 연결 해제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM tb_equipment_tag_map
+            WHERE equipment_id = %s AND tagsn = %s
+        """, (equipment_id, tagsn))
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        logger.error(f"설비 태그 해제 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
