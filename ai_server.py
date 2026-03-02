@@ -108,6 +108,135 @@ MAX_GRAPH_ROWS = 5000  # JSON 응답 최대 행 수 (그래프/차트)
 CSV_EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csv_exports")
 CSV_MAX_AGE_SECONDS = 3600  # CSV 파일 보존 기간 (1시간)
 
+# =============================================================================
+# 태그 데이터 그룹 (tb_tag_data_group 시드 데이터)
+# 2레벨 계층: parent_code=None → 상위 그룹, parent_code!=None → 하위 그룹
+# keywords=[] → 상위 전용 (자동분류 대상 아님, 질의 시 children 확장용)
+# =============================================================================
+TAG_DATA_GROUPS: list[tuple[str, str, str | None, str, list[str]]] = [
+    # (group_code, group_name, parent_code, tagtype, keywords)
+    # --- Analog Input: 트렌드 대상 ---
+    # 유량 계열
+    ("FLOW",               "유량",       None,        "Analog Input",  []),
+    ("FLOW_INSTANT",       "유량순시",   "FLOW",      "Analog Input",  ["유량순시", "순시유량"]),
+    ("FLOW_CUMULATIVE",    "유량적산",   "FLOW",      "Analog Input",  ["유량적산", "적산유량"]),
+    ("FLOW_INLET",         "유입유량",   "FLOW",      "Analog Input",  ["유입유량"]),
+    ("FLOW_OUTLET",        "유출유량",   "FLOW",      "Analog Input",  ["유출유량"]),
+    # 압력 계열
+    ("PRESSURE",           "압력",       None,        "Analog Input",  ["압력"]),
+    ("PRESSURE_INLET",     "유입압력",   "PRESSURE",  "Analog Input",  ["유입압력"]),
+    ("PRESSURE_OUTLET",    "유출압력",   "PRESSURE",  "Analog Input",  ["유출압력"]),
+    ("PRESSURE_DISCHARGE", "토출압력",   "PRESSURE",  "Analog Input",  ["토출압력"]),
+    # 수위 (리프 — 상위=하위)
+    ("WATER_LEVEL",        "수위",       None,        "Analog Input",  ["수위"]),
+    # 수질 계열
+    ("WATER_QUALITY",      "수질",       None,        "Analog Input",  []),
+    ("WATER_QUALITY_PH",   "pH",         "WATER_QUALITY", "Analog Input", ["PH", "ph"]),
+    ("WATER_QUALITY_TURB", "탁도",       "WATER_QUALITY", "Analog Input", ["탁도"]),
+    ("WATER_QUALITY_CL",   "잔류염소",   "WATER_QUALITY", "Analog Input", ["잔류염소", "염소"]),
+    # --- Analog Output: 설정값 ---
+    ("ALARM_SETPOINT",     "알람설정값", None,        "Analog Output", ["SET", "설정"]),
+    # --- Digital Input: 상태/알람 ---
+    ("COMM_ERROR",         "통신이상",   None,        "Digital Input", ["통신이상"]),
+    ("POWER_FAULT",        "전원이상",   None,        "Digital Input", ["UPS", "정전", "배터리"]),
+    ("EQUIP_FAULT",        "설비고장",   None,        "Digital Input", ["FAULT", "고장"]),
+    ("OPERATIONAL",        "운영상태",   None,        "Digital Input", ["동작", "자동", "원격"]),
+    ("VALVE_STATUS",       "밸브상태",   None,        "Digital Input", ["밸브"]),
+    ("PUMP_STATUS",        "펌프상태",   None,        "Digital Input", ["펌프"]),
+]
+
+# group_code → children group_codes 매핑 (런타임 캐시)
+_GROUP_CHILDREN: dict[str, list[str]] = {}
+# group_code → group_id 매핑 (런타임 캐시, _auto_classify_tags 후 채워짐)
+_GROUP_CODE_TO_ID: dict[str, int] = {}
+
+
+def _build_group_children_cache():
+    """TAG_DATA_GROUPS에서 parent→children 매핑을 빌드한다."""
+    _GROUP_CHILDREN.clear()
+    for code, _, parent, _, _ in TAG_DATA_GROUPS:
+        if parent:
+            _GROUP_CHILDREN.setdefault(parent, []).append(code)
+
+
+def _resolve_group_codes(group_code: str) -> list[str]:
+    """group_code가 상위 그룹이면 하위 전체를 반환, 아니면 [자신]."""
+    children = _GROUP_CHILDREN.get(group_code)
+    if children:
+        return children
+    return [group_code]
+
+
+def _auto_classify_tags(conn) -> int:
+    """태그 자동분류: TAG_DATA_GROUPS → tb_tag_data_group UPSERT → tb_tag_group_map 갱신.
+
+    longest-keyword-first 전략으로 datainfo를 매칭한다.
+    반환: 분류된 태그 수
+    """
+    cur = conn.cursor()
+
+    # 1. tb_tag_data_group UPSERT
+    for idx, (code, name, parent, tagtype, keywords) in enumerate(TAG_DATA_GROUPS):
+        cur.execute("""
+            INSERT INTO tb_tag_data_group (group_code, group_name, parent_code, tagtype, keywords, display_order)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+            ON CONFLICT (group_code) DO UPDATE SET
+                group_name = EXCLUDED.group_name,
+                parent_code = EXCLUDED.parent_code,
+                tagtype = EXCLUDED.tagtype,
+                keywords = EXCLUDED.keywords,
+                display_order = EXCLUDED.display_order
+        """, (code, name, parent, tagtype, json.dumps(keywords, ensure_ascii=False), idx))
+    conn.commit()
+
+    # group_code → group_id 캐시 로드
+    cur.execute("SELECT group_code, group_id FROM tb_tag_data_group")
+    _GROUP_CODE_TO_ID.clear()
+    for gc, gid in cur.fetchall():
+        _GROUP_CODE_TO_ID[gc] = gid
+
+    # 2. tb_tag_info 전체 로드
+    cur.execute("SELECT tagsn, datainfo FROM tb_tag_info")
+    all_tags = cur.fetchall()
+
+    # 3. 키워드 정렬: longest-first (긴 키워드가 먼저 매칭되어야 정확)
+    keyword_pairs: list[tuple[str, str]] = []  # (keyword, group_code)
+    for code, _, _, _, keywords in TAG_DATA_GROUPS:
+        for kw in keywords:
+            keyword_pairs.append((kw, code))
+    keyword_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+
+    # 4. 태그별 그룹 매칭
+    mappings: list[tuple[str, int]] = []  # (tagsn, group_id)
+    for tagsn, datainfo in all_tags:
+        if not datainfo:
+            continue
+        matched_code = None
+        for kw, code in keyword_pairs:
+            if kw.upper() in datainfo.upper():
+                matched_code = code
+                break
+        if matched_code and matched_code in _GROUP_CODE_TO_ID:
+            mappings.append((tagsn, _GROUP_CODE_TO_ID[matched_code]))
+
+    # 5. tb_tag_group_map 갱신 (DELETE + bulk INSERT)
+    cur.execute("DELETE FROM tb_tag_group_map")
+    if mappings:
+        from psycopg2.extras import execute_values
+        execute_values(
+            cur,
+            "INSERT INTO tb_tag_group_map (tagsn, group_id) VALUES %s",
+            mappings,
+            page_size=500,
+        )
+    conn.commit()
+    cur.close()
+
+    # children 캐시 빌드
+    _build_group_children_cache()
+
+    return len(mappings)
+
 
 def save_csv(rows: list, columns: list, intent: str, session_id: str) -> str:
     """SQL 결과를 CSV로 저장하고 파일명을 반환한다."""
@@ -262,7 +391,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
 
-    # 캔버스 노드 위치 테이블 자동 생성
+    # DDL 자동 생성 (캔버스 + 태그 그룹)
     try:
         _conn = get_db_connection()
         _cur = _conn.cursor()
@@ -276,9 +405,6 @@ async def lifespan(app: FastAPI):
                 PRIMARY KEY (sitename, facilitytype)
             )
         """)
-        _conn.commit()
-        _cur.close()
-        _conn.close()
         _cur.execute("""
             CREATE TABLE IF NOT EXISTS tb_equipment_tag_map (
                 equipment_id VARCHAR(64)  NOT NULL,
@@ -286,10 +412,40 @@ async def lifespan(app: FastAPI):
                 PRIMARY KEY (equipment_id, tagsn)
             )
         """)
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_tag_data_group (
+                group_id      SERIAL PRIMARY KEY,
+                group_code    VARCHAR(50)  NOT NULL UNIQUE,
+                group_name    VARCHAR(100) NOT NULL,
+                parent_code   VARCHAR(50),
+                tagtype       VARCHAR(50)  NOT NULL,
+                keywords      JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                display_order INT          DEFAULT 0,
+                created_at    TIMESTAMPTZ  DEFAULT now()
+            )
+        """)
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_tag_group_map (
+                tagsn    VARCHAR(64) PRIMARY KEY,
+                group_id INT NOT NULL REFERENCES tb_tag_data_group(group_id)
+            )
+        """)
         _conn.commit()
-        logger.info("tb_canvas_node_position / tb_equipment_tag_map 테이블 확인/생성 완료")
+        _cur.close()
+        _conn.close()
+        logger.info("DDL 확인/생성 완료: canvas_node_position, equipment_tag_map, tag_data_group, tag_group_map")
     except Exception as e:
-        logger.warning(f"캔버스 테이블 생성 실패 (무시): {e}")
+        logger.warning(f"DDL 생성 실패 (무시): {e}")
+
+    # 태그 자동분류
+    try:
+        _conn2 = get_db_connection()
+        classified = _auto_classify_tags(_conn2)
+        _conn2.close()
+        logger.info(f"태그 그룹 자동분류 완료: {classified}건 분류")
+    except Exception as e:
+        logger.warning(f"태그 자동분류 실패 (무시): {e}")
+        _build_group_children_cache()  # 분류 실패해도 children 캐시는 빌드
 
     # 세션 정리 백그라운드 태스크
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
@@ -2298,9 +2454,11 @@ _TIMESERIES_COLUMNS = [
 def _execute_timeseries_query(
     sitename: str, facilitytype: str, tagtype: str,
     datainfo_pattern: str, from_ts: str, to_ts: str,
+    group_code: str | None = None,
 ) -> tuple[list, list]:
     """tb_tag_info → 청크 직접 쿼리로 시계열 raw 데이터 반환.
 
+    group_code 우선 → datainfo regex 폴백.
     JOIN을 Python 측에서 수행하여 ChunkAppend 플래너의
     Hash Join + 전체 스캔 문제를 우회한다.
     """
@@ -2308,30 +2466,63 @@ def _execute_timeseries_query(
     try:
         cur = conn.cursor()
 
-        # Step 1: tb_tag_info에서 매칭 태그 + 메타 추출
-        conditions = ["tagtype = %s"]
-        qp: list = [tagtype]
-        if sitename and sitename != "%%":
-            conditions.append("sitename = %s")
-            qp.append(sitename)
-        if facilitytype and facilitytype != "%%":
-            conditions.append("facilitytype = %s")
-            qp.append(facilitytype)
-        if datainfo_pattern:
-            conditions.append("datainfo ~ %s")
-            qp.append(datainfo_pattern)
-
-        cur.execute(
-            "SELECT tagsn, sitename, facilitytype, datainfo,"
-            " COALESCE(datadesc, '') FROM tb_tag_info"
-            f" WHERE {' AND '.join(conditions)}",
-            qp,
-        )
         tag_meta: dict[str, tuple] = {}
         tagsn_list: list[str] = []
-        for tagsn, sn, ft, di, dd in cur.fetchall():
-            tag_meta[tagsn] = (sn, ft, di, dd)
-            tagsn_list.append(tagsn)
+
+        # Step 1-A: group_code가 있으면 tb_tag_group_map JOIN으로 정확한 태그 목록 획득
+        if group_code:
+            resolved_codes = _resolve_group_codes(group_code)
+            resolved_ids = [_GROUP_CODE_TO_ID[c] for c in resolved_codes if c in _GROUP_CODE_TO_ID]
+
+            if resolved_ids:
+                conditions_g = ["gm.group_id = ANY(%s)", "ti.tagtype = %s"]
+                qp_g: list = [resolved_ids, tagtype]
+                if sitename and sitename != "%%":
+                    conditions_g.append("ti.sitename = %s")
+                    qp_g.append(sitename)
+                if facilitytype and facilitytype != "%%":
+                    conditions_g.append("ti.facilitytype = %s")
+                    qp_g.append(facilitytype)
+
+                cur.execute(
+                    "SELECT ti.tagsn, ti.sitename, ti.facilitytype, ti.datainfo,"
+                    " COALESCE(ti.datadesc, '') FROM tb_tag_info ti"
+                    " JOIN tb_tag_group_map gm ON ti.tagsn = gm.tagsn"
+                    f" WHERE {' AND '.join(conditions_g)}",
+                    qp_g,
+                )
+                for tagsn, sn, ft, di, dd in cur.fetchall():
+                    tag_meta[tagsn] = (sn, ft, di, dd)
+                    tagsn_list.append(tagsn)
+
+                if tagsn_list:
+                    logger.info(f"그룹 매칭: group_code={group_code} → {len(tagsn_list)}태그")
+
+        # Step 1-B: 그룹 매칭 결과 없으면 datainfo regex 폴백
+        if not tagsn_list:
+            conditions = ["tagtype = %s"]
+            qp: list = [tagtype]
+            if sitename and sitename != "%%":
+                conditions.append("sitename = %s")
+                qp.append(sitename)
+            if facilitytype and facilitytype != "%%":
+                conditions.append("facilitytype = %s")
+                qp.append(facilitytype)
+            if datainfo_pattern:
+                conditions.append("datainfo ~ %s")
+                qp.append(datainfo_pattern)
+
+            cur.execute(
+                "SELECT tagsn, sitename, facilitytype, datainfo,"
+                " COALESCE(datadesc, '') FROM tb_tag_info"
+                f" WHERE {' AND '.join(conditions)}",
+                qp,
+            )
+            for tagsn, sn, ft, di, dd in cur.fetchall():
+                tag_meta[tagsn] = (sn, ft, di, dd)
+                tagsn_list.append(tagsn)
+            if tagsn_list and group_code:
+                logger.info(f"그룹 폴백→datainfo: group_code={group_code}, pattern={datainfo_pattern} → {len(tagsn_list)}태그")
 
         if not tagsn_list:
             cur.close()
@@ -4200,7 +4391,7 @@ async def ask(request: AskRequest):
             except ValueError:
                 pass
 
-    # TIMESERIES 인텐트: 2단계 청크 직접 쿼리 (JOIN 플래너 우회)
+    # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
     if intent in _TIMESERIES_CHUNK_INTENTS:
         _sn = params.get("sitename", "%%")
         _ft_ts = params.get("facilitytype", "%%")
@@ -4226,15 +4417,23 @@ async def ask(request: AskRequest):
         else:
             _di_pat = params.get("datainfo", ".*")
 
+        # group_code 결정: param_extractor에서 추출 → intent-specific 오버라이드
+        _group = params.get("group_code")
+        if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
+            _group = _group or "FLOW_INSTANT"
+        elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
+            _group = _group or "FLOW_CUMULATIVE"
+
         try:
             _ts_rows, _ts_cols = await asyncio.to_thread(
                 _execute_timeseries_query,
                 _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
+                _group,
             )
             if _ts_rows:
                 rows = _ts_rows
                 columns = _ts_cols
-                logger.info(f"TIMESERIES 청크 쿼리: {len(_ts_rows)}행 ({intent})")
+                logger.info(f"TIMESERIES 청크 쿼리: {len(_ts_rows)}행 ({intent}, group={_group})")
         except Exception as e:
             logger.error(f"TIMESERIES 청크 쿼리 실패 ({intent}): {e}")
 
@@ -5175,7 +5374,7 @@ async def ask_stream(request: AskRequest):
                 except ValueError:
                     pass
 
-        # TIMESERIES 인텐트: 2단계 청크 직접 쿼리 (JOIN 플래너 우회)
+        # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
         if intent in _TIMESERIES_CHUNK_INTENTS:
             _sn = params.get("sitename", "%%")
             _ft_ts = params.get("facilitytype", "%%")
@@ -5201,10 +5400,18 @@ async def ask_stream(request: AskRequest):
             else:
                 _di_pat = params.get("datainfo", ".*")
 
+            # group_code 결정: param_extractor에서 추출 → intent-specific 오버라이드
+            _group = params.get("group_code")
+            if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
+                _group = _group or "FLOW_INSTANT"
+            elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
+                _group = _group or "FLOW_CUMULATIVE"
+
             try:
                 _ts_rows, _ts_cols = await asyncio.to_thread(
                     _execute_timeseries_query,
                     _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
+                    _group,
                 )
                 if _ts_rows:
                     rows = _ts_rows
@@ -7066,6 +7273,55 @@ async def get_tag_filters():
     except psycopg2.Error as e:
         logger.error(f"태그 필터 조회 실패: {e}")
         return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": {}}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/tags/groups")
+async def get_tag_groups():
+    """태그 데이터 그룹 현황 (디버그용) — 그룹별 태그 수 + 전체/분류/미분류 통계"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 그룹별 태그 수
+        cur.execute("""
+            SELECT g.group_code, g.group_name, g.parent_code, g.tagtype,
+                   COUNT(m.tagsn) AS tag_count
+            FROM tb_tag_data_group g
+            LEFT JOIN tb_tag_group_map m ON g.group_id = m.group_id
+            GROUP BY g.group_id, g.group_code, g.group_name, g.parent_code, g.tagtype
+            ORDER BY g.display_order
+        """)
+        groups = []
+        for code, name, parent, tagtype, cnt in cur.fetchall():
+            groups.append({
+                "group_code": code,
+                "group_name": name,
+                "parent_code": parent,
+                "tagtype": tagtype,
+                "tag_count": cnt,
+            })
+
+        # 전체 통계
+        cur.execute("SELECT COUNT(*) FROM tb_tag_info")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM tb_tag_group_map")
+        classified = cur.fetchone()[0]
+
+        cur.close()
+        return {
+            "status": "OK",
+            "total_tags": total,
+            "classified": classified,
+            "unclassified": total - classified,
+            "groups": groups,
+        }
+    except Exception as e:
+        logger.error(f"태그 그룹 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
             conn.close()

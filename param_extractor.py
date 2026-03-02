@@ -73,6 +73,29 @@ _FUZZY_THRESHOLD_SITE = 0.6       # 현장명 (2~3글자, 임계값 낮게)
 _FUZZY_THRESHOLD_KEYWORD = 0.65   # 시설유형/데이터 키워드
 
 # sitename fuzzy 매칭에서 제외할 일반 단어 (false positive 방지)
+# 질의 키워드 → group_code 매핑 (compound 우선, longest-first 순서)
+_KEYWORD_TO_GROUP_CODE: list[tuple[str, str]] = [
+    # compound (specific) — 먼저 체크
+    ("유입압력",   "PRESSURE_INLET"),
+    ("유출압력",   "PRESSURE_OUTLET"),
+    ("토출압력",   "PRESSURE_DISCHARGE"),
+    ("유입유량",   "FLOW_INLET"),
+    ("유출유량",   "FLOW_OUTLET"),
+    ("유량순시",   "FLOW_INSTANT"),
+    ("순시유량",   "FLOW_INSTANT"),
+    ("유량적산",   "FLOW_CUMULATIVE"),
+    ("적산유량",   "FLOW_CUMULATIVE"),
+    ("잔류염소",   "WATER_QUALITY_CL"),
+    # simple (broader) — 상위 그룹은 하위 전부를 의미
+    ("수위",       "WATER_LEVEL"),
+    ("탁도",       "WATER_QUALITY_TURB"),
+    ("순시",       "FLOW_INSTANT"),
+    ("적산",       "FLOW_CUMULATIVE"),
+    ("유량",       "FLOW"),
+    ("압력",       "PRESSURE"),
+    ("수질",       "WATER_QUALITY"),
+]
+
 _SITENAME_FUZZY_STOPWORDS = {
     # 시설유형/블록
     "배수지", "가압장", "감압", "소블록", "중블록", "대블록",
@@ -115,6 +138,7 @@ class ParamExtractor:
             "facilitytype": str or None,
             "block_level": str or None,
             "datainfo": str or None,
+            "group_code": str or None,   # 태그 데이터 그룹 코드
             "limit": int,
             "alarm_msg": str or None,
             "from_ts": str or None,
@@ -133,6 +157,7 @@ class ParamExtractor:
         sitename = self._extract_sitename(question)
         facilitytype = self._extract_facilitytype(question, block_level)
         datainfo = self._extract_datainfo(question)
+        group_code = self._extract_group_code(question)
         limit_val = self._extract_limit(question)
         alarm_msg = self._extract_alarm_msg(question)
         datakey = self._extract_datakey(question)
@@ -212,6 +237,7 @@ class ParamExtractor:
             "facilitytype": facilitytype,
             "block_level": block_level,
             "datainfo": datainfo,
+            "group_code": group_code,
             "limit": limit_val,
             "alarm_msg": alarm_msg,
             "from_ts": from_ts,
@@ -523,6 +549,16 @@ class ParamExtractor:
                     logger.info(f"datainfo fuzzy 보정: '{token}' → '{canonical}' (score={score:.3f})")
                 return canonical
 
+        return None
+
+    def _extract_group_code(self, question: str) -> Optional[str]:
+        """질의에서 태그 데이터 그룹 코드를 추출한다.
+        _KEYWORD_TO_GROUP_CODE 리스트는 compound→simple 순서이므로
+        가장 구체적인 키워드가 먼저 매칭된다.
+        """
+        for keyword, code in _KEYWORD_TO_GROUP_CODE:
+            if keyword in question:
+                return code
         return None
 
     def _extract_limit(self, question: str) -> int:
