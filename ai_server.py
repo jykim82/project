@@ -145,6 +145,86 @@ TAG_DATA_GROUPS: list[tuple[str, str, str | None, str, list[str]]] = [
     ("PUMP_STATUS",        "펌프상태",   None,        "Digital Input", ["펌프"]),
 ]
 
+# =============================================================================
+# 인과관계 체인 템플릿 (시설유형별 장비 인과 순서)
+# 판단은 Rule-based, SLM은 해석/설명에만 사용
+# =============================================================================
+CAUSAL_CHAIN_TEMPLATES: list[dict] = [
+    # === 가압장: 펌프 → 토출압력 → 유출유량 → [하류 수위] ===
+    {
+        "facilitytype": "가압장",
+        "chain": [
+            {"step": 1, "group_code": "PUMP_STATUS",        "role": "cause",  "signal": "ON",      "expected": None},
+            {"step": 2, "group_code": "PRESSURE_DISCHARGE",  "role": "effect", "signal": None,      "expected": "RISE", "lag_min": 1, "lag_max": 5},
+            {"step": 3, "group_code": "FLOW_OUTLET",         "role": "effect", "signal": None,      "expected": "RISE", "lag_min": 1, "lag_max": 5},
+        ],
+        "cross_facility": {
+            "downstream_group": "WATER_LEVEL",
+            "expected": "RISE",
+            "lag_min": 5,
+            "lag_max": 30,
+        },
+    },
+    # === 배수지: 수위 감시 → 밸브 개방 → 유출유량 → [하류 유입유량] ===
+    {
+        "facilitytype": "배수지",
+        "chain": [
+            {"step": 1, "group_code": "WATER_LEVEL",  "role": "trigger", "signal": "MONITOR", "expected": None},
+            {"step": 2, "group_code": "VALVE_STATUS",  "role": "cause",   "signal": "OPEN",    "expected": None},
+            {"step": 3, "group_code": "FLOW_OUTLET",   "role": "effect",  "signal": None,      "expected": "RISE", "lag_min": 0, "lag_max": 3},
+        ],
+        "cross_facility": {
+            "downstream_group": "FLOW_INLET",
+            "expected": "RISE",
+            "lag_min": 5,
+            "lag_max": 20,
+        },
+    },
+    # === 감압시설: 유입압력 감시 → 밸브 조절 → 유출압력 안정 → [하류 유입압력] ===
+    {
+        "facilitytype": "감압시설",
+        "chain": [
+            {"step": 1, "group_code": "PRESSURE_INLET",  "role": "trigger", "signal": "MONITOR",  "expected": None},
+            {"step": 2, "group_code": "VALVE_STATUS",     "role": "cause",   "signal": "REGULATE", "expected": None},
+            {"step": 3, "group_code": "PRESSURE_OUTLET",  "role": "effect",  "signal": None,       "expected": "STABLE", "lag_min": 0, "lag_max": 3},
+        ],
+        "cross_facility": {
+            "downstream_group": "PRESSURE_INLET",
+            "expected": "STABLE",
+            "lag_min": 1,
+            "lag_max": 10,
+        },
+    },
+    # === 소블록: 유입유량 감시 → 수위 상관 ===
+    {
+        "facilitytype": "소블록",
+        "chain": [
+            {"step": 1, "group_code": "FLOW_INLET",   "role": "trigger", "signal": "MONITOR",   "expected": None},
+            {"step": 2, "group_code": "WATER_LEVEL",   "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
+        ],
+        "cross_facility": None,
+    },
+    # === 소소블록: 소블록과 동일 ===
+    {
+        "facilitytype": "소소블록",
+        "chain": [
+            {"step": 1, "group_code": "FLOW_INLET",   "role": "trigger", "signal": "MONITOR",   "expected": None},
+            {"step": 2, "group_code": "WATER_LEVEL",   "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
+        ],
+        "cross_facility": None,
+    },
+]
+
+# facilitytype → template 빠른 조회
+_CAUSAL_TEMPLATE_MAP: dict[str, dict] = {t["facilitytype"]: t for t in CAUSAL_CHAIN_TEMPLATES}
+
+# =============================================================================
+# 인과 인덱스 (런타임 캐시, _build_causal_index 후 채워짐)
+# key: (sitename, facilitytype)
+# value: {"template", "tag_map", "upstream", "downstream"}
+# =============================================================================
+_CAUSAL_INDEX: dict[tuple[str, str], dict] = {}
+
 # group_code → children group_codes 매핑 (런타임 캐시)
 _GROUP_CHILDREN: dict[str, list[str]] = {}
 # group_code → group_id 매핑 (런타임 캐시, _auto_classify_tags 후 채워짐)
@@ -236,6 +316,65 @@ def _auto_classify_tags(conn) -> int:
     _build_group_children_cache()
 
     return len(mappings)
+
+
+def _build_causal_index(conn) -> int:
+    """인과 인덱스 구축: 시설별 템플릿 + 태그 매핑 + 상류/하류 관계.
+
+    _auto_classify_tags() 이후 호출해야 한다 (_GROUP_CODE_TO_ID 필요).
+    반환: 인덱싱된 시설 수
+    """
+    _CAUSAL_INDEX.clear()
+    cur = conn.cursor()
+
+    # 1) 시설별 group_code → tagsn[] 매핑
+    #    tb_tag_info JOIN tb_tag_group_map JOIN tb_tag_data_group
+    cur.execute("""
+        SELECT t.sitename, t.facilitytype, g.group_code, t.tagsn
+        FROM tb_tag_info t
+        JOIN tb_tag_group_map gm ON t.tagsn = gm.tagsn
+        JOIN tb_tag_data_group g ON gm.group_id = g.group_id
+        WHERE t.sitename IS NOT NULL AND t.facilitytype IS NOT NULL
+        ORDER BY t.sitename, t.facilitytype, g.group_code
+    """)
+    # {(sitename, facilitytype): {group_code: [tagsn, ...]}}
+    site_tag_map: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for sn, ft, gc, tsn in cur.fetchall():
+        key = (sn, ft)
+        site_tag_map.setdefault(key, {}).setdefault(gc, []).append(tsn)
+
+    # 2) flow_map 로드 → upstream/downstream 관계
+    cur.execute("""
+        SELECT upstream_sitename, upstream_facilitytype,
+               downstream_sitename, downstream_facilitytype
+        FROM tb_facility_flow_map
+    """)
+    # {(sn, ft): [downstream (sn, ft), ...]}
+    downstream_map: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    upstream_map: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for usn, uft, dsn, dft in cur.fetchall():
+        ukey, dkey = (usn, uft), (dsn, dft)
+        downstream_map.setdefault(ukey, []).append(dkey)
+        upstream_map.setdefault(dkey, []).append(ukey)
+
+    cur.close()
+
+    # 3) 인덱스 구축
+    count = 0
+    for (sn, ft), tag_map in site_tag_map.items():
+        template = _CAUSAL_TEMPLATE_MAP.get(ft)
+        if not template:
+            continue
+        _CAUSAL_INDEX[(sn, ft)] = {
+            "template": template,
+            "tag_map": tag_map,
+            "upstream": upstream_map.get((sn, ft), []),
+            "downstream": downstream_map.get((sn, ft), []),
+        }
+        count += 1
+
+    logger.info("인과 인덱스 구축 완료: %d개 시설 매핑", count)
+    return count
 
 
 def save_csv(rows: list, columns: list, intent: str, session_id: str) -> str:
@@ -437,14 +576,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"DDL 생성 실패 (무시): {e}")
 
-    # 태그 자동분류
+    # 태그 자동분류 + 인과 인덱스 구축
     try:
         _conn2 = get_db_connection()
         classified = _auto_classify_tags(_conn2)
-        _conn2.close()
         logger.info(f"태그 그룹 자동분류 완료: {classified}건 분류")
+        causal_count = _build_causal_index(_conn2)
+        logger.info(f"인과 인덱스 구축 완료: {causal_count}개 시설")
+        _conn2.close()
     except Exception as e:
-        logger.warning(f"태그 자동분류 실패 (무시): {e}")
+        logger.warning(f"태그 자동분류/인과 인덱스 실패 (무시): {e}")
         _build_group_children_cache()  # 분류 실패해도 children 캐시는 빌드
 
     # 세션 정리 백그라운드 태스크
@@ -3503,6 +3644,11 @@ def process_sql_result(
                 group_dist[g] = group_dist.get(g, 0) + 1
             data["site_group_distribution"] = group_dist
 
+        # 인과 인덱스 통계 (전체 스캔 시에는 요약만)
+        if _CAUSAL_INDEX:
+            data["causal_index_count"] = len(_CAUSAL_INDEX)
+            data["causal_template_types"] = list(_CAUSAL_TEMPLATE_MAP.keys())
+
         data["anomaly_scan_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_scan_detail_block"] = \
             build_anomaly_scan_detail_block(rows, columns, site_profiles=_profiles)
@@ -3572,6 +3718,74 @@ def process_sql_result(
             except Exception as e:
                 logger.warning(f"C그룹 패턴 분석 실패: {e}")
 
+        # 인과관계 검증 (이상 태그 중 첫 번째에 대해)
+        causal_result = None
+        if _CAUSAL_INDEX and rows:
+            try:
+                col_map_c = {c: i for i, c in enumerate(columns)}
+                _c_tagsn_idx = col_map_c.get("tagsn")
+                _c_z_idx = col_map_c.get("z_score")
+                _c_datainfo_idx = col_map_c.get("datainfo")
+                if _c_tagsn_idx is not None and _c_z_idx is not None:
+                    # 이상 등급 태그 찾기
+                    _anomaly_row = None
+                    for _r in rows:
+                        try:
+                            _zv = float(_r[_c_z_idx]) if _r[_c_z_idx] else 0
+                        except (ValueError, TypeError):
+                            _zv = 0
+                        if abs(_zv) >= GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]:
+                            _anomaly_row = _r
+                            break
+                    if _anomaly_row:
+                        _a_tagsn = _anomaly_row[_c_tagsn_idx]
+                        _a_datainfo = str(_anomaly_row[_c_datainfo_idx] or "")
+                        _a_z = float(_anomaly_row[_c_z_idx] or 0)
+                        _a_dir = "RISE" if _a_z > 0 else "FALL"
+                        # group_code 결정
+                        _a_gc = None
+                        for _gc, _gid in _GROUP_CODE_TO_ID.items():
+                            # tag_group_map에서 찾기
+                            pass
+                        # 간이 결정: datainfo 키워드 매칭
+                        from anomaly_detector import verify_causal_context
+                        for kw, code in [
+                            ("유입압력", "PRESSURE_INLET"), ("유출압력", "PRESSURE_OUTLET"),
+                            ("토출압력", "PRESSURE_DISCHARGE"), ("유입유량", "FLOW_INLET"),
+                            ("유출유량", "FLOW_OUTLET"), ("유량순시", "FLOW_INSTANT"),
+                            ("유량적산", "FLOW_CUMULATIVE"),
+                            ("수위", "WATER_LEVEL"), ("압력", "PRESSURE"), ("유량", "FLOW"),
+                            ("밸브", "VALVE_STATUS"), ("펌프", "PUMP_STATUS"),
+                        ]:
+                            if kw in _a_datainfo:
+                                _a_gc = code
+                                break
+                        if _a_gc:
+                            def _causal_query_func(tagsn_list, minutes):
+                                """인과 검증용 시계열 조회 콜백."""
+                                _cconn = get_db_connection()
+                                _ccur = _cconn.cursor()
+                                _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                _from = (datetime.now() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+                                _chunks = _get_chunks_for_range(_ccur, _from, _to)
+                                result = {}
+                                if _chunks:
+                                    raw_rows = _query_chunks_raw(_ccur, _chunks, tagsn_list, _from, _to)
+                                    for tsn, _, val in raw_rows:
+                                        result.setdefault(tsn, []).append(float(val) if val else 0.0)
+                                _ccur.close()
+                                _cconn.close()
+                                return result
+
+                            causal_result = verify_causal_context(
+                                _causal_query_func, _site, _ft,
+                                _a_gc, _a_dir, _CAUSAL_INDEX,
+                            )
+                            if causal_result:
+                                data["causal_context"] = causal_result
+            except Exception as e:
+                logger.warning(f"인과관계 검증 실패 (무시): {e}")
+
         data["anomaly_facility_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_facility_detail_block"] = \
             build_anomaly_facility_detail_block(
@@ -3580,6 +3794,7 @@ def process_sql_result(
                 sitename=_site,
                 facilitytype=_ft,
                 pattern_result=pattern_result,
+                causal_result=causal_result,
             )
 
     # -------------------------------------------------
@@ -7325,6 +7540,102 @@ async def get_tag_groups():
     finally:
         if conn:
             conn.close()
+
+
+# =============================================================================
+# 인과관계 디버그 API
+# =============================================================================
+
+@app.get("/causal/rules")
+async def get_causal_rules():
+    """인과 체인 템플릿 + 시설별 매핑 현황 (디버그용)."""
+    templates = []
+    for t in CAUSAL_CHAIN_TEMPLATES:
+        templates.append({
+            "facilitytype": t["facilitytype"],
+            "chain_steps": len(t["chain"]),
+            "has_cross_facility": t.get("cross_facility") is not None,
+            "chain": t["chain"],
+        })
+
+    # 시설별 인과 인덱스 통계
+    facilities = []
+    for (sn, ft), info in _CAUSAL_INDEX.items():
+        tag_groups = {gc: len(tsns) for gc, tsns in info["tag_map"].items()}
+        facilities.append({
+            "sitename": sn,
+            "facilitytype": ft,
+            "tag_groups": tag_groups,
+            "upstream_count": len(info.get("upstream", [])),
+            "downstream_count": len(info.get("downstream", [])),
+        })
+
+    return {
+        "status": "OK",
+        "template_count": len(templates),
+        "indexed_facility_count": len(_CAUSAL_INDEX),
+        "templates": templates,
+        "facilities": facilities[:50],  # 최대 50개만 표시
+    }
+
+
+@app.get("/causal/verify")
+async def verify_causal(sitename: str, facilitytype: str):
+    """특정 시설의 인과 체인 현재 상태 검증 (디버그용)."""
+    key = (sitename, facilitytype)
+    info = _CAUSAL_INDEX.get(key)
+    if not info:
+        return {"status": "ERROR", "message": f"인과 인덱스에 없음: {sitename} {facilitytype}"}
+
+    template = info["template"]
+    tag_map = info["tag_map"]
+
+    # 각 step의 태그 존재 여부 + 최신값 조회
+    steps = []
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        for step_info in template["chain"]:
+            gc = step_info["group_code"]
+            tagsns = tag_map.get(gc, [])
+            latest_values = {}
+            if tagsns:
+                cur.execute("""
+                    SELECT tagsn, val
+                    FROM tb_tag_raw_data
+                    WHERE tagsn = ANY(%s)
+                    ORDER BY logtime DESC
+                    LIMIT %s
+                """, (tagsns, len(tagsns)))
+                for tsn, val in cur.fetchall():
+                    if tsn not in latest_values:
+                        latest_values[tsn] = float(val) if val else None
+            steps.append({
+                "step": step_info["step"],
+                "group_code": gc,
+                "role": step_info["role"],
+                "expected": step_info.get("expected"),
+                "tag_count": len(tagsns),
+                "latest_values": latest_values,
+            })
+        cur.close()
+    except Exception as e:
+        logger.warning(f"인과 검증 API 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+    return {
+        "status": "OK",
+        "sitename": sitename,
+        "facilitytype": facilitytype,
+        "upstream": info.get("upstream", []),
+        "downstream": info.get("downstream", []),
+        "chain_steps": steps,
+        "cross_facility": template.get("cross_facility"),
+    }
 
 
 # =============================================================================

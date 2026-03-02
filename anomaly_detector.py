@@ -409,6 +409,7 @@ def build_anomaly_facility_detail_block(
     sitename: str = "",
     facilitytype: str = "",
     pattern_result: Optional[dict] = None,
+    causal_result: Optional[dict] = None,
 ) -> list:
     """
     ANOMALY_FACILITY_DETAIL: SQL 결과를 복합 진단 결과 리스트로 조립한다.
@@ -474,6 +475,16 @@ def build_anomaly_facility_detail_block(
             text = f"{datainfo}: {marked_level} ({dev_text}){grade_tag}"
 
         items.append({"prefix": "-", "text": text, "alertGrade": grade})
+
+    # 인과관계 검증 결과 추가
+    if causal_result and causal_result.get("detail"):
+        items.append({"prefix": "", "text": "─── 인과관계 분석 ───"})
+        for line in causal_result["detail"].split("\n"):
+            if line.strip():
+                items.append({"prefix": "▸", "text": line.strip()})
+        if causal_result.get("possible_causes"):
+            causes_text = ", ".join(causal_result["possible_causes"])
+            items.append({"prefix": "▸", "text": f"점검 필요: {causes_text}"})
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:분석 대상 센서가 없습니다.>>"})
@@ -863,3 +874,338 @@ def count_cusum_status(cusum_results: dict) -> dict:
         status = r.get("leak_status", "정상")
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+# ── 인과관계 검증 엔진 ──────────────────────────────────────────
+# 물리법칙 기반 Rule 판단 — SLM 미사용, 투명하고 즉시 실행
+# ────────────────────────────────────────────────────────────────
+
+# 판정 패턴 유형 → 가능 원인 매핑
+_CAUSAL_PATTERNS = {
+    "PUMP_ON_NO_PRESSURE": {
+        "label": "펌프가동+압력무반응",
+        "possible_causes": ["펌프 고장", "관로 파손", "체크밸브 고착"],
+    },
+    "PUMP_ON_NO_FLOW": {
+        "label": "펌프가동+유량무반응",
+        "possible_causes": ["펌프 고장", "밸브 폐쇄 상태", "유량센서 이상"],
+    },
+    "VALVE_OPEN_NO_FLOW": {
+        "label": "밸브개방+유량무반응",
+        "possible_causes": ["밸브 고착", "관로 막힘", "유량센서 이상"],
+    },
+    "UPSTREAM_FLOW_NO_DOWNSTREAM": {
+        "label": "상류유출+하류유입무반응",
+        "possible_causes": ["관로 누수", "분기 밸브 이상", "센서 이상"],
+    },
+    "INLET_FLOW_NO_LEVEL_RISE": {
+        "label": "유입증가+수위무반응",
+        "possible_causes": ["유출 과다", "배수지 오버플로", "수위센서 이상"],
+    },
+    "PRESSURE_SUDDEN_DROP": {
+        "label": "압력급강하",
+        "possible_causes": ["관로 파손 의심", "대량 수요 발생", "밸브 급개방"],
+    },
+    "CAUSAL_CHAIN_NORMAL": {
+        "label": "정상인과",
+        "possible_causes": [],
+    },
+}
+
+# 방향 판정 임계값 (%)
+_DIRECTION_RISE_PCT = 5.0    # 5% 이상 상승 → RISE
+_DIRECTION_FALL_PCT = -5.0   # 5% 이상 하강 → FALL
+_DIRECTION_STABLE_PCT = 10.0  # ±10% 이내 → STABLE
+_SUDDEN_DROP_PCT = -30.0     # 30% 이상 급감 → SUDDEN_DROP
+
+
+def _check_direction(values: list[float], expected: str) -> tuple[bool, str]:
+    """시간 윈도우 내 값들의 방향을 판정한다.
+
+    Args:
+        values: 시간순 정렬된 값 리스트
+        expected: "RISE" | "FALL" | "STABLE" | "CORRELATE"
+
+    Returns:
+        (일치 여부, 실제 방향 "RISE"/"FALL"/"STABLE"/"INSUFFICIENT")
+    """
+    if len(values) < 3:
+        return (True, "INSUFFICIENT")  # 데이터 부족 시 통과 처리
+
+    mid = len(values) // 2
+    first_half = sum(values[:mid]) / mid
+    second_half = sum(values[mid:]) / (len(values) - mid)
+
+    denom = max(abs(first_half), 0.001)
+    diff_pct = (second_half - first_half) / denom * 100
+
+    if diff_pct > _DIRECTION_RISE_PCT:
+        actual = "RISE"
+    elif diff_pct < _DIRECTION_FALL_PCT:
+        actual = "FALL"
+    else:
+        actual = "STABLE"
+
+    if expected == "CORRELATE":
+        return (True, actual)  # 단순 감시: 항상 통과
+    return (actual == expected, actual)
+
+
+def _detect_sudden_drop(values: list[float]) -> bool:
+    """5분 이내 30% 이상 급감 여부를 판정한다."""
+    if len(values) < 3:
+        return False
+    peak = max(values[:len(values) // 2]) if values[:len(values) // 2] else 0
+    last = values[-1]
+    if peak <= 0:
+        return False
+    drop_pct = (last - peak) / peak * 100
+    return drop_pct < _SUDDEN_DROP_PCT
+
+
+def verify_causal_context(
+    query_func,
+    sitename: str,
+    facilitytype: str,
+    anomaly_group_code: str,
+    anomaly_direction: str,
+    causal_index: dict,
+    lookback_minutes: int = 30,
+) -> dict:
+    """알람 발생 태그에 대해 인과 체인을 검증한다.
+
+    Args:
+        query_func: (tagsn_list, minutes) → {tagsn: [float, ...]} 시계열 조회 콜백
+        sitename: 현장명
+        facilitytype: 시설유형
+        anomaly_group_code: 이상 감지된 태그의 group_code
+        anomaly_direction: 이상 방향 ("RISE" | "FALL")
+        causal_index: _CAUSAL_INDEX 전체 딕셔너리
+        lookback_minutes: 시계열 조회 범위 (분)
+
+    Returns:
+        dict with keys: chain_matched, pattern, cause_found, downstream_impact,
+                        confidence, detail, possible_causes
+    """
+    key = (sitename, facilitytype)
+    info = causal_index.get(key)
+    if not info:
+        return _no_match_result("인과 인덱스에 시설 없음")
+
+    template = info["template"]
+    tag_map = info["tag_map"]
+    chain = template["chain"]
+
+    # 이상 태그의 step 찾기
+    anomaly_step = None
+    for step_info in chain:
+        if step_info["group_code"] == anomaly_group_code:
+            anomaly_step = step_info
+            break
+    # group_code가 상위(PRESSURE→PRESSURE_INLET 등)일 수 있으므로 하위도 체크
+    if not anomaly_step:
+        for step_info in chain:
+            gc = step_info["group_code"]
+            if anomaly_group_code.startswith(gc) or gc.startswith(anomaly_group_code):
+                anomaly_step = step_info
+                break
+    if not anomaly_step:
+        return _no_match_result("템플릿에 해당 group_code 없음")
+
+    current_step_num = anomaly_step["step"]
+    results = []
+
+    # ── 역방향 추적: 이전 step들의 태그 상태 확인 ──
+    for step_info in chain:
+        if step_info["step"] >= current_step_num:
+            continue
+        gc = step_info["group_code"]
+        tagsns = tag_map.get(gc, [])
+        if not tagsns:
+            continue
+
+        try:
+            ts_data = query_func(tagsns, lookback_minutes)
+        except Exception as e:
+            logger.debug("인과 검증 시계열 조회 실패 (%s): %s", gc, e)
+            continue
+
+        for tsn, values in ts_data.items():
+            if not values:
+                continue
+            # 디지털 태그 (펌프/밸브): 최신값으로 상태 판정
+            if step_info["role"] == "cause":
+                last_val = values[-1] if values else 0
+                is_active = last_val > 0  # 1=ON/OPEN, 0=OFF/CLOSED
+                results.append({
+                    "step": step_info["step"],
+                    "group_code": gc,
+                    "role": step_info["role"],
+                    "signal": step_info.get("signal"),
+                    "is_active": is_active,
+                    "tagsn": tsn,
+                })
+            elif step_info.get("expected"):
+                matched, actual = _check_direction(values, step_info["expected"])
+                results.append({
+                    "step": step_info["step"],
+                    "group_code": gc,
+                    "role": step_info["role"],
+                    "expected": step_info["expected"],
+                    "actual": actual,
+                    "matched": matched,
+                    "tagsn": tsn,
+                })
+
+    # ── 순방향 추적: 이후 step들 + 하류 시설 ──
+    downstream_impacts = []
+    for step_info in chain:
+        if step_info["step"] <= current_step_num:
+            continue
+        gc = step_info["group_code"]
+        tagsns = tag_map.get(gc, [])
+        if not tagsns or not step_info.get("expected"):
+            continue
+        try:
+            ts_data = query_func(tagsns, lookback_minutes)
+        except Exception:
+            continue
+        for tsn, values in ts_data.items():
+            if values:
+                matched, actual = _check_direction(values, step_info["expected"])
+                results.append({
+                    "step": step_info["step"],
+                    "group_code": gc,
+                    "role": "downstream_effect",
+                    "expected": step_info["expected"],
+                    "actual": actual,
+                    "matched": matched,
+                    "tagsn": tsn,
+                })
+
+    # 하류 시설 영향 체크
+    cross = template.get("cross_facility")
+    if cross:
+        for ds_key in info.get("downstream", []):
+            ds_info = causal_index.get(ds_key)
+            if not ds_info:
+                continue
+            ds_gc = cross["downstream_group"]
+            ds_tagsns = ds_info["tag_map"].get(ds_gc, [])
+            if not ds_tagsns:
+                continue
+            try:
+                ts_data = query_func(ds_tagsns, cross.get("lag_max", 30))
+            except Exception:
+                continue
+            for tsn, values in ts_data.items():
+                if values:
+                    matched, actual = _check_direction(values, cross["expected"])
+                    if not matched:
+                        downstream_impacts.append(
+                            f"{ds_key[0]} {ds_key[1]} ({ds_gc}: {actual})"
+                        )
+
+    # ── 패턴 매칭: 인과 불일치 판정 ──
+    pattern = _determine_pattern(anomaly_group_code, anomaly_direction, results, facilitytype)
+    pat_info = _CAUSAL_PATTERNS.get(pattern, _CAUSAL_PATTERNS["CAUSAL_CHAIN_NORMAL"])
+
+    chain_matched = pattern == "CAUSAL_CHAIN_NORMAL"
+    confidence = "high" if len(results) >= 2 else ("medium" if results else "low")
+    detail = _build_causal_detail(pat_info, results, sitename, facilitytype, downstream_impacts)
+
+    return {
+        "chain_matched": chain_matched,
+        "pattern": pattern,
+        "cause_found": pat_info["label"] if not chain_matched else None,
+        "downstream_impact": downstream_impacts,
+        "confidence": confidence,
+        "detail": detail,
+        "possible_causes": pat_info["possible_causes"],
+    }
+
+
+def _no_match_result(reason: str) -> dict:
+    """인과 인덱스에 매핑 없을 때의 기본 반환값."""
+    return {
+        "chain_matched": True,  # 검증 불가 → 기존 판정 유지
+        "pattern": "NO_INDEX",
+        "cause_found": None,
+        "downstream_impact": [],
+        "confidence": "low",
+        "detail": reason,
+        "possible_causes": [],
+    }
+
+
+def _determine_pattern(
+    anomaly_gc: str,
+    anomaly_dir: str,
+    step_results: list[dict],
+    facilitytype: str,
+) -> str:
+    """step_results를 분석하여 인과 패턴을 판정한다."""
+    # cause 역할 태그의 상태 수집
+    cause_active = None
+    for r in step_results:
+        if r.get("role") == "cause" and r.get("is_active") is not None:
+            cause_active = r["is_active"]
+            break
+
+    # effect 역할 태그의 방향 일치 여부 수집
+    effects_matched = [r["matched"] for r in step_results if r.get("role") in ("effect", "downstream_effect") and "matched" in r]
+
+    # 가압장: 펌프ON인데 압력/유량 무반응
+    if facilitytype == "가압장" and cause_active is True:
+        if anomaly_gc in ("PRESSURE_DISCHARGE", "PRESSURE") and anomaly_dir == "FALL":
+            return "PUMP_ON_NO_PRESSURE"
+        if anomaly_gc in ("FLOW_OUTLET", "FLOW") and anomaly_dir == "FALL":
+            return "PUMP_ON_NO_FLOW"
+
+    # 배수지: 밸브 OPEN인데 유량 무반응
+    if facilitytype == "배수지" and cause_active is True:
+        if anomaly_gc in ("FLOW_OUTLET", "FLOW") and anomaly_dir != "RISE":
+            return "VALVE_OPEN_NO_FLOW"
+
+    # 유입 증가인데 수위 무반응
+    if anomaly_gc == "WATER_LEVEL" and anomaly_dir == "FALL":
+        for r in step_results:
+            if r.get("group_code") in ("FLOW_INLET",) and r.get("actual") == "RISE":
+                return "INLET_FLOW_NO_LEVEL_RISE"
+
+    # 하류 영향 불일치
+    unmatched_effects = [r for r in step_results if r.get("role") == "downstream_effect" and r.get("matched") is False]
+    if unmatched_effects:
+        return "UPSTREAM_FLOW_NO_DOWNSTREAM"
+
+    # 모든 체크 통과 → 정상 인과
+    return "CAUSAL_CHAIN_NORMAL"
+
+
+def _build_causal_detail(
+    pat_info: dict,
+    step_results: list[dict],
+    sitename: str,
+    facilitytype: str,
+    downstream_impacts: list[str],
+) -> str:
+    """인과 판정 결과를 시맨틱 마커 포함 텍스트로 생성한다."""
+    parts = []
+    label = pat_info["label"]
+    causes = pat_info["possible_causes"]
+
+    if causes:
+        # 인과 불일치
+        parts.append(f"<<error:인과불일치>> {sitename} {facilitytype}: {label}")
+        if causes:
+            parts.append(f"추정 원인: {', '.join(causes)}")
+    else:
+        # 정상 인과
+        parts.append(f"<<ok:인과확인>> {sitename} {facilitytype}: 정상 인과 체인")
+
+    # 하류 영향
+    if downstream_impacts:
+        impacts_str = ", ".join(downstream_impacts[:3])
+        parts.append(f"<<warn:하류영향>> {impacts_str}")
+
+    return "\n".join(parts)
