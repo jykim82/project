@@ -113,6 +113,10 @@ _SITENAME_FUZZY_STOPWORDS = {
     "이력", "히스토리", "기록", "예측", "예상", "전망", "비교", "대비",
     "패턴", "시간대", "주기", "스캔", "감지", "점검", "진단", "정밀",
     "위험",
+    # 장비/센서 키워드 (fuzzy에서 "순성" 등 오매칭 방지)
+    "센서", "유량계", "수질계", "압력계", "장비", "계측기",
+    # 물 수지 (fuzzy에서 "배수지" 오매칭 방지)
+    "수지", "균형", "밸런스", "불명", "누수",
 }
 
 
@@ -183,16 +187,22 @@ class ParamExtractor:
                 if to_ts is None and slm_to:
                     to_ts = slm_to
 
-        # SLM이 from_ts > to_ts를 반환한 경우 무효화
+        # SLM이 from_ts >= to_ts를 반환한 경우 보정/무효화
         if from_ts and to_ts:
             try:
                 # timestamp 형식("YYYY-MM-DD HH:MM:SS")과 date 형식("YYYY-MM-DD") 모두 지원
                 fmt = "%Y-%m-%d %H:%M:%S" if " " in from_ts else "%Y-%m-%d"
                 fmt2 = "%Y-%m-%d %H:%M:%S" if " " in to_ts else "%Y-%m-%d"
-                if datetime.strptime(from_ts, fmt) > datetime.strptime(to_ts, fmt2):
+                dt_from = datetime.strptime(from_ts, fmt)
+                dt_to = datetime.strptime(to_ts, fmt2)
+                if dt_from > dt_to:
                     logger.warning(f"SLM 날짜 무효: from_ts={from_ts} > to_ts={to_ts}, 초기화")
                     from_ts = None
                     to_ts = None
+                elif dt_from == dt_to:
+                    # 같은 날짜면 to_ts를 +1일로 보정 (당일 전체 데이터 조회)
+                    to_ts = (dt_to + timedelta(days=1)).strftime("%Y-%m-%d")
+                    logger.info(f"SLM 날짜 보정: from=to={from_ts} → to_ts={to_ts}")
             except ValueError:
                 from_ts = None
                 to_ts = None
@@ -483,8 +493,11 @@ class ParamExtractor:
             return "감압시설"
 
         # fuzzy fallback: 2~4글자 한글 토큰에서 시설유형 매칭
+        _FT_FUZZY_SKIP = {"센서", "유량계", "수질계", "압력계", "계측기", "장비", "설비", "점검", "스캔", "수지"}
         tokens = re.findall(r"[가-힣]{2,4}", question)
         for token in tokens:
+            if token in _FT_FUZZY_SKIP:
+                continue
             match = find_best_match(token, _FACILITYTYPE_CANDIDATES, _FUZZY_THRESHOLD_KEYWORD)
             if match:
                 corrected, score = match

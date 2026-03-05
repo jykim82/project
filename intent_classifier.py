@@ -311,10 +311,12 @@ class IntentClassifier:
             "결측", "진행중",
             "표로",
             "이상", "위험", "예측", "이상감지",
-            "누수", "CUSUM", "cusum",
+            "누수", "CUSUM", "cusum", "물 수지", "물수지", "유량 균형", "유량균형", "불명수량",
             "표준편차",
             "주소",
             "위치도", "계통도", "초동대응", "매뉴얼",
+            "센서 점검", "설비 점검", "센서 상태", "설비 상태",
+            "센서 스캔", "센서 이상",
         ]
         for kw in common_keywords:
             if kw in question:
@@ -491,6 +493,7 @@ class IntentClassifier:
             "현황", "현항", "헌팅", "표", "적산", "순시",
             "알람", "경보", "알림", "통신", "네트워크", "주소", "이상",
             "결측", "표준편차", "밸브", "트렌드", "추이", "같이",
+            "점검", "스캔", "센서", "설비", "진단",
         ]
         if not any(ek in question for ek in _TAG_LATEST_EXCLUDE):
             for dkw in ["수위", "압력"]:
@@ -517,9 +520,20 @@ class IntentClassifier:
         # 키워드 단축: "공통" 카테고리
         if "결측" in question:
             return "TAG_DAILY_MISSING_SUMMARY", "keyword"
+        # 물 수지 검증 — "누수" 키워드보다 우선 ("물 수지", "유량 균형" 등 구체적 키워드)
+        if any(kw in question for kw in ["물 수지", "물수지", "유량 균형", "유량균형", "불명수량", "배분 손실", "배분손실", "유량 밸런스", "유량밸런스"]):
+            return "ANOMALY_FLOW_BALANCE", "keyword"
+        if "누수 구간" in question or "누수구간" in question:
+            return "ANOMALY_FLOW_BALANCE", "keyword"
         # 누수추정 CUSUM 분석 (야간최소유량 + 누수)
         if "누수" in question or any(kw in question for kw in ["CUSUM", "cusum"]):
             return "LEAK_CUSUM_ANALYSIS", "keyword"
+        # 시설간 교차 검증 — "이상" 키워드보다 우선
+        if any(kw in question for kw in ["교차 검증", "교차검증", "시설간 불일치", "유량 불일치", "흐름 불일치", "정합성 확인"]):
+            return "ANOMALY_CROSS_FACILITY", "keyword"
+        if "상류" in question and "하류" in question and any(kw in question for kw in ["비교", "검증", "가동률"]):
+            return "ANOMALY_CROSS_FACILITY", "keyword"
+
         # 이상감지 인텐트 ("이상" 없이도 매칭되는 키워드 우선)
         if any(kw in question for kw in ["위험 예측", "이상 예측", "센서 예측"]):
             return "ANOMALY_PREDICT", "keyword"

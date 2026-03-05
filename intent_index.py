@@ -110,6 +110,8 @@ INTENT_DESCRIPTIONS = {
     "ANOMALY_PREDICT": "위험 예측 분석",
     "ANOMALY_COMPARE": "시설간 이상 비교",
     "ANOMALY_PATTERN": "시간대 이상 패턴",
+    "ANOMALY_CROSS_FACILITY": "시설간 교차 검증",
+    "ANOMALY_FLOW_BALANCE": "물 수지 검증",
     "LEAK_CUSUM_ANALYSIS": "야간최소유량 CUSUM 누수추정",
     "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS": "야간최소유량 표준편차분석",
     "FACILITY_COMMUNICATION_STATUS": "시설 통신 상태",

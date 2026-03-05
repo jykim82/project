@@ -68,10 +68,13 @@ from anomaly_detector import (
     count_cusum_status,
     build_cusum_summary_table,
     build_leak_cusum_detail_block,
+    GROUP_THRESHOLDS,
+    classify_alert_grade,
 )
 from anomaly_iforest import IForestManager
 from site_profiler import SiteProfiler
 from db_sync import DbSyncWorker  # [임시] 개발 완료 후 제거 예정
+from snmp_poller import SnmpPoller
 
 # =============================================================================
 # 로깅 설정
@@ -99,6 +102,20 @@ query_validator: Optional[QueryValidator] = None
 
 _cleanup_task: Optional[asyncio.Task] = None
 _profiling_task: Optional[asyncio.Task] = None
+_snmp_polling_task: Optional[asyncio.Task] = None
+_iforest_task: Optional[asyncio.Task] = None
+_anomaly_scan_task: Optional[asyncio.Task] = None
+snmp_poller_instance: Optional[SnmpPoller] = None
+
+# ── ANOMALY_SCAN_ALL 백그라운드 캐시 ──────────────────────────
+_ANOMALY_SCAN_CACHE: Optional[dict] = None
+_ANOMALY_SCAN_CACHE_TIME: Optional[datetime] = None
+_ANOMALY_SCAN_CACHE_TTL = 300  # 5분
+
+# ── 물 수지 백그라운드 캐시 ──────────────────────────────────
+_FLOW_BALANCE_CACHE: Optional[list] = None
+_FLOW_BALANCE_CACHE_TIME: Optional[datetime] = None
+_FLOW_BALANCE_CACHE_TTL = 1800  # 30분
 
 # =============================================================================
 # CSV 내보내기 설정
@@ -120,8 +137,8 @@ TAG_DATA_GROUPS: list[tuple[str, str, str | None, str, list[str]]] = [
     ("FLOW",               "유량",       None,        "Analog Input",  []),
     ("FLOW_INSTANT",       "유량순시",   "FLOW",      "Analog Input",  ["유량순시", "순시유량"]),
     ("FLOW_CUMULATIVE",    "유량적산",   "FLOW",      "Analog Input",  ["유량적산", "적산유량"]),
-    ("FLOW_INLET",         "유입유량",   "FLOW",      "Analog Input",  ["유입유량"]),
-    ("FLOW_OUTLET",        "유출유량",   "FLOW",      "Analog Input",  ["유출유량"]),
+    ("FLOW_INLET",         "유입유량",   "FLOW",      "Analog Input",  ["유입유량순시", "유입유량적산", "유입순시유량", "유입적산유량", "유입유량"]),
+    ("FLOW_OUTLET",        "유출유량",   "FLOW",      "Analog Input",  ["유출유량순시", "유출유량적산", "유출순시유량", "유출적산유량", "유출유량"]),
     # 압력 계열
     ("PRESSURE",           "압력",       None,        "Analog Input",  ["압력"]),
     ("PRESSURE_INLET",     "유입압력",   "PRESSURE",  "Analog Input",  ["유입압력"]),
@@ -195,12 +212,12 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             "lag_max": 10,
         },
     },
-    # === 소블록: 유입유량 감시 → 수위 상관 ===
+    # === 소블록: 유량순시 감시 → 압력 상관 (FLOW_INSTANT 우선, FLOW_INLET 폴백) ===
     {
         "facilitytype": "소블록",
         "chain": [
-            {"step": 1, "group_code": "FLOW_INLET",   "role": "trigger", "signal": "MONITOR",   "expected": None},
-            {"step": 2, "group_code": "WATER_LEVEL",   "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
+            {"step": 1, "group_code": "FLOW_INSTANT",  "role": "trigger", "signal": "MONITOR",   "expected": None},
+            {"step": 2, "group_code": "PRESSURE",       "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
         ],
         "cross_facility": None,
     },
@@ -208,8 +225,8 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
     {
         "facilitytype": "소소블록",
         "chain": [
-            {"step": 1, "group_code": "FLOW_INLET",   "role": "trigger", "signal": "MONITOR",   "expected": None},
-            {"step": 2, "group_code": "WATER_LEVEL",   "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
+            {"step": 1, "group_code": "FLOW_INSTANT",  "role": "trigger", "signal": "MONITOR",   "expected": None},
+            {"step": 2, "group_code": "PRESSURE",       "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
         ],
         "cross_facility": None,
     },
@@ -217,6 +234,21 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
 
 # facilitytype → template 빠른 조회
 _CAUSAL_TEMPLATE_MAP: dict[str, dict] = {t["facilitytype"]: t for t in CAUSAL_CHAIN_TEMPLATES}
+
+# =============================================================================
+# 설비↔태그 자동 매핑 규칙
+# None = 시설 내 전체 태그, list = 해당 group_code만, 키 없음 = 매핑 안 함
+# =============================================================================
+_EQUIPMENT_GROUP_RULES: dict[str, list[str] | None] = {
+    "가압펌프": ["PUMP_STATUS", "PRESSURE_DISCHARGE", "PRESSURE_INLET",
+                "PRESSURE_OUTLET", "FLOW_OUTLET", "FLOW_INSTANT",
+                "EQUIP_FAULT", "OPERATIONAL", "COMM_ERROR"],
+    "유량계": ["FLOW_INSTANT", "FLOW_CUMULATIVE", "FLOW_INLET", "FLOW_OUTLET"],
+    "PLC": None,       # 시설 내 전체 태그
+    "LTE 모뎀": None,  # 시설 내 전체 태그
+}
+# 가압펌프 1:1 매칭용 regex — datainfo에서 "가압펌프N" 번호 추출
+_PUMP_NUM_RE = re.compile(r"가압펌프(\d+)")
 
 # =============================================================================
 # 인과 인덱스 (런타임 캐시, _build_causal_index 후 채워짐)
@@ -359,22 +391,376 @@ def _build_causal_index(conn) -> int:
 
     cur.close()
 
-    # 3) 인덱스 구축
+    # 3) 인덱스 구축 — tag_map에 체인 step group_code 폴백 매핑 포함
     count = 0
     for (sn, ft), tag_map in site_tag_map.items():
         template = _CAUSAL_TEMPLATE_MAP.get(ft)
         if not template:
             continue
+        # 체인 step의 group_code가 tag_map에 없으면 같은 부모의 형제 그룹에서 폴백
+        resolved_tag_map = dict(tag_map)
+        for step in template.get("chain", []):
+            gc = step["group_code"]
+            if gc in resolved_tag_map:
+                continue
+            # 부모 그룹 찾기 → 형제 그룹의 태그를 폴백
+            parent = None
+            for code, _, par, _, _ in TAG_DATA_GROUPS:
+                if code == gc:
+                    parent = par
+                    break
+            if parent:
+                siblings = _GROUP_CHILDREN.get(parent, [])
+                fallback_tags = []
+                for sib in siblings:
+                    if sib != gc and sib in tag_map:
+                        fallback_tags.extend(tag_map[sib])
+                if fallback_tags:
+                    resolved_tag_map[gc] = fallback_tags
+
         _CAUSAL_INDEX[(sn, ft)] = {
             "template": template,
-            "tag_map": tag_map,
+            "tag_map": resolved_tag_map,
             "upstream": upstream_map.get((sn, ft), []),
             "downstream": downstream_map.get((sn, ft), []),
         }
         count += 1
 
+    # 4) 오버라이드 로딩 — tb_causal_chain_override가 있으면 체인 교체
+    try:
+        cur2 = conn.cursor()
+        cur2.execute("""
+            SELECT sitename, facilitytype, zone, chain_json, cross_facility_json
+            FROM tb_causal_chain_override
+            ORDER BY sitename, facilitytype, zone NULLS FIRST
+        """)
+        override_count = 0
+        for o_sn, o_ft, o_zone, o_chain, o_cross in cur2.fetchall():
+            if o_zone:
+                # 구역별 오버라이드: 3-tuple 키
+                base = _CAUSAL_INDEX.get((o_sn, o_ft))
+                if base:
+                    zone_entry = {
+                        "template": {**base["template"], "chain": o_chain},
+                        "tag_map": base["tag_map"],  # 구역 필터링은 _detect_zones에서
+                        "upstream": base["upstream"],
+                        "downstream": base["downstream"],
+                    }
+                    if o_cross:
+                        zone_entry["template"] = {**zone_entry["template"], "cross_facility": o_cross}
+                    _CAUSAL_INDEX[(o_sn, o_ft, o_zone)] = zone_entry
+                    override_count += 1
+            else:
+                # 전체 오버라이드: 기존 2-tuple 키의 template 교체
+                key2 = (o_sn, o_ft)
+                if key2 in _CAUSAL_INDEX:
+                    orig = _CAUSAL_INDEX[key2]
+                    merged_template = {**orig["template"], "chain": o_chain}
+                    if o_cross:
+                        merged_template["cross_facility"] = o_cross
+                    _CAUSAL_INDEX[key2] = {**orig, "template": merged_template}
+                    override_count += 1
+        cur2.close()
+        if override_count:
+            logger.info("인과 오버라이드 적용: %d건", override_count)
+    except Exception as e:
+        logger.debug("인과 오버라이드 로딩 스킵: %s", e)
+
     logger.info("인과 인덱스 구축 완료: %d개 시설 매핑", count)
     return count
+
+
+import re
+_ZONE_PATTERN = re.compile(r'(\d)[지구역]')
+
+
+# =============================================================================
+# 설비↔태그 자동 매핑
+# =============================================================================
+
+def _auto_map_equipment_tags(conn, *, dry_run: bool = False) -> dict:
+    """설비↔태그 자동 매핑: _EQUIPMENT_GROUP_RULES 기반 그룹 레벨 매핑.
+
+    가압펌프는 datainfo에서 "가압펌프N" 패턴으로 1:1 매칭,
+    번호 없는 태그는 시설 내 모든 가압펌프에 공유 매핑.
+    dry_run=True이면 INSERT 하지 않고 결과만 반환.
+    """
+    cur = conn.cursor()
+
+    # 1) 설비 로드 — 매핑 대상만 필터
+    cur.execute("""
+        SELECT equipment_id, sitename, facilitytype, equipmenttype
+        FROM tb_equipment_info
+        WHERE equipmenttype IN %s
+        ORDER BY sitename, facilitytype, equipmenttype, equipment_id
+    """, (tuple(_EQUIPMENT_GROUP_RULES.keys()),))
+    equip_rows = cur.fetchall()
+    if not equip_rows:
+        cur.close()
+        return {"total_links": 0, "by_type": {}, "dry_run": dry_run}
+
+    # {(sitename, ft): {equipmenttype: [equipment_id, ...]}}
+    site_equip: dict[tuple[str, str], dict[str, list[str]]] = {}
+    for eid, sn, ft, et in equip_rows:
+        site_equip.setdefault((sn, ft), {}).setdefault(et, []).append(eid)
+
+    # 2) 태그 + group_code 로드
+    cur.execute("""
+        SELECT t.tagsn, t.sitename, t.facilitytype, t.datainfo,
+               COALESCE(g.group_code, '') as group_code
+        FROM tb_tag_info t
+        LEFT JOIN tb_tag_group_map gm ON t.tagsn = gm.tagsn
+        LEFT JOIN tb_tag_data_group g ON gm.group_id = g.group_id
+        WHERE t.sitename IS NOT NULL AND t.facilitytype IS NOT NULL
+        ORDER BY t.sitename, t.facilitytype
+    """)
+    # {(sitename, ft): [(tagsn, datainfo, group_code), ...]}
+    site_tags: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+    for tsn, sn, ft, di, gc in cur.fetchall():
+        site_tags.setdefault((sn, ft), []).append((tsn, di or "", gc))
+
+    # 3) 매핑 생성
+    links: list[tuple[str, str]] = []  # (equipment_id, tagsn)
+    by_type: dict[str, int] = {}
+
+    for (sn, ft), type_equips in site_equip.items():
+        tags = site_tags.get((sn, ft), [])
+        if not tags:
+            continue
+
+        for et, eids in type_equips.items():
+            rules = _EQUIPMENT_GROUP_RULES.get(et)
+            if rules is None:
+                # None → 시설 내 전체 태그
+                for eid in eids:
+                    for tsn, _, _ in tags:
+                        links.append((eid, tsn))
+                by_type[et] = by_type.get(et, 0) + len(eids) * len(tags)
+            elif et == "가압펌프":
+                _map_pumps(eids, tags, rules, links, by_type)
+            else:
+                # list → group_code 매칭만, 모든 장비에 동일 매핑
+                resolved = _resolve_group_list(rules)
+                matched = [(tsn, di, gc) for tsn, di, gc in tags if gc in resolved]
+                for eid in eids:
+                    for tsn, _, _ in matched:
+                        links.append((eid, tsn))
+                by_type[et] = by_type.get(et, 0) + len(eids) * len(matched)
+
+    # 4) INSERT (dry_run이 아닌 경우)
+    if not dry_run and links:
+        from psycopg2.extras import execute_values
+        execute_values(
+            cur,
+            "INSERT INTO tb_equipment_tag_map (equipment_id, tagsn) VALUES %s ON CONFLICT DO NOTHING",
+            links,
+            page_size=1000,
+        )
+        conn.commit()
+
+    cur.close()
+    return {"total_links": len(links), "by_type": by_type, "dry_run": dry_run}
+
+
+def _resolve_group_list(rules: list[str]) -> set[str]:
+    """group_code 리스트에서 상위 그룹은 하위 전체를 포함하여 반환."""
+    resolved: set[str] = set()
+    for gc in rules:
+        resolved.update(_resolve_group_codes(gc))
+    return resolved
+
+
+def _map_pumps(
+    eids: list[str],
+    tags: list[tuple[str, str, str]],
+    rules: list[str],
+    links: list[tuple[str, str]],
+    by_type: dict[str, int],
+) -> None:
+    """가압펌프 특수 매핑: 번호 있는 태그는 1:1, 없는 태그는 모든 펌프에 공유."""
+    resolved = _resolve_group_list(rules)
+
+    # 펌프번호 → equipment_id (정렬 순서 = 1번, 2번, ...)
+    pump_by_num: dict[int, str] = {}
+    for idx, eid in enumerate(eids, start=1):
+        pump_by_num[idx] = eid
+
+    count = 0
+    for tsn, di, gc in tags:
+        if gc not in resolved:
+            continue
+        m = _PUMP_NUM_RE.search(di)
+        if m:
+            # 1:1 매칭: "가압펌프N" → N번째 equipment
+            num = int(m.group(1))
+            eid = pump_by_num.get(num)
+            if eid:
+                links.append((eid, tsn))
+                count += 1
+        else:
+            # 공유 태그: "가압펌프" 포함하지만 번호 없음 → 모든 펌프에
+            if "가압펌프" in di:
+                for eid in eids:
+                    links.append((eid, tsn))
+                    count += 1
+            else:
+                # 펌프 관련 아닌 일반 group_code 매칭 태그 → 모든 펌프에 공유
+                for eid in eids:
+                    links.append((eid, tsn))
+                    count += 1
+
+    by_type["가압펌프"] = by_type.get("가압펌프", 0) + count
+
+
+def _detect_zones(conn, sitename: str, facilitytype: str) -> list[dict]:
+    """배수지 태그에서 구역(1지, 2지...) 패턴을 감지한다."""
+    if facilitytype != "배수지":
+        return []
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT t.tagsn, t.datainfo, g.group_code
+        FROM tb_tag_info t
+        JOIN tb_tag_group_map gm ON t.tagsn = gm.tagsn
+        JOIN tb_tag_data_group g ON gm.group_id = g.group_id
+        WHERE t.sitename = %s AND t.facilitytype = %s
+    """, (sitename, facilitytype))
+    zone_tags: dict[str, dict[str, list[str]]] = {}
+    for tagsn, datainfo, gc in cur.fetchall():
+        m = _ZONE_PATTERN.search(datainfo or "")
+        if m:
+            zone = f"{m.group(1)}지"
+            zone_tags.setdefault(zone, {}).setdefault(gc, []).append(tagsn)
+    cur.close()
+    result = []
+    for zone in sorted(zone_tags.keys()):
+        groups = zone_tags[zone]
+        result.append({
+            "zone": zone,
+            "tag_count": sum(len(v) for v in groups.values()),
+            "group_codes": list(groups.keys()),
+        })
+    return result
+
+
+def _get_causal_info(sitename: str, facilitytype: str, zone: str | None = None) -> dict | None:
+    """인과 인덱스에서 시설+구역 조회. zone 지정 시 3-tuple 우선, 없으면 2-tuple 폴백."""
+    if zone:
+        key3 = (sitename, facilitytype, zone)
+        if key3 in _CAUSAL_INDEX:
+            return _CAUSAL_INDEX[key3]
+    return _CAUSAL_INDEX.get((sitename, facilitytype))
+
+
+# _GC_KEYWORDS 폴백용 (인덱스에 없는 시설)
+_FALLBACK_GC_KEYWORDS = [
+    ("유입압력", "PRESSURE_INLET"), ("유출압력", "PRESSURE_OUTLET"),
+    ("토출압력", "PRESSURE_DISCHARGE"), ("유입유량", "FLOW_INLET"),
+    ("유출유량", "FLOW_OUTLET"), ("유량순시", "FLOW_INSTANT"),
+    ("유량적산", "FLOW_CUMULATIVE"),
+    ("수위", "WATER_LEVEL"), ("압력", "PRESSURE"), ("유량", "FLOW"),
+    ("밸브", "VALVE_STATUS"), ("펌프", "PUMP_STATUS"),
+]
+
+
+def _resolve_group_code_for_tagsn(
+    sitename: str, facilitytype: str, tagsn: str, datainfo: str,
+) -> str | None:
+    """tagsn의 group_code를 _CAUSAL_INDEX tag_map에서 역조회한다.
+    인덱스에 없으면 datainfo 키워드 폴백.
+    """
+    info = _CAUSAL_INDEX.get((sitename, facilitytype))
+    if info:
+        tag_map = info.get("tag_map", {})
+        for gc, tagsn_list in tag_map.items():
+            if tagsn in tagsn_list:
+                return gc
+    # 폴백: datainfo 키워드 매칭
+    for kw, code in _FALLBACK_GC_KEYWORDS:
+        if kw in datainfo:
+            return code
+    return None
+
+
+def _rebuild_causal_index_entry(sitename: str, facilitytype: str):
+    """단일 시설의 인과 인덱스 항목을 재구축한다 (PUT/DELETE 후 호출)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 태그 맵 재조회
+        cur.execute("""
+            SELECT g.group_code, t.tagsn
+            FROM tb_tag_info t
+            JOIN tb_tag_group_map gm ON t.tagsn = gm.tagsn
+            JOIN tb_tag_data_group g ON gm.group_id = g.group_id
+            WHERE t.sitename = %s AND t.facilitytype = %s
+        """, (sitename, facilitytype))
+        tag_map: dict[str, list[str]] = {}
+        for gc, tsn in cur.fetchall():
+            tag_map.setdefault(gc, []).append(tsn)
+
+        template = _CAUSAL_TEMPLATE_MAP.get(facilitytype)
+        if not template or not tag_map:
+            cur.close()
+            conn.close()
+            return
+
+        # upstream/downstream 재조회
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype
+            FROM tb_facility_flow_map
+            WHERE (upstream_sitename = %s AND upstream_facilitytype = %s)
+               OR (downstream_sitename = %s AND downstream_facilitytype = %s)
+        """, (sitename, facilitytype, sitename, facilitytype))
+        upstream = []
+        downstream = []
+        for usn, uft, dsn, dft in cur.fetchall():
+            if usn == sitename and uft == facilitytype:
+                downstream.append((dsn, dft))
+            else:
+                upstream.append((usn, uft))
+
+        # 기본 항목 갱신
+        _CAUSAL_INDEX[(sitename, facilitytype)] = {
+            "template": template,
+            "tag_map": tag_map,
+            "upstream": upstream,
+            "downstream": downstream,
+        }
+
+        # 오버라이드 적용
+        cur.execute("""
+            SELECT zone, chain_json, cross_facility_json
+            FROM tb_causal_chain_override
+            WHERE sitename = %s AND facilitytype = %s
+            ORDER BY zone NULLS FIRST
+        """, (sitename, facilitytype))
+        base = _CAUSAL_INDEX[(sitename, facilitytype)]
+        for o_zone, o_chain, o_cross in cur.fetchall():
+            if o_zone:
+                zone_entry = {
+                    "template": {**base["template"], "chain": o_chain},
+                    "tag_map": tag_map,
+                    "upstream": upstream,
+                    "downstream": downstream,
+                }
+                if o_cross:
+                    zone_entry["template"] = {**zone_entry["template"], "cross_facility": o_cross}
+                _CAUSAL_INDEX[(sitename, facilitytype, o_zone)] = zone_entry
+            else:
+                merged = {**base["template"], "chain": o_chain}
+                if o_cross:
+                    merged["cross_facility"] = o_cross
+                _CAUSAL_INDEX[(sitename, facilitytype)] = {**base, "template": merged}
+
+        cur.close()
+    except Exception as e:
+        logger.warning("인과 인덱스 항목 재구축 실패: %s", e)
+    finally:
+        if conn:
+            conn.close()
 
 
 def save_csv(rows: list, columns: list, intent: str, session_id: str) -> str:
@@ -481,6 +867,520 @@ async def _site_profiling_loop():
         await asyncio.sleep(86400)
 
 
+async def _snmp_polling_loop():
+    """백그라운드: 서버 시작 30초 후 첫 실행, 이후 3분마다 SNMP 폴링"""
+    from snmp_poller import POLL_INTERVAL
+    await asyncio.sleep(30)
+    while True:
+        try:
+            count = await asyncio.to_thread(snmp_poller_instance.poll_all)
+            logger.info(f"SNMP 폴링 완료: {count}개 스위치")
+        except Exception as e:
+            logger.error(f"SNMP 폴링 실패: {e}")
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+async def _iforest_training_loop():
+    """백그라운드: 서버 시작 90초 후 첫 실행, 이후 24시간마다 IForest 학습."""
+    from anomaly_iforest import RETRAIN_INTERVAL_HOURS
+    await asyncio.sleep(90)
+    while True:
+        try:
+            _profiles = site_profiler.profiles if site_profiler else None
+            logger.info("IForest 백그라운드 학습 시작...")
+            await asyncio.to_thread(iforest_manager.train_all, get_db_connection, site_profiles=_profiles)
+            logger.info(f"IForest 백그라운드 학습 완료: {iforest_manager.model_count}개 모델")
+        except Exception as e:
+            logger.error(f"IForest 백그라운드 학습 실패: {e}")
+        await asyncio.sleep(RETRAIN_INTERVAL_HOURS * 3600)
+
+
+async def _anomaly_scan_cache_loop():
+    """백그라운드: 서버 시작 150초 후 첫 실행, 이후 5분마다 ANOMALY_SCAN_ALL 전체 캐시 갱신.
+
+    전체 파이프라인(SQL + IForest + 교차검증)을 미리 실행하여 캐시에 저장.
+    사용자 요청 시 캐시 반환 (<1s).
+    """
+    global _ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME
+    await asyncio.sleep(150)
+    while True:
+        try:
+            t0 = datetime.now()
+            result = await asyncio.to_thread(_compute_anomaly_scan_all)
+            elapsed = (datetime.now() - t0).total_seconds()
+            if result:
+                _ANOMALY_SCAN_CACHE = result
+                _ANOMALY_SCAN_CACHE_TIME = datetime.now()
+                row_count = len(result.get("rows", []))
+                logger.info(f"ANOMALY_SCAN_ALL 캐시 갱신: {row_count}행, {elapsed:.1f}초")
+            else:
+                logger.warning("ANOMALY_SCAN_ALL 캐시 갱신 실패: 빈 결과")
+        except Exception as e:
+            logger.error(f"ANOMALY_SCAN_ALL 캐시 갱신 실패: {e}")
+        await asyncio.sleep(_ANOMALY_SCAN_CACHE_TTL)
+
+
+async def _flow_balance_cache_loop():
+    """백그라운드: 서버 시작 200초 후 첫 실행, 이후 30분마다 물 수지 캐시 갱신."""
+    global _FLOW_BALANCE_CACHE, _FLOW_BALANCE_CACHE_TIME
+    await asyncio.sleep(200)
+    while True:
+        try:
+            from flow_balance import compute_flow_balance_all
+            t0 = datetime.now()
+            tag_info = await asyncio.to_thread(_get_tag_datainfo_cache)
+            edges = await asyncio.to_thread(
+                compute_flow_balance_all,
+                _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
+            )
+            elapsed = (datetime.now() - t0).total_seconds()
+            _FLOW_BALANCE_CACHE = edges
+            _FLOW_BALANCE_CACHE_TIME = datetime.now()
+            imbalance_count = sum(1 for e in edges if e["grade"] != "정상")
+            logger.info(f"물 수지 캐시 갱신: {len(edges)}엣지, 불균형 {imbalance_count}건, {elapsed:.1f}초")
+        except Exception as e:
+            logger.error(f"물 수지 캐시 갱신 실패: {e}")
+        await asyncio.sleep(_FLOW_BALANCE_CACHE_TTL)
+
+
+def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
+    """ANOMALY_SCAN_ALL 결과에서 빠진 태그를 감지하여 데이터 품질 이상 목록 반환.
+
+    빠진 원인 분류:
+    - 센서무응답: 7일간 전체 val≈0 (DEAD sensor)
+    - 데이터홀딩: 7일간 데이터 존재하나 active_cnt < 50 + 높은 flat 비율
+    - 데이터없음: 7일간 데이터 자체가 없음
+    """
+    tagsn_idx = columns.index("tagsn") if "tagsn" in columns else None
+    if tagsn_idx is None:
+        return []
+
+    result_tagsns = {r[tagsn_idx] for r in rows}
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 전체 Analog Input (NOT 적산, NOT 설정값) 태그
+        cur.execute("""
+            SELECT tagsn, sitename, facilitytype, datainfo
+            FROM tb_tag_info
+            WHERE tagtype = 'Analog Input'
+              AND datainfo NOT LIKE '%%적산%%'
+              AND datainfo NOT LIKE '%%설정%%'
+        """)
+        all_tags = {r[0]: {"tagsn": r[0], "sitename": r[1], "facilitytype": r[2], "datainfo": r[3]}
+                    for r in cur.fetchall()}
+
+        # 2) 차집합 = 결과에서 빠진 태그
+        missing_tagsns = [t for t in all_tags if t not in result_tagsns]
+        if not missing_tagsns:
+            cur.close()
+            return []
+
+        # 3) 빠진 태그의 최근 7일 데이터 상태 (DEAD/데이터없음 판별)
+        cur.execute("""
+            SELECT tagsn,
+                COUNT(*) AS total_5m,
+                COUNT(*) FILTER (WHERE (min_val + max_val) / 2.0 > 0.001) AS nonzero_cnt,
+                SUM(CASE WHEN min_val = max_val THEN 1 ELSE 0 END) AS flat_cnt,
+                MAX(bucket) AS last_bucket
+            FROM cagg_5min_raw_stats_ai
+            WHERE tagsn = ANY(%s)
+                AND bucket >= now() - interval '7 days'
+            GROUP BY tagsn
+        """, (missing_tagsns,))
+        stats_7d = {r[0]: r for r in cur.fetchall()}
+
+        # 4) 최근 24시간 데이터 상태 (홀딩 조기 감지)
+        cur.execute("""
+            SELECT tagsn,
+                COUNT(*) AS total_24h,
+                COUNT(*) FILTER (WHERE (min_val + max_val) / 2.0 > 0.001) AS nonzero_24h,
+                SUM(CASE WHEN min_val = max_val THEN 1 ELSE 0 END) AS flat_24h
+            FROM cagg_5min_raw_stats_ai
+            WHERE tagsn = ANY(%s)
+                AND bucket >= now() - interval '24 hours'
+            GROUP BY tagsn
+        """, (missing_tagsns,))
+        stats_24h = {r[0]: r for r in cur.fetchall()}
+        cur.close()
+
+        issues = []
+        for tagsn in missing_tagsns:
+            info = all_tags[tagsn]
+            s7 = stats_7d.get(tagsn)
+            s24 = stats_24h.get(tagsn)
+
+            if not s7:
+                issue_type = "데이터없음"
+                detail = "최근 7일간 데이터 없음"
+            elif int(s7[2]) == 0:  # nonzero_cnt == 0 (7일간 전부 val≈0)
+                issue_type = "센서무응답"
+                detail = f"7일간 {s7[1]}건 전부 val~0"
+            else:
+                # 24시간 윈도우 우선 (홀딩 조기 감지)
+                # s24 = (tagsn, total_24h, nonzero_24h, flat_24h) → 인덱스 주의
+                flat_24h_pct = round(int(s24[3]) / int(s24[1]) * 100, 1) if s24 and int(s24[1]) > 0 else 0
+                flat_7d_pct = round(int(s7[3]) / int(s7[1]) * 100, 1) if int(s7[1]) > 0 else 0
+                if flat_24h_pct > 90:
+                    issue_type = "데이터홀딩"
+                    detail = f"24h flat {flat_24h_pct}% (7d flat {flat_7d_pct}%)"
+                elif flat_7d_pct > 80:
+                    issue_type = "데이터홀딩"
+                    detail = f"7d flat {flat_7d_pct}%"
+                else:
+                    issue_type = "데이터부족"
+                    detail = f"활성 {s7[2]}건 (50건 미달)"
+
+            issues.append({
+                "tagsn": tagsn,
+                "sitename": info["sitename"],
+                "facilitytype": info["facilitytype"],
+                "datainfo": info["datainfo"],
+                "issue_type": issue_type,
+                "detail": detail,
+            })
+
+        return issues
+
+    except Exception as e:
+        logger.warning(f"데이터 품질 감지 실패: {e}")
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 설비 장애 역추적 (Equipment Failure Traceback)
+# ---------------------------------------------------------------------------
+_FAILURE_SEVERITY: dict[str, int] = {
+    "equip_fault": 4,
+    "power_fault": 3,
+    "network_down": 2,
+    "comm_error": 1,
+}
+
+
+def _detect_equipment_failures(
+    rows: list, columns: list,
+) -> tuple[list[dict], dict[str, str]]:
+    """설비 장애 감지 + 영향 태그 역추적.
+
+    3가지 신호 소스를 조합:
+    A) tb_network_status: is_alive=false 설비
+    B) DI 태그(COMM_ERROR/EQUIP_FAULT/POWER_FAULT): val=1, 최근 10분
+    C) tb_equipment_tag_map: 역방향 매핑 (equipment → tags)
+
+    Returns:
+        (impacts_list, tag_to_failure_map)
+        - impacts_list: 설비별 장애 요약 [{equipment_id, failure_type, affected_tag_count, ...}]
+        - tag_to_failure_map: {tagsn: failure_type} per-row 뱃지용
+    """
+    tagsn_idx = columns.index("tagsn") if "tagsn" in columns else None
+    sn_idx = columns.index("sitename") if "sitename" in columns else None
+    ft_idx = columns.index("facilitytype") if "facilitytype" in columns else None
+    di_idx = columns.index("datainfo") if "datainfo" in columns else None
+    if tagsn_idx is None:
+        return [], {}
+
+    result_tagsns = {r[tagsn_idx] for r in rows}
+    # tagsn → datainfo 조회용
+    tag_datainfo: dict[str, str] = {}
+    if di_idx is not None:
+        tag_datainfo = {r[tagsn_idx]: str(r[di_idx]) for r in rows}
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # --- A. 네트워크 장애 설비 ---
+        failed_equips: dict[str, dict] = {}
+        try:
+            cur.execute("""
+                WITH lt AS (SELECT MAX(check_time) AS ct FROM tb_network_status)
+                SELECT ns.equipment_id, e.equipmenttype, e.sitename, e.facilitytype,
+                       ns.error_message
+                FROM tb_network_status ns
+                JOIN lt ON ns.check_time = lt.ct
+                JOIN tb_equipment_info e ON ns.equipment_id = e.equipment_id
+                WHERE ns.is_alive = false
+            """)
+            for eid, etype, sn, ft, emsg in cur.fetchall():
+                failed_equips[eid] = {
+                    "equipmenttype": etype or "",
+                    "sitename": sn or "",
+                    "facilitytype": ft or "",
+                    "failure_type": "network_down",
+                    "failure_detail": emsg or "네트워크 응답 없음",
+                }
+        except Exception as e:
+            logger.debug(f"네트워크 장애 조회 실패(무시): {e}")
+
+        # --- B. DI 장애 태그 (COMM_ERROR / EQUIP_FAULT / POWER_FAULT) ---
+        site_faults: dict[tuple[str, str], str] = {}  # (sitename, facilitytype) → worst failure_type
+        try:
+            # B-1: 대상 DI 태그 조회
+            cur.execute("""
+                SELECT gm.tagsn, dg.group_code, ti.sitename, ti.facilitytype
+                FROM tb_tag_group_map gm
+                JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
+                JOIN tb_tag_info ti ON gm.tagsn = ti.tagsn
+                WHERE dg.group_code IN ('COMM_ERROR', 'EQUIP_FAULT', 'POWER_FAULT')
+            """)
+            di_tags = cur.fetchall()
+
+            if di_tags:
+                di_tagsn_list = [r[0] for r in di_tags]
+                di_meta = {r[0]: (r[1], r[2], r[3]) for r in di_tags}  # tagsn → (group_code, sitename, facilitytype)
+
+                # B-2: 최근 10분 val=1 (장애 활성)
+                cur.execute("""
+                    SELECT DISTINCT tagsn
+                    FROM tb_tag_raw_data
+                    WHERE tagsn = ANY(%s)
+                      AND logtime >= now() - interval '10 minutes'
+                      AND val = 1
+                """, (di_tagsn_list,))
+                active_faults = {r[0] for r in cur.fetchall()}
+
+                _gc_to_ft = {
+                    "COMM_ERROR": "comm_error",
+                    "EQUIP_FAULT": "equip_fault",
+                    "POWER_FAULT": "power_fault",
+                }
+                for tsn in active_faults:
+                    gc, sn, ft = di_meta[tsn]
+                    ftype = _gc_to_ft.get(gc, "comm_error")
+                    key = (sn, ft)
+                    existing = site_faults.get(key)
+                    if not existing or _FAILURE_SEVERITY.get(ftype, 0) > _FAILURE_SEVERITY.get(existing, 0):
+                        site_faults[key] = ftype
+        except Exception as e:
+            logger.debug(f"DI 장애 태그 조회 실패(무시): {e}")
+
+        # --- C. 설비↔태그 역방향 맵 ---
+        equip_to_tags: dict[str, set[str]] = {}
+        equip_info_map: dict[str, dict] = {}
+        try:
+            cur.execute("""
+                SELECT etm.equipment_id, etm.tagsn, e.equipmenttype, e.sitename, e.facilitytype
+                FROM tb_equipment_tag_map etm
+                JOIN tb_equipment_info e ON etm.equipment_id = e.equipment_id
+            """)
+            for eid, tsn, etype, sn, ft in cur.fetchall():
+                equip_to_tags.setdefault(eid, set()).add(tsn)
+                if eid not in equip_info_map:
+                    equip_info_map[eid] = {
+                        "equipmenttype": etype or "",
+                        "sitename": sn or "",
+                        "facilitytype": ft or "",
+                    }
+        except Exception as e:
+            logger.debug(f"설비 태그 맵 조회 실패(무시): {e}")
+
+        cur.close()
+
+        # --- 조인: 장애 설비 → 영향 태그 → 스캔 결과 교차 ---
+        impacts: list[dict] = []
+        tag_failure_map: dict[str, str] = {}
+
+        # A 소스: 네트워크 장애 설비
+        for eid, info in failed_equips.items():
+            affected = equip_to_tags.get(eid, set())
+            in_scan = affected & result_tagsns
+            impacts.append({
+                "equipment_id": eid,
+                "equipmenttype": info["equipmenttype"],
+                "sitename": info["sitename"],
+                "facilitytype": info["facilitytype"],
+                "failure_type": info["failure_type"],
+                "failure_detail": info["failure_detail"],
+                "affected_tag_count": len(affected),
+                "anomalous_tag_count": len(in_scan),
+                "affected_tags": [
+                    {"tagsn": t, "datainfo": tag_datainfo.get(t, "")}
+                    for t in sorted(in_scan)[:5]
+                ],
+            })
+            for t in affected:
+                _apply_worst_failure(tag_failure_map, t, info["failure_type"])
+
+        # B 소스: DI 장애 → 사이트+시설 레벨 전체 태그
+        for (sn, ft), ftype in site_faults.items():
+            # 해당 사이트+시설의 모든 태그 찾기
+            site_tags: set[str] = set()
+            if sn_idx is not None and ft_idx is not None:
+                for r in rows:
+                    if r[sn_idx] == sn and r[ft_idx] == ft:
+                        site_tags.add(r[tagsn_idx])
+            if not site_tags:
+                continue
+
+            impacts.append({
+                "equipment_id": f"{sn}_{ft}",
+                "equipmenttype": "DI장애",
+                "sitename": sn,
+                "facilitytype": ft,
+                "failure_type": ftype,
+                "failure_detail": {
+                    "comm_error": "통신이상 DI 활성",
+                    "equip_fault": "설비고장 DI 활성",
+                    "power_fault": "전원이상 DI 활성",
+                }.get(ftype, "DI 활성"),
+                "affected_tag_count": len(site_tags),
+                "anomalous_tag_count": len(site_tags),
+                "affected_tags": [
+                    {"tagsn": t, "datainfo": tag_datainfo.get(t, "")}
+                    for t in sorted(site_tags)[:5]
+                ],
+            })
+            for t in site_tags:
+                _apply_worst_failure(tag_failure_map, t, ftype)
+
+        # 영향 태그 수 내림차순 정렬
+        impacts.sort(key=lambda x: x["affected_tag_count"], reverse=True)
+
+        return impacts, tag_failure_map
+
+    except Exception as e:
+        logger.warning(f"설비 장애 감지 실패: {e}")
+        return [], {}
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _apply_worst_failure(
+    tag_map: dict[str, str], tagsn: str, failure_type: str,
+) -> None:
+    """tag_failure_map에 worst severity 기준으로 장애 유형 적용."""
+    existing = tag_map.get(tagsn)
+    if not existing or _FAILURE_SEVERITY.get(failure_type, 0) > _FAILURE_SEVERITY.get(existing, 0):
+        tag_map[tagsn] = failure_type
+
+
+def _compute_anomaly_scan_all() -> Optional[dict]:
+    """ANOMALY_SCAN_ALL 전체 파이프라인을 동기 실행하여 캐시용 결과 반환.
+
+    SQL 실행 → process_sql_result(IForest+grade/group 포함) → 교차 검증 → 최종 결과.
+    캐시된 결과는 핸들러에서 answer_template 렌더링에 직접 사용된다.
+    """
+    from anomaly_detector import cross_facility_check_all, enrich_rows_with_cross_verdict
+
+    # intent_def 찾기
+    intent_def = None
+    for idef in INTENT_DEFINITIONS:
+        if idef.get("intent") == "ANOMALY_SCAN_ALL":
+            intent_def = idef
+            break
+    if not intent_def:
+        return None
+
+    sql_raw = intent_def.get("sql", "")
+    if not sql_raw:
+        return None
+    sql_combined = "\n".join(sql_raw) if isinstance(sql_raw, list) else sql_raw
+
+    # 1단계: SQL 실행 (365일 stats + 3h latest + comm_error)
+    try:
+        rows, columns = execute_sql(sql_combined, {})
+    except Exception as e:
+        logger.error(f"SCAN_ALL 캐시 SQL 실패: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    rows = [list(r) for r in rows]
+
+    # 2단계: process_sql_result (IForest + per-row grade/group 포함)
+    try:
+        processed_data = process_sql_result(rows, columns, intent_def, {})
+    except Exception as e:
+        logger.error(f"SCAN_ALL 캐시 후처리 실패: {e}")
+        return None
+
+    # 3단계: 교차 검증
+    if _CAUSAL_INDEX:
+        try:
+            cross_mismatches = cross_facility_check_all(
+                _query_recent_values, _CAUSAL_INDEX, lookback_minutes=180,
+            )
+            if cross_mismatches:
+                processed_data["cross_facility_mismatches"] = cross_mismatches
+                processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
+            logger.info(f"SCAN_ALL 캐시 교차검증: {len(cross_mismatches)}건")
+        except Exception as e:
+            logger.warning(f"SCAN_ALL 캐시 교차검증 실패: {e}")
+
+    # 4단계: 교차검증 결과를 per-row cross_status/verdict로 병합
+    _profiles = site_profiler.profiles if site_profiler.profiles else None
+    _cross_list = processed_data.get("cross_facility_mismatches")
+    enrich_rows_with_cross_verdict(rows, columns, _cross_list, site_profiles=_profiles)
+
+    # verdict 기반 교차이상 카운트
+    _vd_idx = columns.index("verdict") if "verdict" in columns else None
+    if _vd_idx is not None:
+        processed_data["cross_anomaly_count"] = sum(
+            1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+        )
+
+    # 5단계: 데이터 품질 이상 감지 (DEAD/홀딩 — 결과에서 빠진 태그)
+    dq_issues = _detect_data_quality_issues(rows, columns)
+    if dq_issues:
+        processed_data["data_quality_issues"] = dq_issues
+        logger.info(f"SCAN_ALL 데이터 품질 이상: {len(dq_issues)}건")
+
+    # 6단계: 설비 장애 역추적 (network_down + DI fault → 영향 태그)
+    try:
+        equip_impacts, tag_failure_map = _detect_equipment_failures(rows, columns)
+        if equip_impacts:
+            processed_data["equipment_failure_impacts"] = equip_impacts
+            processed_data["equipment_failure_count"] = len(equip_impacts)
+            logger.info(f"SCAN_ALL 설비 장애: {len(equip_impacts)}건")
+
+        # per-row equip_failure 컬럼 추가 (rows가 tuple일 수 있으므로 재구성)
+        columns.append("equip_failure")
+        tsn_idx = columns.index("tagsn")
+        rows[:] = [
+            tuple(list(r) + [tag_failure_map.get(r[tsn_idx], "")])
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning(f"SCAN_ALL 설비 장애 감지 실패: {e}")
+
+    # 7단계: 물 수지 요약 (캐시 참조)
+    try:
+        if _FLOW_BALANCE_CACHE:
+            imbalance_edges = [e for e in _FLOW_BALANCE_CACHE if e["grade"] != "정상" and e["status"] == "ok"]
+            processed_data["flow_balance_summary"] = {
+                "total_edges": len(_FLOW_BALANCE_CACHE),
+                "imbalance_count": len(imbalance_edges),
+                "worst_edges": sorted(imbalance_edges, key=lambda e: -abs(e["imbalance_pct"]))[:5],
+            }
+            if imbalance_edges:
+                logger.info(f"SCAN_ALL 물 수지: {len(imbalance_edges)}/{len(_FLOW_BALANCE_CACHE)} 불균형")
+    except Exception as e:
+        logger.warning(f"SCAN_ALL 물 수지 요약 실패: {e}")
+
+    return {
+        "rows": rows,
+        "columns": list(columns),
+        "processed_data": processed_data,
+        "answer_template": intent_def.get("answer_template", {}),
+    }
+
+
 async def _session_cleanup_loop():
     """백그라운드: 60초마다 만료 세션 정리 + CSV 파일 정리"""
     while True:
@@ -569,10 +1469,42 @@ async def lifespan(app: FastAPI):
                 group_id INT NOT NULL REFERENCES tb_tag_data_group(group_id)
             )
         """)
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_snmp_port_status (
+                equipment_id          VARCHAR(64)   NOT NULL,
+                port_index            INT           NOT NULL,
+                port_name             VARCHAR(100),
+                oper_status           VARCHAR(20)   NOT NULL DEFAULT 'unknown',
+                admin_status          VARCHAR(20)   NOT NULL DEFAULT 'up',
+                speed_mbps            INT           DEFAULT 0,
+                connected_mac         VARCHAR(20),
+                connected_ip          VARCHAR(50),
+                connected_device_name VARCHAR(100),
+                in_octets             BIGINT        DEFAULT 0,
+                out_octets            BIGINT        DEFAULT 0,
+                in_errors             INT           DEFAULT 0,
+                out_errors            INT           DEFAULT 0,
+                polled_at             TIMESTAMPTZ   NOT NULL DEFAULT now(),
+                PRIMARY KEY (equipment_id, port_index)
+            )
+        """)
+        _cur.execute("""
+            CREATE TABLE IF NOT EXISTS tb_causal_chain_override (
+                override_id       SERIAL PRIMARY KEY,
+                sitename          VARCHAR(100) NOT NULL,
+                facilitytype      VARCHAR(50) NOT NULL,
+                zone              VARCHAR(10) DEFAULT NULL,
+                chain_json        JSONB NOT NULL,
+                cross_facility_json JSONB,
+                source            VARCHAR(20) DEFAULT 'manual',
+                updated_at        TIMESTAMPTZ DEFAULT now(),
+                UNIQUE(sitename, facilitytype, zone)
+            )
+        """)
         _conn.commit()
         _cur.close()
         _conn.close()
-        logger.info("DDL 확인/생성 완료: canvas_node_position, equipment_tag_map, tag_data_group, tag_group_map")
+        logger.info("DDL 확인/생성 완료: canvas_node_position, equipment_tag_map, tag_data_group, tag_group_map, snmp_port_status, causal_chain_override")
     except Exception as e:
         logger.warning(f"DDL 생성 실패 (무시): {e}")
 
@@ -583,6 +1515,10 @@ async def lifespan(app: FastAPI):
         logger.info(f"태그 그룹 자동분류 완료: {classified}건 분류")
         causal_count = _build_causal_index(_conn2)
         logger.info(f"인과 인덱스 구축 완료: {causal_count}개 시설")
+        # 설비↔태그 자동 매핑 (ON CONFLICT DO NOTHING → 기존 수동 매핑 보존)
+        map_result = _auto_map_equipment_tags(_conn2, dry_run=False)
+        logger.info("설비↔태그 자동 매핑 완료: %d건 (by_type: %s)",
+                     map_result["total_links"], map_result["by_type"])
         _conn2.close()
     except Exception as e:
         logger.warning(f"태그 자동분류/인과 인덱스 실패 (무시): {e}")
@@ -599,6 +1535,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"기존 프로파일 로드 실패 (서버 시작 후 재생성): {e}")
     _profiling_task = asyncio.create_task(_site_profiling_loop())
+
+    # SNMP 스위치 포트 폴링 백그라운드 태스크
+    global snmp_poller_instance, _snmp_polling_task
+    snmp_poller_instance = SnmpPoller(get_db_connection)
+    try:
+        sw_count = snmp_poller_instance.load_switches()
+        logger.info(f"SNMP 스위치 로드: {sw_count}대")
+    except Exception as e:
+        logger.warning(f"SNMP 스위치 로드 실패 (무시): {e}")
+    _snmp_polling_task = asyncio.create_task(_snmp_polling_loop())
+
+    # IForest 백그라운드 학습 (90초 후 첫 실행, 이후 24시간 주기)
+    global _iforest_task
+    _iforest_task = asyncio.create_task(_iforest_training_loop())
+
+    # ANOMALY_SCAN_ALL 백그라운드 캐시 (150초 후 첫 실행, 이후 5분 주기)
+    global _anomaly_scan_task
+    _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
+    _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
 
     # [임시] 로컬 DB 사용 시 원격→로컬 실시간 동기화 (개발 완료 후 제거 예정)
     _sync_task = None
@@ -619,7 +1574,7 @@ async def lifespan(app: FastAPI):
     # shutdown
     if _sync_worker:
         _sync_worker.stop()
-    for task in (_cleanup_task, _profiling_task, _sync_task):
+    for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _sync_task):
         if task:
             task.cancel()
             try:
@@ -1289,6 +2244,7 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
         all_columns = []
 
         for stmt in statements:
+            logger.debug(f"execute_sql statement ({len(stmt)} chars): {stmt[:500]}")
             cur.execute(stmt)
             if cur.description:
                 cols = [desc[0] for desc in cur.description]
@@ -1791,7 +2747,7 @@ _ANOMALY_FILTER_INTENTS = {
 
 
 def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
-    """ANOMALY 인텐트에 대해 선택적 sitename/facilitytype WHERE 절 생성."""
+    """ANOMALY 인텐트에 대해 선택적 sitename/facilitytype/group_code WHERE 절 생성."""
     alias = _ANOMALY_FILTER_INTENTS.get(intent_name)
     if not alias:
         return ""
@@ -1802,19 +2758,105 @@ def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
         parts.append(f"AND {alias}.sitename = '{site}'")
     if ftype and ftype not in ("전체", "%%", ""):
         parts.append(f"AND {alias}.facilitytype = '{ftype}'")
+    # group_code 필터 (센서 유형별 점검: 유량/압력/수질 등)
+    gc = params.get("group_code", "")
+    if gc and alias == "ti":
+        resolved = _resolve_group_codes(gc)
+        gc_sql = ", ".join(f"'{c}'" for c in resolved)
+        parts.append(
+            f"AND {alias}.tagsn IN ("
+            f"SELECT gm.tagsn FROM tb_tag_group_map gm "
+            f"JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id "
+            f"WHERE dg.group_code IN ({gc_sql}))"
+        )
     return "\n    ".join(parts)
+
+
+def _filter_anomaly_cache_rows(
+    rows: list, columns: list, params: dict,
+) -> list:
+    """캐시된 ANOMALY_SCAN_ALL 결과에서 facilitytype/group_code 필터를 적용."""
+    ftype = params.get("facilitytype", "")
+    site = params.get("sitename", "")
+    gc = params.get("group_code", "")
+
+    # 필터가 없으면 전체 반환
+    if not ftype and (not site or site in ("전체", "%%", "")) and not gc:
+        return rows
+
+    ft_idx = columns.index("facilitytype") if "facilitytype" in columns else -1
+    sn_idx = columns.index("sitename") if "sitename" in columns else -1
+    di_idx = columns.index("datainfo") if "datainfo" in columns else -1
+    tsn_idx = columns.index("tagsn") if "tagsn" in columns else -1
+
+    # group_code 필터를 위한 tagsn set 미리 계산
+    gc_tagsns: set | None = None
+    if gc:
+        resolved = _resolve_group_codes(gc)
+        gc_tagsns = set()
+        for key, tag_map in _CAUSAL_INDEX.items():
+            if len(key) == 2:
+                tm = tag_map.get("tag_map", {})
+                for code in resolved:
+                    gc_tagsns.update(tm.get(code, []))
+        # _CAUSAL_INDEX에 없는 태그를 위해 group_map 직접 조회
+        if not gc_tagsns:
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                gc_sql = ", ".join(f"'{c}'" for c in resolved)
+                cur.execute(f"""
+                    SELECT gm.tagsn FROM tb_tag_group_map gm
+                    JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
+                    WHERE dg.group_code IN ({gc_sql})
+                """)
+                gc_tagsns = {r[0] for r in cur.fetchall()}
+                cur.close()
+                conn.close()
+            except Exception:
+                gc_tagsns = None  # 실패 시 필터 없이
+
+    filtered = []
+    for row in rows:
+        if ftype and ftype not in ("전체", "%%", "") and ft_idx >= 0:
+            if row[ft_idx] != ftype:
+                continue
+        if site and site not in ("전체", "%%", "") and sn_idx >= 0:
+            if row[sn_idx] != site:
+                continue
+        if gc_tagsns is not None and tsn_idx >= 0:
+            if row[tsn_idx] not in gc_tagsns:
+                continue
+        filtered.append(row)
+    return filtered
+
+
+# group_code → 한글 레이블 매핑
+_GROUP_CODE_LABELS = {
+    "FLOW": "유량", "FLOW_INSTANT": "유량순시", "FLOW_CUMULATIVE": "유량적산",
+    "FLOW_INLET": "유입유량", "FLOW_OUTLET": "유출유량",
+    "PRESSURE": "압력", "PRESSURE_INLET": "유입압력",
+    "PRESSURE_OUTLET": "유출압력", "PRESSURE_DISCHARGE": "토출압력",
+    "WATER_LEVEL": "수위", "WATER_QUALITY": "수질",
+    "WATER_QUALITY_PH": "pH", "WATER_QUALITY_TURB": "탁도",
+    "WATER_QUALITY_CL": "잔류염소",
+}
 
 
 def build_anomaly_scope_label(params: dict) -> str:
     """ANOMALY 인텐트 답변 summary에 쓸 범위 표시 문자열 생성."""
     site = params.get("sitename", "")
     ftype = params.get("facilitytype", "")
+    gc = params.get("group_code", "")
+    parts = []
     if site and site not in ("전체", "%%", ""):
-        if ftype:
-            return f"{site} {ftype}"
-        return site
+        parts.append(site)
     if ftype:
-        return ftype
+        parts.append(ftype)
+    if gc:
+        parts.append(_GROUP_CODE_LABELS.get(gc, gc))
+    if parts:
+        return " ".join(parts)
     return "전체"
 
 
@@ -2040,6 +3082,20 @@ def build_success_response(
         response["site_group"] = kwargs["site_group"]
     if kwargs.get("pattern_analysis"):
         response["pattern_analysis"] = kwargs["pattern_analysis"]
+    if kwargs.get("cross_facility_mismatches"):
+        response["cross_facility_mismatches"] = kwargs["cross_facility_mismatches"]
+    if kwargs.get("cross_facility_mismatch_count"):
+        response["cross_facility_mismatch_count"] = kwargs["cross_facility_mismatch_count"]
+    if kwargs.get("cross_anomaly_count") is not None:
+        response["cross_anomaly_count"] = kwargs["cross_anomaly_count"]
+    if kwargs.get("data_quality_issues"):
+        response["data_quality_issues"] = kwargs["data_quality_issues"]
+    if kwargs.get("equipment_failure_impacts"):
+        response["equipment_failure_impacts"] = kwargs["equipment_failure_impacts"]
+    if kwargs.get("equipment_failure_count") is not None:
+        response["equipment_failure_count"] = kwargs["equipment_failure_count"]
+    if kwargs.get("flow_balance_summary"):
+        response["flow_balance_summary"] = kwargs["flow_balance_summary"]
     return response
 
 
@@ -2572,6 +3628,67 @@ def _query_chunks_raw(
         """, (tagsn_list, from_ts, to_ts))
         all_rows.extend(cur.fetchall())
     return all_rows
+
+
+def _query_recent_values(tagsn_list: list[str], minutes: int = 180) -> dict[str, list[float]]:
+    """교차 검증용 최근 raw 값 조회 — 공용 헬퍼.
+
+    cross_facility_check_all/single에서 query_func으로 사용.
+    Returns: {tagsn: [val1, val2, ...]}
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _from = (datetime.now() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        chunks = _get_chunks_for_range(cur, _from, _to)
+        result: dict[str, list[float]] = {}
+        if chunks:
+            raw = _query_chunks_raw(cur, chunks, tagsn_list, _from, _to)
+            for tsn, _, val in raw:
+                result.setdefault(tsn, []).append(float(val) if val else 0.0)
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _query_flow_timeseries(
+    tagsn_list: list[str], from_ts: str, to_ts: str,
+) -> dict[str, list[tuple]]:
+    """물 수지용 시계열 조회 — (tagsn, logtime, val) raw 데이터.
+
+    Returns: {tagsn: [(logtime, val), ...]} sorted by logtime
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+        result: dict[str, list[tuple]] = {}
+        if chunks:
+            raw = _query_chunks_raw(cur, chunks, tagsn_list, from_ts, to_ts)
+            for tsn, logtime, val in raw:
+                result.setdefault(tsn, []).append(
+                    (logtime, float(val) if val else 0.0))
+        # 시간순 정렬
+        for tsn in result:
+            result[tsn].sort(key=lambda x: x[0])
+        return result
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _get_tag_datainfo_cache() -> dict[str, str]:
+    """모든 태그의 tagsn → datainfo 매핑 캐시."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT tagsn, datainfo FROM tb_tag_info WHERE datainfo IS NOT NULL")
+        return {r[0]: r[1] for r in cur.fetchall()}
+    finally:
+        cur.close()
+        conn.close()
 
 
 # ── TIMESERIES 인텐트 청크 직접 쿼리 ──────────────────────────
@@ -3625,9 +4742,8 @@ def process_sql_result(
         data["ok_count"] = counts["정상"]
         data["comm_error_sites"] = count_comm_error_sites(rows, columns)
 
-        # Isolation Forest ML 보강
+        # Isolation Forest ML 보강 (백그라운드 학습 — ensure_trained 불필요)
         try:
-            iforest_manager.ensure_trained(get_db_connection, site_profiles=_profiles)
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
                 data["ml_model_count"] = iforest_manager.model_count
@@ -3648,6 +4764,32 @@ def process_sql_result(
         if _CAUSAL_INDEX:
             data["causal_index_count"] = len(_CAUSAL_INDEX)
             data["causal_template_types"] = list(_CAUSAL_TEMPLATE_MAP.keys())
+
+        # per-row grade/group 보강 — 프론트엔드에서 그룹별 필터/정렬 지원
+        _sn_idx = columns.index("sitename") if "sitename" in columns else None
+        _ft_idx = columns.index("facilitytype") if "facilitytype" in columns else None
+        _z_idx = columns.index("z_score") if "z_score" in columns else None
+        if _sn_idx is not None and _ft_idx is not None and _z_idx is not None:
+            columns.extend(["site_group", "alert_grade"])
+            enriched_rows = []
+            for row in rows:
+                sn = row[_sn_idx] or ""
+                ft = row[_ft_idx] or ""
+                try:
+                    z = float(row[_z_idx] or 0)
+                except (ValueError, TypeError):
+                    z = 0.0
+                grp = "B"
+                grade = None
+                if _profiles:
+                    _prof = _profiles.get((sn, ft))
+                    grp = _prof.get("site_group", "B") if _prof else "B"
+                    level = classify_z_level_by_group(z, grp)
+                    if level != "정상":
+                        info_cnt = (_prof or {}).get("info_count_7d", 0)
+                        grade = classify_alert_grade(grp, level, "정상", None, info_cnt)
+                enriched_rows.append(tuple(list(row) + [grp, grade]))
+            rows[:] = enriched_rows
 
         data["anomaly_scan_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_scan_detail_block"] = \
@@ -3676,7 +4818,6 @@ def process_sql_result(
 
         # Isolation Forest ML 보강
         try:
-            iforest_manager.ensure_trained(get_db_connection, site_profiles=_profiles)
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
                 data["ml_anomaly_count"] = if_result.get("if_anomaly_count", 0)
@@ -3718,7 +4859,7 @@ def process_sql_result(
             except Exception as e:
                 logger.warning(f"C그룹 패턴 분석 실패: {e}")
 
-        # 인과관계 검증 (이상 태그 중 첫 번째에 대해)
+        # 인과관계 검증 (group_code 매칭 가능한 이상 태그 탐색)
         causal_result = None
         if _CAUSAL_INDEX and rows:
             try:
@@ -3727,64 +4868,96 @@ def process_sql_result(
                 _c_z_idx = col_map_c.get("z_score")
                 _c_datainfo_idx = col_map_c.get("datainfo")
                 if _c_tagsn_idx is not None and _c_z_idx is not None:
-                    # 이상 등급 태그 찾기
-                    _anomaly_row = None
+                    # |z_score| 높은 순으로 정렬 → group_code 매칭 가능한 태그 찾기
+                    _warn_th = GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]
+                    _anomaly_rows = []
                     for _r in rows:
                         try:
                             _zv = float(_r[_c_z_idx]) if _r[_c_z_idx] else 0
                         except (ValueError, TypeError):
                             _zv = 0
-                        if abs(_zv) >= GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]:
-                            _anomaly_row = _r
-                            break
-                    if _anomaly_row:
-                        _a_tagsn = _anomaly_row[_c_tagsn_idx]
+                        if abs(_zv) >= _warn_th:
+                            _anomaly_rows.append((_zv, _r))
+                    _anomaly_rows.sort(key=lambda x: abs(x[0]), reverse=True)
+
+                    _a_gc = None
+                    _a_dir = None
+                    _a_tagsn = ""
+                    _a_datainfo = ""
+                    from anomaly_detector import verify_causal_context
+                    for _zv, _anomaly_row in _anomaly_rows:
+                        _a_tagsn = str(_anomaly_row[_c_tagsn_idx] or "")
                         _a_datainfo = str(_anomaly_row[_c_datainfo_idx] or "")
-                        _a_z = float(_anomaly_row[_c_z_idx] or 0)
-                        _a_dir = "RISE" if _a_z > 0 else "FALL"
-                        # group_code 결정
-                        _a_gc = None
-                        for _gc, _gid in _GROUP_CODE_TO_ID.items():
-                            # tag_group_map에서 찾기
-                            pass
-                        # 간이 결정: datainfo 키워드 매칭
-                        from anomaly_detector import verify_causal_context
-                        for kw, code in [
-                            ("유입압력", "PRESSURE_INLET"), ("유출압력", "PRESSURE_OUTLET"),
-                            ("토출압력", "PRESSURE_DISCHARGE"), ("유입유량", "FLOW_INLET"),
-                            ("유출유량", "FLOW_OUTLET"), ("유량순시", "FLOW_INSTANT"),
-                            ("유량적산", "FLOW_CUMULATIVE"),
-                            ("수위", "WATER_LEVEL"), ("압력", "PRESSURE"), ("유량", "FLOW"),
-                            ("밸브", "VALVE_STATUS"), ("펌프", "PUMP_STATUS"),
-                        ]:
-                            if kw in _a_datainfo:
-                                _a_gc = code
-                                break
+                        _a_dir = "RISE" if _zv > 0 else "FALL"
+                        # _CAUSAL_INDEX tag_map 우선 → _FALLBACK_GC_KEYWORDS 폴백
+                        _a_gc = _resolve_group_code_for_tagsn(
+                            _site, _ft, _a_tagsn, _a_datainfo,
+                        )
                         if _a_gc:
-                            def _causal_query_func(tagsn_list, minutes):
-                                """인과 검증용 시계열 조회 콜백."""
-                                _cconn = get_db_connection()
-                                _ccur = _cconn.cursor()
-                                _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                _from = (datetime.now() - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
-                                _chunks = _get_chunks_for_range(_ccur, _from, _to)
-                                result = {}
-                                if _chunks:
-                                    raw_rows = _query_chunks_raw(_ccur, _chunks, tagsn_list, _from, _to)
-                                    for tsn, _, val in raw_rows:
-                                        result.setdefault(tsn, []).append(float(val) if val else 0.0)
-                                _ccur.close()
-                                _cconn.close()
-                                return result
+                            break
+                    if _a_gc:
+                            # 구역 감지 (배수지: datainfo에서 "1지","2지" 패턴)
+                            _a_zone = None
+                            _zm = _ZONE_PATTERN.search(_a_datainfo)
+                            if _zm:
+                                _a_zone = f"{_zm.group(1)}지"
 
                             causal_result = verify_causal_context(
-                                _causal_query_func, _site, _ft,
+                                _query_recent_values, _site, _ft,
                                 _a_gc, _a_dir, _CAUSAL_INDEX,
+                                zone=_a_zone,
                             )
                             if causal_result:
+                                # SLM 자연어 해석 (비정상 패턴일 때만)
+                                if not causal_result.get("chain_matched"):
+                                    try:
+                                        from anomaly_detector import generate_causal_explanation
+                                        _slm_text = generate_causal_explanation(
+                                            lambda p: ollama_client.generate(p),
+                                            causal_result, _site, _ft,
+                                        )
+                                        if _slm_text:
+                                            causal_result["_slm_explanation"] = _slm_text
+                                    except Exception as _slm_err:
+                                        logger.debug("인과 SLM 해석 실패 (무시): %s", _slm_err)
                                 data["causal_context"] = causal_result
             except Exception as e:
                 logger.warning(f"인과관계 검증 실패 (무시): {e}")
+
+        # 시설간 교차 검증 (상류/하류 가동률·방향 비교)
+        cross_facility_result = None
+        if _CAUSAL_INDEX:
+            try:
+                from anomaly_detector import cross_facility_check_single
+
+                cross_facility_result = cross_facility_check_single(
+                    _query_recent_values, _site, _ft, _CAUSAL_INDEX,
+                )
+                if cross_facility_result and cross_facility_result.get("has_mismatch"):
+                    data["cross_facility"] = cross_facility_result
+            except Exception as e:
+                logger.warning(f"교차 검증 실패 (무시): {e}")
+
+        # 다중 홉 전파 추적 (인과 or 교차 검증 결과가 있을 때만)
+        propagation_trace = None
+        if _CAUSAL_INDEX and (causal_result or cross_facility_result):
+            try:
+                from anomaly_detector import (
+                    trace_propagation_forward,
+                    trace_upstream_root_cause,
+                )
+                _target_key = (_site, _ft)
+                _fwd = trace_propagation_forward(
+                    _query_recent_values, _target_key, _CAUSAL_INDEX,
+                )
+                _bwd = trace_upstream_root_cause(
+                    _query_recent_values, _target_key, _CAUSAL_INDEX,
+                )
+                if _fwd.get("hops") or _bwd.get("root_cause") or _bwd.get("hops"):
+                    propagation_trace = {"forward": _fwd, "backward": _bwd}
+                    data["propagation_trace"] = propagation_trace
+            except Exception as e:
+                logger.warning(f"전파 추적 실패 (무시): {e}")
 
         data["anomaly_facility_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_facility_detail_block"] = \
@@ -3795,6 +4968,8 @@ def process_sql_result(
                 facilitytype=_ft,
                 pattern_result=pattern_result,
                 causal_result=causal_result,
+                cross_facility_result=cross_facility_result,
+                propagation_trace=propagation_trace,
             )
 
     # -------------------------------------------------
@@ -3875,6 +5050,39 @@ def process_sql_result(
         data["leak_cusum_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["leak_cusum_detail_block"] = \
             build_leak_cusum_detail_block(cusum_results)
+
+    # -------------------------------------------------
+    # 시설간 교차 검증 (ANOMALY_CROSS_FACILITY)
+    # -------------------------------------------------
+    if intent == "ANOMALY_CROSS_FACILITY":
+        mismatches = params.get("_cross_facility_mismatches", [])
+        from anomaly_detector import build_cross_facility_scan_block
+        scan_items, scan_data = build_cross_facility_scan_block(mismatches)
+        data.update(scan_data)
+        data["cross_facility_scan_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["cross_facility_scan_block"] = scan_items
+
+    # -------------------------------------------------
+    # 물 수지 검증: 상류 유출 vs 하류 합계 비교
+    # -------------------------------------------------
+    if intent == "ANOMALY_FLOW_BALANCE":
+        edges = params.get("_flow_balance_edges", [])
+        from flow_balance import build_flow_balance_scan_block
+        scan_items, scan_data = build_flow_balance_scan_block(edges)
+        data.update(scan_data)
+        data["flow_balance_scan_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["flow_balance_scan_block"] = scan_items
+        # flow_balance_summary for frontend UI
+        imbalance_edges = [e for e in edges if e["grade"] != "정상" and e["status"] == "ok"]
+        data["flow_balance_summary"] = {
+            "total_edges": len(edges),
+            "imbalance_count": len(imbalance_edges),
+            "worst_edges": sorted(
+                [e for e in edges if e["status"] == "ok"],
+                key=lambda e: abs(e["imbalance_pct"]),
+                reverse=True,
+            )[:10],
+        }
 
     # -------------------------------------------------
     # 이상 설비 현황: 결측률 기반 시맨틱 마커 상세
@@ -4259,7 +5467,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE"}
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -4545,6 +5753,56 @@ async def ask(request: AskRequest):
             logger.error(f"FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
         # sql_combined은 빈 상태 — 아래 execute_sql 단계를 건너뜀
 
+    # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용, 인과 인덱스 직접 조회)
+    if intent == "ANOMALY_CROSS_FACILITY":
+        try:
+            from anomaly_detector import cross_facility_check_all
+
+            mismatches = await asyncio.to_thread(
+                cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
+            )
+            params["_cross_facility_mismatches"] = mismatches
+            rows = [["cross_facility_done"]]
+            columns = ["status"]
+            logger.info(f"ANOMALY_CROSS_FACILITY: {len(mismatches)}건 불일치")
+        except Exception as e:
+            logger.error(f"ANOMALY_CROSS_FACILITY 실패: {e}")
+            params["_cross_facility_mismatches"] = []
+            rows = [["cross_facility_error"]]
+            columns = ["status"]
+
+    # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용, 인과 인덱스 + 시계열 직접 조회)
+    if intent == "ANOMALY_FLOW_BALANCE":
+        try:
+            if _FLOW_BALANCE_CACHE and _FLOW_BALANCE_CACHE_TIME:
+                cache_age = (datetime.now() - _FLOW_BALANCE_CACHE_TIME).total_seconds()
+                if cache_age < _FLOW_BALANCE_CACHE_TTL:
+                    params["_flow_balance_edges"] = _FLOW_BALANCE_CACHE
+                    rows = [["flow_balance_cached"]]
+                    columns = ["status"]
+                    logger.info(f"ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전)")
+                else:
+                    raise ValueError("cache expired")
+            else:
+                raise ValueError("no cache")
+        except (ValueError, Exception):
+            try:
+                from flow_balance import compute_flow_balance_all
+                tag_info = await asyncio.to_thread(_get_tag_datainfo_cache)
+                edges = await asyncio.to_thread(
+                    compute_flow_balance_all,
+                    _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
+                )
+                params["_flow_balance_edges"] = edges
+                rows = [["flow_balance_done"]]
+                columns = ["status"]
+                logger.info(f"ANOMALY_FLOW_BALANCE: {len(edges)}엣지")
+            except Exception as e2:
+                logger.error(f"ANOMALY_FLOW_BALANCE 실패: {e2}")
+                params["_flow_balance_edges"] = []
+                rows = [["flow_balance_error"]]
+                columns = ["status"]
+
     # alarm_msg가 None이면 전체 알람 조회 (LIKE '%%')
     if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
         params["alarm_msg"] = ""
@@ -4606,6 +5864,72 @@ async def ask(request: AskRequest):
             except ValueError:
                 pass
 
+    # ── ANOMALY_SCAN_ALL 캐시 히트: 전체 파이프라인 건너뜀 ──
+    if intent == "ANOMALY_SCAN_ALL" and _ANOMALY_SCAN_CACHE and _ANOMALY_SCAN_CACHE_TIME:
+        cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
+        if cache_age < _ANOMALY_SCAN_CACHE_TTL:
+            logger.info(f"ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전)")
+            _c = _ANOMALY_SCAN_CACHE
+            _c_rows = _c["rows"]
+            _c_cols = _c["columns"]
+            _c_data = dict(_c["processed_data"])  # 복사 (필터 시 수정)
+            _c_tmpl = _c["answer_template"]
+
+            # facilitytype / group_code 필터 적용
+            _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
+            _scope = build_anomaly_scope_label(params)
+            if _scope != "전체":
+                _c_data["total_tag_count"] = len(_c_rows)
+                # 필터된 결과로 카운트 재계산
+                from anomaly_detector import count_anomaly_levels
+                _fc = count_anomaly_levels(_c_rows, _c_cols)
+                _c_data["error_count"] = _fc["이상"]
+                _c_data["warn_count"] = _fc["주의"]
+                _c_data["ok_count"] = _fc["정상"]
+                # verdict 기반 교차이상 카운트 재계산
+                _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
+                if _vd_idx is not None:
+                    _c_data["cross_anomaly_count"] = sum(
+                        1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                    )
+
+            params["total_count"] = str(len(_c_rows))
+            rendered = render_answer_template(_c_tmpl, _c_data)
+            rendered = apply_corrections_to_answer(rendered, params)
+
+            # 테이블 데이터 구성 (summary 타입)
+            csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
+            _total = len(_c_rows)
+            if _total > MAX_TABLE_ROWS:
+                _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
+                _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
+                _trunc = True
+            else:
+                _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
+                _trunc = False
+
+            return build_success_response(
+                intent=intent,
+                answer=rendered,
+                graph_type=graph_type,
+                data=_resp_data,
+                table_columns=table_columns,
+                table_type=table_type,
+                session_id=sid,
+                csv_url=f"/csv/{csv_fn}",
+                total_rows=_total,
+                data_truncated=_trunc,
+                intent_candidates=intent_candidates,
+                site_group_distribution=_c_data.get("site_group_distribution"),
+                cross_facility_mismatches=_c_data.get("cross_facility_mismatches"),
+                cross_facility_mismatch_count=_c_data.get("cross_facility_mismatch_count"),
+                cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+                data_quality_issues=_c_data.get("data_quality_issues"),
+                equipment_failure_impacts=_c_data.get("equipment_failure_impacts"),
+                equipment_failure_count=_c_data.get("equipment_failure_count"),
+                flow_balance_summary=_c_data.get("flow_balance_summary"),
+            )
+
     # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
     if intent in _TIMESERIES_CHUNK_INTENTS:
         _sn = params.get("sitename", "%%")
@@ -4658,14 +5982,23 @@ async def ask(request: AskRequest):
             rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
         except psycopg2.OperationalError as e:
             logger.error(f"DB 접속 오류: {e}")
+            logger.error(f"  sql_combined[:500]: {sql_combined[:500]}")
             return build_error_response(
                 message="데이터베이스 연결 오류가 발생했습니다.",
                 session_id=sid,
             )
         except psycopg2.Error as e:
-            logger.error(f"SQL 실행 오류: {e}")
+            err_msg = str(e)
+            logger.error(f"SQL 실행 오류: {err_msg}")
+            logger.error(f"  sql_combined[:500]: {sql_combined[:500]}")
+            logger.error(f"  params keys: {list(params.keys())}")
+            # 사용자에게 친절한 에러 메시지
+            if "Invalid period" in err_msg:
+                user_msg = "조회 기간이 올바르지 않습니다. 시작일이 종료일보다 앞서야 합니다."
+            else:
+                user_msg = "데이터 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
             return build_error_response(
-                message="데이터베이스 연결 오류가 발생했습니다.",
+                message=user_msg,
                 session_id=sid,
             )
 
@@ -4793,6 +6126,29 @@ async def ask(request: AskRequest):
             message="데이터 구조 오류가 발생했습니다.",
             session_id=sid,
         )
+
+    # ANOMALY_SCAN_ALL: 교차 검증 + per-row 종합 판정
+    if intent == "ANOMALY_SCAN_ALL" and _CAUSAL_INDEX:
+        try:
+            from anomaly_detector import cross_facility_check_all, enrich_rows_with_cross_verdict
+            cross_mismatches = await asyncio.to_thread(
+                cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
+                lookback_minutes=180,
+            )
+            if cross_mismatches:
+                processed_data["cross_facility_mismatches"] = cross_mismatches
+                processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
+            logger.info(f"SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
+            # per-row cross_status/verdict 병합
+            _profiles = site_profiler.profiles if site_profiler.profiles else None
+            enrich_rows_with_cross_verdict(rows, columns, cross_mismatches, site_profiles=_profiles)
+            _vd_idx = columns.index("verdict") if "verdict" in columns else None
+            if _vd_idx is not None:
+                processed_data["cross_anomaly_count"] = sum(
+                    1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                )
+        except Exception as e:
+            logger.warning(f"SCAN_ALL 교차 검증 실패: {e}")
 
     # 트렌드 인텐트: 템플릿 변수 보충
     if intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND"):
@@ -4941,7 +6297,12 @@ async def ask(request: AskRequest):
             and intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND")
             and rows and columns):
         try:
-            _anomaly_zones = compute_anomaly_zones(rows, columns, region, conn)
+            _region = params.get("region", "R01")
+            _az_conn = get_db_connection()
+            try:
+                _anomaly_zones = compute_anomaly_zones(rows, columns, _region, _az_conn)
+            finally:
+                _az_conn.close()
         except Exception as e:
             logger.warning(f"Anomaly zone computation failed: {e}")
 
@@ -4965,6 +6326,10 @@ async def ask(request: AskRequest):
         site_group_distribution=processed_data.get("site_group_distribution"),
         site_group=processed_data.get("site_group"),
         pattern_analysis=processed_data.get("pattern_analysis"),
+        cross_facility_mismatches=processed_data.get("cross_facility_mismatches"),
+        cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
+        cross_anomaly_count=processed_data.get("cross_anomaly_count"),
+        flow_balance_summary=processed_data.get("flow_balance_summary"),
     )
 
 
@@ -5250,7 +6615,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE"}
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -5533,6 +6898,56 @@ async def ask_stream(request: AskRequest):
             except Exception as e:
                 logger.error(f"[SSE] FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
 
+        # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용)
+        if intent == "ANOMALY_CROSS_FACILITY":
+            try:
+                from anomaly_detector import cross_facility_check_all
+
+                mismatches = await asyncio.to_thread(
+                    cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
+                )
+                params["_cross_facility_mismatches"] = mismatches
+                rows = [["cross_facility_done"]]
+                columns = ["status"]
+                logger.info(f"[SSE] ANOMALY_CROSS_FACILITY: {len(mismatches)}건 불일치")
+            except Exception as e:
+                logger.error(f"[SSE] ANOMALY_CROSS_FACILITY 실패: {e}")
+                params["_cross_facility_mismatches"] = []
+                rows = [["cross_facility_error"]]
+                columns = ["status"]
+
+        # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용)
+        if intent == "ANOMALY_FLOW_BALANCE":
+            try:
+                if _FLOW_BALANCE_CACHE and _FLOW_BALANCE_CACHE_TIME:
+                    cache_age = (datetime.now() - _FLOW_BALANCE_CACHE_TIME).total_seconds()
+                    if cache_age < _FLOW_BALANCE_CACHE_TTL:
+                        params["_flow_balance_edges"] = _FLOW_BALANCE_CACHE
+                        rows = [["flow_balance_cached"]]
+                        columns = ["status"]
+                        logger.info(f"[SSE] ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전)")
+                    else:
+                        raise ValueError("cache expired")
+                else:
+                    raise ValueError("no cache")
+            except (ValueError, Exception):
+                try:
+                    from flow_balance import compute_flow_balance_all
+                    tag_info = await asyncio.to_thread(_get_tag_datainfo_cache)
+                    edges = await asyncio.to_thread(
+                        compute_flow_balance_all,
+                        _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
+                    )
+                    params["_flow_balance_edges"] = edges
+                    rows = [["flow_balance_done"]]
+                    columns = ["status"]
+                    logger.info(f"[SSE] ANOMALY_FLOW_BALANCE: {len(edges)}엣지")
+                except Exception as e2:
+                    logger.error(f"[SSE] ANOMALY_FLOW_BALANCE 실패: {e2}")
+                    params["_flow_balance_edges"] = []
+                    rows = [["flow_balance_error"]]
+                    columns = ["status"]
+
         # alarm_msg 기본값
         if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
             params["alarm_msg"] = ""
@@ -5588,6 +7003,72 @@ async def ask_stream(request: AskRequest):
                     params["to_ts"] = (to_date + timedelta(days=1)).strftime("%Y-%m-%d")
                 except ValueError:
                     pass
+
+        # ── ANOMALY_SCAN_ALL 캐시 히트: 전체 파이프라인 건너뜀 ──
+        if intent == "ANOMALY_SCAN_ALL" and _ANOMALY_SCAN_CACHE and _ANOMALY_SCAN_CACHE_TIME:
+            cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
+            if cache_age < _ANOMALY_SCAN_CACHE_TTL:
+                logger.info(f"[SSE] ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전)")
+                yield _sse_event("progress", {"step": "cache_hit", "message": "캐시된 이상감지 결과를 반환합니다..."})
+                _c = _ANOMALY_SCAN_CACHE
+                _c_rows = _c["rows"]
+                _c_cols = _c["columns"]
+                _c_data = dict(_c["processed_data"])
+                _c_tmpl = _c["answer_template"]
+
+                # facilitytype / group_code 필터 적용
+                _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
+                _scope = build_anomaly_scope_label(params)
+                if _scope != "전체":
+                    _c_data["total_tag_count"] = len(_c_rows)
+                    from anomaly_detector import count_anomaly_levels
+                    _fc = count_anomaly_levels(_c_rows, _c_cols)
+                    _c_data["error_count"] = _fc["이상"]
+                    _c_data["warn_count"] = _fc["주의"]
+                    _c_data["ok_count"] = _fc["정상"]
+                    # verdict 기반 교차이상 카운트 재계산
+                    _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
+                    if _vd_idx is not None:
+                        _c_data["cross_anomaly_count"] = sum(
+                            1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                        )
+
+                params["total_count"] = str(len(_c_rows))
+                rendered = render_answer_template(_c_tmpl, _c_data)
+                rendered = apply_corrections_to_answer(rendered, params)
+
+                csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
+                _total = len(_c_rows)
+                if _total > MAX_TABLE_ROWS:
+                    _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
+                    _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
+                    _trunc = True
+                else:
+                    _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
+                    _trunc = False
+
+                yield _sse_event("result", build_success_response(
+                    intent=intent,
+                    answer=rendered,
+                    graph_type=graph_type,
+                    data=_resp_data,
+                    table_columns=table_columns,
+                    table_type=table_type,
+                    session_id=sid,
+                    csv_url=f"/csv/{csv_fn}",
+                    total_rows=_total,
+                    data_truncated=_trunc,
+                    intent_candidates=intent_candidates,
+                    site_group_distribution=_c_data.get("site_group_distribution"),
+                    cross_facility_mismatches=_c_data.get("cross_facility_mismatches"),
+                    cross_facility_mismatch_count=_c_data.get("cross_facility_mismatch_count"),
+                    cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+                    data_quality_issues=_c_data.get("data_quality_issues"),
+                    equipment_failure_impacts=_c_data.get("equipment_failure_impacts"),
+                    equipment_failure_count=_c_data.get("equipment_failure_count"),
+                    flow_balance_summary=_c_data.get("flow_balance_summary"),
+                ))
+                return
 
         # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
         if intent in _TIMESERIES_CHUNK_INTENTS:
@@ -5654,10 +7135,14 @@ async def ask_stream(request: AskRequest):
                 })
                 return
             except psycopg2.Error as e:
-                logger.error(f"[SSE] SQL 실행 오류: {e}")
+                err_msg = str(e)
+                logger.error(f"[SSE] SQL 실행 오류: {err_msg}")
+                user_msg = ("조회 기간이 올바르지 않습니다. 시작일이 종료일보다 앞서야 합니다."
+                            if "Invalid period" in err_msg
+                            else "데이터 조회 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.")
                 yield _sse_event("error", {
                     "status": "ERROR",
-                    "message": "데이터베이스 연결 오류가 발생했습니다.",
+                    "message": user_msg,
                     "session_id": sid,
                 })
                 return
@@ -5794,6 +7279,29 @@ async def ask_stream(request: AskRequest):
             })
             return
 
+        # ANOMALY_SCAN_ALL: 교차 검증 + per-row 종합 판정
+        if intent == "ANOMALY_SCAN_ALL" and _CAUSAL_INDEX:
+            try:
+                from anomaly_detector import cross_facility_check_all, enrich_rows_with_cross_verdict
+                cross_mismatches = await asyncio.to_thread(
+                    cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
+                    lookback_minutes=180,
+                )
+                if cross_mismatches:
+                    processed_data["cross_facility_mismatches"] = cross_mismatches
+                    processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
+                logger.info(f"[SSE] SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
+                # per-row cross_status/verdict 병합
+                _profiles = site_profiler.profiles if site_profiler.profiles else None
+                enrich_rows_with_cross_verdict(rows, columns, cross_mismatches, site_profiles=_profiles)
+                _vd_idx = columns.index("verdict") if "verdict" in columns else None
+                if _vd_idx is not None:
+                    processed_data["cross_anomaly_count"] = sum(
+                        1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                    )
+            except Exception as e:
+                logger.warning(f"[SSE] SCAN_ALL 교차 검증 실패: {e}")
+
         # 트렌드 인텐트: 템플릿 변수 보충
         if intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND"):
             _ft = params.get("from_ts", "")
@@ -5928,7 +7436,12 @@ async def ask_stream(request: AskRequest):
                 and intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND")
                 and rows and columns):
             try:
-                _anomaly_zones = compute_anomaly_zones(rows, columns, region, conn)
+                _region = params.get("region", "R01")
+                _az_conn = get_db_connection()
+                try:
+                    _anomaly_zones = compute_anomaly_zones(rows, columns, _region, _az_conn)
+                finally:
+                    _az_conn.close()
             except Exception as e:
                 logger.warning(f"Anomaly zone computation failed (SSE): {e}")
 
@@ -5952,6 +7465,10 @@ async def ask_stream(request: AskRequest):
             site_group_distribution=processed_data.get("site_group_distribution"),
             site_group=processed_data.get("site_group"),
             pattern_analysis=processed_data.get("pattern_analysis"),
+            cross_facility_mismatches=processed_data.get("cross_facility_mismatches"),
+            cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
+            cross_anomaly_count=processed_data.get("cross_anomaly_count"),
+            flow_balance_summary=processed_data.get("flow_balance_summary"),
         )
 
         yield _sse_event("result", final_response)
@@ -6689,6 +8206,50 @@ async def get_network_status_summary():
     finally:
         if conn:
             conn.close()
+
+
+# =============================================================================
+# SNMP 스위치 포트 진단 API
+# =============================================================================
+
+
+@app.get("/network/snmp/{equipment_id}/ports")
+async def get_snmp_ports(equipment_id: str):
+    """스위치 포트 상태 조회"""
+    if not snmp_poller_instance:
+        return {"status": "ERROR", "message": "SNMP 폴러 미초기화", "data": []}
+    try:
+        ports = await asyncio.to_thread(snmp_poller_instance.get_ports, equipment_id)
+        return {"status": "OK", "data": ports}
+    except Exception as e:
+        logger.error(f"SNMP 포트 조회 실패 ({equipment_id}): {e}")
+        return {"status": "ERROR", "message": str(e), "data": []}
+
+
+@app.get("/network/snmp/{equipment_id}/system")
+async def get_snmp_system(equipment_id: str):
+    """스위치 시스템 정보 (장비정보 + 포트 요약)"""
+    if not snmp_poller_instance:
+        return {"status": "ERROR", "message": "SNMP 폴러 미초기화", "data": None}
+    try:
+        info = await asyncio.to_thread(snmp_poller_instance.get_system_info, equipment_id)
+        return {"status": "OK", "data": info}
+    except Exception as e:
+        logger.error(f"SNMP 시스템 정보 조회 실패 ({equipment_id}): {e}")
+        return {"status": "ERROR", "message": str(e), "data": None}
+
+
+@app.get("/network/snmp/summary")
+async def get_snmp_summary():
+    """전체 스위치 포트 상태 요약"""
+    if not snmp_poller_instance:
+        return {"status": "ERROR", "message": "SNMP 폴러 미초기화", "data": []}
+    try:
+        summary = await asyncio.to_thread(snmp_poller_instance.get_summary)
+        return {"status": "OK", "data": summary}
+    except Exception as e:
+        logger.error(f"SNMP 요약 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e), "data": []}
 
 
 # =============================================================================
@@ -7548,34 +9109,96 @@ async def get_tag_groups():
 
 @app.get("/causal/rules")
 async def get_causal_rules():
-    """인과 체인 템플릿 + 시설별 매핑 현황 (디버그용)."""
-    templates = []
+    """인과 체인 템플릿 + 시설별 매핑 현황 + 커버리지 통계."""
+    # 1) 시설유형별 템플릿
+    templates: dict[str, dict] = {}
     for t in CAUSAL_CHAIN_TEMPLATES:
-        templates.append({
-            "facilitytype": t["facilitytype"],
-            "chain_steps": len(t["chain"]),
-            "has_cross_facility": t.get("cross_facility") is not None,
+        templates[t["facilitytype"]] = {
             "chain": t["chain"],
-        })
+            "cross_facility": t.get("cross_facility"),
+        }
 
-    # 시설별 인과 인덱스 통계
+    # 2) 오버라이드 목록 (sitename, facilitytype, zone)
+    override_set: set[tuple[str, str]] = set()
+    for key in _CAUSAL_INDEX:
+        if len(key) == 3:  # 3-tuple = zone override
+            override_set.add((key[0], key[1]))
+    # 2-tuple override 감지: 체인이 템플릿과 다르면 오버라이드
+    for key, info in _CAUSAL_INDEX.items():
+        if len(key) != 2:
+            continue
+        sn, ft = key
+        orig_tmpl = _CAUSAL_TEMPLATE_MAP.get(ft)
+        if orig_tmpl and info["template"].get("chain") != orig_tmpl.get("chain"):
+            override_set.add((sn, ft))
+
+    # 3) 시설별 상세
     facilities = []
-    for (sn, ft), info in _CAUSAL_INDEX.items():
-        tag_groups = {gc: len(tsns) for gc, tsns in info["tag_map"].items()}
+    for key, info in _CAUSAL_INDEX.items():
+        if len(key) != 2:
+            continue  # zone entries 제외 (2-tuple만)
+        sn, ft = key
+        tmpl = info["template"]
+        chain_steps = tmpl.get("chain", [])
+        tag_map = info.get("tag_map", {})
+        # step별 태그 커버리지
+        tag_coverage: dict[str, int] = {}
+        for step in chain_steps:
+            gc = step["group_code"]
+            tag_coverage[gc] = len(tag_map.get(gc, []))
+        total_steps = len(chain_steps)
+        mapped_steps = sum(1 for v in tag_coverage.values() if v > 0)
+        # 구역 정보 (3-tuple 키에서 추출)
+        zones = sorted(
+            k[2] for k in _CAUSAL_INDEX if len(k) == 3 and k[0] == sn and k[1] == ft
+        )
+        # 상류/하류 시설명
+        upstream = [f"{u[0]} {u[1]}" for u in info.get("upstream", [])]
+        downstream = [f"{d[0]} {d[1]}" for d in info.get("downstream", [])]
         facilities.append({
             "sitename": sn,
             "facilitytype": ft,
-            "tag_groups": tag_groups,
-            "upstream_count": len(info.get("upstream", [])),
-            "downstream_count": len(info.get("downstream", [])),
+            "zones": zones,
+            "has_override": (sn, ft) in override_set,
+            "tag_coverage": tag_coverage,
+            "total_steps": total_steps,
+            "mapped_steps": mapped_steps,
+            "upstream": upstream,
+            "downstream": downstream,
         })
+
+    # 4) 요약 통계
+    # 전체 시설 수 (인과 템플릿이 있는 시설유형만)
+    covered_types = set(templates.keys())
+    total_facilities = 0
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(DISTINCT (sitename, facilitytype))
+            FROM tb_tag_info
+            WHERE facilitytype IN %s AND sitename IS NOT NULL
+        """, (tuple(covered_types),))
+        total_facilities = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+    except Exception:
+        total_facilities = len(facilities)
+
+    summary = {
+        "total_facilities": total_facilities,
+        "covered_facilities": len(facilities),
+        "override_count": len(override_set),
+        "full_coverage_count": sum(
+            1 for f in facilities if f["mapped_steps"] == f["total_steps"] and f["total_steps"] > 0
+        ),
+    }
 
     return {
         "status": "OK",
-        "template_count": len(templates),
-        "indexed_facility_count": len(_CAUSAL_INDEX),
         "templates": templates,
-        "facilities": facilities[:50],  # 최대 50개만 표시
+        "facilities": facilities,
+        "summary": summary,
     }
 
 
@@ -7636,6 +9259,234 @@ async def verify_causal(sitename: str, facilitytype: str):
         "chain_steps": steps,
         "cross_facility": template.get("cross_facility"),
     }
+
+
+# =============================================================================
+# 인과 체인 CRUD API (Phase 2)
+# =============================================================================
+
+@app.get("/causal/chain/{sitename}/{facilitytype}")
+async def get_causal_chain(sitename: str, facilitytype: str):
+    """시설별 인과 체인 상세 (템플릿 + 오버라이드 + 태그매핑 + 구역정보)."""
+    template = _CAUSAL_TEMPLATE_MAP.get(facilitytype)
+    if not template:
+        return {"status": "ERROR", "message": f"인과 템플릿 없음: {facilitytype}"}
+
+    info = _CAUSAL_INDEX.get((sitename, facilitytype))
+    tag_map = info["tag_map"] if info else {}
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 오버라이드 조회
+        cur.execute("""
+            SELECT zone, chain_json, cross_facility_json, source, updated_at
+            FROM tb_causal_chain_override
+            WHERE sitename = %s AND facilitytype = %s
+            ORDER BY zone NULLS FIRST
+        """, (sitename, facilitytype))
+        overrides = []
+        for zone, cj, cfj, src, upd in cur.fetchall():
+            overrides.append({
+                "zone": zone,
+                "chain": cj,
+                "cross_facility": cfj,
+                "source": src,
+                "updated_at": upd.isoformat() if upd else None,
+            })
+
+        # 구역 감지
+        zones = _detect_zones(conn, sitename, facilitytype)
+
+        cur.close()
+    except Exception as e:
+        logger.warning("인과 체인 조회 실패: %s", e)
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+    # effective chain: 기본 오버라이드 → 템플릿 폴백
+    effective_chain = template["chain"]
+    effective_cross = template.get("cross_facility")
+    default_override = next((o for o in overrides if o["zone"] is None), None)
+    if default_override:
+        effective_chain = default_override["chain"]
+        if default_override.get("cross_facility") is not None:
+            effective_cross = default_override["cross_facility"]
+
+    return {
+        "status": "OK",
+        "template": {"chain": template["chain"], "cross_facility": template.get("cross_facility")},
+        "effective": {"chain": effective_chain, "cross_facility": effective_cross},
+        "overrides": overrides,
+        "tag_map": tag_map,
+        "zones": zones,
+        "upstream": [list(u) for u in (info.get("upstream", []) if info else [])],
+        "downstream": [list(d) for d in (info.get("downstream", []) if info else [])],
+    }
+
+
+class CausalChainSaveRequest(BaseModel):
+    zone: Optional[str] = None
+    chain: list
+    cross_facility: Optional[dict] = None
+    source: str = "manual"
+
+
+@app.put("/causal/chain/{sitename}/{facilitytype}")
+async def save_causal_chain(sitename: str, facilitytype: str, body: CausalChainSaveRequest):
+    """인과 체인 오버라이드 저장 (UPSERT)."""
+    zone = body.zone
+    chain = body.chain
+    cross = body.cross_facility
+    source = body.source
+
+    if not chain:
+        return {"status": "ERROR", "message": "chain 필수"}
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO tb_causal_chain_override
+                (sitename, facilitytype, zone, chain_json, cross_facility_json, source, updated_at)
+            VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, now())
+            ON CONFLICT (sitename, facilitytype, zone) DO UPDATE SET
+                chain_json = EXCLUDED.chain_json,
+                cross_facility_json = EXCLUDED.cross_facility_json,
+                source = EXCLUDED.source,
+                updated_at = now()
+        """, (sitename, facilitytype, zone,
+              json.dumps(chain), json.dumps(cross) if cross else None, source))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("인과 체인 저장 실패: %s", e)
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+    _rebuild_causal_index_entry(sitename, facilitytype)
+    return {"status": "OK"}
+
+
+@app.delete("/causal/chain/{sitename}/{facilitytype}")
+async def delete_causal_chain(sitename: str, facilitytype: str, zone: Optional[str] = None):
+    """인과 체인 오버라이드 삭제 (템플릿으로 복귀)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if zone:
+            cur.execute(
+                "DELETE FROM tb_causal_chain_override WHERE sitename=%s AND facilitytype=%s AND zone=%s",
+                (sitename, facilitytype, zone))
+        else:
+            cur.execute(
+                "DELETE FROM tb_causal_chain_override WHERE sitename=%s AND facilitytype=%s AND zone IS NULL",
+                (sitename, facilitytype))
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("인과 체인 삭제 실패: %s", e)
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+    _rebuild_causal_index_entry(sitename, facilitytype)
+    return {"status": "OK"}
+
+
+class CausalLagRequest(BaseModel):
+    sitename: str
+    facilitytype: str
+    zone: Optional[str] = None
+    days: int = 14
+
+
+@app.post("/causal/estimate-lag")
+async def estimate_causal_lag_api(body: CausalLagRequest):
+    """교차상관 기반 인과 시간 지연 자동 추정."""
+    sitename = body.sitename
+    facilitytype = body.facilitytype
+    zone = body.zone
+    days = body.days
+
+    info = _get_causal_info(sitename, facilitytype, zone)
+    if not info:
+        return {"status": "ERROR", "message": f"인과 인덱스에 없음: {sitename} {facilitytype}"}
+
+    template = info["template"]
+    tag_map = info["tag_map"]
+    chain = template["chain"]
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        from_ts = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        to_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+
+        from causal_estimator import estimate_lag
+
+        estimates = []
+        for i in range(len(chain) - 1):
+            cause_step = chain[i]
+            effect_step = chain[i + 1]
+            if not effect_step.get("expected"):
+                continue
+
+            cause_tags = tag_map.get(cause_step["group_code"], [])
+            effect_tags = tag_map.get(effect_step["group_code"], [])
+            if not cause_tags or not effect_tags:
+                estimates.append({
+                    "cause_step": cause_step["step"],
+                    "effect_step": effect_step["step"],
+                    "cause_group": cause_step["group_code"],
+                    "effect_group": effect_step["group_code"],
+                    "peak_lag_min": 0, "peak_corr": 0.0,
+                    "lag_min": 0, "lag_max": 0, "confidence": "low",
+                })
+                continue
+
+            # 대표 태그 1개씩 사용
+            all_tags = [cause_tags[0], effect_tags[0]]
+            cause_vals = []
+            effect_vals = []
+
+            if chunks:
+                raw_rows = _query_chunks_raw(cur, chunks, all_tags, from_ts, to_ts)
+                for tsn, _, val in raw_rows:
+                    v = float(val) if val is not None else 0.0
+                    if tsn == cause_tags[0]:
+                        cause_vals.append(v)
+                    elif tsn == effect_tags[0]:
+                        effect_vals.append(v)
+
+            result = estimate_lag(cause_vals, effect_vals)
+            estimates.append({
+                "cause_step": cause_step["step"],
+                "effect_step": effect_step["step"],
+                "cause_group": cause_step["group_code"],
+                "effect_group": effect_step["group_code"],
+                **result,
+            })
+
+        cur.close()
+        return {"status": "OK", "estimates": estimates}
+    except Exception as e:
+        logger.error("인과 lag 추정 실패: %s", e)
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -11016,6 +12867,26 @@ async def get_canvas_node_detail(sitename: str, facilitytype: str):
 # =============================================================================
 # 설비↔태그 링크 (tb_equipment_tag_map)
 # =============================================================================
+
+@app.get("/equipments/auto-map")
+async def auto_map_equipment_tags(dry_run: bool = True):
+    """설비↔태그 자동 매핑 실행/미리보기.
+
+    dry_run=true(기본): 매핑 예상 결과만 반환 (DB 변경 없음)
+    dry_run=false: 실제 INSERT 수행 (ON CONFLICT DO NOTHING)
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        result = _auto_map_equipment_tags(conn, dry_run=dry_run)
+        return {"status": "OK", **result}
+    except Exception as e:
+        logger.error("설비 태그 자동 매핑 실패: %s", e)
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
 
 @app.get("/canvas/equipment-tags/{sitename}/{facilitytype}")
 async def get_equipment_tags(sitename: str, facilitytype: str):

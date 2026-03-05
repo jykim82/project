@@ -121,6 +121,101 @@ def classify_alert_grade(
     return None
 
 
+# ── 교차검증 종합 판정 ─────────────────────────────────────
+
+_CROSS_SEVERITY = {"교차이상": 2, "교차주의": 1}
+
+# (z_status, cross_status) → verdict
+_VERDICT_MATRIX = {
+    ("이상", "교차이상"): "복합이상",
+    ("이상", "교차주의"): "이상",
+    ("이상", None): "이상",
+    ("주의", "교차이상"): "복합이상",
+    ("주의", "교차주의"): "주의",
+    ("주의", None): "주의",
+    ("정상", "교차이상"): "교차이상",
+    ("정상", "교차주의"): "교차주의",
+    ("정상", None): "정상",
+}
+
+
+def map_cross_mismatches_to_facilities(
+    mismatches: list[dict],
+) -> dict[tuple[str, str], str]:
+    """엣지 레벨 교차검증 불일치 → per-(sitename, facilitytype) cross_status.
+
+    하류 facility: 교차이상 (유량 수신 실패)
+    상류 facility: 교차주의 (자체는 정상이나 하류 문제)
+    동일 시설이 여러 엣지에 관련 시 worst severity 적용.
+    """
+    facility_map: dict[tuple[str, str], str] = {}
+
+    for m in mismatches:
+        us_key = (m["upstream_sitename"], m["upstream_facilitytype"])
+        ds_key = (m["downstream_sitename"], m["downstream_facilitytype"])
+
+        # 하류: 교차이상, 상류: 교차주의
+        ds_status = "교차이상"
+        us_status = "교차주의"
+
+        for key, status in [(us_key, us_status), (ds_key, ds_status)]:
+            existing = facility_map.get(key)
+            if not existing or _CROSS_SEVERITY.get(status, 0) > _CROSS_SEVERITY.get(existing, 0):
+                facility_map[key] = status
+
+    return facility_map
+
+
+def compute_verdict(z_status: str, cross_status: Optional[str]) -> str:
+    """Z-Score 상태 + cross_status → 종합 판정."""
+    return _VERDICT_MATRIX.get((z_status, cross_status), z_status)
+
+
+def enrich_rows_with_cross_verdict(
+    rows: list,
+    columns: list,
+    cross_mismatches: Optional[list[dict]],
+    site_profiles: Optional[dict] = None,
+) -> None:
+    """per-row cross_status + verdict 컬럼 추가 (in-place).
+
+    site_group/alert_grade 컬럼이 이미 추가된 이후에 호출해야 한다.
+    """
+    if "cross_status" in columns:
+        return  # 이미 enriched
+
+    sn_idx = columns.index("sitename") if "sitename" in columns else None
+    ft_idx = columns.index("facilitytype") if "facilitytype" in columns else None
+    z_idx = columns.index("z_score") if "z_score" in columns else None
+    grp_idx = columns.index("site_group") if "site_group" in columns else None
+
+    if sn_idx is None or ft_idx is None or z_idx is None:
+        return
+
+    # 엣지 → 시설 레벨 매핑
+    facility_cross = map_cross_mismatches_to_facilities(cross_mismatches) if cross_mismatches else {}
+
+    columns.extend(["cross_status", "verdict"])
+    enriched = []
+    for row in rows:
+        sn = row[sn_idx] or ""
+        ft = row[ft_idx] or ""
+        try:
+            z = float(row[z_idx] or 0)
+        except (ValueError, TypeError):
+            z = 0.0
+
+        grp = row[grp_idx] if grp_idx is not None else "B"
+        z_status = classify_z_level_by_group(z, grp or "B")
+
+        cross_st = facility_cross.get((sn, ft))
+        verdict = compute_verdict(z_status, cross_st)
+
+        enriched.append(tuple(list(row) + [cross_st, verdict]))
+
+    rows[:] = enriched
+
+
 # ── C그룹 수위 패턴 분석 ───────────────────────────────────
 
 def analyze_level_pattern(
@@ -282,6 +377,13 @@ def get_hh_ll_for_site(
 
 def _wrap_marker(text: str, level: str) -> str:
     """레벨에 따라 시맨틱 마커를 감싼다."""
+    # 영문 직접 매칭
+    if level in ("error", "critical"):
+        return f"<<error:{text}>>"
+    if level in ("warn", "warning"):
+        return f"<<warn:{text}>>"
+    if level == "ok":
+        return f"<<ok:{text}>>"
     # 복합 상태 키워드에서 마커 결정 (심각/이상→error, 주의→warn, 정상→ok)
     for keyword, marker in [("심각", "error"), ("이상", "error"),
                             ("주의", "warn"), ("정상", "ok")]:
@@ -410,6 +512,8 @@ def build_anomaly_facility_detail_block(
     facilitytype: str = "",
     pattern_result: Optional[dict] = None,
     causal_result: Optional[dict] = None,
+    cross_facility_result: Optional[dict] = None,
+    propagation_trace: Optional[dict] = None,
 ) -> list:
     """
     ANOMALY_FACILITY_DETAIL: SQL 결과를 복합 진단 결과 리스트로 조립한다.
@@ -485,6 +589,24 @@ def build_anomaly_facility_detail_block(
         if causal_result.get("possible_causes"):
             causes_text = ", ".join(causal_result["possible_causes"])
             items.append({"prefix": "▸", "text": f"점검 필요: {causes_text}"})
+        # SLM 자연어 해석 (Phase 2)
+        if causal_result.get("_slm_explanation"):
+            items.append({"prefix": "", "text": "─── AI 종합 해석 ───"})
+            items.append({"prefix": "💡", "text": causal_result["_slm_explanation"]})
+
+    # 시설간 교차 검증 결과
+    cross_items = build_cross_facility_detail_block(cross_facility_result)
+    if cross_items:
+        items.extend(cross_items)
+
+    # 다중 홉 전파 추적 결과
+    if propagation_trace:
+        prop_items = build_propagation_trace_block(
+            propagation_trace.get("forward"),
+            propagation_trace.get("backward"),
+        )
+        if prop_items:
+            items.extend(prop_items)
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:분석 대상 센서가 없습니다.>>"})
@@ -910,6 +1032,10 @@ _CAUSAL_PATTERNS = {
         "label": "정상인과",
         "possible_causes": [],
     },
+    "UPSTREAM_PROPAGATION": {
+        "label": "상류→하류 이상 전파",
+        "possible_causes": ["상류 시설 이상 전파", "관로 연쇄 영향", "유량 변동 전파"],
+    },
 }
 
 # 방향 판정 임계값 (%)
@@ -963,6 +1089,68 @@ def _detect_sudden_drop(values: list[float]) -> bool:
     return drop_pct < _SUDDEN_DROP_PCT
 
 
+# =============================================================================
+# SLM 자연어 해석 (Phase 2)
+# =============================================================================
+
+_CAUSAL_EXPLAIN_PROMPT = """당신은 수도시설 이상감지 시스템의 분석 전문가입니다.
+아래 인과관계 분석 결과를 현장 운영자가 이해할 수 있는 한국어로 설명하세요.
+
+시설: {sitename} {facilitytype}
+감지 패턴: {pattern_label}
+인과 체인 정상 여부: {chain_status}
+추정 원인: {causes}
+하류 영향: {downstream}
+
+요구사항:
+1. 어떤 현상이 감지되었는지 한 문장
+2. 가능한 원인을 우선순위로 한 문장
+3. 즉시 확인해야 할 사항 한 문장
+
+3문장 이내로 간결하게 답변하세요. 마크다운 없이 평문으로."""
+
+
+def generate_causal_explanation(
+    ollama_generate_func,
+    causal_result: dict,
+    sitename: str,
+    facilitytype: str,
+) -> str | None:
+    """인과 판정 결과를 SLM으로 자연어 해석한다.
+
+    Args:
+        ollama_generate_func: (prompt: str) → str 텍스트 생성 콜백
+        causal_result: verify_causal_context() 반환값
+        sitename: 현장명
+        facilitytype: 시설유형
+
+    Returns:
+        자연어 해석 문자열, 실패/불필요 시 None
+    """
+    if not causal_result:
+        return None
+    pattern = causal_result.get("pattern", "")
+    if pattern in ("CAUSAL_CHAIN_NORMAL", "NO_INDEX", ""):
+        return None
+
+    pat_info = _CAUSAL_PATTERNS.get(pattern, {})
+    prompt = _CAUSAL_EXPLAIN_PROMPT.format(
+        sitename=sitename,
+        facilitytype=facilitytype,
+        pattern_label=pat_info.get("label", pattern),
+        chain_status="정상" if causal_result.get("chain_matched") else "불일치",
+        causes=", ".join(causal_result.get("possible_causes", [])) or "미확인",
+        downstream=", ".join(str(d) for d in causal_result.get("downstream_impact", [])) or "없음",
+    )
+
+    try:
+        explanation = ollama_generate_func(prompt)
+        return explanation.strip() if explanation else None
+    except Exception as e:
+        logger.debug("인과 해석 SLM 호출 실패 (무시): %s", e)
+        return None
+
+
 def verify_causal_context(
     query_func,
     sitename: str,
@@ -971,6 +1159,7 @@ def verify_causal_context(
     anomaly_direction: str,
     causal_index: dict,
     lookback_minutes: int = 30,
+    zone: str | None = None,
 ) -> dict:
     """알람 발생 태그에 대해 인과 체인을 검증한다.
 
@@ -982,13 +1171,18 @@ def verify_causal_context(
         anomaly_direction: 이상 방향 ("RISE" | "FALL")
         causal_index: _CAUSAL_INDEX 전체 딕셔너리
         lookback_minutes: 시계열 조회 범위 (분)
+        zone: 구역 ("1지","2지" 등, 배수지 구역 분리용)
 
     Returns:
         dict with keys: chain_matched, pattern, cause_found, downstream_impact,
                         confidence, detail, possible_causes
     """
-    key = (sitename, facilitytype)
-    info = causal_index.get(key)
+    # zone 지정 시 3-tuple 키 우선, 없으면 2-tuple 폴백
+    info = None
+    if zone:
+        info = causal_index.get((sitename, facilitytype, zone))
+    if not info:
+        info = causal_index.get((sitename, facilitytype))
     if not info:
         return _no_match_result("인과 인덱스에 시설 없음")
 
@@ -1009,6 +1203,19 @@ def verify_causal_context(
             if anomaly_group_code.startswith(gc) or gc.startswith(anomaly_group_code):
                 anomaly_step = step_info
                 break
+    # 같은 부모 그룹 형제 매칭 (FLOW_INSTANT↔FLOW_INLET 등)
+    if not anomaly_step:
+        _SIBLING_MAP = {
+            "FLOW": ["FLOW_INSTANT", "FLOW_CUMULATIVE", "FLOW_INLET", "FLOW_OUTLET"],
+            "PRESSURE": ["PRESSURE_INLET", "PRESSURE_OUTLET", "PRESSURE_DISCHARGE"],
+        }
+        anomaly_parent = anomaly_group_code.rsplit("_", 1)[0] if "_" in anomaly_group_code else anomaly_group_code
+        siblings = _SIBLING_MAP.get(anomaly_parent, [])
+        if anomaly_group_code in siblings:
+            for step_info in chain:
+                if step_info["group_code"] in siblings:
+                    anomaly_step = step_info
+                    break
     if not anomaly_step:
         return _no_match_result("템플릿에 해당 group_code 없음")
 
@@ -1209,3 +1416,693 @@ def _build_causal_detail(
         parts.append(f"<<warn:하류영향>> {impacts_str}")
 
     return "\n".join(parts)
+
+
+# =============================================================================
+# 시설간 교차 검증 (Cross-Facility Validation)
+# =============================================================================
+# 상류→하류 물리적 흐름 일관성 검사
+# tb_facility_flow_map 기반, group_code 매칭
+# =============================================================================
+
+_FACILITY_OUTPUT_GROUPS: dict[str, list[str]] = {
+    "배수지": ["FLOW_OUTLET"],
+    "가압장": ["FLOW_OUTLET"],
+    "감압시설": ["PRESSURE_OUTLET"],
+    "소블록": ["FLOW_OUTLET", "FLOW_INSTANT"],
+    "소소블록": ["FLOW_OUTLET", "FLOW_INSTANT"],
+}
+
+_FACILITY_INPUT_GROUPS: dict[str, list[str]] = {
+    "배수지": ["FLOW_INLET"],
+    "가압장": ["FLOW_INLET"],
+    "감압시설": ["PRESSURE_INLET"],
+    "소블록": ["FLOW_INLET", "FLOW_INSTANT"],
+    "소소블록": ["FLOW_INLET", "FLOW_INSTANT"],
+}
+
+# active_ratio 불일치 판정 임계값 (보수적: 전파 지연 오탐 방지)
+_CROSS_ACTIVE_HIGH = 0.85  # 상류 85%+ 가동 중
+_CROSS_ACTIVE_LOW = 0.15   # 하류 15% 미만 → 확실한 단절만
+
+
+def _calc_active_rate(values: list[float], threshold: float = 0.01) -> float:
+    """비제로(활성) 데이터 비율 계산."""
+    if not values:
+        return 0.0
+    active = sum(1 for v in values if abs(v) > threshold)
+    return active / len(values)
+
+
+def _get_latest_value(tag_data: dict[str, list[float]]) -> Optional[float]:
+    """태그 데이터에서 가장 마지막(최신) 값을 반환. 시계열 끝 = 최신."""
+    latest: Optional[float] = None
+    for values in tag_data.values():
+        if values:
+            latest = values[-1]  # _query_recent_values는 시간순 정렬
+    return latest
+
+
+def _calc_mean_direction(values: list[float]) -> str:
+    """시계열 전반부 vs 후반부 평균 비교 → RISE/FALL/STABLE."""
+    if len(values) < 4:
+        return "UNKNOWN"
+    mid = len(values) // 2
+    first_half = sum(values[:mid]) / mid
+    second_half = sum(values[mid:]) / (len(values) - mid)
+    if abs(first_half) < 0.001:
+        return "UNKNOWN"
+    change_pct = (second_half - first_half) / abs(first_half) * 100
+    if change_pct > 5:
+        return "RISE"
+    elif change_pct < -5:
+        return "FALL"
+    return "STABLE"
+
+
+def _collect_tags_for_groups(
+    tag_map: dict[str, list[str]], groups: list[str],
+) -> list[str]:
+    """group_code 리스트에 해당하는 tagsn 수집."""
+    result = []
+    for g in groups:
+        result.extend(tag_map.get(g, []))
+    return result
+
+
+def _check_edge(
+    query_func,
+    us_tagsns: list[str],
+    ds_tagsns: list[str],
+    lookback_minutes: int,
+) -> tuple[float, float, str, str, list[dict]]:
+    """상류/하류 태그 쌍의 가동률 + 방향 비교.
+
+    Returns: (us_active, ds_active, us_dir, ds_dir, checks)
+    """
+    try:
+        us_data = query_func(us_tagsns, lookback_minutes)
+        ds_data = query_func(ds_tagsns, lookback_minutes)
+    except Exception:
+        return 0.0, 0.0, "UNKNOWN", "UNKNOWN", []
+
+    us_values = [v for vals in us_data.values() for v in vals]
+    ds_values = [v for vals in ds_data.values() for v in vals]
+
+    if not us_values or not ds_values:
+        return 0.0, 0.0, "UNKNOWN", "UNKNOWN", []
+
+    us_active = _calc_active_rate(us_values)
+    ds_active = _calc_active_rate(ds_values)
+    us_dir = _calc_mean_direction(us_values)
+    ds_dir = _calc_mean_direction(ds_values)
+
+    checks: list[dict] = []
+
+    # 가동률 불일치: 상류 고가동 + 하류 저가동
+    if us_active >= _CROSS_ACTIVE_HIGH and ds_active < _CROSS_ACTIVE_LOW:
+        checks.append({
+            "type": "active_ratio",
+            "upstream_active": round(us_active * 100, 1),
+            "downstream_active": round(ds_active * 100, 1),
+        })
+
+    # 방향 역전: 제거 — 유량 전파 지연으로 일시적 역전이 정상 패턴
+    # (상류 펌프 가동 → 하류 도달까지 수십 분 소요 시 RISE vs STABLE/FALL)
+
+    # 하류 비활성: 상류 유량 > 0인데 하류 평균값 ≈ 0 (공급 단절 의심)
+    if us_active >= _CROSS_ACTIVE_HIGH:
+        # 하류 활성값만 필터링 (0이 아닌 값)
+        ds_nonzero = [v for v in ds_values if abs(v) > 0.01]
+        if not ds_nonzero:
+            # 하류 데이터 전부 0 또는 근사 0
+            us_mean = sum(us_values) / len(us_values) if us_values else 0
+            checks.append({
+                "type": "downstream_zero",
+                "upstream_mean": round(us_mean, 2),
+                "downstream_nonzero_count": 0,
+                "downstream_total_count": len(ds_values),
+            })
+
+    # 인과 기대 위반 (급락): 상류 활성 + 하류 전반부 활성 → 후반부 정지
+    # 남산11 패턴: [872, 877, 439, 0, 0, 0, 0, 0, 0] — 상류가 보내는데 하류가 갑자기 멈춤
+    if us_active >= _CROSS_ACTIVE_HIGH and len(ds_values) >= 4:
+        mid = len(ds_values) // 2
+        first_half = ds_values[:mid]
+        second_half = ds_values[mid:]
+        first_active = _calc_active_rate(first_half)
+        second_active = _calc_active_rate(second_half)
+        # 전반부 35%+ 활성 → 후반부 10%- 정지: 인과적으로 비정상
+        if first_active >= 0.35 and second_active < 0.1:
+            first_mean = sum(abs(v) for v in first_half) / len(first_half)
+            checks.append({
+                "type": "sudden_drop",
+                "first_half_active_pct": round(first_active * 100, 1),
+                "second_half_active_pct": round(second_active * 100, 1),
+                "first_half_mean": round(first_mean, 2),
+                "upstream_active_pct": round(us_active * 100, 1),
+            })
+
+    # 최근 비활성: 상류 활성인데 하류 최근 60분이 전부 0
+    # 전체 윈도우에서 일부 활성이 있어도 "지금" 죽어있으면 이상
+    _RECENT_MINUTES = 60
+    _recent_count = min(_RECENT_MINUTES, len(ds_values))
+    if (us_active >= _CROSS_ACTIVE_HIGH and _recent_count >= 10
+            and not any(c["type"] == "downstream_zero" for c in checks)):
+        recent_tail = ds_values[-_recent_count:]
+        recent_active = _calc_active_rate(recent_tail)
+        if recent_active < 0.05:  # 최근 60분 5% 미만 활성 → 사실상 정지
+            us_mean = sum(us_values) / len(us_values) if us_values else 0
+            checks.append({
+                "type": "recent_inactive",
+                "recent_minutes": _RECENT_MINUTES,
+                "recent_active_pct": round(recent_active * 100, 1),
+                "overall_active_pct": round(ds_active * 100, 1),
+                "upstream_active_pct": round(us_active * 100, 1),
+                "upstream_mean": round(us_mean, 2),
+            })
+
+    return us_active, ds_active, us_dir, ds_dir, checks
+
+
+def cross_facility_check_single(
+    query_func,
+    target_sitename: str,
+    target_facilitytype: str,
+    causal_index: dict,
+    lookback_minutes: int = 180,
+) -> Optional[dict]:
+    """단일 시설의 상류/하류 교차 검증.
+
+    ANOMALY_FACILITY_DETAIL에서 자동 호출.
+    """
+    key = (target_sitename, target_facilitytype)
+    info = causal_index.get(key)
+    if not info:
+        return None
+
+    upstream_list = info.get("upstream", [])
+    downstream_list = info.get("downstream", [])
+    if not upstream_list and not downstream_list:
+        return None
+
+    mismatches: list[dict] = []
+    input_groups = _FACILITY_INPUT_GROUPS.get(target_facilitytype, [])
+    output_groups = _FACILITY_OUTPUT_GROUPS.get(target_facilitytype, [])
+
+    # 상류 검증: upstream output → 자신 input
+    for us_key in upstream_list:
+        us_info = causal_index.get(us_key)
+        if not us_info or not isinstance(us_key, tuple) or len(us_key) != 2:
+            continue
+        us_out_groups = _FACILITY_OUTPUT_GROUPS.get(us_key[1], [])
+        us_tagsns = _collect_tags_for_groups(us_info["tag_map"], us_out_groups)
+        my_tagsns = _collect_tags_for_groups(info["tag_map"], input_groups)
+        if not us_tagsns or not my_tagsns:
+            continue
+
+        us_active, my_active, us_dir, my_dir, checks = _check_edge(
+            query_func, us_tagsns, my_tagsns, lookback_minutes,
+        )
+        if checks:
+            mismatches.append({
+                "relation": "upstream",
+                "peer_sitename": us_key[0],
+                "peer_facilitytype": us_key[1],
+                "peer_active_pct": round(us_active * 100, 1),
+                "self_active_pct": round(my_active * 100, 1),
+                "checks": checks,
+            })
+
+    # 하류 검증: 자신 output → downstream input
+    for ds_key in downstream_list:
+        ds_info = causal_index.get(ds_key)
+        if not ds_info or not isinstance(ds_key, tuple) or len(ds_key) != 2:
+            continue
+        ds_in_groups = _FACILITY_INPUT_GROUPS.get(ds_key[1], [])
+        my_out_tagsns = _collect_tags_for_groups(info["tag_map"], output_groups)
+        ds_tagsns = _collect_tags_for_groups(ds_info["tag_map"], ds_in_groups)
+        if not my_out_tagsns or not ds_tagsns:
+            continue
+
+        my_active, ds_active, my_dir, ds_dir, checks = _check_edge(
+            query_func, my_out_tagsns, ds_tagsns, lookback_minutes,
+        )
+        if checks:
+            mismatches.append({
+                "relation": "downstream",
+                "peer_sitename": ds_key[0],
+                "peer_facilitytype": ds_key[1],
+                "self_active_pct": round(my_active * 100, 1),
+                "peer_active_pct": round(ds_active * 100, 1),
+                "checks": checks,
+            })
+
+    if not mismatches:
+        return {"has_mismatch": False, "mismatches": [], "summary": ""}
+
+    return {
+        "has_mismatch": True,
+        "mismatches": mismatches,
+        "summary": f"교차 검증 불일치 {len(mismatches)}건",
+    }
+
+
+def cross_facility_check_all(
+    query_func,
+    causal_index: dict,
+    lookback_minutes: int = 180,
+) -> list[dict]:
+    """전체 시설 교차 검증 스캔 (ANOMALY_CROSS_FACILITY 인텐트).
+
+    모든 flow_map 엣지를 순회하며 불일치를 찾는다.
+    """
+    checked_edges: set[tuple] = set()
+    all_mismatches: list[dict] = []
+
+    for key, info in causal_index.items():
+        if not isinstance(key, tuple) or len(key) != 2:
+            continue
+        sn, ft = key
+        out_groups = _FACILITY_OUTPUT_GROUPS.get(ft, [])
+        if not out_groups:
+            continue
+
+        us_tagsns = _collect_tags_for_groups(info["tag_map"], out_groups)
+        if not us_tagsns:
+            continue
+
+        for ds_key in info.get("downstream", []):
+            edge = (key, ds_key)
+            if edge in checked_edges:
+                continue
+            checked_edges.add(edge)
+
+            ds_info = causal_index.get(ds_key)
+            if not ds_info:
+                continue
+
+            ds_in_groups = _FACILITY_INPUT_GROUPS.get(ds_key[1], [])
+            ds_tagsns = _collect_tags_for_groups(ds_info["tag_map"], ds_in_groups)
+            if not ds_tagsns:
+                continue
+
+            us_active, ds_active, us_dir, ds_dir, checks = _check_edge(
+                query_func, us_tagsns, ds_tagsns, lookback_minutes,
+            )
+            if checks:
+                all_mismatches.append({
+                    "upstream_sitename": sn,
+                    "upstream_facilitytype": ft,
+                    "downstream_sitename": ds_key[0],
+                    "downstream_facilitytype": ds_key[1],
+                    "upstream_active_pct": round(us_active * 100, 1),
+                    "downstream_active_pct": round(ds_active * 100, 1),
+                    "upstream_direction": us_dir,
+                    "downstream_direction": ds_dir,
+                    "checks": checks,
+                })
+
+    return all_mismatches
+
+
+def build_cross_facility_detail_block(result: Optional[dict]) -> list:
+    """단일 시설 교차 검증 결과 → detail block 포맷 (ANOMALY_FACILITY_DETAIL용)."""
+    if not result or not result.get("has_mismatch"):
+        return []
+
+    items: list[dict] = []
+    items.append({"prefix": "", "text": "─── 시설간 교차 검증 ───"})
+
+    for m in result["mismatches"]:
+        rel = "▲ 상류" if m["relation"] == "upstream" else "▼ 하류"
+        peer = f"{m['peer_sitename']} {m['peer_facilitytype']}"
+
+        for c in m["checks"]:
+            if c["type"] == "active_ratio":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 가동률 {c['upstream_active']}% → {c['downstream_active']}% (불일치)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "direction":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 상류 {c['upstream_direction']} / 하류 {c['downstream_direction']} (역방향)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "downstream_zero":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 상류 평균 {c['upstream_mean']} → 하류 전부 0 (공급 단절 의심)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "snapshot_zero":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 상류 현재 {c['upstream_latest']} → 하류 현재 0 "
+                        f"(하류 가동률 {c['downstream_active_pct']}%)",
+                        "warn",
+                    ),
+                })
+            elif c["type"] == "sudden_drop":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 하류 유량 급락 "
+                        f"(전반 {c['first_half_active_pct']}% → 후반 {c['second_half_active_pct']}%)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "recent_inactive":
+                items.append({
+                    "prefix": "⚠",
+                    "text": _wrap_marker(
+                        f"{rel} {peer}: 최근 {c['recent_minutes']}분 비활성 "
+                        f"(전체 {c['overall_active_pct']}% / 최근 {c['recent_active_pct']}%)",
+                        "error",
+                    ),
+                })
+
+    return items
+
+
+def build_cross_facility_scan_block(mismatches: list[dict]) -> tuple[list, dict]:
+    """전체 스캔 결과 → (detail_block, data) (ANOMALY_CROSS_FACILITY용)."""
+    data = {
+        "mismatch_count": len(mismatches),
+    }
+
+    items: list[dict] = []
+    if not mismatches:
+        items.append({
+            "prefix": "✓",
+            "text": _wrap_marker("전체 시설간 교차 검증 정상 — 유량 흐름 불일치 없음", "ok"),
+        })
+        return items, data
+
+    items.append({
+        "prefix": "",
+        "text": _wrap_marker(f"교차 검증 불일치 {len(mismatches)}건 감지", "error"),
+    })
+
+    for i, m in enumerate(mismatches, 1):
+        us = f"{m['upstream_sitename']} {m['upstream_facilitytype']}"
+        ds = f"{m['downstream_sitename']} {m['downstream_facilitytype']}"
+        items.append({"prefix": f"[{i}]", "text": f"{us} → {ds}"})
+
+        for c in m["checks"]:
+            if c["type"] == "active_ratio":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  가동률: 상류 {c['upstream_active']}% / 하류 {c['downstream_active']}%",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "direction":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  방향: 상류 {c['upstream_direction']} / 하류 {c['downstream_direction']} (역전)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "downstream_zero":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  상류 평균 {c['upstream_mean']} → 하류 전부 0 (공급 단절 의심)",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "snapshot_zero":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  현재 시점: 상류 {c['upstream_latest']} / 하류 0 "
+                        f"(하류 가동률 {c['downstream_active_pct']}%)",
+                        "warn",
+                    ),
+                })
+            elif c["type"] == "sudden_drop":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  유량 급락: 전반 {c['first_half_active_pct']}% → 후반 {c['second_half_active_pct']}%",
+                        "error",
+                    ),
+                })
+            elif c["type"] == "recent_inactive":
+                items.append({
+                    "prefix": "",
+                    "text": _wrap_marker(
+                        f"  최근 {c['recent_minutes']}분 비활성: 전체 {c['overall_active_pct']}% / 최근 {c['recent_active_pct']}%",
+                        "error",
+                    ),
+                })
+
+        items.append({"prefix": "", "text": ""})  # 빈 줄 구분
+
+    return items, data
+
+
+# ─── 시설간 다중 홉 전파 추적 ───
+
+
+def trace_propagation_forward(
+    query_func,
+    start_key: tuple[str, str],
+    causal_index: dict,
+    max_depth: int = 3,
+    lookback_minutes: int = 180,
+) -> dict:
+    """start_key에서 하류 방향으로 BFS 전파 추적 (max_depth 홉).
+
+    각 홉마다 _check_edge()로 출력↔입력 비교.
+    Returns: {hops: [{hop, from, to, status, checks}], propagation_stopped_at}
+    """
+    visited: set[tuple[str, str]] = {start_key}
+    queue: list[tuple[tuple[str, str], int]] = [(start_key, 0)]
+    hops: list[dict] = []
+    stopped_at: str | None = None
+
+    while queue:
+        current, depth = queue.pop(0)
+        if depth >= max_depth:
+            break
+
+        info = causal_index.get(current)
+        if not info:
+            continue
+
+        out_groups = _FACILITY_OUTPUT_GROUPS.get(current[1], [])
+        us_tagsns = _collect_tags_for_groups(info["tag_map"], out_groups)
+        if not us_tagsns:
+            continue
+
+        for ds_key in info.get("downstream", []):
+            if ds_key in visited:
+                continue
+            visited.add(ds_key)
+
+            ds_info = causal_index.get(ds_key)
+            if not ds_info:
+                continue
+
+            ds_in_groups = _FACILITY_INPUT_GROUPS.get(ds_key[1], [])
+            ds_tagsns = _collect_tags_for_groups(ds_info["tag_map"], ds_in_groups)
+            if not ds_tagsns:
+                continue
+
+            us_active, ds_active, us_dir, ds_dir, checks = _check_edge(
+                query_func, us_tagsns, ds_tagsns, lookback_minutes,
+            )
+
+            status = "mismatch" if checks else "normal"
+            hops.append({
+                "hop": depth + 1,
+                "from_sitename": current[0],
+                "from_facilitytype": current[1],
+                "to_sitename": ds_key[0],
+                "to_facilitytype": ds_key[1],
+                "status": status,
+                "checks": checks,
+                "upstream_active_pct": round(us_active * 100, 1),
+                "downstream_active_pct": round(ds_active * 100, 1),
+            })
+
+            if checks:
+                # 불일치 발견 → 전파 중단 지점 기록
+                stopped_at = f"{ds_key[0]} {ds_key[1]}"
+            else:
+                # 정상 → 하류로 계속 탐색
+                queue.append((ds_key, depth + 1))
+
+    return {"hops": hops, "propagation_stopped_at": stopped_at}
+
+
+def trace_upstream_root_cause(
+    query_func,
+    target_key: tuple[str, str],
+    causal_index: dict,
+    max_depth: int = 3,
+    lookback_minutes: int = 180,
+) -> dict:
+    """target_key에서 상류 방향으로 BFS 역추적하여 근원지를 찾는다.
+
+    가장 먼 상류에서 이상 신호(checks)가 있는 시설 = root_cause candidate.
+    Returns: {root_cause, path, hops, confidence}
+    """
+    visited: set[tuple[str, str]] = {target_key}
+    queue: list[tuple[tuple[str, str], int, list[tuple[str, str]]]] = [
+        (target_key, 0, [target_key]),
+    ]
+    hops: list[dict] = []
+    root_cause: dict | None = None
+
+    while queue:
+        current, depth, path = queue.pop(0)
+        if depth >= max_depth:
+            break
+
+        info = causal_index.get(current)
+        if not info:
+            continue
+
+        in_groups = _FACILITY_INPUT_GROUPS.get(current[1], [])
+        my_tagsns = _collect_tags_for_groups(info["tag_map"], in_groups)
+
+        for us_key in info.get("upstream", []):
+            if us_key in visited:
+                continue
+            visited.add(us_key)
+
+            us_info = causal_index.get(us_key)
+            if not us_info:
+                continue
+
+            us_out_groups = _FACILITY_OUTPUT_GROUPS.get(us_key[1], [])
+            us_tagsns = _collect_tags_for_groups(us_info["tag_map"], us_out_groups)
+            if not us_tagsns or not my_tagsns:
+                continue
+
+            us_active, my_active, us_dir, my_dir, checks = _check_edge(
+                query_func, us_tagsns, my_tagsns, lookback_minutes,
+            )
+
+            new_path = [us_key] + path
+            hop_info = {
+                "hop": depth + 1,
+                "from_sitename": us_key[0],
+                "from_facilitytype": us_key[1],
+                "to_sitename": current[0],
+                "to_facilitytype": current[1],
+                "status": "mismatch" if checks else "normal",
+                "checks": checks,
+                "upstream_active_pct": round(us_active * 100, 1),
+                "downstream_active_pct": round(my_active * 100, 1),
+            }
+            hops.append(hop_info)
+
+            if checks:
+                # 불일치 발견 → 이 상류가 근원지 후보 (더 먼 상류 탐색 계속)
+                root_cause = {
+                    "sitename": us_key[0],
+                    "facilitytype": us_key[1],
+                    "depth": depth + 1,
+                    "path": [f"{k[0]} {k[1]}" for k in new_path],
+                    "checks": checks,
+                }
+
+            # 상류로 계속 탐색
+            queue.append((us_key, depth + 1, new_path))
+
+    confidence = "high" if root_cause and root_cause["depth"] >= 2 else "medium" if root_cause else "low"
+
+    return {
+        "root_cause": root_cause,
+        "hops": hops,
+        "confidence": confidence,
+    }
+
+
+def build_propagation_trace_block(
+    forward: dict | None,
+    backward: dict | None,
+) -> list:
+    """forward/backward trace 결과 → 시맨틱 마커 detail block 포맷."""
+    items: list[dict] = []
+
+    has_forward = forward and forward.get("hops")
+    has_backward = backward and (backward.get("root_cause") or backward.get("hops"))
+
+    if not has_forward and not has_backward:
+        return items
+
+    items.append({"prefix": "", "text": "─── 시설간 전파 추적 ───"})
+
+    # 상류 역추적 (근원지)
+    if has_backward:
+        rc = backward.get("root_cause")
+        if rc:
+            rc_name = f"{rc['sitename']} {rc['facilitytype']}"
+            items.append({
+                "prefix": "🔍",
+                "text": _wrap_marker(f"근원지 추정: {rc_name} (신뢰도: {backward['confidence']})", "warn"),
+            })
+            if rc.get("path"):
+                items.append({
+                    "prefix": "",
+                    "text": f"  경로: {' → '.join(rc['path'])}",
+                })
+        # 각 홉 상세
+        for h in backward.get("hops", []):
+            src = f"{h['from_sitename']} {h['from_facilitytype']}"
+            dst = f"{h['to_sitename']} {h['to_facilitytype']}"
+            if h["status"] == "mismatch":
+                check_types = [c["type"] for c in h.get("checks", [])]
+                reason = "/".join(check_types)
+                items.append({
+                    "prefix": "▲",
+                    "text": _wrap_marker(f"{src} → {dst}: 불일치 ({reason})", "error"),
+                })
+            else:
+                items.append({
+                    "prefix": "▲",
+                    "text": _wrap_marker(f"{src} → {dst}: 정상", "ok"),
+                })
+
+    # 하류 전파 추적
+    if has_forward:
+        stopped = forward.get("propagation_stopped_at")
+        if stopped:
+            items.append({
+                "prefix": "📍",
+                "text": _wrap_marker(f"전파 중단 지점: {stopped}", "error"),
+            })
+
+        for h in forward.get("hops", []):
+            src = f"{h['from_sitename']} {h['from_facilitytype']}"
+            dst = f"{h['to_sitename']} {h['to_facilitytype']}"
+            if h["status"] == "mismatch":
+                check_types = [c["type"] for c in h.get("checks", [])]
+                reason = "/".join(check_types)
+                items.append({
+                    "prefix": "▼",
+                    "text": _wrap_marker(f"{src} → {dst}: 불일치 ({reason})", "error"),
+                })
+            else:
+                items.append({
+                    "prefix": "▼",
+                    "text": _wrap_marker(f"{src} → {dst}: 정상 전파", "ok"),
+                })
+
+    return items

@@ -1,5 +1,5 @@
 {
-  "hash": "a8032fb2d6284e27c9bcb35c5437c2d8",
+  "hash": "05e30de85a52893e6b73eeb0edc0586a",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -2006,6 +2006,94 @@
       "이상 발생 주기를 분석해줘"
     ],
     [
+      "ANOMALY_CROSS_FACILITY",
+      "시설간 유량 불일치 확인해줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "교차 검증해줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "시설간 교차 검증 해줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "상류 하류 유량 비교해줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "시설간 흐름 불일치 찾아줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "배수지 소블록 유량 교차 검증"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "상류 하류 가동률 비교"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "유량 흐름 일관성 검사"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "시설간 데이터 정합성 확인해줘"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "전체 교차 검증 스캔"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "상류시설 하류시설 비교 분석"
+    ],
+    [
+      "ANOMALY_CROSS_FACILITY",
+      "유량 흐름 불일치 찾아줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "물 수지 검증해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "유량 균형 확인해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "누수 구간 찾아줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "상류 하류 유량 합계 비교해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "유량 수지 분석해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "배분 손실 확인해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "불명수량 분석해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "물 수지 밸런스 확인해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "유량 밸런스 검증해줘"
+    ],
+    [
+      "ANOMALY_FLOW_BALANCE",
+      "유출유량 합산 비교해줘"
+    ],
+    [
       "LEAK_CUSUM_ANALYSIS",
       "야간최소유량 누수추정 분석해줘"
     ],
@@ -2120,6 +2208,6 @@
   ],
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
-  "count": 529,
-  "built_at": "2026-02-28 12:44:41"
+  "count": 551,
+  "built_at": "2026-03-05 22:35:57"
 }

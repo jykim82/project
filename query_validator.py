@@ -111,7 +111,7 @@ class QueryValidator:
 
         # 3. 필수 파라미터 검증
         # fn_realtime_missing_summary()는 빈 문자열 = 전체 조회이므로 검증 스킵
-        _SKIP_REQUIRED_CHECK = {"FACILITY_ABNORMAL_STATUS_SUMMARY", "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT", "ALARM_ABNORMAL_LOCATIONS"}
+        _SKIP_REQUIRED_CHECK = {"FACILITY_ABNORMAL_STATUS_SUMMARY", "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT", "ALARM_ABNORMAL_LOCATIONS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE"}
         intent_info = self._index.get_intent_summary(intent_name)
         if intent_info and intent_name not in _SKIP_REQUIRED_CHECK:
             required = intent_info.get("required_params", [])

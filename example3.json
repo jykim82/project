@@ -2833,22 +2833,45 @@
     ],
     "sql": "",
     "table_columns": [
-      "sitename", "facilitytype", "alarm_msg", "alarm_category", "alarm_start_time", "alarm_status"
+      "sitename",
+      "facilitytype",
+      "alarm_msg",
+      "alarm_category",
+      "alarm_start_time",
+      "alarm_status"
     ],
     "table_type": "summary",
     "answer_template": {
       "summary": "{facilitytype} {alarm_label} {alarm_level_label} 경보 발생 지점은 다음과 같습니다. (총 {total_alarm_count}건)",
       "detail": [
-        {"prefix": "", "text": "{_fallback_note}"},
-        {"prefix": "•", "text": "{category_summary}"},
-        {"prefix": "", "text": "{alarm_location_detail_block}"}
+        {
+          "prefix": "",
+          "text": "{_fallback_note}"
+        },
+        {
+          "prefix": "•",
+          "text": "{category_summary}"
+        },
+        {
+          "prefix": "",
+          "text": "{alarm_location_detail_block}"
+        }
       ],
       "recommend_questions": {
         "title": "다음은 추천질의입니다.",
         "items": [
-          {"prefix": "1.", "text": "현재 진행중인 알람은?"},
-          {"prefix": "2.", "text": "{alarm_label} 경보 발생원인 진단 순위를 알려줘"},
-          {"prefix": "3.", "text": "전체 이상 스캔해줘"}
+          {
+            "prefix": "1.",
+            "text": "현재 진행중인 알람은?"
+          },
+          {
+            "prefix": "2.",
+            "text": "{alarm_label} 경보 발생원인 진단 순위를 알려줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "전체 이상 스캔해줘"
+          }
         ]
       }
     },
@@ -3094,6 +3117,8 @@
       "WITH raw_adaptive AS (",
       "    SELECT tagsn, bucket,",
       "        (min_val + max_val) / 2.0 AS approx_avg,",
+      "        CASE WHEN min_val = max_val THEN 1 ELSE 0 END AS is_flat,",
+      "        date_trunc('hour', bucket) AS bucket_hr,",
       "        CASE WHEN EXTRACT(ISODOW FROM bucket) IN (6, 7) THEN 'WE' ELSE 'WD' END AS day_type,",
       "        CASE WHEN EXTRACT(HOUR FROM bucket) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS time_slot",
       "    FROM cagg_5min_raw_stats_ai",
@@ -3104,24 +3129,38 @@
       "        CASE WHEN EXTRACT(ISODOW FROM now()) IN (6, 7) THEN 'WE' ELSE 'WD' END AS cur_day,",
       "        CASE WHEN EXTRACT(HOUR FROM now()) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS cur_slot",
       "),",
+      "hourly_holding AS (",
+      "    SELECT tagsn, bucket_hr",
+      "    FROM raw_adaptive",
+      "    WHERE approx_avg > 0.001",
+      "    GROUP BY tagsn, bucket_hr",
+      "    HAVING SUM(is_flat) = COUNT(*)",
+      "       AND COUNT(DISTINCT ROUND(approx_avg::numeric, 1)) <= 1",
+      "       AND COUNT(*) >= 6",
+      "),",
       "stats_segment AS (",
       "    SELECT r.tagsn,",
       "        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_seg,",
       "        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_seg,",
       "        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS seg_cnt",
-      "    FROM raw_adaptive r, time_ctx tc",
+      "    FROM raw_adaptive r",
+      "    CROSS JOIN time_ctx tc",
+      "    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr",
       "    WHERE r.day_type = tc.cur_day AND r.time_slot = tc.cur_slot",
+      "        AND hh.bucket_hr IS NULL",
       "    GROUP BY r.tagsn",
       "),",
       "stats_global AS (",
-      "    SELECT tagsn,",
-      "        AVG(approx_avg) FILTER (WHERE approx_avg > 0.001) AS mean_all,",
-      "        STDDEV_POP(approx_avg) FILTER (WHERE approx_avg > 0.001) AS stddev_all,",
-      "        COUNT(*) FILTER (WHERE approx_avg > 0.001) AS active_cnt,",
+      "    SELECT r.tagsn,",
+      "        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_all,",
+      "        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_all,",
+      "        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS active_cnt,",
       "        COUNT(*) AS total_cnt",
-      "    FROM raw_adaptive",
-      "    GROUP BY tagsn",
-      "    HAVING COUNT(*) FILTER (WHERE approx_avg > 0.001) >= 50",
+      "    FROM raw_adaptive r",
+      "    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr",
+      "    WHERE hh.bucket_hr IS NULL",
+      "    GROUP BY r.tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE r.approx_avg > 0.001) >= 50",
       "),",
       "stats_30d AS (",
       "    SELECT g.tagsn,",
@@ -3138,7 +3177,7 @@
       "        (min_val + max_val) / 2.0 AS current_val,",
       "        bucket AS latest_time",
       "    FROM cagg_5min_raw_stats_ai",
-      "    WHERE bucket >= now() - interval '1 hour'",
+      "    WHERE bucket >= now() - interval '3 hours'",
       "    ORDER BY tagsn, bucket DESC",
       "),",
       "comm_error AS (",
@@ -3149,6 +3188,16 @@
       "        AND ci.datainfo LIKE '%통신이상%'",
       "        AND cr.logtime >= now() - interval '10 minutes'",
       "        AND cr.val = 1",
+      "),",
+      "recent_holding AS (",
+      "    SELECT tagsn",
+      "    FROM raw_adaptive",
+      "    WHERE bucket >= now() - interval '1 hour'",
+      "      AND approx_avg > 0.001",
+      "    GROUP BY tagsn",
+      "    HAVING COUNT(*) >= 6",
+      "       AND SUM(is_flat) = COUNT(*)",
+      "       AND COUNT(DISTINCT ROUND(approx_avg::numeric, 2)) <= 1",
       ")",
       "SELECT",
       "    ti.tagsn,",
@@ -3164,16 +3213,19 @@
       "        ELSE 0",
       "    END AS z_score,",
       "    CASE",
-      "        WHEN ABS(l.current_val) < 0.001 OR ABS(s.mean_30d) < 0.001 THEN 0",
+      "        WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "        WHEN ABS(s.mean_30d) < 0.001 THEN 0",
       "        ELSE ROUND((ABS(l.current_val - s.mean_30d) / ABS(s.mean_30d) * 100)::numeric, 1)",
       "    END AS deviation_pct,",
       "    ROUND(s.active_cnt::numeric * 100 / NULLIF(s.total_cnt, 0), 0) AS active_pct,",
       "    CASE WHEN ce.sitename IS NOT NULL THEN '통신장애' ELSE '정상' END AS comm_status,",
-      "    l.latest_time",
+      "    l.latest_time,",
+      "    CASE WHEN rh.tagsn IS NOT NULL THEN 'Y' ELSE 'N' END AS recent_holding",
       "FROM latest l",
       "JOIN stats_30d s ON l.tagsn = s.tagsn",
       "JOIN tb_tag_info ti ON l.tagsn = ti.tagsn",
       "LEFT JOIN comm_error ce ON ti.sitename = ce.sitename",
+      "LEFT JOIN recent_holding rh ON l.tagsn = rh.tagsn",
       "WHERE ti.tagtype = 'Analog Input'",
       "    AND ti.datainfo NOT LIKE '%적산%'",
       "    {anomaly_facility_filter}",
@@ -3277,6 +3329,8 @@
       "raw_adaptive AS (",
       "    SELECT c.tagsn, c.bucket,",
       "        (c.min_val + c.max_val) / 2.0 AS approx_avg,",
+      "        CASE WHEN c.min_val = c.max_val THEN 1 ELSE 0 END AS is_flat,",
+      "        date_trunc('hour', c.bucket) AS bucket_hr,",
       "        CASE WHEN EXTRACT(ISODOW FROM c.bucket) IN (6, 7) THEN 'WE' ELSE 'WD' END AS day_type,",
       "        CASE WHEN EXTRACT(HOUR FROM c.bucket) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS time_slot",
       "    FROM cagg_5min_raw_stats_ai c",
@@ -3288,24 +3342,38 @@
       "        CASE WHEN EXTRACT(ISODOW FROM now()) IN (6, 7) THEN 'WE' ELSE 'WD' END AS cur_day,",
       "        CASE WHEN EXTRACT(HOUR FROM now()) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS cur_slot",
       "),",
+      "hourly_holding AS (",
+      "    SELECT tagsn, bucket_hr",
+      "    FROM raw_adaptive",
+      "    WHERE approx_avg > 0.001",
+      "    GROUP BY tagsn, bucket_hr",
+      "    HAVING SUM(is_flat) = COUNT(*)",
+      "       AND COUNT(DISTINCT ROUND(approx_avg::numeric, 1)) <= 1",
+      "       AND COUNT(*) >= 6",
+      "),",
       "stats_segment AS (",
       "    SELECT r.tagsn,",
       "        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_seg,",
       "        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_seg,",
       "        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS seg_cnt",
-      "    FROM raw_adaptive r, time_ctx tc",
+      "    FROM raw_adaptive r",
+      "    CROSS JOIN time_ctx tc",
+      "    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr",
       "    WHERE r.day_type = tc.cur_day AND r.time_slot = tc.cur_slot",
+      "        AND hh.bucket_hr IS NULL",
       "    GROUP BY r.tagsn",
       "),",
       "stats_global AS (",
-      "    SELECT tagsn,",
-      "        AVG(approx_avg) FILTER (WHERE approx_avg > 0.001) AS mean_all,",
-      "        STDDEV_POP(approx_avg) FILTER (WHERE approx_avg > 0.001) AS stddev_all,",
-      "        COUNT(*) FILTER (WHERE approx_avg > 0.001) AS active_cnt,",
+      "    SELECT r.tagsn,",
+      "        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_all,",
+      "        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_all,",
+      "        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS active_cnt,",
       "        COUNT(*) AS total_cnt",
-      "    FROM raw_adaptive",
-      "    GROUP BY tagsn",
-      "    HAVING COUNT(*) FILTER (WHERE approx_avg > 0.001) >= 50",
+      "    FROM raw_adaptive r",
+      "    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr",
+      "    WHERE hh.bucket_hr IS NULL",
+      "    GROUP BY r.tagsn",
+      "    HAVING COUNT(*) FILTER (WHERE r.approx_avg > 0.001) >= 50",
       "),",
       "stats_30d AS (",
       "    SELECT g.tagsn,",
@@ -3323,7 +3391,7 @@
       "        c.bucket AS latest_time",
       "    FROM cagg_5min_raw_stats_ai c",
       "    JOIN facility_tags ft ON c.tagsn = ft.tagsn",
-      "    WHERE c.bucket >= now() - interval '1 hour'",
+      "    WHERE c.bucket >= now() - interval '3 hours'",
       "    ORDER BY c.tagsn, c.bucket DESC",
       "),",
       "raw_recent AS (",
@@ -3362,7 +3430,8 @@
       "        ELSE 0",
       "    END AS z_score,",
       "    CASE",
-      "        WHEN ABS(l.current_val) < 0.001 OR ABS(s.mean_30d) < 0.001 THEN 0",
+      "        WHEN ABS(l.current_val) < 0.001 THEN 0",
+      "        WHEN ABS(s.mean_30d) < 0.001 THEN 0",
       "        ELSE ROUND((ABS(l.current_val - s.mean_30d) / ABS(s.mean_30d) * 100)::numeric, 1)",
       "    END AS deviation_pct,",
       "    COALESCE(dc.change_count, 0) AS change_count,",
@@ -3688,7 +3757,7 @@
       "    SELECT DISTINCT ON (tagsn)",
       "        tagsn, (min_val + max_val) / 2.0 AS current_val",
       "    FROM cagg_5min_raw_stats_ai",
-      "    WHERE bucket >= now() - interval '1 hour'",
+      "    WHERE bucket >= now() - interval '3 hours'",
       "    ORDER BY tagsn, bucket DESC",
       "),",
       "tag_z AS (",
@@ -3803,7 +3872,7 @@
       "    SELECT c.tagsn,",
       "        AVG((c.min_val + c.max_val) / 2.0) AS current_avg",
       "    FROM cagg_5min_raw_stats_ai c",
-      "    WHERE c.bucket >= now() - interval '1 hour'",
+      "    WHERE c.bucket >= now() - interval '3 hours'",
       "    GROUP BY c.tagsn",
       ")",
       "SELECT",
@@ -3887,6 +3956,94 @@
     ],
     "graph_type": "table",
     "table_type": "summary"
+  },
+  {
+    "intent": "ANOMALY_CROSS_FACILITY",
+    "questions": [
+      "시설간 유량 불일치 확인해줘",
+      "교차 검증해줘",
+      "시설간 교차 검증 해줘",
+      "상류 하류 유량 비교해줘",
+      "시설간 흐름 불일치 찾아줘",
+      "배수지 소블록 유량 교차 검증",
+      "상류 하류 가동률 비교",
+      "유량 흐름 일관성 검사",
+      "시설간 데이터 정합성 확인해줘",
+      "전체 교차 검증 스캔",
+      "상류시설 하류시설 비교 분석",
+      "유량 흐름 불일치 찾아줘"
+    ],
+    "sql": "",
+    "answer_template": {
+      "summary": "상류→하류 유량/압력 흐름 일관성을 교차 검증합니다.",
+      "detail": [
+        {
+          "prefix": "",
+          "text": "{cross_facility_scan_block}"
+        }
+      ],
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "야간최소유량 누수추정 분석해줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "남산 배수지 이상 진단해줘"
+          }
+        ]
+      }
+    },
+    "graph_type": "none"
+  },
+  {
+    "intent": "ANOMALY_FLOW_BALANCE",
+    "questions": [
+      "물 수지 검증해줘",
+      "유량 균형 확인해줘",
+      "누수 구간 찾아줘",
+      "상류 하류 유량 합계 비교해줘",
+      "유량 수지 분석해줘",
+      "배분 손실 확인해줘",
+      "불명수량 분석해줘",
+      "물 수지 밸런스 확인해줘",
+      "유량 밸런스 검증해줘",
+      "유출유량 합산 비교해줘"
+    ],
+    "sql": "",
+    "answer_template": {
+      "summary": "상류 유출유량 vs 하류 유입유량 합계를 비교하여 물 수지(Mass Balance)를 검증합니다.",
+      "detail": [
+        {
+          "prefix": "",
+          "text": "{flow_balance_scan_block}"
+        }
+      ],
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "교차 검증해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "야간최소유량 누수추정 분석해줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "전체 이상 스캔해줘"
+          }
+        ]
+      }
+    },
+    "graph_type": "none"
   },
   {
     "intent": "LEAK_CUSUM_ANALYSIS",
@@ -3993,7 +4150,15 @@
     "sql": "",
     "graph_type": "table",
     "default_period": "7 days",
-    "table_columns": ["현장명", "항목", "날짜", "평균", "최대", "최소", "단위"],
+    "table_columns": [
+      "현장명",
+      "항목",
+      "날짜",
+      "평균",
+      "최대",
+      "최소",
+      "단위"
+    ],
     "answer_template": {
       "summary": "{facilitytype} {datainfo} 현황 ({from_ts} ~ {to_ts}, {total_count}건)",
       "detail": ""
