@@ -10041,6 +10041,161 @@ async def get_flow_maps():
             conn.close()
 
 
+@app.get("/flow-map/realtime")
+async def get_flow_map_realtime():
+    """용수 흐름 실시간 모니터링 — 시설별 최신 유량/수위/압력 + 교차검증 상태."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 토폴로지
+        cur.execute("""
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype,
+                   relation_type
+            FROM tb_facility_flow_map
+            ORDER BY upstream_facilitytype, upstream_sitename
+        """)
+        edges = [
+            {
+                "upstream_sitename": r[0], "upstream_facilitytype": r[1],
+                "downstream_sitename": r[2], "downstream_facilitytype": r[3],
+                "relation_type": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+        # 2) 고유 시설 목록
+        node_set: set[tuple[str, str]] = set()
+        for e in edges:
+            node_set.add((e["upstream_sitename"], e["upstream_facilitytype"]))
+            node_set.add((e["downstream_sitename"], e["downstream_facilitytype"]))
+
+        # 3) 시설별 대표 태그 최신값 조회 (FLOW_OUTLET/INSTANT, WATER_LEVEL, PRESSURE_OUTLET/DISCHARGE)
+        _TARGET_GROUPS = ["FLOW_OUTLET", "FLOW_INSTANT", "FLOW_INLET", "WATER_LEVEL",
+                          "PRESSURE_OUTLET", "PRESSURE_DISCHARGE", "PRESSURE_INLET"]
+        cur.execute("""
+            SELECT t.sitename, t.facilitytype, dg.group_code, t.tagsn, t.datainfo
+            FROM tb_tag_info t
+            JOIN tb_tag_group_map gm ON gm.tagsn = t.tagsn
+            JOIN tb_tag_data_group dg ON dg.group_id = gm.group_id
+            WHERE dg.group_code = ANY(%s)
+              AND COALESCE(t.datainfo, '') NOT LIKE '%%적산%%'
+            ORDER BY t.sitename, dg.group_code
+        """, (_TARGET_GROUPS,))
+        tag_rows = cur.fetchall()
+
+        # 시설별 그룹별 tagsn 매핑 (대표 1개씩)
+        facility_tags: dict[tuple[str, str], dict[str, dict]] = {}
+        for sitename, ft, gc, tagsn, datainfo in tag_rows:
+            key = (sitename, ft)
+            if key not in facility_tags:
+                facility_tags[key] = {}
+            if gc not in facility_tags[key]:
+                facility_tags[key][gc] = {"tagsn": tagsn, "tagname": datainfo or tagsn, "datainfo": datainfo}
+
+        # 4) 모든 대표 tagsn의 최신값 일괄 조회
+        all_tagsns: list[str] = []
+        tagsn_to_facility: dict[str, tuple[str, str, str]] = {}  # tagsn -> (sn, ft, gc)
+        for (sn, ft), groups in facility_tags.items():
+            for gc, info in groups.items():
+                tsn = info["tagsn"]
+                all_tagsns.append(tsn)
+                tagsn_to_facility[tsn] = (sn, ft, gc)
+
+        latest_values: dict[str, float] = {}
+        if all_tagsns:
+            # 청크 기반 최신값 — 최근 1시간
+            _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _from = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            chunks = _get_chunks_for_range(cur, _from, _to)
+            if chunks:
+                raw = _query_chunks_raw(cur, chunks, all_tagsns, _from, _to)
+                # tagsn별 마지막 값
+                for tsn, _, val in raw:
+                    latest_values[tsn] = val  # 시간순이므로 마지막이 최신
+
+        # 5) 노드 데이터 구성
+        node_data: dict[str, dict] = {}
+        for sn, ft in node_set:
+            nid = f"{sn}__{ft}"
+            groups = facility_tags.get((sn, ft), {})
+            metrics: dict[str, dict] = {}
+            for gc, info in groups.items():
+                val = latest_values.get(info["tagsn"])
+                if val is not None:
+                    # 그룹 코드를 카테고리로 축약
+                    category = "flow" if "FLOW" in gc else ("level" if "LEVEL" in gc else "pressure")
+                    if category not in metrics or _group_priority(gc) > _group_priority(metrics[category].get("group_code", "")):
+                        metrics[category] = {
+                            "value": round(val, 2),
+                            "group_code": gc,
+                            "tagname": info["tagname"],
+                            "tagsn": info["tagsn"],
+                        }
+            node_data[nid] = {
+                "sitename": sn,
+                "facilitytype": ft,
+                "metrics": metrics,
+            }
+
+        # 6) 교차검증 불일치 (캐시 참조)
+        cross_mismatches_map: dict[str, list[str]] = {}  # node_id -> [check_type, ...]
+        if _ANOMALY_SCAN_CACHE:
+            cm_list = _ANOMALY_SCAN_CACHE.get("processed_data", {}).get("cross_facility_mismatches", [])
+            for cm in (cm_list or []):
+                ds_sn = cm.get("downstream_sitename", "")
+                ds_ft = cm.get("downstream_facilitytype", "")
+                checks = cm.get("checks", [])
+                # checks는 리스트: [{"type": ..., "level": ...}, ...]
+                error_checks = [c["type"] for c in checks if c.get("level") in ("error", "warn")]
+                if error_checks:
+                    nid = f"{ds_sn}__{ds_ft}"
+                    cross_mismatches_map[nid] = error_checks
+
+        # 7) 물 수지 불균형 (엣지별)
+        edge_imbalance: dict[str, dict] = {}  # "us_nid|ds_nid" -> {pct, grade}
+        if _FLOW_BALANCE_CACHE:
+            for fb in _FLOW_BALANCE_CACHE:
+                if fb.get("status") != "ok":
+                    continue
+                us_sn = fb.get("upstream_sitename", "")
+                us_ft = fb.get("upstream_facilitytype", "")
+                for ds in fb.get("downstream_facilities", []):
+                    ds_sn = ds.get("sitename", "")
+                    ds_ft = ds.get("facilitytype", "")
+                    ek = f"{us_sn}__{us_ft}|{ds_sn}__{ds_ft}"
+                    edge_imbalance[ek] = {
+                        "imbalance_pct": round(fb.get("imbalance_pct", 0), 1),
+                        "grade": fb.get("grade", "정상"),
+                    }
+
+        cur.close()
+        return {
+            "status": "OK",
+            "edges": edges,
+            "nodes": node_data,
+            "cross_mismatches": cross_mismatches_map,
+            "edge_imbalance": edge_imbalance,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"용수 흐름 실시간 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+def _group_priority(gc: str) -> int:
+    """유량 그룹 우선순위 — OUTLET > INSTANT > INLET > 기타."""
+    _P = {"FLOW_OUTLET": 4, "PRESSURE_DISCHARGE": 4, "FLOW_INSTANT": 3,
+           "PRESSURE_OUTLET": 3, "FLOW_INLET": 2, "PRESSURE_INLET": 2,
+           "WATER_LEVEL": 3}
+    return _P.get(gc, 1)
+
+
 @app.get("/flow-map/roots")
 async def get_flow_map_roots():
     """최상위 노드 목록 (상류에만 존재하고 하류에는 없는 노드)."""
