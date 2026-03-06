@@ -13163,4 +13163,18 @@ async def delete_equipment_tag_link(equipment_id: str, tagsn: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os as _os
+
+    _ssl_enabled = _os.getenv("HTTPS_ENABLED", "false").lower() == "true"
+    _ssl_kwargs = {}
+    if _ssl_enabled:
+        _cert_dir = _os.path.normpath(
+            _os.path.join(_os.path.dirname(__file__), "..", "web", "certs")
+        )
+        _ssl_kwargs = {
+            "ssl_keyfile": _os.path.join(_cert_dir, "localhost-key.pem"),
+            "ssl_certfile": _os.path.join(_cert_dir, "localhost.pem"),
+        }
+        print(f"[HTTPS] SSL enabled (certs: {_cert_dir})")
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, **_ssl_kwargs)
