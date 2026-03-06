@@ -1424,13 +1424,18 @@ async def lifespan(app: FastAPI):
     )
     query_validator = QueryValidator(intent_index, KNOWN_SITENAMES, SITENAME_FACILITY_MAP)
 
-    # Ollama 연결 상태 로그
+    # Ollama 연결 상태 로그 + embed_query 백오프 초기화
     if ollama_client.health_check():
         logger.info(f"Ollama 연결 성공: {get_model()}")
         if embedding_index.ready:
             logger.info(f"벡터 검색 활성화: {embedding_index.size}벡터")
     else:
         logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
+        # Ollama 비가용: embed_query + generate 백오프 즉시 설정 (첫 요청 타임아웃 방지)
+        import time as _time_mod
+        import intent_embeddings
+        intent_embeddings._ollama_unavailable_until = _time_mod.time() + 60
+        ollama_client._unavailable_until = _time_mod.time() + 60
 
     # DDL 자동 생성 (캔버스 + 태그 그룹)
     try:

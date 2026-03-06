@@ -22,6 +22,10 @@ from slm_config import OLLAMA_BASE_URL
 
 logger = logging.getLogger(__name__)
 
+# Ollama 가용성 캐시 — 연결 실패 시 60초간 재시도 억제
+_ollama_unavailable_until: float = 0.0
+_OLLAMA_BACKOFF_SECONDS = 60
+
 # 캐시 파일 경로
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(_SCRIPT_DIR, "data")
@@ -218,6 +222,12 @@ def embed_query(text: str) -> Optional[np.ndarray]:
     단일 질문 임베딩 (검색 시 사용).
     반환: (768,) float32 배열 또는 None.
     """
+    global _ollama_unavailable_until
+
+    # Ollama 비가용 백오프: 이전 실패 후 60초간 즉시 반환
+    if time.time() < _ollama_unavailable_until:
+        return None
+
     base_url = OLLAMA_BASE_URL.rstrip("/")
     try:
         resp = httpx.post(
@@ -234,5 +244,6 @@ def embed_query(text: str) -> Optional[np.ndarray]:
             return None
         return np.array(embeddings[0], dtype=np.float32)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
-        logger.warning(f"embed_query 연결 실패: {e}")
+        _ollama_unavailable_until = time.time() + _OLLAMA_BACKOFF_SECONDS
+        logger.warning(f"embed_query 연결 실패 (다음 {_OLLAMA_BACKOFF_SECONDS}초간 스킵): {e}")
         return None
