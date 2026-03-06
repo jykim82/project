@@ -10121,6 +10121,25 @@ async def get_flow_map_realtime():
                 for tsn, _, val in raw:
                     latest_values[tsn] = val  # 시간순이므로 마지막이 최신
 
+        # 4-b) 배수지 용수공급가능시간 조회
+        reservoir_supply: dict[str, dict] = {}  # sitename -> {hours, status, reason}
+        reservoir_sites = [sn for sn, ft in node_set if ft == "배수지"]
+        if reservoir_sites:
+            try:
+                cur.execute("""
+                    SELECT sitename, total_supply_time, supply_time_status, supply_time_reason
+                    FROM tb_service_reservoir_status
+                    WHERE sitename = ANY(%s)
+                """, (reservoir_sites,))
+                for sn, hours, status, reason in cur.fetchall():
+                    reservoir_supply[sn] = {
+                        "hours": float(hours) if hours is not None else None,
+                        "status": status or "",
+                        "reason": reason or "",
+                    }
+            except Exception:
+                conn.rollback()  # 컬럼 미존재 시 롤백 후 계속
+
         # 5) 노드 데이터 구성
         node_data: dict[str, dict] = {}
         for sn, ft in node_set:
@@ -10139,11 +10158,15 @@ async def get_flow_map_realtime():
                             "tagname": info["tagname"],
                             "tagsn": info["tagsn"],
                         }
-            node_data[nid] = {
+            node_entry: dict = {
                 "sitename": sn,
                 "facilitytype": ft,
                 "metrics": metrics,
             }
+            # 배수지: 용수공급가능시간 추가
+            if ft == "배수지" and sn in reservoir_supply:
+                node_entry["supply_time"] = reservoir_supply[sn]
+            node_data[nid] = node_entry
 
         # 6) 교차검증 불일치 (캐시 참조)
         cross_mismatches_map: dict[str, list[str]] = {}  # node_id -> [check_type, ...]
