@@ -514,6 +514,7 @@ def build_anomaly_facility_detail_block(
     causal_result: Optional[dict] = None,
     cross_facility_result: Optional[dict] = None,
     propagation_trace: Optional[dict] = None,
+    intra_facility_result: Optional[list] = None,
 ) -> list:
     """
     ANOMALY_FACILITY_DETAIL: SQL 결과를 복합 진단 결과 리스트로 조립한다.
@@ -607,6 +608,14 @@ def build_anomaly_facility_detail_block(
         )
         if prop_items:
             items.extend(prop_items)
+
+    # 시설 내부 인과 검증 결과
+    if intra_facility_result:
+        intra_items = build_intra_facility_block(
+            intra_facility_result, sitename, facilitytype,
+        )
+        if intra_items:
+            items.extend(intra_items)
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:분석 대상 센서가 없습니다.>>"})
@@ -1036,6 +1045,15 @@ _CAUSAL_PATTERNS = {
         "label": "상류→하류 이상 전파",
         "possible_causes": ["상류 시설 이상 전파", "관로 연쇄 영향", "유량 변동 전파"],
     },
+    # 시설 내부 인과 패턴 (intra-facility)
+    "LEVEL_DROP_NO_OUTFLOW": {
+        "label": "수위하강+유출유량없음(누출의심)",
+        "possible_causes": ["배수지 누출", "수위센서 이상", "부지 내 미계량 유출"],
+    },
+    "INLET_PRESSURE_NO_OUTLET": {
+        "label": "유입압력활성+유출압력없음",
+        "possible_causes": ["감압밸브 고착", "관로 막힘", "압력센서 이상"],
+    },
 }
 
 # 방향 판정 임계값 (%)
@@ -1419,6 +1437,226 @@ def _build_causal_detail(
 
 
 # =============================================================================
+# 시설 내부 인과 검증 (Intra-Facility Validation)
+# =============================================================================
+# 시설 내부 물리법칙: 펌프 ON→토출압력, 밸브 OPEN→유량, 유입→수위 등
+# verify_causal_context 와 독립적으로 실행 — 태그 보유 시 자동 적용
+# =============================================================================
+
+# 시설 내부 규칙 정의
+_INTRA_RULES: list[dict] = [
+    # === 가압장 내부 ===
+    {
+        "facilitytype": "가압장",
+        "condition_gc": "PUMP_STATUS",
+        "condition_check": "active",
+        "effect_gc": "PRESSURE_DISCHARGE",
+        "effect_gc_fallback": ["PRESSURE_OUTLET", "PRESSURE"],
+        "effect_check": "nonzero",
+        "mismatch_pattern": "PUMP_ON_NO_PRESSURE",
+        "label": "펌프가동+토출압력없음",
+    },
+    {
+        "facilitytype": "가압장",
+        "condition_gc": "PUMP_STATUS",
+        "condition_check": "active",
+        "effect_gc": "FLOW_OUTLET",
+        "effect_check": "nonzero",
+        "effect_gc_fallback": ["FLOW_INSTANT", "FLOW_CUMULATIVE"],
+        "mismatch_pattern": "PUMP_ON_NO_FLOW",
+        "label": "펌프가동+유출유량없음",
+    },
+    # === 배수지 내부 ===
+    {
+        "facilitytype": "배수지",
+        "condition_gc": "VALVE_STATUS",
+        "condition_check": "active",
+        "effect_gc": "FLOW_OUTLET",
+        "effect_check": "nonzero",
+        "mismatch_pattern": "VALVE_OPEN_NO_FLOW",
+        "label": "유출밸브개방+유량없음",
+    },
+    {
+        "facilitytype": "배수지",
+        "condition_gc": "FLOW_INLET",
+        "condition_check": "nonzero",
+        "effect_gc": "WATER_LEVEL",
+        "effect_check": "not_falling",
+        "mismatch_pattern": "INLET_FLOW_NO_LEVEL_RISE",
+        "label": "유입유량활성+수위하강",
+    },
+    {
+        "facilitytype": "배수지",
+        "condition_gc": "WATER_LEVEL",
+        "condition_check": "falling",
+        "effect_gc": "FLOW_OUTLET",
+        "effect_check": "nonzero",
+        "inverted": True,
+        "mismatch_pattern": "LEVEL_DROP_NO_OUTFLOW",
+        "label": "수위하강+유출유량없음(누출의심)",
+    },
+    # === 감압시설 내부 ===
+    {
+        "facilitytype": "감압시설",
+        "condition_gc": "PRESSURE_INLET",
+        "condition_check": "nonzero",
+        "effect_gc": "PRESSURE_OUTLET",
+        "effect_check": "nonzero",
+        "mismatch_pattern": "INLET_PRESSURE_NO_OUTLET",
+        "label": "유입압력활성+유출압력없음",
+    },
+]
+
+
+def _check_intra_condition(values: list[float], check_type: str) -> bool:
+    if not values:
+        return False
+    if check_type == "active":
+        return values[-1] > 0
+    if check_type == "nonzero":
+        active_rate = sum(1 for v in values if abs(v) > 0.01) / len(values)
+        return active_rate >= 0.5
+    if check_type == "falling":
+        if len(values) < 4:
+            return False
+        mid = len(values) // 2
+        first = sum(values[:mid]) / mid
+        second = sum(values[mid:]) / (len(values) - mid)
+        if abs(first) < 0.001:
+            return False
+        return (second - first) / abs(first) * 100 < -5.0
+    return False
+
+
+def _check_intra_effect(values: list[float], check_type: str) -> bool:
+    if not values:
+        return False
+    if check_type == "nonzero":
+        active_rate = sum(1 for v in values if abs(v) > 0.01) / len(values)
+        return active_rate >= 0.3
+    if check_type == "not_falling":
+        if len(values) < 4:
+            return True
+        mid = len(values) // 2
+        first = sum(values[:mid]) / mid
+        second = sum(values[mid:]) / (len(values) - mid)
+        if abs(first) < 0.001:
+            return True
+        return (second - first) / abs(first) * 100 >= -15.0
+    return True
+
+
+def verify_intra_facility(
+    query_func,
+    sitename: str,
+    facilitytype: str,
+    causal_index: dict,
+    lookback_minutes: int = 30,
+    zone: str | None = None,
+) -> list[dict]:
+    """시설 내부 물리법칙 기반 인과 검증."""
+    info = None
+    if zone:
+        info = causal_index.get((sitename, facilitytype, zone))
+    if not info:
+        info = causal_index.get((sitename, facilitytype))
+    if not info:
+        return []
+
+    tag_map = info["tag_map"]
+    results: list[dict] = []
+
+    for rule in _INTRA_RULES:
+        if rule["facilitytype"] != facilitytype:
+            continue
+
+        cond_tagsns = tag_map.get(rule["condition_gc"], [])
+        if not cond_tagsns:
+            continue
+
+        eff_gc = rule["effect_gc"]
+        eff_tagsns = tag_map.get(eff_gc, [])
+        if not eff_tagsns:
+            for fb in rule.get("effect_gc_fallback", []):
+                eff_tagsns = tag_map.get(fb, [])
+                if eff_tagsns:
+                    eff_gc = fb
+                    break
+        if not eff_tagsns:
+            continue
+
+        try:
+            cond_data = query_func(cond_tagsns, lookback_minutes)
+            eff_data = query_func(eff_tagsns, lookback_minutes)
+        except Exception:
+            continue
+
+        cond_values = [v for vals in cond_data.values() for v in vals]
+        eff_values = [v for vals in eff_data.values() for v in vals]
+        if not cond_values:
+            continue
+
+        cond_met = _check_intra_condition(cond_values, rule["condition_check"])
+        if not cond_met:
+            continue
+
+        eff_met = _check_intra_effect(eff_values, rule["effect_check"])
+        inverted = rule.get("inverted", False)
+        is_mismatch = not eff_met if not inverted else not eff_met
+
+        results.append({
+            "rule_label": rule["label"],
+            "pattern": rule["mismatch_pattern"] if is_mismatch else "INTRA_NORMAL",
+            "condition_gc": rule["condition_gc"],
+            "effect_gc": eff_gc,
+            "condition_met": True,
+            "effect_met": eff_met,
+            "is_mismatch": is_mismatch,
+            "detail": _build_intra_detail(rule, sitename, facilitytype, cond_values, eff_values, is_mismatch),
+        })
+
+    return results
+
+
+def _build_intra_detail(
+    rule: dict, sitename: str, facilitytype: str,
+    cond_values: list[float], eff_values: list[float], is_mismatch: bool,
+) -> str:
+    cond_mean = sum(cond_values) / len(cond_values) if cond_values else 0
+    eff_mean = sum(eff_values) / len(eff_values) if eff_values else 0
+    eff_active = sum(1 for v in eff_values if abs(v) > 0.01) / max(len(eff_values), 1) * 100
+
+    if is_mismatch:
+        pat = _CAUSAL_PATTERNS.get(rule["mismatch_pattern"], {})
+        causes = pat.get("possible_causes", [])
+        parts = [f"<<error:설비점검필요>> {sitename} {facilitytype}: {rule['label']}"]
+        parts.append(f"  조건: {rule['condition_gc']} 평균={cond_mean:.1f}, 결과: {rule['effect_gc']} 평균={eff_mean:.1f} (활성 {eff_active:.0f}%)")
+        if causes:
+            parts.append(f"  추정 원인: {', '.join(causes)}")
+        return chr(10).join(parts)
+    return f"<<ok:설비정상>> {sitename} {facilitytype}: {rule['condition_gc']}→{rule['effect_gc']} 정상 연동"
+
+
+def build_intra_facility_block(
+    intra_results: list[dict], sitename: str, facilitytype: str,
+) -> list[dict]:
+    """verify_intra_facility 결과를 시맨틱 마커 블록으로 변환."""
+    items: list[dict] = []
+    mismatches = [r for r in intra_results if r["is_mismatch"]]
+    normals = [r for r in intra_results if not r["is_mismatch"]]
+    if not intra_results:
+        return items
+    for r in mismatches:
+        items.append({"prefix": "error", "text": r["detail"]})
+    if normals:
+        normal_labels = [r["rule_label"] for r in normals]
+        items.append({"prefix": "ok", "text": f"설비 내부 정상: {', '.join(normal_labels)}"})
+    return items
+
+
+
+
+# =============================================================================
 # 시설간 교차 검증 (Cross-Facility Validation)
 # =============================================================================
 # 상류→하류 물리적 흐름 일관성 검사
@@ -1427,7 +1665,7 @@ def _build_causal_detail(
 
 _FACILITY_OUTPUT_GROUPS: dict[str, list[str]] = {
     "배수지": ["FLOW_OUTLET"],
-    "가압장": ["FLOW_OUTLET"],
+    "가압장": ["FLOW_OUTLET", "PRESSURE_DISCHARGE"],
     "감압시설": ["PRESSURE_OUTLET"],
     "소블록": ["FLOW_OUTLET", "FLOW_INSTANT"],
     "소소블록": ["FLOW_OUTLET", "FLOW_INSTANT"],

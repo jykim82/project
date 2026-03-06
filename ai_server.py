@@ -70,6 +70,8 @@ from anomaly_detector import (
     build_leak_cusum_detail_block,
     GROUP_THRESHOLDS,
     classify_alert_grade,
+    verify_intra_facility,
+    build_intra_facility_block,
 )
 from anomaly_iforest import IForestManager
 from site_profiler import SiteProfiler
@@ -3096,6 +3098,8 @@ def build_success_response(
         response["equipment_failure_count"] = kwargs["equipment_failure_count"]
     if kwargs.get("flow_balance_summary"):
         response["flow_balance_summary"] = kwargs["flow_balance_summary"]
+    if kwargs.get("intra_facility"):
+        response["intra_facility"] = kwargs["intra_facility"]
     return response
 
 
@@ -4959,9 +4963,26 @@ def process_sql_result(
             except Exception as e:
                 logger.warning(f"전파 추적 실패 (무시): {e}")
 
+        # 시설 내부 인과 검증 (펌프/밸브/수위 물리법칙)
+        intra_facility_result = None
+        if _CAUSAL_INDEX:
+            try:
+                _a_zone_intra = None
+                if _a_datainfo:
+                    _zm2 = _ZONE_PATTERN.search(_a_datainfo)
+                    if _zm2:
+                        _a_zone_intra = f"{_zm2.group(1)}지"
+                intra_facility_result = verify_intra_facility(
+                    _query_recent_values, _site, _ft, _CAUSAL_INDEX,
+                    zone=_a_zone_intra,
+                )
+                if intra_facility_result:
+                    data["intra_facility"] = intra_facility_result
+            except Exception as e:
+                logger.warning("시설 내부 인과 검증 실패 (무시): %s", e)
+
         data["anomaly_facility_detail_block"] = _EXPAND_MARKER
-        data["_detail_blocks"]["anomaly_facility_detail_block"] = \
-            build_anomaly_facility_detail_block(
+        data["_detail_blocks"]["anomaly_facility_detail_block"] =             build_anomaly_facility_detail_block(
                 rows, columns,
                 site_profiles=_profiles,
                 sitename=_site,
@@ -4970,6 +4991,7 @@ def process_sql_result(
                 causal_result=causal_result,
                 cross_facility_result=cross_facility_result,
                 propagation_trace=propagation_trace,
+                intra_facility_result=intra_facility_result,
             )
 
     # -------------------------------------------------
@@ -6330,6 +6352,7 @@ async def ask(request: AskRequest):
         cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
         cross_anomaly_count=processed_data.get("cross_anomaly_count"),
         flow_balance_summary=processed_data.get("flow_balance_summary"),
+        intra_facility=processed_data.get("intra_facility"),
     )
 
 
@@ -7469,6 +7492,7 @@ async def ask_stream(request: AskRequest):
             cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
             cross_anomaly_count=processed_data.get("cross_anomaly_count"),
             flow_balance_summary=processed_data.get("flow_balance_summary"),
+            intra_facility=processed_data.get("intra_facility"),
         )
 
         yield _sse_event("result", final_response)
