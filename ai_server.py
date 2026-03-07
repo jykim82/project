@@ -3700,6 +3700,275 @@ def _get_tag_datainfo_cache() -> dict[str, str]:
         conn.close()
 
 
+# ── 야간최소유량 청크 직접 쿼리 ──────────────────────────────
+# fn_night_min_flow_summary PostgreSQL 함수의 60분 이동평균 윈도우가
+# 43만행 대상 22초 소요 → Python 측 청크 직접 쿼리 + numpy 이동평균으로 대체.
+
+def _execute_night_min_flow_query(
+    sitename: str, facilitytype: str,
+    from_ts: str, to_ts: str,
+) -> tuple[list, list]:
+    """fn_night_min_flow_summary 대체: 청크 직접 쿼리 + 60분 이동평균."""
+    import numpy as np
+    from collections import defaultdict
+
+    columns = ["log_time", "sitename", "facilitytype", "label",
+               "tagsn", "datainfo", "datadesc", "unit", "val"]
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Step 1: tb_trend_catalog에서 태그 목록 조회
+        _sn_cond = "" if sitename in ("전체", "%%", "") else " AND tc.sitename = %s"
+        _ft_cond = "" if facilitytype in ("전체", "%%", "") else " AND tc.facilitytype = %s"
+        _qp: list = []
+        if _sn_cond:
+            _qp.append(sitename)
+        if _ft_cond:
+            _qp.append(facilitytype)
+
+        cur.execute(f"""
+            SELECT elem->>'tagsn' AS tagsn, elem->>'label' AS label
+            FROM tb_trend_catalog tc,
+                 jsonb_array_elements(tc.meta->'items') elem
+            WHERE tc.trend_name = '유량순시'
+              {_sn_cond} {_ft_cond}
+        """, _qp)
+        tag_labels: dict[str, str] = {}
+        tagsn_list: list[str] = []
+        for tsn, lbl in cur.fetchall():
+            tag_labels[tsn] = lbl or ""
+            tagsn_list.append(tsn)
+
+        if not tagsn_list:
+            cur.close()
+            return [], columns
+
+        # Step 2: 태그 메타 조회
+        cur.execute(
+            "SELECT tagsn, sitename, facilitytype, datainfo,"
+            " COALESCE(datadesc,''), COALESCE(unit,'') FROM tb_tag_info"
+            " WHERE tagsn = ANY(%s)", (tagsn_list,)
+        )
+        tag_meta: dict[str, tuple] = {}
+        for tsn, sn, ft, di, dd, unit in cur.fetchall():
+            tag_meta[tsn] = (sn, ft, di, dd, unit)
+
+        # Step 3: 청크 직접 쿼리 (야간 0~6시)
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+        if not chunks:
+            cur.close()
+            return [], columns
+
+        raw_rows = _query_chunks_raw(
+            cur, chunks, tagsn_list, from_ts, to_ts,
+            hour_filter=(0, 6),
+        )
+        cur.close()
+    finally:
+        conn.close()
+
+    if not raw_rows:
+        return [], columns
+
+    # Step 4: 태그별 시계열 분리 + 정렬
+    tag_series: dict[str, list[tuple]] = defaultdict(list)
+    for tsn, logtime, val in raw_rows:
+        if val is not None:
+            tag_series[tsn].append((logtime, float(val)))
+    for tsn in tag_series:
+        tag_series[tsn].sort(key=lambda x: x[0])
+
+    # Step 5: 60분 이동평균 + 일별 최소값 계산
+    # time_bucket('1 day', timestamptz)는 UTC 기준으로 날짜를 나눔
+    from datetime import timezone as _tz
+    result_rows: list[tuple] = []
+    for tsn, series in tag_series.items():
+        if not series:
+            continue
+        meta = tag_meta.get(tsn)
+        if not meta:
+            continue
+        sn, ft, di, dd, unit = meta
+        label = tag_labels.get(tsn, "")
+
+        times = [s[0] for s in series]
+        vals = np.array([s[1] for s in series], dtype=np.float64)
+
+        # 60분 이동평균: 각 포인트에서 이전 60분 내 모든 값의 평균
+        ma_vals = np.empty(len(vals), dtype=np.float64)
+        for i in range(len(vals)):
+            t_cur = times[i]
+            # 이진 탐색으로 60분 전 인덱스 찾기
+            t_start = t_cur - timedelta(minutes=60)
+            lo = 0
+            hi = i
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if times[mid] < t_start:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            ma_vals[i] = round(float(np.mean(vals[lo:i+1])), 2)
+
+        # 일별 최소 이동평균 (UTC 기준 날짜 — time_bucket 호환)
+        daily_min: dict[str, float] = {}
+        for i, t in enumerate(times):
+            t_utc = t.astimezone(_tz.utc) if t.tzinfo else t
+            day_key = t_utc.strftime("%Y-%m-%d")
+            if day_key not in daily_min or ma_vals[i] < daily_min[day_key]:
+                daily_min[day_key] = ma_vals[i]
+
+        for day_str, min_val in sorted(daily_min.items()):
+            result_rows.append((
+                day_str, sn, ft, label, tsn, di, dd, unit,
+                round(min_val, 2),
+            ))
+
+    # 정렬: log_time, label
+    result_rows.sort(key=lambda r: (r[0], r[3]))
+    return result_rows, columns
+
+
+# ── 결측분석 청크 직접 쿼리 ──────────────────────────────────
+# fn_tag_daily_summary PostgreSQL 함수의 대량 JOIN + 홀딩 계산이
+# 14초 소요 → Python 측 청크 직접 쿼리 + 분단위 집계로 대체.
+
+def _execute_tag_daily_summary_query(
+    start_date: str, end_date: str,
+    sitename: str | None = None, facilitytype: str | None = None,
+    datainfo_filter: str | None = None,
+) -> tuple[list, list]:
+    """fn_tag_daily_summary 대체: 청크별 분단위 집계 쿼리 + Python 홀딩 계산.
+
+    466만 raw 행을 Python으로 가져오는 대신, SQL에서 분단위 min/max 집계 후
+    약 4만 행만 가져와서 홀딩/통신 결측을 계산한다.
+    """
+    from collections import defaultdict
+
+    columns = ["result_log_date", "result_sitename", "result_facilitytype",
+               "total_good_cnt", "total_expect_cnt", "total_missing_cnt",
+               "good_rate_pct", "missing_rate_pct"]
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Step 1: 태그 필터링
+        conditions = []
+        qp: list = []
+        if sitename and sitename not in ("", "전체", "%%"):
+            conditions.append("sitename = %s")
+            qp.append(sitename)
+        if facilitytype and facilitytype not in ("", "전체", "%%"):
+            conditions.append("facilitytype = %s")
+            qp.append(facilitytype)
+        if datainfo_filter and datainfo_filter.strip():
+            conditions.append("datainfo ~* %s")
+            qp.append(datainfo_filter)
+
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        cur.execute(f"SELECT tagsn, datainfo FROM tb_tag_info{where}", qp)
+        tag_datainfo: dict[str, str] = {}
+        tagsn_list: list[str] = []
+        for tsn, di in cur.fetchall():
+            tag_datainfo[tsn] = di or ""
+            tagsn_list.append(tsn)
+
+        if not tagsn_list:
+            cur.close()
+            return [], columns
+
+        # 통신 태그 존재 여부
+        has_comm = any("통신" in di for di in tag_datainfo.values())
+        comm_tagsns = [tsn for tsn, di in tag_datainfo.items() if "통신" in di]
+        non_comm_tagsns = [tsn for tsn, di in tag_datainfo.items() if "통신" not in di]
+
+        from_ts = start_date
+        to_ts = (datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
+        if not chunks:
+            cur.close()
+            return [], columns
+
+        _sn_display = sitename if sitename and sitename not in ("", "전체", "%%") else "전체"
+        _ft_display = facilitytype if facilitytype and facilitytype not in ("", "전체", "%%") else "전체"
+
+        daily_missing: dict[str, int] = defaultdict(int)
+
+        if has_comm and comm_tagsns:
+            # 통신 누락: SQL에서 직접 val=1인 분 카운트
+            for chunk_name in chunks:
+                cur.execute(f"""
+                    SELECT logtime::date AS log_dt, COUNT(*) AS cnt
+                    FROM {chunk_name}
+                    WHERE tagsn = ANY(%s)
+                      AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
+                      AND val = 1
+                    GROUP BY logtime::date
+                """, (comm_tagsns, from_ts, to_ts))
+                for dt, cnt in cur.fetchall():
+                    daily_missing[dt.strftime("%Y-%m-%d")] += cnt
+        elif non_comm_tagsns:
+            # 홀딩: SQL에서 분단위 min/max 집계 → Python에서 연속 30분 체크
+            minute_flags: dict[str, dict[str, bool]] = defaultdict(dict)  # day -> {minute: is_hold}
+            for chunk_name in chunks:
+                cur.execute(f"""
+                    SELECT logtime::date AS log_dt,
+                           date_trunc('minute', logtime) AS log_min,
+                           CASE WHEN MIN(val) = MAX(val) THEN 1 ELSE 0 END AS hold_flag
+                    FROM {chunk_name}
+                    WHERE tagsn = ANY(%s)
+                      AND logtime >= %s::timestamptz AND logtime < %s::timestamptz
+                    GROUP BY logtime::date, date_trunc('minute', logtime)
+                """, (non_comm_tagsns, from_ts, to_ts))
+                for dt, log_min, hold in cur.fetchall():
+                    day_str = dt.strftime("%Y-%m-%d")
+                    min_str = log_min.strftime("%Y-%m-%d %H:%M")
+                    # 여러 청크에서 같은 분이 올 수 있으므로 hold=0이면 우선
+                    if min_str in minute_flags[day_str]:
+                        if hold == 0:
+                            minute_flags[day_str][min_str] = False
+                    else:
+                        minute_flags[day_str][min_str] = (hold == 1)
+
+            for day, minutes in minute_flags.items():
+                sorted_mins = sorted(minutes.keys())
+                streak = 0
+                for m_key in sorted_mins:
+                    if minutes[m_key]:
+                        streak += 1
+                    else:
+                        if streak >= 30:
+                            daily_missing[day] += streak
+                        streak = 0
+                if streak >= 30:
+                    daily_missing[day] += streak
+
+        cur.close()
+    finally:
+        conn.close()
+
+    # 일별 결과 생성
+    result_rows: list[tuple] = []
+    d = datetime.strptime(start_date, "%Y-%m-%d")
+    end_d = datetime.strptime(end_date, "%Y-%m-%d")
+    while d <= end_d:
+        day_str = d.strftime("%Y-%m-%d")
+        missing = daily_missing.get(day_str, 0)
+        good = 1440 - missing
+        good_pct = round(good / 1440.0 * 100, 2)
+        missing_pct = round(missing / 1440.0 * 100, 2)
+        result_rows.append((
+            day_str, _sn_display, _ft_display,
+            good, 1440, missing, good_pct, missing_pct,
+        ))
+        d += timedelta(days=1)
+
+    return result_rows, columns
+
+
 # ── TIMESERIES 인텐트 청크 직접 쿼리 ──────────────────────────
 # tb_tag_raw_data JOIN tb_tag_info 패턴의 Hash Join → 116M행 스캔 문제를
 # 2단계(tb_tag_info 조회 → 청크별 raw 쿼리)로 분리하여 우회한다.
@@ -5494,7 +5763,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY"}
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -5956,6 +6225,65 @@ async def ask(request: AskRequest):
                 equipment_failure_count=_c_data.get("equipment_failure_count"),
                 flow_balance_summary=_c_data.get("flow_balance_summary"),
             )
+
+    # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
+    if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
+        _nmf_sn = params.get("sitename", "전체")
+        _nmf_ft = params.get("facilitytype", "소블록")
+        _nmf_from = params.get("from_ts", "")
+        _nmf_to = params.get("to_ts", "")
+        try:
+            _nmf_rows, _nmf_cols = await asyncio.to_thread(
+                _execute_night_min_flow_query,
+                _nmf_sn, _nmf_ft, _nmf_from, _nmf_to,
+            )
+            if _nmf_rows:
+                csv_fn = save_csv(_nmf_rows, _nmf_cols, intent, sid)
+                _total = len(_nmf_rows)
+                if _total > MAX_TABLE_ROWS:
+                    _sampled = stratified_sample(_nmf_rows, _nmf_cols, MAX_TABLE_ROWS)
+                    _resp_data = [dict(zip(_nmf_cols, r)) for r in _sampled]
+                    _trunc = True
+                else:
+                    _resp_data = [dict(zip(_nmf_cols, r)) for r in _nmf_rows]
+                    _trunc = False
+                _nmf_rendered = answer_template if isinstance(answer_template, dict) else {}
+                return build_success_response(
+                    intent=intent, answer=_nmf_rendered, graph_type=graph_type,
+                    data=_resp_data, columns=_nmf_cols, csv_file=csv_fn,
+                    session_id=sid, intent_candidates=intent_candidates,
+                    total_rows=_total, data_truncated=_trunc,
+                )
+        except Exception as e:
+            logger.warning(f"야간최소유량 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+    # TAG_DAILY_MISSING_SUMMARY: 청크 직접 쿼리 (fn_tag_daily_summary 대체)
+    if intent == "TAG_DAILY_MISSING_SUMMARY":
+        _tdm_sn = params.get("sitename", "")
+        _tdm_ft = params.get("facilitytype", "")
+        _tdm_from = params.get("from_ts", "")
+        _tdm_to = params.get("to_ts", "")
+        _tdm_di = params.get("datainfo", "")
+        logger.info(f"결측분석 청크 핸들러 진입: from={_tdm_from} to={_tdm_to} sn={_tdm_sn} ft={_tdm_ft}")
+        try:
+            _tdm_rows, _tdm_cols = await asyncio.to_thread(
+                _execute_tag_daily_summary_query,
+                _tdm_from, _tdm_to, _tdm_sn, _tdm_ft, _tdm_di,
+            )
+            logger.info(f"결측분석 청크 결과: {len(_tdm_rows)}행")
+            if _tdm_rows:
+                csv_fn = save_csv(_tdm_rows, _tdm_cols, intent, sid)
+                _total = len(_tdm_rows)
+                _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
+                _tdm_rendered = answer_template if isinstance(answer_template, dict) else {}
+                return build_success_response(
+                    intent=intent, answer=_tdm_rendered, graph_type=graph_type,
+                    data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,
+                    session_id=sid, intent_candidates=intent_candidates,
+                    total_rows=_total,
+                )
+        except Exception as e:
+            logger.warning(f"결측분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
     # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
     if intent in _TIMESERIES_CHUNK_INTENTS:
@@ -6643,7 +6971,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY"}
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -7097,6 +7425,65 @@ async def ask_stream(request: AskRequest):
                     flow_balance_summary=_c_data.get("flow_balance_summary"),
                 ))
                 return
+
+        # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
+        if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
+            _nmf_sn = params.get("sitename", "전체")
+            _nmf_ft = params.get("facilitytype", "소블록")
+            _nmf_from = params.get("from_ts", "")
+            _nmf_to = params.get("to_ts", "")
+            try:
+                _nmf_rows, _nmf_cols = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _nmf_sn, _nmf_ft, _nmf_from, _nmf_to,
+                )
+                if _nmf_rows:
+                    csv_fn = save_csv(_nmf_rows, _nmf_cols, intent, sid)
+                    _total = len(_nmf_rows)
+                    if _total > MAX_TABLE_ROWS:
+                        _sampled = stratified_sample(_nmf_rows, _nmf_cols, MAX_TABLE_ROWS)
+                        _resp_data = [dict(zip(_nmf_cols, r)) for r in _sampled]
+                        _trunc = True
+                    else:
+                        _resp_data = [dict(zip(_nmf_cols, r)) for r in _nmf_rows]
+                        _trunc = False
+                    _nmf_rendered = answer_template if isinstance(answer_template, dict) else {}
+                    yield sse_event("result", build_success_response(
+                        intent=intent, answer=_nmf_rendered, graph_type=graph_type,
+                        data=_resp_data, columns=_nmf_cols, csv_file=csv_fn,
+                        session_id=sid, intent_candidates=intent_candidates,
+                        total_rows=_total, data_truncated=_trunc,
+                    ))
+                    return
+            except Exception as e:
+                logger.warning(f"SSE 야간최소유량 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+        # TAG_DAILY_MISSING_SUMMARY: 청크 직접 쿼리 (fn_tag_daily_summary 대체)
+        if intent == "TAG_DAILY_MISSING_SUMMARY":
+            _tdm_sn = params.get("sitename", "")
+            _tdm_ft = params.get("facilitytype", "")
+            _tdm_from = params.get("from_ts", "")
+            _tdm_to = params.get("to_ts", "")
+            _tdm_di = params.get("datainfo", "")
+            try:
+                _tdm_rows, _tdm_cols = await asyncio.to_thread(
+                    _execute_tag_daily_summary_query,
+                    _tdm_from, _tdm_to, _tdm_sn, _tdm_ft, _tdm_di,
+                )
+                if _tdm_rows:
+                    csv_fn = save_csv(_tdm_rows, _tdm_cols, intent, sid)
+                    _total = len(_tdm_rows)
+                    _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
+                    _tdm_rendered = answer_template if isinstance(answer_template, dict) else {}
+                    yield sse_event("result", build_success_response(
+                        intent=intent, answer=_tdm_rendered, graph_type=graph_type,
+                        data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,
+                        session_id=sid, intent_candidates=intent_candidates,
+                        total_rows=_total,
+                    ))
+                    return
+            except Exception as e:
+                logger.warning(f"SSE 결측분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
         # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
         if intent in _TIMESERIES_CHUNK_INTENTS:

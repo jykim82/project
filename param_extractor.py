@@ -690,8 +690,15 @@ class ParamExtractor:
             from_date = today - timedelta(weeks=weeks)
             return from_date.strftime("%Y-%m-%d"), today_str
 
+        # "N개월간", "최근 N개월"
+        match = re.search(r"(\d+)\s*개월", question)
+        if match:
+            months = int(match.group(1))
+            from_date = today - timedelta(days=30 * months)
+            return from_date.strftime("%Y-%m-%d"), today_str
+
         # "한달간", "최근 한달", "한 달"
-        if re.search(r"(한\s*달|1개월|최근\s*한\s*달)", question):
+        if re.search(r"(한\s*달|최근\s*한\s*달)", question):
             from_date = today - timedelta(days=30)
             return from_date.strftime("%Y-%m-%d"), today_str
 
