@@ -3831,6 +3831,104 @@ def _execute_night_min_flow_query(
     return result_rows, columns
 
 
+# ── 야간최소유량 표준편차분석 청크 직접 쿼리 ──────────────────
+# 원본: fn_night_min_flow_stats(내부 3회) + fn_night_min_flow_summary(2회)
+# = 총 5회 함수 호출 → 53초.  여기서 1회 청크 쿼리 + Python 통계로 대체.
+
+def _execute_night_min_flow_stddev_query(
+    sitename: str, facilitytype: str,
+) -> tuple[list, list]:
+    """fn_night_min_flow_stats + fn_night_min_flow_summary 대체.
+
+    400일 범위 1회 조회 → Python 통계 계산.
+    """
+    import numpy as np
+    import calendar
+    from collections import defaultdict
+    from datetime import date
+
+    out_cols = ["sitename", "facilitytype", "stats_report",
+                "avg_month", "avg_year", "unit"]
+    today = date.today()
+
+    # 400일 범위로 1회 조회 (365일 + 작년 동월 여유분)
+    from_date = (today - timedelta(days=400)).strftime("%Y-%m-%d")
+    to_date = today.strftime("%Y-%m-%d")
+
+    rows, _ = _execute_night_min_flow_query(sitename, facilitytype, from_date, to_date)
+    if not rows:
+        return [], out_cols
+
+    # rows: (log_time, sitename, facilitytype, label, tagsn, ..., unit, val)
+    # 일별 전체 태그 평균 (각 태그의 일별 최소값을 태그 간 평균)
+    daily_vals: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        val = r[8]
+        if val is not None:
+            daily_vals[r[0]].append(float(val))
+
+    daily_avg: dict[str, float] = {
+        d: float(np.mean(vs)) for d, vs in daily_vals.items()
+    }
+
+    # 기간 키 (daily_avg 키는 UTC 날짜)
+    d365_start = (today - timedelta(days=365)).strftime("%Y-%m-%d")
+    year_start = today.replace(month=1, day=1).strftime("%Y-%m-%d")
+    month_start = today.replace(day=1).strftime("%Y-%m-%d")
+
+    ly = today.replace(year=today.year - 1, day=1)
+    ly_end_day = calendar.monthrange(ly.year, ly.month)[1]
+    ly_start_str = ly.strftime("%Y-%m-%d")
+    ly_end_str = ly.replace(day=ly_end_day).strftime("%Y-%m-%d")
+
+    # 기간별 값 추출
+    v365 = [v for d, v in daily_avg.items() if d >= d365_start]
+    v_ly = [v for d, v in daily_avg.items() if ly_start_str <= d <= ly_end_str]
+    v_month = [v for d, v in daily_avg.items() if d >= month_start]
+    v_year = [v for d, v in daily_avg.items() if d >= year_start]
+    # 가장 최근 날짜의 값 (UTC 키 기준이므로 어제 로컬 날짜와 불일치 가능)
+    sorted_days = sorted(daily_avg.keys())
+    yesterday_val = daily_avg[sorted_days[-1]] if sorted_days else None
+
+    def _safe_round(x, n=2):
+        return round(float(x), n) if x is not None else None
+
+    avg_365 = _safe_round(np.mean(v365)) if v365 else None
+    std_365 = _safe_round(np.std(v365, ddof=0)) if v365 else None
+    avg_30 = _safe_round(np.mean(v_ly)) if v_ly else None
+    std_30 = _safe_round(np.std(v_ly, ddof=0)) if v_ly else None
+    avg_month_val = _safe_round(np.mean(v_month)) if v_month else None
+    avg_year_val = _safe_round(np.mean(v_year)) if v_year else None
+    yesterday_min = _safe_round(yesterday_val) if yesterday_val is not None else None
+
+    # 신뢰구간 + 초과량
+    ci_min_365 = _safe_round(avg_365 - std_365) if avg_365 is not None and std_365 is not None else None
+    ci_max_365 = _safe_round(avg_365 + std_365) if avg_365 is not None and std_365 is not None else None
+    ci_min_30 = _safe_round(avg_30 - std_30) if avg_30 is not None and std_30 is not None else None
+    ci_max_30 = _safe_round(avg_30 + std_30) if avg_30 is not None and std_30 is not None else None
+
+    exceed_365 = _safe_round(yesterday_min - ci_max_365) if yesterday_min is not None and ci_max_365 is not None else None
+    exceed_30 = _safe_round(yesterday_min - ci_max_30) if yesterday_min is not None and ci_max_30 is not None else None
+
+    stats_report = [
+        {"구분": "평균", "비고": "누수증감량 반영",
+         "365일기준": avg_365, "1년전 30일기준": avg_30},
+        {"구분": "표준편차", "비고": "",
+         "365일기준": std_365, "1년전 30일기준": std_30},
+        {"구분": "신뢰구간", "비고": "(평균±표준편차)구간",
+         "365일기준": f"{ci_min_365} ~ {ci_max_365}" if ci_min_365 is not None else None,
+         "1년전 30일기준": f"{ci_min_30} ~ {ci_max_30}" if ci_min_30 is not None else None},
+        {"구분": "신뢰구간 초과량", "비고": "금일 - 신뢰구간 최대값",
+         "365일기준": exceed_365, "1년전 30일기준": exceed_30},
+    ]
+
+    sn = rows[0][1]
+    ft = rows[0][2]
+    unit = rows[0][7] or "㎥/hr"
+
+    return [[sn, ft, stats_report, avg_month_val, avg_year_val, unit]], out_cols
+
+
 # ── 결측분석 청크 직접 쿼리 ──────────────────────────────────
 # fn_tag_daily_summary PostgreSQL 함수의 대량 JOIN + 홀딩 계산이
 # 14초 소요 → Python 측 청크 직접 쿼리 + 분단위 집계로 대체.
@@ -5763,7 +5861,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -6225,6 +6323,28 @@ async def ask(request: AskRequest):
                 equipment_failure_count=_c_data.get("equipment_failure_count"),
                 flow_balance_summary=_c_data.get("flow_balance_summary"),
             )
+
+    # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (fn_night_min_flow_stats 대체, 53s→~10s)
+    if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
+        _sd_sn = params.get("sitename", "")
+        _sd_ft = params.get("facilitytype", "소블록")
+        try:
+            _sd_rows, _sd_cols = await asyncio.to_thread(
+                _execute_night_min_flow_stddev_query, _sd_sn, _sd_ft,
+            )
+            if _sd_rows:
+                _sd_data = [dict(zip(_sd_cols, r)) for r in _sd_rows]
+                _sd_rendered = answer_template if isinstance(answer_template, dict) else {}
+                _sd_stats = _extract_stddev_stats(_sd_data[0])
+                return build_success_response(
+                    intent=intent, answer=_sd_rendered, graph_type=graph_type,
+                    data=_sd_data, columns=_sd_cols,
+                    session_id=sid, intent_candidates=intent_candidates,
+                    total_rows=len(_sd_rows),
+                    stddev_stats=_sd_stats,
+                )
+        except Exception as e:
+            logger.warning(f"표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
     # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
     if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
@@ -6971,7 +7091,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -7426,6 +7546,29 @@ async def ask_stream(request: AskRequest):
                 ))
                 return
 
+        # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (53s→~10s)
+        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
+            _sd_sn = params.get("sitename", "")
+            _sd_ft = params.get("facilitytype", "소블록")
+            try:
+                _sd_rows, _sd_cols = await asyncio.to_thread(
+                    _execute_night_min_flow_stddev_query, _sd_sn, _sd_ft,
+                )
+                if _sd_rows:
+                    _sd_data = [dict(zip(_sd_cols, r)) for r in _sd_rows]
+                    _sd_rendered = answer_template if isinstance(answer_template, dict) else {}
+                    _sd_stats = _extract_stddev_stats(_sd_data[0])
+                    yield _sse_event("result", build_success_response(
+                        intent=intent, answer=_sd_rendered, graph_type=graph_type,
+                        data=_sd_data, columns=_sd_cols,
+                        session_id=sid, intent_candidates=intent_candidates,
+                        total_rows=len(_sd_rows),
+                        stddev_stats=_sd_stats,
+                    ))
+                    return
+            except Exception as e:
+                logger.warning(f"SSE 표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
         # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
         if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
             _nmf_sn = params.get("sitename", "전체")
@@ -7448,7 +7591,7 @@ async def ask_stream(request: AskRequest):
                         _resp_data = [dict(zip(_nmf_cols, r)) for r in _nmf_rows]
                         _trunc = False
                     _nmf_rendered = answer_template if isinstance(answer_template, dict) else {}
-                    yield sse_event("result", build_success_response(
+                    yield _sse_event("result", build_success_response(
                         intent=intent, answer=_nmf_rendered, graph_type=graph_type,
                         data=_resp_data, columns=_nmf_cols, csv_file=csv_fn,
                         session_id=sid, intent_candidates=intent_candidates,
@@ -7475,7 +7618,7 @@ async def ask_stream(request: AskRequest):
                     _total = len(_tdm_rows)
                     _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
                     _tdm_rendered = answer_template if isinstance(answer_template, dict) else {}
-                    yield sse_event("result", build_success_response(
+                    yield _sse_event("result", build_success_response(
                         intent=intent, answer=_tdm_rendered, graph_type=graph_type,
                         data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,
                         session_id=sid, intent_candidates=intent_candidates,
