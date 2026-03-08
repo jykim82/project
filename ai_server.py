@@ -139,8 +139,8 @@ TAG_DATA_GROUPS: list[tuple[str, str, str | None, str, list[str]]] = [
     ("FLOW",               "유량",       None,        "Analog Input",  []),
     ("FLOW_INSTANT",       "유량순시",   "FLOW",      "Analog Input",  ["유량순시", "순시유량"]),
     ("FLOW_CUMULATIVE",    "유량적산",   "FLOW",      "Analog Input",  ["유량적산", "적산유량"]),
-    ("FLOW_INLET",         "유입유량",   "FLOW",      "Analog Input",  ["유입유량순시", "유입유량적산", "유입순시유량", "유입적산유량", "유입유량"]),
-    ("FLOW_OUTLET",        "유출유량",   "FLOW",      "Analog Input",  ["유출유량순시", "유출유량적산", "유출순시유량", "유출적산유량", "유출유량"]),
+    ("FLOW_INLET",         "유입유량",   "FLOW",      "Analog Input",  ["유입유량순시", "유입유량적산", "유입순시유량", "유입적산유량", "유입 유량", "유입유량"]),
+    ("FLOW_OUTLET",        "유출유량",   "FLOW",      "Analog Input",  ["유출유량순시", "유출유량적산", "유출순시유량", "유출적산유량", "유출 유량", "유출유량"]),
     # 압력 계열
     ("PRESSURE",           "압력",       None,        "Analog Input",  ["압력"]),
     ("PRESSURE_INLET",     "유입압력",   "PRESSURE",  "Analog Input",  ["유입압력"]),
@@ -3077,6 +3077,8 @@ def build_success_response(
         response["plot_type"] = plot_type
     if kwargs.get("stddev_stats"):
         response["stddev_stats"] = kwargs["stddev_stats"]
+    if kwargs.get("stddev_stats_list"):
+        response["stddev_stats_list"] = kwargs["stddev_stats_list"]
     if kwargs.get("cusum_chart_data"):
         response["cusum_chart_data"] = kwargs["cusum_chart_data"]
     if kwargs.get("anomaly_zones"):
@@ -3837,8 +3839,9 @@ def _execute_night_min_flow_query(
 
 def _execute_night_min_flow_stddev_query(
     sitename: str, facilitytype: str,
-) -> tuple[list, list]:
+) -> tuple[list, list, list]:
     """fn_night_min_flow_stats + fn_night_min_flow_summary 대체.
+    Returns (rows, columns, stddev_stats_list).
 
     400일 범위 1회 조회 → Python 통계 계산.
     """
@@ -3860,16 +3863,29 @@ def _execute_night_min_flow_stddev_query(
         return [], out_cols
 
     # rows: (log_time, sitename, facilitytype, label, tagsn, ..., unit, val)
-    # 일별 전체 태그 평균 (각 태그의 일별 최소값을 태그 간 평균)
-    daily_vals: dict[str, list[float]] = defaultdict(list)
+    # "전체" 조회 시 소블록별 분리, 개별 조회 시 단일 통계
+    is_all = sitename in ("전체", "%%", "")
+
+    # 소블록별로 일별 평균 그룹화
+    from itertools import groupby as _gb
+    site_daily: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    site_meta: dict[str, tuple[str, str]] = {}  # sn → (ft, unit)
     for r in rows:
         val = r[8]
+        sn_key = r[1]
         if val is not None:
-            daily_vals[r[0]].append(float(val))
+            site_daily[sn_key][r[0]].append(float(val))
+        if sn_key not in site_meta:
+            site_meta[sn_key] = (r[2], r[7] or "㎥/hr")
 
-    daily_avg: dict[str, float] = {
-        d: float(np.mean(vs)) for d, vs in daily_vals.items()
-    }
+    if not is_all:
+        # 개별 조회: 모든 태그를 하나로 합산
+        site_daily = {"_all": {}}
+        for r in rows:
+            val = r[8]
+            if val is not None:
+                site_daily["_all"].setdefault(r[0], []).append(float(val))
+        site_meta["_all"] = (rows[0][2], rows[0][7] or "㎥/hr")
 
     # 기간 키 (daily_avg 키는 UTC 날짜)
     d365_start = (today - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -3881,52 +3897,105 @@ def _execute_night_min_flow_stddev_query(
     ly_start_str = ly.strftime("%Y-%m-%d")
     ly_end_str = ly.replace(day=ly_end_day).strftime("%Y-%m-%d")
 
-    # 기간별 값 추출
-    v365 = [v for d, v in daily_avg.items() if d >= d365_start]
-    v_ly = [v for d, v in daily_avg.items() if ly_start_str <= d <= ly_end_str]
-    v_month = [v for d, v in daily_avg.items() if d >= month_start]
-    v_year = [v for d, v in daily_avg.items() if d >= year_start]
-    # 가장 최근 날짜의 값 (UTC 키 기준이므로 어제 로컬 날짜와 불일치 가능)
-    sorted_days = sorted(daily_avg.keys())
-    yesterday_val = daily_avg[sorted_days[-1]] if sorted_days else None
-
     def _safe_round(x, n=2):
         return round(float(x), n) if x is not None else None
 
-    avg_365 = _safe_round(np.mean(v365)) if v365 else None
-    std_365 = _safe_round(np.std(v365, ddof=0)) if v365 else None
-    avg_30 = _safe_round(np.mean(v_ly)) if v_ly else None
-    std_30 = _safe_round(np.std(v_ly, ddof=0)) if v_ly else None
-    avg_month_val = _safe_round(np.mean(v_month)) if v_month else None
-    avg_year_val = _safe_round(np.mean(v_year)) if v_year else None
-    yesterday_min = _safe_round(yesterday_val) if yesterday_val is not None else None
+    def _compute_stats(daily_avg: dict[str, float]) -> dict:
+        v365 = [v for d, v in daily_avg.items() if d >= d365_start]
+        v_ly = [v for d, v in daily_avg.items() if ly_start_str <= d <= ly_end_str]
+        v_month = [v for d, v in daily_avg.items() if d >= month_start]
+        v_year = [v for d, v in daily_avg.items() if d >= year_start]
+        sorted_days = sorted(daily_avg.keys())
+        yesterday_val = daily_avg[sorted_days[-1]] if sorted_days else None
 
-    # 신뢰구간 + 초과량
-    ci_min_365 = _safe_round(avg_365 - std_365) if avg_365 is not None and std_365 is not None else None
-    ci_max_365 = _safe_round(avg_365 + std_365) if avg_365 is not None and std_365 is not None else None
-    ci_min_30 = _safe_round(avg_30 - std_30) if avg_30 is not None and std_30 is not None else None
-    ci_max_30 = _safe_round(avg_30 + std_30) if avg_30 is not None and std_30 is not None else None
+        avg_365 = _safe_round(np.mean(v365)) if v365 else None
+        std_365 = _safe_round(np.std(v365, ddof=0)) if v365 else None
+        avg_30 = _safe_round(np.mean(v_ly)) if v_ly else None
+        std_30 = _safe_round(np.std(v_ly, ddof=0)) if v_ly else None
+        avg_month_val = _safe_round(np.mean(v_month)) if v_month else None
+        avg_year_val = _safe_round(np.mean(v_year)) if v_year else None
+        yesterday_min = _safe_round(yesterday_val) if yesterday_val is not None else None
 
-    exceed_365 = _safe_round(yesterday_min - ci_max_365) if yesterday_min is not None and ci_max_365 is not None else None
-    exceed_30 = _safe_round(yesterday_min - ci_max_30) if yesterday_min is not None and ci_max_30 is not None else None
+        ci_min_365 = _safe_round(avg_365 - std_365) if avg_365 is not None and std_365 is not None else None
+        ci_max_365 = _safe_round(avg_365 + std_365) if avg_365 is not None and std_365 is not None else None
+        ci_min_30 = _safe_round(avg_30 - std_30) if avg_30 is not None and std_30 is not None else None
+        ci_max_30 = _safe_round(avg_30 + std_30) if avg_30 is not None and std_30 is not None else None
 
-    stats_report = [
-        {"구분": "평균", "비고": "누수증감량 반영",
-         "365일기준": avg_365, "1년전 30일기준": avg_30},
-        {"구분": "표준편차", "비고": "",
-         "365일기준": std_365, "1년전 30일기준": std_30},
-        {"구분": "신뢰구간", "비고": "(평균±표준편차)구간",
-         "365일기준": f"{ci_min_365} ~ {ci_max_365}" if ci_min_365 is not None else None,
-         "1년전 30일기준": f"{ci_min_30} ~ {ci_max_30}" if ci_min_30 is not None else None},
-        {"구분": "신뢰구간 초과량", "비고": "금일 - 신뢰구간 최대값",
-         "365일기준": exceed_365, "1년전 30일기준": exceed_30},
-    ]
+        exceed_365 = _safe_round(yesterday_min - ci_max_365) if yesterday_min is not None and ci_max_365 is not None else None
+        exceed_30 = _safe_round(yesterday_min - ci_max_30) if yesterday_min is not None and ci_max_30 is not None else None
 
-    sn = rows[0][1]
-    ft = rows[0][2]
-    unit = rows[0][7] or "㎥/hr"
+        stats_report = [
+            {"구분": "평균", "비고": "누수증감량 반영",
+             "365일기준": avg_365, "1년전 30일기준": avg_30},
+            {"구분": "표준편차", "비고": "",
+             "365일기준": std_365, "1년전 30일기준": std_30},
+            {"구분": "신뢰구간", "비고": "(평균±표준편차)구간",
+             "365일기준": f"{ci_min_365} ~ {ci_max_365}" if ci_min_365 is not None else None,
+             "1년전 30일기준": f"{ci_min_30} ~ {ci_max_30}" if ci_min_30 is not None else None},
+            {"구분": "신뢰구간 초과량", "비고": "금일 - 신뢰구간 최대값",
+             "365일기준": exceed_365, "1년전 30일기준": exceed_30},
+        ]
+        return {
+            "stats_report": stats_report,
+            "avg_month": avg_month_val, "avg_year": avg_year_val,
+            "yesterday_min": yesterday_min,
+            "avg_365": avg_365, "std_365": std_365,
+            "ci_min_365": ci_min_365, "ci_max_365": ci_max_365,
+            "exceed_365": exceed_365,
+        }
 
-    return [[sn, ft, stats_report, avg_month_val, avg_year_val, unit]], out_cols
+    result_rows = []
+    stddev_stats_list: list[dict] = []
+
+    for sn_key in sorted(site_daily.keys()):
+        dvals = site_daily[sn_key]
+        daily_avg = {d: float(np.mean(vs)) for d, vs in dvals.items()}
+        if not daily_avg:
+            continue
+        stats = _compute_stats(daily_avg)
+        ft_val, unit_val = site_meta.get(sn_key, (facilitytype, "㎥/hr"))
+
+        if is_all:
+            # 전체: flat 요약 행 + stddev_stats 구조
+            exceed = stats["exceed_365"]
+            verdict = "이상" if exceed is not None and exceed > 0 else "정상"
+            sr = stats["stats_report"]
+            ci_range = sr[2]["365일기준"] if len(sr) > 2 else None
+            result_rows.append([
+                sn_key, ft_val,
+                stats["avg_365"], stats["std_365"],
+                ci_range, exceed,
+                stats["yesterday_min"], stats["avg_month"], stats["avg_year"],
+                verdict, unit_val,
+            ])
+            stddev_stats_list.append({
+                "sitename": sn_key,
+                "facilitytype": ft_val,
+                "mean": stats["avg_365"],
+                "stddev": stats["std_365"],
+                "ci_lower": stats["ci_min_365"],
+                "ci_upper": stats["ci_max_365"],
+                "excess": exceed,
+                "today_value": stats["yesterday_min"],
+                "unit": unit_val,
+                "avg_month": stats["avg_month"],
+                "avg_year": stats["avg_year"],
+            })
+        else:
+            # 개별: 기존 stats_report 구조
+            out_sn = rows[0][1]
+            result_rows.append([out_sn, ft_val, stats["stats_report"],
+                                stats["avg_month"], stats["avg_year"], unit_val])
+
+    if is_all:
+        out_cols = ["sitename", "facilitytype",
+                    "avg_365", "std_365", "ci_range_365", "exceed_365",
+                    "yesterday_min", "avg_month", "avg_year", "판정", "unit"]
+
+    if not result_rows:
+        return [], out_cols, []
+
+    return result_rows, out_cols, stddev_stats_list
 
 
 # ── 결측분석 청크 직접 쿼리 ──────────────────────────────────
@@ -5434,6 +5503,7 @@ def process_sql_result(
         data["cusum_alarm_count"] = cusum_counts.get("누수의심", 0)
         data["cusum_warn_count"] = cusum_counts.get("주의", 0)
         data["cusum_ok_count"] = cusum_counts.get("정상", 0)
+        data["cusum_inactive_count"] = cusum_counts.get("비활성", 0)
 
         # 테이블 데이터를 CUSUM 결과 테이블로 교체
         cusum_table_rows, cusum_table_cols = build_cusum_summary_table(cusum_results)
@@ -5739,9 +5809,9 @@ async def ask(request: AskRequest):
         "소블록": "BLOCK_LOCATION", "중블록": "BLOCK_LOCATION", "대블록": "BLOCK_LOCATION",
     }
     _DIAGRAM_REMAP = {
-        "배수지": "RESERVOIR_SYSTEM_DIAGRAM",
-        "가압장": "BOOSTER_STATION_SYSTEM_DIAGRAM",
-        "소블록": "BLOCK_SYSTEM_DIAGRAM", "중블록": "BLOCK_SYSTEM_DIAGRAM", "대블록": "BLOCK_SYSTEM_DIAGRAM",
+        "배수지": "RESERVOIR_NETWORK_DIAGRAM",
+        "가압장": "BOOSTER_STATION_NETWORK_DIAGRAM",
+        "소블록": "BLOCK_NETWORK_DIAGRAM", "중블록": "BLOCK_NETWORK_DIAGRAM", "대블록": "BLOCK_NETWORK_DIAGRAM",
     }
     _q_nospace = user_question.replace(" ", "")
     _resolved_ft = new_params.get("facilitytype") or new_params.get("block_level")
@@ -6329,22 +6399,59 @@ async def ask(request: AskRequest):
         _sd_sn = params.get("sitename", "")
         _sd_ft = params.get("facilitytype", "소블록")
         try:
-            _sd_rows, _sd_cols = await asyncio.to_thread(
+            _sd_rows, _sd_cols, _sd_stats_list = await asyncio.to_thread(
                 _execute_night_min_flow_stddev_query, _sd_sn, _sd_ft,
             )
             if _sd_rows:
                 _sd_data = [dict(zip(_sd_cols, r)) for r in _sd_rows]
-                _sd_rendered = answer_template if isinstance(answer_template, dict) else {}
-                _sd_stats = _extract_stddev_stats(_sd_data[0])
+                _sd_kwargs: dict = {}
+                if len(_sd_rows) == 1:
+                    _sd_kwargs["stddev_stats"] = _extract_stddev_stats(_sd_data[0])
+                    _sd_rendered = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
+                elif _sd_stats_list:
+                    _sd_kwargs["stddev_stats_list"] = _sd_stats_list
+                    # 전체 조회: 요약 텍스트 직접 생성
+                    _sd_ft_label = params.get("facilitytype", "소블록")
+                    _raw_sn = params.get("sitename", "")
+                    _sd_sn_label = "전체" if (not _raw_sn or _raw_sn == "%%") else _raw_sn
+                    _n_normal = sum(1 for s in _sd_stats_list if (s.get("excess") or 0) <= 0)
+                    _n_exceed = len(_sd_stats_list) - _n_normal
+                    _sd_summary = f"{_sd_sn_label} {_sd_ft_label} 야간최소유량 표준편차 분석 결과입니다."
+                    _sd_rendered = {
+                        "summary": _sd_summary,
+                        "detail": [
+                            {"prefix": "ㆍ", "text": f"총 {len(_sd_stats_list)}개 시설 분석 — 정상 {_n_normal}개, 신뢰구간 초과 {_n_exceed}개"},
+                        ],
+                    }
+                else:
+                    _sd_rendered = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
                 return build_success_response(
                     intent=intent, answer=_sd_rendered, graph_type=graph_type,
                     data=_sd_data, columns=_sd_cols,
                     session_id=sid, intent_candidates=intent_candidates,
                     total_rows=len(_sd_rows),
-                    stddev_stats=_sd_stats,
+                    **_sd_kwargs,
                 )
         except Exception as e:
             logger.warning(f"표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+    # LEAK_CUSUM_ANALYSIS: 청크 직접 쿼리 (fn_night_min_flow_summary 대체, rows만 채움 → process_sql_result에서 CUSUM)
+    if intent == "LEAK_CUSUM_ANALYSIS":
+        _lc_sn = params.get("sitename", "전체")
+        _lc_ft = params.get("facilitytype", "소블록")
+        _lc_from = params.get("from_ts", "")
+        _lc_to = params.get("to_ts", "")
+        try:
+            _lc_rows, _lc_cols = await asyncio.to_thread(
+                _execute_night_min_flow_query,
+                _lc_sn, _lc_ft, _lc_from, _lc_to,
+            )
+            if _lc_rows:
+                rows = _lc_rows
+                columns = _lc_cols
+                logger.info(f"LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
+        except Exception as e:
+            logger.warning(f"LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
     # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
     if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
@@ -6741,9 +6848,9 @@ async def ask(request: AskRequest):
         elif not _plot_type and _chart_data_type:
             _plot_type = _PLOT_TYPE_DEFAULTS.get(_chart_data_type, "line")
 
-    # STDDEV 분석: stddev_stats 추출
+    # STDDEV 분석: stddev_stats 추출 (개별 조회 시만)
     _stddev_stats = None
-    if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS" and response_data:
+    if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS" and response_data and len(response_data) == 1:
         _stddev_stats = _extract_stddev_stats(response_data[0])
 
     # CUSUM 누수추정: 응답 데이터를 CUSUM 요약 테이블로 교체 + cusum_chart_data
@@ -6972,9 +7079,9 @@ async def ask_stream(request: AskRequest):
             "소블록": "BLOCK_LOCATION", "중블록": "BLOCK_LOCATION", "대블록": "BLOCK_LOCATION",
         }
         _DIAGRAM_REMAP_S = {
-            "배수지": "RESERVOIR_SYSTEM_DIAGRAM",
-            "가압장": "BOOSTER_STATION_SYSTEM_DIAGRAM",
-            "소블록": "BLOCK_SYSTEM_DIAGRAM", "중블록": "BLOCK_SYSTEM_DIAGRAM", "대블록": "BLOCK_SYSTEM_DIAGRAM",
+            "배수지": "RESERVOIR_NETWORK_DIAGRAM",
+            "가압장": "BOOSTER_STATION_NETWORK_DIAGRAM",
+            "소블록": "BLOCK_NETWORK_DIAGRAM", "중블록": "BLOCK_NETWORK_DIAGRAM", "대블록": "BLOCK_NETWORK_DIAGRAM",
         }
         _q_nospace_s = user_question.replace(" ", "")
         _resolved_ft_s = new_params.get("facilitytype") or new_params.get("block_level")
@@ -7551,23 +7658,59 @@ async def ask_stream(request: AskRequest):
             _sd_sn = params.get("sitename", "")
             _sd_ft = params.get("facilitytype", "소블록")
             try:
-                _sd_rows, _sd_cols = await asyncio.to_thread(
+                _sd_rows, _sd_cols, _sd_stats_list = await asyncio.to_thread(
                     _execute_night_min_flow_stddev_query, _sd_sn, _sd_ft,
                 )
                 if _sd_rows:
                     _sd_data = [dict(zip(_sd_cols, r)) for r in _sd_rows]
-                    _sd_rendered = answer_template if isinstance(answer_template, dict) else {}
-                    _sd_stats = _extract_stddev_stats(_sd_data[0])
+                    _sd_kwargs_s: dict = {}
+                    if len(_sd_rows) == 1:
+                        _sd_kwargs_s["stddev_stats"] = _extract_stddev_stats(_sd_data[0])
+                        _sd_rendered_s = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
+                    elif _sd_stats_list:
+                        _sd_kwargs_s["stddev_stats_list"] = _sd_stats_list
+                        _sd_ft_label = params.get("facilitytype", "소블록")
+                        _raw_sn = params.get("sitename", "")
+                        _sd_sn_label = "전체" if (not _raw_sn or _raw_sn == "%%") else _raw_sn
+                        _n_normal = sum(1 for s in _sd_stats_list if (s.get("excess") or 0) <= 0)
+                        _n_exceed = len(_sd_stats_list) - _n_normal
+                        _sd_summary = f"{_sd_sn_label} {_sd_ft_label} 야간최소유량 표준편차 분석 결과입니다."
+                        _sd_rendered_s = {
+                            "summary": _sd_summary,
+                            "detail": [
+                                {"prefix": "ㆍ", "text": f"총 {len(_sd_stats_list)}개 시설 분석 — 정상 {_n_normal}개, 신뢰구간 초과 {_n_exceed}개"},
+                            ],
+                        }
+                    else:
+                        _sd_rendered_s = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
                     yield _sse_event("result", build_success_response(
-                        intent=intent, answer=_sd_rendered, graph_type=graph_type,
+                        intent=intent, answer=_sd_rendered_s, graph_type=graph_type,
                         data=_sd_data, columns=_sd_cols,
                         session_id=sid, intent_candidates=intent_candidates,
                         total_rows=len(_sd_rows),
-                        stddev_stats=_sd_stats,
+                        **_sd_kwargs_s,
                     ))
                     return
             except Exception as e:
                 logger.warning(f"SSE 표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+        # LEAK_CUSUM_ANALYSIS: 청크 직접 쿼리 (rows만 채움 → process_sql_result에서 CUSUM)
+        if intent == "LEAK_CUSUM_ANALYSIS":
+            _lc_sn = params.get("sitename", "전체")
+            _lc_ft = params.get("facilitytype", "소블록")
+            _lc_from = params.get("from_ts", "")
+            _lc_to = params.get("to_ts", "")
+            try:
+                _lc_rows, _lc_cols = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _lc_sn, _lc_ft, _lc_from, _lc_to,
+                )
+                if _lc_rows:
+                    rows = _lc_rows
+                    columns = _lc_cols
+                    logger.info(f"SSE LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
+            except Exception as e:
+                logger.warning(f"SSE LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
         # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
         if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
@@ -7964,9 +8107,9 @@ async def ask_stream(request: AskRequest):
             elif not _plot_type and _chart_data_type:
                 _plot_type = _PLOT_TYPE_DEFAULTS.get(_chart_data_type, "line")
 
-        # STDDEV 분석: stddev_stats 추출
+        # STDDEV 분석: stddev_stats 추출 (개별 조회 시만)
         _stddev_stats = None
-        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS" and response_data:
+        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS" and response_data and len(response_data) == 1:
             _stddev_stats = _extract_stddev_stats(response_data[0])
 
         # CUSUM 누수추정: 응답 데이터를 CUSUM 요약 테이블로 교체
@@ -10617,39 +10760,44 @@ async def get_flow_map_realtime():
             JOIN tb_tag_data_group dg ON dg.group_id = gm.group_id
             WHERE dg.group_code = ANY(%s)
               AND COALESCE(t.datainfo, '') NOT LIKE '%%적산%%'
+              AND t.tagtype = 'Analog Input'
             ORDER BY t.sitename, dg.group_code
         """, (_TARGET_GROUPS,))
         tag_rows = cur.fetchall()
 
-        # 시설별 그룹별 tagsn 매핑 (대표 1개씩)
-        facility_tags: dict[tuple[str, str], dict[str, dict]] = {}
+        # 시설별 그룹별 후보 태그 수집 (여러 개 유지)
+        facility_tag_candidates: dict[tuple[str, str], dict[str, list[dict]]] = {}
         for sitename, ft, gc, tagsn, datainfo in tag_rows:
             key = (sitename, ft)
-            if key not in facility_tags:
-                facility_tags[key] = {}
-            if gc not in facility_tags[key]:
-                facility_tags[key][gc] = {"tagsn": tagsn, "tagname": datainfo or tagsn, "datainfo": datainfo}
+            if key not in facility_tag_candidates:
+                facility_tag_candidates[key] = {}
+            if gc not in facility_tag_candidates[key]:
+                facility_tag_candidates[key][gc] = []
+            facility_tag_candidates[key][gc].append(
+                {"tagsn": tagsn, "tagname": datainfo or tagsn, "datainfo": datainfo}
+            )
 
-        # 4) 모든 대표 tagsn의 최신값 일괄 조회
+        # 4) 모든 후보 tagsn의 최신값 일괄 조회
         all_tagsns: list[str] = []
-        tagsn_to_facility: dict[str, tuple[str, str, str]] = {}  # tagsn -> (sn, ft, gc)
-        for (sn, ft), groups in facility_tags.items():
-            for gc, info in groups.items():
-                tsn = info["tagsn"]
-                all_tagsns.append(tsn)
-                tagsn_to_facility[tsn] = (sn, ft, gc)
+        tagsn_to_facility: dict[str, tuple[str, str, str]] = {}
+        for (sn, ft), groups in facility_tag_candidates.items():
+            for gc, candidates in groups.items():
+                for cand in candidates:
+                    tsn = cand["tagsn"]
+                    all_tagsns.append(tsn)
+                    tagsn_to_facility[tsn] = (sn, ft, gc)
 
         latest_values: dict[str, float] = {}
         if all_tagsns:
-            # 청크 기반 최신값 — 최근 1시간
             _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             _from = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
             chunks = _get_chunks_for_range(cur, _from, _to)
             if chunks:
                 raw = _query_chunks_raw(cur, chunks, all_tagsns, _from, _to)
-                # tagsn별 마지막 값
                 for tsn, _, val in raw:
-                    latest_values[tsn] = val  # 시간순이므로 마지막이 최신
+                    latest_values[tsn] = val
+
+        # 4-a) 후보 전체 유지 (노드 구성 시 활성 태그 합산)
 
         # 4-b) 배수지 용수공급가능시간 조회
         reservoir_supply: dict[str, dict] = {}  # sitename -> {hours, status, reason}
@@ -10670,24 +10818,47 @@ async def get_flow_map_realtime():
             except Exception:
                 conn.rollback()  # 컬럼 미존재 시 롤백 후 계속
 
-        # 5) 노드 데이터 구성
+        # 5) 노드 데이터 구성 — 같은 그룹의 활성 태그 합산
         node_data: dict[str, dict] = {}
         for sn, ft in node_set:
             nid = f"{sn}__{ft}"
-            groups = facility_tags.get((sn, ft), {})
+            cand_groups = facility_tag_candidates.get((sn, ft), {})
             metrics: dict[str, dict] = {}
-            for gc, info in groups.items():
-                val = latest_values.get(info["tagsn"])
-                if val is not None:
-                    # 그룹 코드를 카테고리로 축약
-                    category = "flow" if "FLOW" in gc else ("level" if "LEVEL" in gc else "pressure")
-                    if category not in metrics or _group_priority(gc) > _group_priority(metrics[category].get("group_code", "")):
-                        metrics[category] = {
-                            "value": round(val, 2),
-                            "group_code": gc,
-                            "tagname": info["tagname"],
-                            "tagsn": info["tagsn"],
-                        }
+            for gc, candidates in cand_groups.items():
+                category = "flow" if "FLOW" in gc else ("level" if "LEVEL" in gc else "pressure")
+                is_summable = category == "flow"  # 유량만 합산, 수위/압력은 대표값
+
+                active_vals = []
+                active_names = []
+                for cand in candidates:
+                    v = latest_values.get(cand["tagsn"])
+                    if v is not None and v > 0:
+                        active_vals.append(v)
+                        active_names.append(cand["tagname"])
+                if not active_vals:
+                    first = candidates[0]
+                    v0 = latest_values.get(first["tagsn"])
+                    if v0 is not None:
+                        active_vals = [v0]
+                        active_names = [first["tagname"]]
+                if not active_vals:
+                    continue
+
+                if is_summable:
+                    total_val = sum(active_vals)
+                    tag_label = active_names[0] if len(active_names) == 1 else f"{active_names[0]} 외 {len(active_names)-1}개 합산"
+                else:
+                    # 수위/압력: 첫 번째 활성 태그 대표값
+                    total_val = active_vals[0]
+                    tag_label = active_names[0]
+                if category not in metrics or _group_priority(gc) > _group_priority(metrics[category].get("group_code", "")):
+                    metrics[category] = {
+                        "value": round(total_val, 2),
+                        "group_code": gc,
+                        "tagname": tag_label,
+                        "tagsn": candidates[0]["tagsn"],
+                        "tag_count": len(active_vals) if is_summable else 1,
+                    }
             node_entry: dict = {
                 "sitename": sn,
                 "facilitytype": ft,
@@ -10697,6 +10868,57 @@ async def get_flow_map_realtime():
             if ft == "배수지" and sn in reservoir_supply:
                 node_entry["supply_time"] = reservoir_supply[sn]
             node_data[nid] = node_entry
+
+        # 5-b) 진행 중인 알람 조회 — 시설별 가장 심각한 알람 등급 판정
+        alarm_severity_map: dict[str, str] = {}  # nid -> "경고"|"주의"
+        try:
+            cur_alarm = conn.cursor()
+            cur_alarm.execute("""
+                SELECT t.sitename, t.facilitytype, a.alarm_severity
+                FROM tb_equipment_alarm_report a
+                JOIN tb_tag_info t ON t.tagsn = a.tagsn
+                WHERE a.alarm_status = '진행중'
+                  AND a.alarm_severity IN ('경고', '주의')
+                ORDER BY t.sitename
+            """)
+            for r_sn, r_ft, r_sev in cur_alarm.fetchall():
+                nid = f"{r_sn}__{r_ft}"
+                existing = alarm_severity_map.get(nid)
+                if existing != "경고":  # 경고가 최우선
+                    alarm_severity_map[nid] = r_sev
+            cur_alarm.close()
+        except Exception as e:
+            logger.debug("알람 조회 실패: %s", e)
+
+        for nid, sev in alarm_severity_map.items():
+            if nid in node_data:
+                node_data[nid]["alarm_severity"] = sev
+
+        # 5-c) 통신이상 태그 조회 — Digital Input, datainfo LIKE '%통신이상%', val=1이면 알람
+        comm_error_nodes: set[str] = set()
+        try:
+            cur2 = conn.cursor()
+            cur2.execute("""
+                SELECT DISTINCT t.sitename, t.facilitytype
+                FROM tb_tag_info t
+                WHERE t.tagtype = 'Digital Input'
+                  AND t.datainfo LIKE '%%통신이상%%'
+                  AND EXISTS (
+                      SELECT 1 FROM tb_tag_raw_data r
+                      WHERE r.tagsn = t.tagsn
+                        AND r.logtime >= NOW() - INTERVAL '30 minutes'
+                        AND r.val = 1
+                  )
+            """)
+            for row in cur2.fetchall():
+                comm_error_nodes.add(f"{row[0]}__{row[1]}")
+            cur2.close()
+        except Exception as e:
+            logger.debug("통신이상 태그 조회 실패: %s", e)
+
+        for nid in comm_error_nodes:
+            if nid in node_data:
+                node_data[nid]["comm_error"] = True
 
         # 6) 교차검증 불일치 (캐시 참조)
         cross_mismatches_map: dict[str, list[str]] = {}  # node_id -> [check_type, ...]

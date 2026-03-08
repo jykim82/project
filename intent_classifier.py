@@ -298,9 +298,12 @@ class IntentClassifier:
         "야간최소유량", "알람" 등 공통 INTENT 키워드가 시설명보다 우선한다.
         """
         # "트렌드"/"트랜드"/"그래프"/"추이"/"같이 보"는 다른 공통 키워드보다 우선
-        if ("트렌드" in question or "트랜드" in question or "그래프" in question
+        # 단, 야간최소유량은 자체 인텐트가 있으므로 제외
+        _is_trend_kw = ("트렌드" in question or "트랜드" in question or "그래프" in question
                 or "추이" in question
-                or "같이 보" in question or "함께 보" in question):
+                or "같이 보" in question or "함께 보" in question)
+        _is_night_min = ("야간최소유량" in question or "야간 최소유량" in question or "최소유량" in question)
+        if _is_trend_kw and not _is_night_min:
             logger.info("Stage1 키워드 매칭: '트렌드/그래프/추이/같이' → 트렌드")
             return "트렌드", "keyword"
 
@@ -513,9 +516,11 @@ class IntentClassifier:
         if "야간최소유량" in question or "야간 최소유량" in question or "최소유량" in question:
             if "표준편차" in question or "분석" in question:
                 return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
+            if "트렌드" in question or "트랜드" in question or "추이" in question or "그래프" in question:
+                return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
             if "표" in question or "표로" in question:
                 return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
-            return "FACILITY_TREND", "keyword"
+            return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
 
         # 키워드 단축: "공통" 카테고리
         if "결측" in question:

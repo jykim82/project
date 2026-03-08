@@ -866,6 +866,22 @@ def compute_cusum_for_tags(
         stddev = variance ** 0.5
 
         if stddev < 0.001:
+            # 전부 0 또는 변동 없음 → "비활성" 상태로 등록
+            results[tagsn] = {
+                **tag_meta.get(tagsn, {}),
+                "baseline_mean": round(mean_val, 2),
+                "baseline_stddev": 0.0,
+                "baseline_wd_mean": round(mean_val, 2),
+                "baseline_we_mean": round(mean_val, 2),
+                "recent_mean": round(mean_val, 2),
+                "cusum_series": [],
+                "cusum_max": 0.0,
+                "cusum_current": 0.0,
+                "threshold_h": 0.0,
+                "leak_status": "비활성",
+                "trend_slope": 0.0,
+                "day_count": n,
+            }
             continue
 
         # 평일/주말 분리 기준선 (최소 7건 미달 시 전체 폴백)
@@ -939,8 +955,14 @@ def build_cusum_summary_table(cusum_results: dict) -> tuple:
     ]
     table_rows = []
     for tagsn, r in cusum_results.items():
-        direction = "↑" if r["trend_slope"] > 0 else "↓" if r["trend_slope"] < 0 else "→"
         unit = r.get("unit") or ""
+        if r["leak_status"] == "비활성":
+            table_rows.append([
+                r["sitename"], r["label"],
+                "-", "비활성", "-", "-", "-", "비활성", "-",
+            ])
+            continue
+        direction = "↑" if r["trend_slope"] > 0 else "↓" if r["trend_slope"] < 0 else "→"
         current_trend = f"{r['recent_mean']}{unit} ({direction})"
         table_rows.append([
             r["sitename"],
@@ -953,8 +975,8 @@ def build_cusum_summary_table(cusum_results: dict) -> tuple:
             r["leak_status"],
             f"{r['trend_slope']:+.4f}",
         ])
-    # 누수의심 → 주의 → 정상 순서 정렬
-    _status_order = {"누수의심": 0, "주의": 1, "정상": 2}
+    # 누수의심 → 주의 → 정상 → 비활성 순서 정렬
+    _status_order = {"누수의심": 0, "주의": 1, "정상": 2, "비활성": 3}
     table_rows.sort(key=lambda r: _status_order.get(r[7], 3))
     return table_rows, columns
 
@@ -962,8 +984,8 @@ def build_cusum_summary_table(cusum_results: dict) -> tuple:
 def build_leak_cusum_detail_block(cusum_results: dict) -> list:
     """LEAK_CUSUM_ANALYSIS: CUSUM + MNF 결과를 시맨틱 마커로 포맷한다."""
     items = []
-    _status_marker = {"누수의심": "error", "주의": "warn", "정상": "ok"}
-    _status_order = {"누수의심": 0, "주의": 1, "정상": 2}
+    _status_marker = {"누수의심": "error", "주의": "warn", "정상": "ok", "비활성": "warn"}
+    _status_order = {"누수의심": 0, "주의": 1, "정상": 2, "비활성": 3}
 
     sorted_tags = sorted(
         cusum_results.values(),
@@ -975,6 +997,15 @@ def build_leak_cusum_detail_block(cusum_results: dict) -> list:
         marker = _status_marker.get(status, "ok")
         label = r.get("label", "")
         unit = r.get("unit", "")
+
+        if status == "비활성":
+            text = (
+                f"{label}: <<warn:비활성>> "
+                f"(야간유량 전부 0 — 유량계 미작동 또는 무급수 구간, "
+                f"분석기간 {r['day_count']}일)"
+            )
+            items.append({"prefix": "-", "text": text})
+            continue
 
         direction = "↑상승" if r["trend_slope"] > 0 else "↓하강" if r["trend_slope"] < 0 else "→안정"
         deviation_pct = 0
@@ -1000,7 +1031,7 @@ def build_leak_cusum_detail_block(cusum_results: dict) -> list:
 
 def count_cusum_status(cusum_results: dict) -> dict:
     """CUSUM 판정 결과별 건수를 집계한다."""
-    counts = {"누수의심": 0, "주의": 0, "정상": 0}
+    counts = {"누수의심": 0, "주의": 0, "정상": 0, "비활성": 0}
     for r in cusum_results.values():
         status = r.get("leak_status", "정상")
         counts[status] = counts.get(status, 0) + 1
