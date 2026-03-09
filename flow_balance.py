@@ -35,11 +35,12 @@ _OUTPUT_GROUPS: dict[str, list[str]] = {
     "소소블록": ["FLOW_OUTLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
 }
 _INPUT_GROUPS: dict[str, list[str]] = {
-    "배수지": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
-    "가압장": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
-    "감압시설": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
-    "소블록": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
-    "소소블록": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_CUMULATIVE"],
+    # 유입 태그 없으면 유출/순시로 폴백 (통과 유량 ≈ 유입)
+    "배수지": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_OUTLET", "FLOW_CUMULATIVE"],
+    "가압장": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_OUTLET", "FLOW_CUMULATIVE"],
+    "감압시설": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_OUTLET", "FLOW_CUMULATIVE"],
+    "소블록": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_OUTLET", "FLOW_CUMULATIVE"],
+    "소소블록": ["FLOW_INLET", "FLOW_INSTANT", "FLOW_OUTLET", "FLOW_CUMULATIVE"],
 }
 
 # ── 유량 관련 group_code (압력 제외) ──
@@ -303,6 +304,12 @@ def compute_flow_balance_all(
 
         # 불균형 계산
         us_vol = us_result["volume_m3"]
+        # 하류 전체가 데이터 없음/부족 → 불균형 산출 불가
+        # (태그 없음 OR 태그 있지만 유효 데이터 없음)
+        ds_all_no_data = all(
+            d["method"] == "none" or (d["volume_m3"] < 0.01 and d["coverage_pct"] < 50)
+            for d in ds_results
+        )
         if us_vol < 0.01:
             status = "upstream_zero"
             imbalance_m3 = 0.0
@@ -310,6 +317,11 @@ def compute_flow_balance_all(
             grade = "정상"
         elif us_result["status"] == "no_data" or us_result["status"] == "no_tags":
             status = "insufficient_data"
+            imbalance_m3 = 0.0
+            imbalance_pct = 0.0
+            grade = "정상"
+        elif ds_all_no_data:
+            status = "downstream_no_data"
             imbalance_m3 = 0.0
             imbalance_pct = 0.0
             grade = "정상"

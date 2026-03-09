@@ -10920,6 +10920,68 @@ async def get_flow_map_realtime():
             if nid in node_data:
                 node_data[nid]["comm_error"] = True
 
+        # 5-d) 설비 장애 감지 — 네트워크 장애 + DI 장애(COMM_ERROR/EQUIP_FAULT/POWER_FAULT)
+        equip_failures_map: dict[str, list[dict]] = {}  # nid -> [{type, label, count}, ...]
+        try:
+            # A) 네트워크 장애 설비 → 시설별 집계
+            cur_ef = conn.cursor()
+            cur_ef.execute("""
+                WITH lt AS (SELECT MAX(check_time) AS ct FROM tb_network_status)
+                SELECT e.sitename, e.facilitytype, COUNT(*) AS cnt
+                FROM tb_network_status ns
+                JOIN lt ON ns.check_time = lt.ct
+                JOIN tb_equipment_info e ON ns.equipment_id = e.equipment_id
+                WHERE ns.is_alive = false
+                GROUP BY e.sitename, e.facilitytype
+            """)
+            for sn, ft, cnt in cur_ef.fetchall():
+                nid = f"{sn}__{ft}"
+                equip_failures_map.setdefault(nid, []).append({
+                    "type": "network_down",
+                    "label": "네트워크 단절",
+                    "count": cnt,
+                })
+
+            # B) DI 장애 태그 (COMM_ERROR/EQUIP_FAULT/POWER_FAULT) val=1 최근 10분
+            cur_ef.execute("""
+                SELECT ti.sitename, ti.facilitytype, dg.group_code, COUNT(DISTINCT gm.tagsn) AS cnt
+                FROM tb_tag_group_map gm
+                JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
+                JOIN tb_tag_info ti ON gm.tagsn = ti.tagsn
+                WHERE dg.group_code IN ('COMM_ERROR', 'EQUIP_FAULT', 'POWER_FAULT')
+                  AND EXISTS (
+                      SELECT 1 FROM tb_tag_raw_data r
+                      WHERE r.tagsn = gm.tagsn
+                        AND r.logtime >= now() - interval '10 minutes'
+                        AND r.val = 1
+                  )
+                GROUP BY ti.sitename, ti.facilitytype, dg.group_code
+            """)
+            _DI_LABEL = {
+                "COMM_ERROR": "통신이상",
+                "EQUIP_FAULT": "설비고장",
+                "POWER_FAULT": "전원이상",
+            }
+            _DI_TYPE = {
+                "COMM_ERROR": "comm_error",
+                "EQUIP_FAULT": "equip_fault",
+                "POWER_FAULT": "power_fault",
+            }
+            for sn, ft, gc, cnt in cur_ef.fetchall():
+                nid = f"{sn}__{ft}"
+                equip_failures_map.setdefault(nid, []).append({
+                    "type": _DI_TYPE.get(gc, "comm_error"),
+                    "label": _DI_LABEL.get(gc, gc),
+                    "count": cnt,
+                })
+            cur_ef.close()
+        except Exception as e:
+            logger.debug("설비 장애 조회 실패(무시): %s", e)
+
+        for nid, failures in equip_failures_map.items():
+            if nid in node_data:
+                node_data[nid]["equip_failures"] = failures
+
         # 6) 교차검증 불일치 (캐시 참조)
         cross_mismatches_map: dict[str, list[str]] = {}  # node_id -> [check_type, ...]
         if _ANOMALY_SCAN_CACHE:
@@ -10933,6 +10995,123 @@ async def get_flow_map_realtime():
                 if error_checks:
                     nid = f"{ds_sn}__{ds_ft}"
                     cross_mismatches_map[nid] = error_checks
+
+        # 6-b) 상류-하류 유량 불일치 인라인 감지
+        #   (1) zero_flow: 상류 유량 > 1 m³/h + 하류 유량 ≈ 0
+        #   (2) flow_disparity: 상류 대비 하류 총합 비율 < 20% (대량 유실 의심)
+        _UPSTREAM_FLOW_THRESHOLD = 1.0  # m³/h
+        # 상류별 하류 유량 합산용
+        _us_ds_map: dict[str, list[tuple[str, float]]] = {}  # us_nid -> [(ds_nid, ds_flow), ...]
+        _us_flow_map: dict[str, float] = {}  # us_nid -> us_flow
+        for e in edges:
+            us_nid = f"{e['upstream_sitename']}__{e['upstream_facilitytype']}"
+            ds_nid = f"{e['downstream_sitename']}__{e['downstream_facilitytype']}"
+            us_node = node_data.get(us_nid)
+            ds_node = node_data.get(ds_nid)
+            if not us_node or not ds_node:
+                continue
+            us_flow_val = (us_node.get("metrics", {}).get("flow") or {}).get("value")
+            ds_flow_val = (ds_node.get("metrics", {}).get("flow") or {}).get("value")
+            # (1) zero_flow: 하류 유량 ≈ 0
+            if us_flow_val is not None and us_flow_val > _UPSTREAM_FLOW_THRESHOLD:
+                if ds_flow_val is not None and ds_flow_val <= 0.01:
+                    cross_mismatches_map.setdefault(ds_nid, [])
+                    if "zero_flow" not in cross_mismatches_map[ds_nid]:
+                        cross_mismatches_map[ds_nid].append("zero_flow")
+            # 상류별 하류 합산 기록
+            if us_flow_val is not None and us_flow_val > _UPSTREAM_FLOW_THRESHOLD:
+                _us_flow_map[us_nid] = us_flow_val
+                _us_ds_map.setdefault(us_nid, [])
+                if ds_flow_val is not None:
+                    _us_ds_map[us_nid].append((ds_nid, ds_flow_val))
+        # (2) flow_disparity: 상류 대비 하류 총합 비율 체크
+        _DISPARITY_RATIO = 0.20  # 하류 총합 < 상류 20% → 유실 의심
+        for us_nid, ds_list in _us_ds_map.items():
+            us_flow = _us_flow_map.get(us_nid, 0)
+            if us_flow < 10:  # 상류 유량 10 미만이면 소규모 시설로 스킵
+                continue
+            ds_total = sum(v for _, v in ds_list)
+            if ds_total < us_flow * _DISPARITY_RATIO:
+                # 전체 하류 유량 합이 상류의 20% 미만 → 모든 하류에 flow_disparity 마킹
+                for ds_nid, _ in ds_list:
+                    cross_mismatches_map.setdefault(ds_nid, [])
+                    if "flow_disparity" not in cross_mismatches_map[ds_nid]:
+                        cross_mismatches_map[ds_nid].append("flow_disparity")
+
+        # (3) 상류 활성인데 하류 유량의 최근 1시간 가동률 < 30% (순간 스파이크 감지)
+        #   상류 시설유형에 따라 판정 분리:
+        #   - 배수지→하류: 중력식이므로 배수지 유량>0이면 하류 반드시 유량>0 → gravity_no_flow (확정 이상)
+        #   - 가압장→하류: 펌프 가동(압력>0) 확인 후 판단 → pump_no_flow (펌프 가동 중 하류 유량 이상)
+        _LOW_ACTIVE_RATIO = 0.30  # 가압장/기타 하류 기준
+        _GRAVITY_ACTIVE_RATIO = 0.80  # 배수지→하류: 중력식은 거의 100% 활성이어야 정상
+        # 상류 시설유형 추적: ds_nid → upstream facilitytype
+        _ds_us_ft: dict[str, str] = {}  # ds_nid -> upstream facilitytype
+        _ds_us_pressure: dict[str, float] = {}  # ds_nid -> upstream pressure value
+        for e in edges:
+            us_nid = f"{e['upstream_sitename']}__{e['upstream_facilitytype']}"
+            ds_nid = f"{e['downstream_sitename']}__{e['downstream_facilitytype']}"
+            us_node = node_data.get(us_nid)
+            if us_nid in _us_flow_map and us_node:  # 상류 유량 활성인 경우만
+                _ds_us_ft[ds_nid] = e["upstream_facilitytype"]
+                us_pressure = (us_node.get("metrics", {}).get("pressure") or {}).get("value")
+                if us_pressure is not None:
+                    _ds_us_pressure[ds_nid] = us_pressure
+        # 하류 노드의 flow tagsn 수집
+        _ds_flow_tags: dict[str, str] = {}  # tagsn -> ds_nid
+        for us_nid, ds_list in _us_ds_map.items():
+            for ds_nid, ds_flow_val in ds_list:
+                ds_node = node_data.get(ds_nid)
+                if not ds_node:
+                    continue
+                ds_flow_tag = (ds_node.get("metrics", {}).get("flow") or {}).get("tagsn")
+                if ds_flow_tag:
+                    _ds_flow_tags[ds_flow_tag] = ds_nid
+        if _ds_flow_tags:
+            try:
+                cur_active = conn.cursor()
+                tag_list = list(_ds_flow_tags.keys())
+                cur_active.execute("""
+                    SELECT tagsn,
+                           COUNT(*) FILTER (WHERE val > 0.5) AS active_cnt,
+                           COUNT(*) AS total_cnt
+                    FROM tb_tag_raw_data
+                    WHERE tagsn = ANY(%s)
+                      AND logtime >= now() - interval '1 hour'
+                    GROUP BY tagsn
+                """, (tag_list,))
+                for tsn, active_cnt, total_cnt in cur_active.fetchall():
+                    if total_cnt < 3:  # 데이터 부족 스킵
+                        continue
+                    active_ratio = active_cnt / total_cnt
+                    ds_nid = _ds_flow_tags[tsn]
+                    us_ft = _ds_us_ft.get(ds_nid, "")
+                    cross_mismatches_map.setdefault(ds_nid, [])
+                    if us_ft == "배수지":
+                        # 중력식: 배수지→하류는 거의 100% 활성이어야 정상
+                        if active_ratio < _GRAVITY_ACTIVE_RATIO:
+                            check_type = "gravity_no_flow"
+                        else:
+                            continue
+                    elif us_ft == "가압장":
+                        # 펌프식: 가압장 압력>0 (펌프 가동) 확인
+                        if active_ratio >= _LOW_ACTIVE_RATIO:
+                            continue  # 30% 이상이면 펌프 가동 패턴으로 정상
+                        us_prs = _ds_us_pressure.get(ds_nid, 0)
+                        if us_prs > 0.5:
+                            # 펌프 가동 중(토출압력 활성)인데 하류 유량 불안정 → 이상
+                            check_type = "pump_no_flow"
+                        else:
+                            # 펌프 미가동(압력 0) → 간헐적 동작 가능, 스킵
+                            continue
+                    else:
+                        if active_ratio >= _LOW_ACTIVE_RATIO:
+                            continue
+                        check_type = "low_active"
+                    if check_type not in cross_mismatches_map[ds_nid]:
+                        cross_mismatches_map[ds_nid].append(check_type)
+                cur_active.close()
+            except Exception as e:
+                logger.debug("가동률 조회 실패(무시): %s", e)
 
         # 7) 물 수지 불균형 (엣지별)
         edge_imbalance: dict[str, dict] = {}  # "us_nid|ds_nid" -> {pct, grade}
@@ -10956,7 +11135,7 @@ async def get_flow_map_realtime():
             "status": "OK",
             "edges": edges,
             "nodes": node_data,
-            "cross_mismatches": cross_mismatches_map,
+            "cross_mismatches": {k: v for k, v in cross_mismatches_map.items() if v},
             "edge_imbalance": edge_imbalance,
             "timestamp": datetime.now().isoformat(),
         }
@@ -10974,6 +11153,50 @@ def _group_priority(gc: str) -> int:
            "PRESSURE_OUTLET": 3, "FLOW_INLET": 2, "PRESSURE_INLET": 2,
            "WATER_LEVEL": 3}
     return _P.get(gc, 1)
+
+
+@app.get("/flow-map/node-alarms")
+async def get_flow_map_node_alarms(sitename: str, facilitytype: str):
+    """시설별 최근 알람 목록 (진행중 + 최근 24시간 해제)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT a.alarm_start_time, a.alarm_end_time,
+                   a.alarm_severity, a.alarm_status, a.alarm_category,
+                   a.alarm_msg, a.tagsn, t.datainfo
+            FROM tb_equipment_alarm_report a
+            JOIN tb_tag_info t ON t.tagsn = a.tagsn
+            WHERE t.sitename = %s AND t.facilitytype = %s
+              AND (a.alarm_status = '진행중'
+                   OR a.alarm_start_time >= now() - interval '24 hours')
+            ORDER BY
+              CASE WHEN a.alarm_status = '진행중' THEN 0 ELSE 1 END,
+              a.alarm_start_time DESC
+            LIMIT 20
+        """, (sitename, facilitytype))
+        rows = cur.fetchall()
+        cur.close()
+        alarms = []
+        for r in rows:
+            alarms.append({
+                "start_time": r[0].isoformat() if r[0] else None,
+                "end_time": r[1].isoformat() if r[1] else None,
+                "severity": r[2],
+                "status": r[3],
+                "category": r[4],
+                "message": r[5],
+                "tagsn": r[6],
+                "datainfo": r[7],
+            })
+        return {"status": "OK", "alarms": alarms}
+    except Exception as e:
+        logger.error(f"시설 알람 조회 실패: {e}")
+        return {"status": "ERROR", "alarms": []}
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.get("/flow-map/roots")
