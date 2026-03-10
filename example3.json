@@ -1929,7 +1929,7 @@
           },
           {
             "prefix": "2.",
-            "text": "고대리 가압장의 통신 상태를 알려줘"
+            "text": "{sitename} {facilitytype} 통신 상태를 알려줘"
           },
           {
             "prefix": "3.",
@@ -2194,7 +2194,7 @@
           },
           {
             "prefix": "2.",
-            "text": "행정1-1 소블록 통신 경보 발생원인 진단 순위를 1순위부터 4순위까지 알려줘"
+            "text": "{sitename} {facilitytype} 통신 경보 발생원인 진단 순위를 1순위부터 4순위까지 알려줘"
           },
           {
             "prefix": "3.",
@@ -2249,7 +2249,7 @@
           },
           {
             "prefix": "2.",
-            "text": "죽동 배수지의 최근 알람은 뭐야?"
+            "text": "{sitename} {facilitytype} 최근 알람은 뭐야?"
           },
           {
             "prefix": "3.",
@@ -2299,7 +2299,7 @@
           },
           {
             "prefix": "3.",
-            "text": "삼봉 가압장 압력의 최근 알람을 알려줘"
+            "text": "{sitename} {facilitytype} 압력의 최근 알람을 알려줘"
           }
         ]
       }
@@ -2459,7 +2459,7 @@
         },
         {
           "prefix": "3.",
-          "text": "금일 행정 배수지 수위를 보여줘"
+          "text": "금일 {sitename} {facilitytype} 수위를 보여줘"
         }
       ]
     },
@@ -2498,7 +2498,7 @@
         },
         {
           "prefix": "3.",
-          "text": "금일 행정 배수지 수위를 보여줘"
+          "text": "금일 {sitename} {facilitytype} 수위를 보여줘"
         }
       ]
     },
@@ -2537,7 +2537,7 @@
         },
         {
           "prefix": "3.",
-          "text": "금일 행정 배수지 수위를 보여줘"
+          "text": "금일 {sitename} {facilitytype} 수위를 보여줘"
         }
       ]
     },
@@ -2617,7 +2617,7 @@
         },
         {
           "prefix": "3.",
-          "text": "금일 행정 배수지 수위를 보여줘"
+          "text": "금일 {sitename} {facilitytype} 수위를 보여줘"
         }
       ]
     },
@@ -2648,15 +2648,15 @@
       "items": [
         {
           "prefix": "1.",
-          "text": "금일 남산1 소블록 유량을 보여줘"
+          "text": "금일 {sitename} {facilitytype} 유량을 보여줘"
         },
         {
           "prefix": "2.",
-          "text": "한달간 남산2 소블록 유량 순시를 보여줘"
+          "text": "한달간 {sitename} {facilitytype} 유량 순시를 보여줘"
         },
         {
           "prefix": "3.",
-          "text": "금일 행정 배수지 수위를 보여줘"
+          "text": "금일 {sitename} {facilitytype} 수위를 보여줘"
         }
       ]
     },
@@ -3030,11 +3030,11 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "신평 배수지 수위 트렌드 그래프를 보여줘"
+            "text": "{sitename} {facilitytype} 수위 트렌드 그래프를 보여줘"
           },
           {
             "prefix": "2.",
-            "text": "한달간 기지시 가압장 압력 트렌드를 보여줘"
+            "text": "한달간 {sitename} {facilitytype} 압력 트렌드를 보여줘"
           }
         ]
       }
@@ -3995,7 +3995,7 @@
           },
           {
             "prefix": "3.",
-            "text": "남산 배수지 이상 진단해줘"
+            "text": "{sitename} {facilitytype} 이상 진단해줘"
           }
         ]
       }

@@ -1607,6 +1607,163 @@ app.add_middleware(
 )
 
 # =============================================================================
+# 데모 모드 — sitename 익명화 미들웨어
+# DEMO_MODE=true 환경변수로 활성화, site_mapping.csv 기반 치환
+# =============================================================================
+DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+_DEMO_SITE_MAP: dict[str, str] = {}
+
+def _load_demo_site_map():
+    """site_mapping.csv 로드 → {원본: 코드} 딕셔너리 (긴 이름 우선 정렬)"""
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "files", "site_mapping.csv")
+    csv_path = os.path.normpath(csv_path)
+    if not os.path.exists(csv_path):
+        logger.warning(f"[DEMO] site_mapping.csv 없음: {csv_path}")
+        return
+    import csv as csv_mod
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            orig = row.get("original", "").strip()
+            code = row.get("code", "").strip()
+            if orig and code:
+                _DEMO_SITE_MAP[orig] = code
+    # 긴 이름 우선 (남산11 → 남산1 → 남산 순서로 치환하기 위해)
+    logger.info(f"[DEMO] site_mapping 로드: {len(_DEMO_SITE_MAP)}건")
+
+if DEMO_MODE:
+    _load_demo_site_map()
+    logger.info(f"[DEMO] 데모 모드 활성화 — {len(_DEMO_SITE_MAP)}개 현장명 익명화")
+
+# 역변환 맵: {코드: 원본} — 사용자 입력(코드)을 DB 원본명으로 복원
+_DEMO_REVERSE_MAP: dict[str, str] = {v: k for k, v in _DEMO_SITE_MAP.items()} if _DEMO_SITE_MAP else {}
+
+def _demo_replace_text(text: str) -> str:
+    """문자열 내 모든 현장명을 코드로 치환 (긴 이름 우선)"""
+    if not text or not _DEMO_SITE_MAP:
+        return text
+    for orig in sorted(_DEMO_SITE_MAP.keys(), key=len, reverse=True):
+        if orig in text:
+            text = text.replace(orig, _DEMO_SITE_MAP[orig])
+    return text
+
+def _demo_restore_text(text: str) -> str:
+    """문자열 내 익명 코드를 원본 현장명으로 복원 (단어 경계 기반, 긴 코드 우선)
+
+    단일 문자 코드(A, B, H 등)가 JSON 키/값의 일부와 충돌하지 않도록
+    공백/시작/끝 경계에서만 치환한다.
+    """
+    if not text or not _DEMO_REVERSE_MAP:
+        return text
+    import re
+    for code in sorted(_DEMO_REVERSE_MAP.keys(), key=len, reverse=True):
+        if code in text:
+            # 한글이 포함된 코드는 그대로 치환 (충돌 없음)
+            if re.search(r'[가-힣]', code):
+                text = text.replace(code, _DEMO_REVERSE_MAP[code])
+            else:
+                # 영문 코드: 단어 경계에서만 치환 (A가 "application"의 A를 치환하는 것 방지)
+                pattern = r'(?<![A-Za-z0-9_])' + re.escape(code) + r'(?![A-Za-z0-9_])'
+                text = re.sub(pattern, _DEMO_REVERSE_MAP[code], text)
+    return text
+
+def _demo_restore_json_fields(body: bytes, fields: tuple[str, ...] = ("user_question", "query", "sitename", "keyword")) -> bytes:
+    """JSON body에서 특정 필드만 역변환 (안전한 방식)"""
+    import json as _json
+    try:
+        obj = _json.loads(body.decode("utf-8"))
+    except Exception:
+        return body
+
+    changed = False
+    for field in fields:
+        if field in obj and isinstance(obj[field], str):
+            restored = _demo_restore_text(obj[field])
+            if restored != obj[field]:
+                obj[field] = restored
+                changed = True
+
+    if changed:
+        return _json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    return body
+
+def _demo_anonymize(obj):
+    """재귀적으로 dict/list/str 내 현장명 치환"""
+    if isinstance(obj, str):
+        return _demo_replace_text(obj)
+    if isinstance(obj, dict):
+        return {k: _demo_anonymize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_demo_anonymize(item) for item in obj]
+    return obj
+
+@app.middleware("http")
+async def demo_anonymize_middleware(request: Request, call_next):
+    """DEMO_MODE 시 요청 역변환(코드→원본) + 응답 익명화(원본→코드)"""
+    if not DEMO_MODE:
+        return await call_next(request)
+
+    # ── GET 쿼리 파라미터 역변환 (sitename=BH → sitename=신평 등) ──
+    if request.method == "GET" and _DEMO_REVERSE_MAP:
+        query_string = request.scope.get("query_string", b"").decode("utf-8")
+        if query_string:
+            restored_qs = _demo_restore_text(query_string)
+            if restored_qs != query_string:
+                logger.debug("[DEMO] GET 쿼리 파라미터 역변환 적용")
+                request.scope["query_string"] = restored_qs.encode("utf-8")
+
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+
+    # SSE 스트리밍 응답 처리
+    if "text/event-stream" in content_type:
+        original_body = response.body_iterator
+
+        async def anonymize_stream():
+            async for chunk in original_body:
+                if isinstance(chunk, bytes):
+                    text = chunk.decode("utf-8", errors="replace")
+                else:
+                    text = chunk
+                yield _demo_replace_text(text).encode("utf-8") if isinstance(chunk, bytes) else _demo_replace_text(text)
+
+        return StreamingResponse(
+            anonymize_stream(),
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type="text/event-stream",
+        )
+
+    # JSON 응답 처리
+    if "application/json" in content_type:
+        body_bytes = b""
+        async for chunk in response.body_iterator:
+            if isinstance(chunk, bytes):
+                body_bytes += chunk
+            else:
+                body_bytes += chunk.encode("utf-8")
+
+        try:
+            body_text = body_bytes.decode("utf-8")
+            anonymized = _demo_replace_text(body_text)
+            new_body = anonymized.encode("utf-8")
+        except Exception:
+            new_body = body_bytes
+
+        from starlette.responses import Response as StarletteResponse
+        headers = dict(response.headers)
+        headers["content-length"] = str(len(new_body))
+        return StarletteResponse(
+            content=new_body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type="application/json",
+        )
+
+    return response
+
+
+# =============================================================================
 # 환경변수 기반 DB 접속 정보
 # docs/ai_server_task.md 참조: 접속 정보는 환경변수 기반으로 처리
 # =============================================================================
@@ -5687,7 +5844,11 @@ async def ask(request: AskRequest):
     6. 질의 검증 → NEED_CORRECTION이면 정정 응답
     7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
     """
-    user_question = normalize_question(request.user_question)
+    raw_question = request.user_question
+    # DEMO_MODE: 사용자 입력의 익명 코드를 원본 현장명으로 복원
+    if DEMO_MODE and _DEMO_REVERSE_MAP:
+        raw_question = _demo_restore_text(raw_question)
+    user_question = normalize_question(raw_question)
     logger.info(f"질의 수신: {user_question}")
 
     # 1. 세션 로드/생성
@@ -6941,7 +7102,11 @@ async def ask_stream(request: AskRequest):
     요청: { "user_question": "...", "session_id": "..." (선택) }
     """
     async def event_generator():
-        user_question = normalize_question(request.user_question)
+        raw_question = request.user_question
+        # DEMO_MODE: 사용자 입력의 익명 코드를 원본 현장명으로 복원
+        if DEMO_MODE and _DEMO_REVERSE_MAP:
+            raw_question = _demo_restore_text(raw_question)
+        user_question = normalize_question(raw_question)
         logger.info(f"[SSE] 질의 수신: {user_question}")
 
         # --- 진행 1: 질의 분석 ---
