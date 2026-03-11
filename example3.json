@@ -148,15 +148,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename} 배수지 운영현황은?"
+            "text": "배수지 운영현황은?"
           },
           {
             "prefix": "2.",
-            "text": "{sitename} 배수지 설비현황은?"
+            "text": "배수지 설비현황은?"
           },
           {
             "prefix": "3.",
-            "text": "{sitename} 배수지 계통도는?"
+            "text": "배수지 계통도는?"
           }
         ]
       }
@@ -1258,15 +1258,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename} 배수지 일반현황은?"
+            "text": "배수지 일반현황은?"
           },
           {
             "prefix": "2.",
-            "text": "{sitename} 배수지 운영현황은?"
+            "text": "배수지 운영현황은?"
           },
           {
             "prefix": "3.",
-            "text": "{sitename} 배수지 계통도는?"
+            "text": "배수지 계통도는?"
           }
         ]
       }
@@ -1461,15 +1461,15 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename} 배수지 일반현황은?"
+            "text": "배수지 일반현황은?"
           },
           {
             "prefix": "2.",
-            "text": "{sitename} 배수지 운영현황은?"
+            "text": "배수지 운영현황은?"
           },
           {
             "prefix": "3.",
-            "text": "{sitename} 배수지 위치도는?"
+            "text": "배수지 위치도는?"
           }
         ]
       }

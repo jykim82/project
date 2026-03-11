@@ -6139,7 +6139,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -6660,6 +6660,78 @@ async def ask(request: AskRequest):
                 logger.info(f"LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
         except Exception as e:
             logger.warning(f"LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+    # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (tb_tag_group_map 폴백 포함)
+    if intent == "NIGHT_MIN_FLOW_STATUS":
+        _nfs_sn = params.get("sitename", "")
+        _nfs_ft = params.get("facilitytype", "소블록")
+        try:
+            _now = datetime.now()
+            # current: 최근 1일
+            _cur_rows, _cur_cols = await asyncio.to_thread(
+                _execute_night_min_flow_query,
+                _nfs_sn, _nfs_ft,
+                (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                _now.strftime("%Y-%m-%d"),
+            )
+            if not _cur_rows:
+                logger.info(f"NIGHT_MIN_FLOW_STATUS 데이터 없음: {_nfs_sn} {_nfs_ft}")
+            else:
+                # avg month: 최근 1달
+                _mon_rows, _ = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _nfs_sn, _nfs_ft,
+                    (_now - timedelta(days=30)).strftime("%Y-%m-%d"),
+                    _now.strftime("%Y-%m-%d"),
+                )
+                # avg year: 최근 1년
+                _yr_rows, _ = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _nfs_sn, _nfs_ft,
+                    (_now - timedelta(days=365)).strftime("%Y-%m-%d"),
+                    _now.strftime("%Y-%m-%d"),
+                )
+                # 결과 집계: current_val = 최신 row, avg_month/avg_year = 평균
+                _last = dict(zip(_cur_cols, _cur_rows[-1]))
+                _result_cols = ["sitename", "facilitytype", "label", "datadesc",
+                                "current_val", "unit", "log_time", "avg_month", "avg_year"]
+                # 태그별 그룹핑
+                from collections import defaultdict
+                _tag_vals_m: dict[str, list] = defaultdict(list)
+                _tag_vals_y: dict[str, list] = defaultdict(list)
+                for r in _mon_rows:
+                    rd = dict(zip(_cur_cols, r))
+                    _tag_vals_m[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
+                for r in _yr_rows:
+                    rd = dict(zip(_cur_cols, r))
+                    _tag_vals_y[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
+                # 태그별 최신 row → 결과 행 생성
+                _seen: set = set()
+                _result_rows = []
+                for r in reversed(_cur_rows):
+                    rd = dict(zip(_cur_cols, r))
+                    _tsn = rd.get("tagsn", "")
+                    if _tsn in _seen:
+                        continue
+                    _seen.add(_tsn)
+                    _cv = float(rd.get("val") or 0)
+                    _mv = _tag_vals_m.get(_tsn, [])
+                    _yv = _tag_vals_y.get(_tsn, [])
+                    _am = round(sum(_mv) / len(_mv), 2) if _mv else None
+                    _ay = round(sum(_yv) / len(_yv), 2) if _yv else None
+                    _result_rows.append((
+                        rd.get("sitename", ""), rd.get("facilitytype", ""),
+                        rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
+                        round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
+                        _am, _ay,
+                    ))
+                if _result_rows:
+                    sql_combined = "-- custom handler"
+                    rows = _result_rows
+                    columns = _result_cols
+                    logger.info(f"NIGHT_MIN_FLOW_STATUS 커스텀: {len(_result_rows)}행")
+        except Exception as e:
+            logger.warning(f"NIGHT_MIN_FLOW_STATUS 커스텀 실패, 원본 SQL 폴백: {e}")
 
     # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
     if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
@@ -7410,7 +7482,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -7923,6 +7995,69 @@ async def ask_stream(request: AskRequest):
                     logger.info(f"SSE LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
             except Exception as e:
                 logger.warning(f"SSE LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+        # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (tb_tag_group_map 폴백 포함)
+        if intent == "NIGHT_MIN_FLOW_STATUS":
+            _nfs_sn = params.get("sitename", "")
+            _nfs_ft = params.get("facilitytype", "소블록")
+            try:
+                _now = datetime.now()
+                _cur_rows, _cur_cols = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _nfs_sn, _nfs_ft,
+                    (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                    _now.strftime("%Y-%m-%d"),
+                )
+                if _cur_rows:
+                    _mon_rows, _ = await asyncio.to_thread(
+                        _execute_night_min_flow_query,
+                        _nfs_sn, _nfs_ft,
+                        (_now - timedelta(days=30)).strftime("%Y-%m-%d"),
+                        _now.strftime("%Y-%m-%d"),
+                    )
+                    _yr_rows, _ = await asyncio.to_thread(
+                        _execute_night_min_flow_query,
+                        _nfs_sn, _nfs_ft,
+                        (_now - timedelta(days=365)).strftime("%Y-%m-%d"),
+                        _now.strftime("%Y-%m-%d"),
+                    )
+                    from collections import defaultdict
+                    _tag_vals_m: dict[str, list] = defaultdict(list)
+                    _tag_vals_y: dict[str, list] = defaultdict(list)
+                    for r in _mon_rows:
+                        rd = dict(zip(_cur_cols, r))
+                        _tag_vals_m[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
+                    for r in _yr_rows:
+                        rd = dict(zip(_cur_cols, r))
+                        _tag_vals_y[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
+                    _result_cols = ["sitename", "facilitytype", "label", "datadesc",
+                                    "current_val", "unit", "log_time", "avg_month", "avg_year"]
+                    _seen: set = set()
+                    _result_rows = []
+                    for r in reversed(_cur_rows):
+                        rd = dict(zip(_cur_cols, r))
+                        _tsn = rd.get("tagsn", "")
+                        if _tsn in _seen:
+                            continue
+                        _seen.add(_tsn)
+                        _cv = float(rd.get("val") or 0)
+                        _mv = _tag_vals_m.get(_tsn, [])
+                        _yv = _tag_vals_y.get(_tsn, [])
+                        _am = round(sum(_mv) / len(_mv), 2) if _mv else None
+                        _ay = round(sum(_yv) / len(_yv), 2) if _yv else None
+                        _result_rows.append((
+                            rd.get("sitename", ""), rd.get("facilitytype", ""),
+                            rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
+                            round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
+                            _am, _ay,
+                        ))
+                    if _result_rows:
+                        sql_combined = "-- custom handler"
+                        rows = _result_rows
+                        columns = _result_cols
+                        logger.info(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀: {len(_result_rows)}행")
+            except Exception as e:
+                logger.warning(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀 실패, 원본 SQL 폴백: {e}")
 
         # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
         if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":

@@ -346,6 +346,9 @@ class ParamExtractor:
                 start = end_idx
             # 공백 제거 버전에서 추가 검색 (원본에서 못 찾은 경우)
             if not any(site == s for _, s in found):
+                # 이미 찾은 더 긴 이름의 부분문자열이면 건너뜀
+                if any(site in s and site != s for _, s in found):
+                    continue
                 idx = q_nospace.find(site)
                 if idx >= 0:
                     end_idx = idx + len(site)
@@ -353,7 +356,8 @@ class ParamExtractor:
                         next_char = q_nospace[end_idx]
                         if next_char == '-' or next_char.isdigit():
                             continue
-                    overlap = any(site == s for _, s in found)
+                    # 범위 중복 검사 (q_nospace 기준)
+                    overlap = any(idx < ue and end_idx > us for us, ue in used_ranges)
                     if not overlap:
                         found.append((idx, site))
                         used_ranges.append((idx, end_idx))

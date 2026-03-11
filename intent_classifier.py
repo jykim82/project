@@ -462,13 +462,15 @@ class IntentClassifier:
         if "경보 분석 결과" in question or "알람 분석 결과" in question:
             return "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "keyword"
 
-        # 키워드 단축: 통신/네트워크 상태 → 통신 상태 조회
+        # 키워드 단축: 통신/네트워크 — 구성(TOPOLOGY) vs 상태(STATUS) 분기
         # 경보 순위 키워드와 결합 시 제외 (→ FACILITY_ALARM_TOP_COUNT로 분류)
         _alarm_rank_kws = {"누적", "순서", "다발", "빈번"}
         if ("통신" in question or "네트워크" in question) and \
            "발생원인" not in question and "진단" not in question and \
            "TOP" not in question.upper() and \
            not any(kw in question for kw in _alarm_rank_kws):
+            if any(kw in question for kw in ["구성", "토폴로지", "topology", "구조"]):
+                return "FACILITY_COMMUNICATION_TOPOLOGY", "keyword"
             return "FACILITY_COMMUNICATION_STATUS", "keyword"
 
         # 키워드 단축: 수위 현황
@@ -518,12 +520,17 @@ class IntentClassifier:
 
         # 키워드 단축: 야간최소유량 — 세부 인텐트 분기
         if "야간최소유량" in question or "야간 최소유량" in question or "최소유량" in question:
-            if "표준편차" in question or "분석" in question:
+            # "누수" 우선 체크 — "누수추정 분석"이 "분석" 단독보다 먼저
+            if "누수" in question:
+                return "LEAK_CUSUM_ANALYSIS", "keyword"
+            if "표준편차" in question or ("분석" in question and "표준편차" not in question):
                 return "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "keyword"
             if "트렌드" in question or "트랜드" in question or "추이" in question or "그래프" in question:
-                return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
+                return "FACILITY_TREND", "keyword"
             if "표" in question or "표로" in question:
                 return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
+            if "현황" in question or "현항" in question:
+                return "NIGHT_MIN_FLOW_STATUS", "keyword"
             return "NIGHT_MIN_FLOW_SUMMARY_TABLE", "keyword"
 
         # 키워드 단축: "공통" 카테고리
@@ -585,8 +592,15 @@ class IntentClassifier:
         if "순시" in question and "유량" in question:
             return "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "keyword"
 
-        # 카탈로그 트렌드 표 — "표" + 데이터 키워드 (야간/적산/순시/표준편차 제외)
-        if ("표" in question or "표로" in question) and not any(
+        # 디지털 상태 시계열 표 — "상태" + "데이터" + 밸브/펌프 (시계열)
+        # "현재 밸브 상태를 표로" = VALVE_STATUS_CURRENT (스냅샷)와 구분
+        if "상태" in question and "데이터" in question:
+            if any(kw in question for kw in ["밸브", "펌프", "유입밸브", "유출밸브"]):
+                return "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE", "keyword"
+
+        # 카탈로그 트렌드 표 — "전체" + "표" + 데이터 키워드 (야간/적산/순시/표준편차 제외)
+        # 개별 시설 시계열 표(ANALOG_TIMESERIES 등)는 벡터 검색으로 분류
+        if ("표" in question or "표로" in question) and "전체" in question and not any(
             x in question for x in ["야간최소유량", "최소유량", "적산", "순시", "표준편차"]
         ):
             for dkw in ["수위", "압력", "유량", "밸브", "펌프"]:

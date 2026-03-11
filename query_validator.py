@@ -197,13 +197,17 @@ class QueryValidator:
                     s for s, ftypes in self._sitename_facility_map.items()
                     if facilitytype in ftypes
                 ])
-                hints = sites_for_ftype[:5] if sites_for_ftype else []
+                hints = sites_for_ftype[:15] if sites_for_ftype else []
                 msg = (
                     f"'{sitename}'은(는) '{facilitytype}'에 등록되지 않은 현장입니다. "
                     f"'{sitename}'의 등록 시설: {avail_str}."
                 )
                 if hints:
-                    msg += f" '{facilitytype}' 등록 현장: {', '.join(hints)}."
+                    shown = ', '.join(hints)
+                    remaining = len(sites_for_ftype) - len(hints)
+                    if remaining > 0:
+                        shown += f" 외 {remaining}건"
+                    msg += f" '{facilitytype}' 등록 현장: {shown}."
                 return ValidationResult(
                     is_valid=False,
                     error_type="sitename_facility_mismatch",
