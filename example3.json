@@ -1186,23 +1186,10 @@
       "summary": "{sitename} {block_level} 위치도는 다음과 같습니다.",
       "detail": [
         {
-          "prefix": "•",
-          "text": "{sitename} {block_level}의 주소는 {install_location}입니다."
-        },
-        {
           "prefix": "",
           "text": "{location_image_block}"
         }
       ],
-      "reference": {
-        "title": "참고 자료",
-        "items": [
-          {
-            "prefix": "1.",
-            "text": "현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
-          }
-        ]
-      },
       "recommend_questions": {
         "title": "추가로 추천 질의입니다.",
         "items": [
@@ -1236,23 +1223,10 @@
       "summary": "{sitename} 배수지 위치도는 다음과 같습니다.",
       "detail": [
         {
-          "prefix": "•",
-          "text": "{sitename} 배수지의 주소는 {install_location}입니다."
-        },
-        {
           "prefix": "",
           "text": "{location_image_block}"
         }
       ],
-      "reference": {
-        "title": "참고 자료",
-        "items": [
-          {
-            "prefix": "1.",
-            "text": "현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
-          }
-        ]
-      },
       "recommend_questions": {
         "title": "추가로 추천 질의입니다.",
         "items": [
@@ -1287,23 +1261,10 @@
       "summary": "{sitename} 가압장 위치도는 다음과 같습니다.",
       "detail": [
         {
-          "prefix": "•",
-          "text": "{sitename} 가압장의 주소는 {install_location}입니다."
-        },
-        {
           "prefix": "",
           "text": "{location_image_block}"
         }
       ],
-      "reference": {
-        "title": "참고 자료",
-        "items": [
-          {
-            "prefix": "1.",
-            "text": "현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
-          }
-        ]
-      },
       "recommend_questions": {
         "title": "추가로 추천 질의입니다.",
         "items": [
@@ -1338,23 +1299,10 @@
       "summary": "{sitename} 감압시설 위치도는 다음과 같습니다.",
       "detail": [
         {
-          "prefix": "•",
-          "text": "{sitename} 감압시설의 주소는 {install_location}입니다."
-        },
-        {
           "prefix": "",
           "text": "{location_image_block}"
         }
       ],
-      "reference": {
-        "title": "참고 자료",
-        "items": [
-          {
-            "prefix": "1.",
-            "text": "현장 사진은 위치 보기 이미지를 참고하시기 바랍니다."
-          }
-        ]
-      },
       "recommend_questions": {
         "title": "추가로 추천 질의입니다.",
         "items": [

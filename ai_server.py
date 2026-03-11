@@ -8684,6 +8684,11 @@ async def upload_facility_file(
     import shutil
     import uuid
 
+    # DEMO_MODE: form-data의 sitename 역변환 (코드→원본)
+    if DEMO_MODE and _DEMO_REVERSE_MAP:
+        sitename = _demo_restore_text(sitename)
+        region = _demo_restore_text(region)
+
     # 유효성 검증
     if file_type not in FACILITY_FILE_ALLOWED_TYPES:
         return {"status": "ERROR", "message": f"허용되지 않는 파일 유형: {file_type}"}
