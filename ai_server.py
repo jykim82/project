@@ -1612,6 +1612,13 @@ app.add_middleware(
 # =============================================================================
 DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
 _DEMO_SITE_MAP: dict[str, str] = {}
+# 지역명 익명화 매핑 (현장명 이외 응답에 포함되는 행정구역명)
+_DEMO_REGION_MAP: dict[str, str] = {
+    "충청남도": "X도",
+    "충남": "X도",
+    "당진시": "Y시",
+    "당진": "Y시",
+}
 
 def _load_demo_site_map():
     """site_mapping.csv 로드 → {원본: 코드} 딕셔너리 (긴 이름 우선 정렬)"""
@@ -1633,10 +1640,15 @@ def _load_demo_site_map():
 
 if DEMO_MODE:
     _load_demo_site_map()
-    logger.info(f"[DEMO] 데모 모드 활성화 — {len(_DEMO_SITE_MAP)}개 현장명 익명화")
+    _DEMO_SITE_MAP.update(_DEMO_REGION_MAP)
+    logger.info(f"[DEMO] 데모 모드 활성화 — {len(_DEMO_SITE_MAP)}개 현장명+지역명 익명화")
 
 # 역변환 맵: {코드: 원본} — 사용자 입력(코드)을 DB 원본명으로 복원
-_DEMO_REVERSE_MAP: dict[str, str] = {v: k for k, v in _DEMO_SITE_MAP.items()} if _DEMO_SITE_MAP else {}
+# 지역명 역변환 제외 (X도→충청남도/충남 중복, 사용자가 "X도" 입력할 일 없음)
+_DEMO_REGION_CODES = set(_DEMO_REGION_MAP.values())
+_DEMO_REVERSE_MAP: dict[str, str] = {
+    v: k for k, v in _DEMO_SITE_MAP.items() if v not in _DEMO_REGION_CODES
+} if _DEMO_SITE_MAP else {}
 
 def _demo_replace_text(text: str) -> str:
     """문자열 내 모든 현장명을 코드로 치환 (긴 이름 우선)"""
@@ -1705,12 +1717,24 @@ async def demo_anonymize_middleware(request: Request, call_next):
 
     # ── GET 쿼리 파라미터 역변환 (sitename=BH → sitename=신평 등) ──
     if request.method == "GET" and _DEMO_REVERSE_MAP:
+        from urllib.parse import parse_qs, urlencode
         query_string = request.scope.get("query_string", b"").decode("utf-8")
         if query_string:
-            restored_qs = _demo_restore_text(query_string)
-            if restored_qs != query_string:
+            parsed = parse_qs(query_string, keep_blank_values=True)
+            changed = False
+            for key in list(parsed.keys()):
+                new_vals = []
+                for v in parsed[key]:
+                    restored = _demo_restore_text(v)
+                    if restored != v:
+                        changed = True
+                    new_vals.append(restored)
+                parsed[key] = new_vals
+            if changed:
+                # urlencode는 한글을 %XX 형태로 URL-인코딩함
+                restored_qs = urlencode(parsed, doseq=True)
                 logger.debug("[DEMO] GET 쿼리 파라미터 역변환 적용")
-                request.scope["query_string"] = restored_qs.encode("utf-8")
+                request.scope["query_string"] = restored_qs.encode("ascii")
 
     response = await call_next(request)
     content_type = response.headers.get("content-type", "")
@@ -3899,6 +3923,29 @@ def _execute_night_min_flow_query(
         for tsn, lbl in cur.fetchall():
             tag_labels[tsn] = lbl or ""
             tagsn_list.append(tsn)
+
+        if not tagsn_list:
+            # 카탈로그에 없으면 tb_tag_group_map 폴백 (FLOW_OUTLET 순시 태그)
+            _sn_cond2 = "" if sitename in ("전체", "%%", "") else " AND t.sitename = %s"
+            _ft_cond2 = "" if facilitytype in ("전체", "%%", "") else " AND t.facilitytype = %s"
+            _qp2: list = []
+            if _sn_cond2:
+                _qp2.append(sitename)
+            if _ft_cond2:
+                _qp2.append(facilitytype)
+            cur.execute(f"""
+                SELECT t.tagsn, t.datainfo
+                FROM tb_tag_info t
+                JOIN tb_tag_group_map gm ON gm.tagsn = t.tagsn
+                JOIN tb_tag_data_group g ON g.group_id = gm.group_id
+                WHERE g.group_code IN ('FLOW_OUTLET', 'FLOW_INSTANT')
+                  AND t.datainfo LIKE '%%순시%%'
+                  AND t.tagtype = 'Analog Input'
+                  {_sn_cond2} {_ft_cond2}
+            """, _qp2)
+            for tsn, di in cur.fetchall():
+                tag_labels[tsn] = di or ""
+                tagsn_list.append(tsn)
 
         if not tagsn_list:
             cur.close()

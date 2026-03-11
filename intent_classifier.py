@@ -471,6 +471,10 @@ class IntentClassifier:
            not any(kw in question for kw in _alarm_rank_kws):
             return "FACILITY_COMMUNICATION_STATUS", "keyword"
 
+        # 키워드 단축: 수위 현황
+        if "수위" in question and ("현황" in question or "현항" in question):
+            return "RESERVOIR_LEVEL_STATUS", "keyword"
+
         # 키워드 단축: 압력 현황
         if "압력" in question and ("현황" in question or "현항" in question):
             return "FACILITY_PRESSURE_STATUS", "keyword"
