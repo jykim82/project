@@ -119,6 +119,11 @@ _FLOW_BALANCE_CACHE: Optional[list] = None
 _FLOW_BALANCE_CACHE_TIME: Optional[datetime] = None
 _FLOW_BALANCE_CACHE_TTL = 1800  # 30분
 
+# ── 용수 흐름 기준선(7일 평균) 캐시 ─────────────────────────
+_FLOW_BASELINE_CACHE: dict[str, float] = {}   # tagsn → 7d avg
+_FLOW_BASELINE_CACHE_TIME: Optional[datetime] = None
+_FLOW_BASELINE_CACHE_TTL = 600  # 10분
+
 # =============================================================================
 # CSV 내보내기 설정
 # =============================================================================
@@ -945,6 +950,89 @@ async def _flow_balance_cache_loop():
         await asyncio.sleep(_FLOW_BALANCE_CACHE_TTL)
 
 
+async def _flow_baseline_cache_loop():
+    """백그라운드: 서버 시작 120초 후 첫 실행, 이후 10분마다 7일 평균 기준선 갱신."""
+    global _FLOW_BASELINE_CACHE, _FLOW_BASELINE_CACHE_TIME
+    await asyncio.sleep(120)
+    while True:
+        try:
+            t0 = datetime.now()
+            result = await asyncio.to_thread(_compute_flow_baselines)
+            if result:
+                _FLOW_BASELINE_CACHE = result
+                _FLOW_BASELINE_CACHE_TIME = datetime.now()
+                logger.info(f"용수 흐름 기준선 캐시 갱신: {len(result)}태그, "
+                            f"{(datetime.now() - t0).total_seconds():.1f}초")
+        except Exception as e:
+            logger.error(f"용수 흐름 기준선 캐시 갱신 실패: {e}")
+        await asyncio.sleep(_FLOW_BASELINE_CACHE_TTL)
+
+
+def _compute_flow_baselines() -> dict[str, float]:
+    """7일간 동일 요일·시간대(±1h) 평균값을 태그별로 계산."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    try:
+        now = datetime.now()
+        _from = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        _to = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 모니터링 대상 Analog Input 태그 전체
+        cur.execute("""
+            SELECT tagsn FROM tb_tag_group_map
+            WHERE group_code IN (
+                'FLOW_OUTLET','FLOW_INSTANT','FLOW_INLET','FLOW_CUMULATIVE',
+                'WATER_LEVEL','PRESSURE_OUTLET','PRESSURE_INLET',
+                'PRESSURE_DISCHARGE','PRESSURE'
+            )
+        """)
+        tagsns = [r[0] for r in cur.fetchall()]
+        if not tagsns:
+            return {}
+
+        chunks = _get_chunks_for_range(cur, _from, _to)
+        if not chunks:
+            return {}
+
+        # 동일 요일·시간대(±1h) 필터링을 위한 현재 요일/시간
+        cur_dow = now.weekday()   # 0=Mon
+        cur_hour = now.hour
+
+        # 청크별 집계: 동일 요일, 시간대(±1h) 필터
+        baselines: dict[str, list[float]] = {}
+        for chunk in chunks:
+            try:
+                cur.execute(f"""
+                    SELECT tagsn, AVG(val)
+                    FROM {chunk}
+                    WHERE tagsn = ANY(%s)
+                      AND logtime >= %s AND logtime < %s
+                      AND val IS NOT NULL
+                      AND EXTRACT(DOW FROM logtime) = %s
+                      AND EXTRACT(HOUR FROM logtime) BETWEEN %s AND %s
+                    GROUP BY tagsn
+                """, (tagsns, _from, _to,
+                      cur_dow, max(0, cur_hour - 1), min(23, cur_hour + 1)))
+                for tsn, avg_val in cur.fetchall():
+                    if avg_val is not None and avg_val > 0.01:
+                        baselines.setdefault(tsn, []).append(float(avg_val))
+            except Exception:
+                conn.rollback()
+                continue
+
+        # 청크별 평균의 전체 평균
+        result: dict[str, float] = {}
+        for tsn, vals in baselines.items():
+            result[tsn] = round(sum(vals) / len(vals), 2)
+        return result
+    except Exception as e:
+        logger.error(f"기준선 계산 실패: {e}")
+        conn.rollback()
+        return {}
+    finally:
+        cur.close()
+
+
 def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
     """ANOMALY_SCAN_ALL 결과에서 빠진 태그를 감지하여 데이터 품질 이상 목록 반환.
 
@@ -1561,6 +1649,7 @@ async def lifespan(app: FastAPI):
     global _anomaly_scan_task
     _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
+    _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
 
     # [임시] 로컬 DB 사용 시 원격→로컬 실시간 동기화 (개발 완료 후 제거 예정)
     _sync_task = None
@@ -1581,7 +1670,7 @@ async def lifespan(app: FastAPI):
     # shutdown
     if _sync_worker:
         _sync_worker.stop()
-    for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _sync_task):
+    for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _flow_baseline_task, _sync_task):
         if task:
             task.cancel()
             try:
@@ -8556,6 +8645,121 @@ async def download_csv(filename: str):
 
 
 # =============================================================================
+# 종합 현황판 API
+# =============================================================================
+
+@app.get("/dashboard/overview")
+async def dashboard_overview():
+    """종합 현황판 — 캐시 데이터 집계 (이상감지+교차+물수지+설비장애+데이터품질+경보)."""
+    result: dict = {}
+
+    # 1) 이상감지 캐시에서 KPI + TOP 시설 추출
+    if _ANOMALY_SCAN_CACHE:
+        c = _ANOMALY_SCAN_CACHE
+        rows = c.get("rows", [])
+        columns = c.get("columns", [])
+        pd = c.get("processed_data", {})
+
+        col_idx = {col: i for i, col in enumerate(columns)}
+        vd_i = col_idx.get("verdict")
+        sn_i = col_idx.get("sitename")
+        ft_i = col_idx.get("facilitytype")
+        di_i = col_idx.get("datainfo")
+        zs_i = col_idx.get("z_score")
+        sg_i = col_idx.get("site_group")
+        ag_i = col_idx.get("alert_grade")
+        ef_i = col_idx.get("equip_failure")
+        rh_i = col_idx.get("recent_holding")
+
+        # KPI 카운트
+        verdicts = {"복합이상": 0, "이상": 0, "교차이상": 0, "주의": 0, "정상": 0}
+        for r in rows:
+            v = r[vd_i] if vd_i is not None else "정상"
+            if v in verdicts:
+                verdicts[v] += 1
+
+        # 시설유형별 분포
+        ft_dist: dict[str, int] = {}
+        for r in rows:
+            ft = r[ft_i] if ft_i is not None else ""
+            ft_dist[ft] = ft_dist.get(ft, 0) + 1
+
+        # TOP 이상 시설 (verdict 우선순위 정렬)
+        _vd_order = {"복합이상": 0, "이상": 1, "교차이상": 2, "주의": 3, "정상": 4}
+        anomaly_rows = []
+        for r in rows:
+            vd = r[vd_i] if vd_i is not None else "정상"
+            if vd == "정상":
+                continue
+            anomaly_rows.append({
+                "sitename": r[sn_i] if sn_i is not None else "",
+                "facilitytype": r[ft_i] if ft_i is not None else "",
+                "datainfo": r[di_i] if di_i is not None else "",
+                "z_score": round(float(r[zs_i]), 2) if zs_i is not None and r[zs_i] is not None else 0,
+                "verdict": vd,
+                "site_group": r[sg_i] if sg_i is not None else "",
+                "alert_grade": r[ag_i] if ag_i is not None else "",
+                "equip_failure": r[ef_i] if ef_i is not None else "",
+                "recent_holding": r[rh_i] if rh_i is not None else "",
+            })
+        anomaly_rows.sort(key=lambda x: (_vd_order.get(x["verdict"], 9), -abs(x["z_score"])))
+
+        result["anomaly"] = {
+            "total": len(rows),
+            "verdicts": verdicts,
+            "ft_distribution": ft_dist,
+            "top_facilities": anomaly_rows[:15],
+            "cross_anomaly_count": pd.get("cross_anomaly_count", 0),
+        }
+
+        # 데이터 품질
+        result["data_quality"] = pd.get("data_quality_issues", [])
+
+        # 설비 장애
+        result["equipment_failures"] = pd.get("equipment_failure_impacts", [])
+        result["equipment_failure_count"] = pd.get("equipment_failure_count", 0)
+
+        # 물수지 요약
+        result["flow_balance"] = pd.get("flow_balance_summary")
+
+        # 캐시 시간
+        if _ANOMALY_SCAN_CACHE_TIME:
+            result["cache_time"] = _ANOMALY_SCAN_CACHE_TIME.isoformat()
+    else:
+        result["anomaly"] = None
+
+    # 2) 최근 경보 (진행중 + 최근 해제 12건)
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT alarm_start_time, tagsn, alarm_status, alarm_severity,
+                   alarm_category, alarm_msg, sitename, facilitytype
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time > NOW() - INTERVAL '24 hours'
+            ORDER BY alarm_start_time DESC
+            LIMIT 20
+        """)
+        alarm_cols = [d[0] for d in cur.description]
+        alarm_rows = cur.fetchall()
+        result["recent_alarms"] = [dict(zip(alarm_cols, r)) for r in alarm_rows]
+        # 진행중 카운트
+        ongoing = [r for r in result["recent_alarms"] if r.get("alarm_status") == "진행중"]
+        result["ongoing_alarm_count"] = len(ongoing)
+        result["ongoing_alarm_severity"] = {
+            "경고": sum(1 for a in ongoing if a.get("alarm_severity") == "경고"),
+            "주의": sum(1 for a in ongoing if a.get("alarm_severity") == "주의"),
+        }
+        cur.close()
+    except Exception as e:
+        logger.warning(f"dashboard/overview 경보 조회 실패: {e}")
+        result["recent_alarms"] = []
+        result["ongoing_alarm_count"] = 0
+
+    return result
+
+
+# =============================================================================
 # 헬스 체크 엔드포인트
 # =============================================================================
 
@@ -11071,6 +11275,9 @@ async def get_flow_maps():
             conn.close()
 
 
+_LEVEL_ALARM_SETTING_RE = re.compile(r'(HH|LL|H설정|L설정|_H_|_L_|설정값)', re.IGNORECASE)
+
+
 @app.get("/flow-map/realtime")
 async def get_flow_map_realtime():
     """용수 흐름 실시간 모니터링 — 시설별 최신 유량/수위/압력 + 교차검증 상태."""
@@ -11204,18 +11411,55 @@ async def get_flow_map_realtime():
                     total_val = active_vals[0]
                     tag_label = active_names[0]
                 if category not in metrics or _group_priority(gc) > _group_priority(metrics[category].get("group_code", "")):
-                    metrics[category] = {
+                    # 기준선(7일 동일 요일·시간대 평균) 참조
+                    primary_tsn = candidates[0]["tagsn"]
+                    baseline_val = _FLOW_BASELINE_CACHE.get(primary_tsn)
+                    metric_entry: dict = {
                         "value": round(total_val, 2),
                         "group_code": gc,
                         "tagname": tag_label,
-                        "tagsn": candidates[0]["tagsn"],
+                        "tagsn": primary_tsn,
                         "tag_count": len(active_vals) if is_summable else 1,
                     }
+                    if baseline_val and baseline_val > 0.01:
+                        metric_entry["baseline_avg"] = baseline_val
+                    metrics[category] = metric_entry
+            # level_zones: 배수지 구역별 수위 태그 전체 (2개 이상일 때만)
+            # HH/LL/H/L 설정값 태그는 제외 (실제 수위 측정값만)
+            level_zones: list[dict] = []
+            if ft == "배수지":
+                for gc, candidates in cand_groups.items():
+                    if "LEVEL" not in gc:
+                        continue
+                    for cand in candidates:
+                        di = cand.get("datainfo", "") or ""
+                        # 알람 설정값 태그 제외
+                        if _LEVEL_ALARM_SETTING_RE.search(di):
+                            continue
+                        v = latest_values.get(cand["tagsn"])
+                        if v is None:
+                            continue
+                        level_zones.append({
+                            "value": round(v, 3),
+                            "group_code": gc,
+                            "tagname": cand["tagname"],
+                            "tagsn": cand["tagsn"],
+                            "datainfo": di,
+                        })
+
             node_entry: dict = {
                 "sitename": sn,
                 "facilitytype": ft,
                 "metrics": metrics,
             }
+            if len(level_zones) > 1:
+                # 자연 정렬: datainfo 내 숫자 기준 (수위1, 수위2, 1지, 2지 ...)
+                def _zone_sort_key(z: dict) -> tuple:
+                    di = z.get("datainfo", "")
+                    nums = re.findall(r'\d+', di)
+                    return (int(nums[0]) if nums else 999, di)
+                level_zones.sort(key=_zone_sort_key)
+                node_entry["level_zones"] = level_zones
             # 배수지: 용수공급가능시간 추가
             if ft == "배수지" and sn in reservoir_supply:
                 node_entry["supply_time"] = reservoir_supply[sn]
