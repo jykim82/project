@@ -4062,10 +4062,12 @@ def _execute_night_min_flow_query(
     sitename: str, facilitytype: str,
     from_ts: str, to_ts: str,
 ) -> tuple[list, list]:
-    """fn_night_min_flow_summary 대체: 청크 직접 쿼리 + 60분 이동평균."""
-    import numpy as np
-    from collections import defaultdict
+    """tb_night_min_flow_daily 테이블에서 사전 집계된 야간최소유량 조회.
 
+    DB 스케줄(매일 07시)로 사전 계산된 데이터를 단순 SELECT.
+    기존: 청크 직접 쿼리 + Python 60분 이동평균 → 27초
+    개선: 인덱스 스캔 → <0.5초
+    """
     columns = ["log_time", "sitename", "facilitytype", "label",
                "tagsn", "datainfo", "datadesc", "unit", "val"]
 
@@ -4073,138 +4075,29 @@ def _execute_night_min_flow_query(
     try:
         cur = conn.cursor()
 
-        # Step 1: tb_trend_catalog에서 태그 목록 조회
-        _sn_cond = "" if sitename in ("전체", "%%", "") else " AND tc.sitename = %s"
-        _ft_cond = "" if facilitytype in ("전체", "%%", "") else " AND tc.facilitytype = %s"
-        _qp: list = []
-        if _sn_cond:
-            _qp.append(sitename)
-        if _ft_cond:
-            _qp.append(facilitytype)
+        conditions = ["log_date >= %s::date", "log_date <= %s::date"]
+        params_q: list = [from_ts, to_ts]
 
+        if sitename and sitename not in ("전체", "%%", ""):
+            conditions.append("sitename = %s")
+            params_q.append(sitename)
+        if facilitytype and facilitytype not in ("전체", "%%", ""):
+            conditions.append("facilitytype = %s")
+            params_q.append(facilitytype)
+
+        where_sql = " AND ".join(conditions)
         cur.execute(f"""
-            SELECT elem->>'tagsn' AS tagsn, elem->>'label' AS label
-            FROM tb_trend_catalog tc,
-                 jsonb_array_elements(tc.meta->'items') elem
-            WHERE tc.trend_name = '유량순시'
-              {_sn_cond} {_ft_cond}
-        """, _qp)
-        tag_labels: dict[str, str] = {}
-        tagsn_list: list[str] = []
-        for tsn, lbl in cur.fetchall():
-            tag_labels[tsn] = lbl or ""
-            tagsn_list.append(tsn)
-
-        if not tagsn_list:
-            # 카탈로그에 없으면 tb_tag_group_map 폴백 (FLOW_OUTLET 순시 태그)
-            _sn_cond2 = "" if sitename in ("전체", "%%", "") else " AND t.sitename = %s"
-            _ft_cond2 = "" if facilitytype in ("전체", "%%", "") else " AND t.facilitytype = %s"
-            _qp2: list = []
-            if _sn_cond2:
-                _qp2.append(sitename)
-            if _ft_cond2:
-                _qp2.append(facilitytype)
-            cur.execute(f"""
-                SELECT t.tagsn, t.datainfo
-                FROM tb_tag_info t
-                JOIN tb_tag_group_map gm ON gm.tagsn = t.tagsn
-                JOIN tb_tag_data_group g ON g.group_id = gm.group_id
-                WHERE g.group_code IN ('FLOW_OUTLET', 'FLOW_INSTANT')
-                  AND t.datainfo LIKE '%%순시%%'
-                  AND t.tagtype = 'Analog Input'
-                  {_sn_cond2} {_ft_cond2}
-            """, _qp2)
-            for tsn, di in cur.fetchall():
-                tag_labels[tsn] = di or ""
-                tagsn_list.append(tsn)
-
-        if not tagsn_list:
-            cur.close()
-            return [], columns
-
-        # Step 2: 태그 메타 조회
-        cur.execute(
-            "SELECT tagsn, sitename, facilitytype, datainfo,"
-            " COALESCE(datadesc,''), COALESCE(unit,'') FROM tb_tag_info"
-            " WHERE tagsn = ANY(%s)", (tagsn_list,)
-        )
-        tag_meta: dict[str, tuple] = {}
-        for tsn, sn, ft, di, dd, unit in cur.fetchall():
-            tag_meta[tsn] = (sn, ft, di, dd, unit)
-
-        # Step 3: 청크 직접 쿼리 (야간 0~6시)
-        chunks = _get_chunks_for_range(cur, from_ts, to_ts)
-        if not chunks:
-            cur.close()
-            return [], columns
-
-        raw_rows = _query_chunks_raw(
-            cur, chunks, tagsn_list, from_ts, to_ts,
-            hour_filter=(0, 6),
-        )
+            SELECT log_date::text, sitename, facilitytype, label,
+                   tagsn, datainfo, datadesc, unit, min_val
+            FROM tb_night_min_flow_daily
+            WHERE {where_sql}
+            ORDER BY log_date, label
+        """, params_q)
+        result_rows = cur.fetchall()
         cur.close()
     finally:
         conn.close()
 
-    if not raw_rows:
-        return [], columns
-
-    # Step 4: 태그별 시계열 분리 + 정렬
-    tag_series: dict[str, list[tuple]] = defaultdict(list)
-    for tsn, logtime, val in raw_rows:
-        if val is not None:
-            tag_series[tsn].append((logtime, float(val)))
-    for tsn in tag_series:
-        tag_series[tsn].sort(key=lambda x: x[0])
-
-    # Step 5: 60분 이동평균 + 일별 최소값 계산
-    # time_bucket('1 day', timestamptz)는 UTC 기준으로 날짜를 나눔
-    from datetime import timezone as _tz
-    result_rows: list[tuple] = []
-    for tsn, series in tag_series.items():
-        if not series:
-            continue
-        meta = tag_meta.get(tsn)
-        if not meta:
-            continue
-        sn, ft, di, dd, unit = meta
-        label = tag_labels.get(tsn, "")
-
-        times = [s[0] for s in series]
-        vals = np.array([s[1] for s in series], dtype=np.float64)
-
-        # 60분 이동평균: 각 포인트에서 이전 60분 내 모든 값의 평균
-        ma_vals = np.empty(len(vals), dtype=np.float64)
-        for i in range(len(vals)):
-            t_cur = times[i]
-            # 이진 탐색으로 60분 전 인덱스 찾기
-            t_start = t_cur - timedelta(minutes=60)
-            lo = 0
-            hi = i
-            while lo < hi:
-                mid = (lo + hi) // 2
-                if times[mid] < t_start:
-                    lo = mid + 1
-                else:
-                    hi = mid
-            ma_vals[i] = round(float(np.mean(vals[lo:i+1])), 2)
-
-        # 일별 최소 이동평균 (UTC 기준 날짜 — time_bucket 호환)
-        daily_min: dict[str, float] = {}
-        for i, t in enumerate(times):
-            t_utc = t.astimezone(_tz.utc) if t.tzinfo else t
-            day_key = t_utc.strftime("%Y-%m-%d")
-            if day_key not in daily_min or ma_vals[i] < daily_min[day_key]:
-                daily_min[day_key] = ma_vals[i]
-
-        for day_str, min_val in sorted(daily_min.items()):
-            result_rows.append((
-                day_str, sn, ft, label, tsn, di, dd, unit,
-                round(min_val, 2),
-            ))
-
-    # 정렬: log_time, label
-    result_rows.sort(key=lambda r: (r[0], r[3]))
     return result_rows, columns
 
 
@@ -6323,7 +6216,7 @@ async def ask(request: AskRequest):
             session_id=sid,
         )
 
-    # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
+    # FACILITY_TREND + 야간최소유량: tb_night_min_flow_daily 테이블 조회
     _q_no_space = user_question.replace(" ", "")
     _is_night_min_flow = intent == "FACILITY_TREND" and "야간최소유량" in _q_no_space
     if _is_night_min_flow:
@@ -6335,21 +6228,26 @@ async def ask(request: AskRequest):
                 _ft_date = datetime.strptime(_ft.strip("'"), "%Y-%m-%d")
                 _tt_date = datetime.strptime(_tt.strip("'"), "%Y-%m-%d")
                 if (_tt_date - _ft_date).days <= 7:
-                    # 기본 7일이 적용된 경우 → 1년으로 확장
                     _tt_date = datetime.now()
                     _ft_date = _tt_date - timedelta(days=365)
                     params["from_ts"] = _ft_date.strftime("%Y-%m-%d")
                     params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
             except (ValueError, TypeError):
                 pass
-        # fn_night_min_flow_summary는 = 비교이므로 '%%' 와일드카드 대신 '전체' 사용
         if params.get("sitename") == "%%":
             params["sitename"] = "전체"
-        sql_combined = (
-            "SELECT * FROM fn_night_min_flow_summary("
-            "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
-            ") ORDER BY log_time ASC;"
-        )
+        # tb_night_min_flow_daily 직접 조회 (사전 집계 테이블)
+        _nmf_sn = params.get("sitename", "전체")
+        _nmf_ft = params.get("facilitytype", "소블록")
+        _nmf_from = params.get("from_ts", "")
+        _nmf_to = params.get("to_ts", "")
+        try:
+            rows, columns = await asyncio.to_thread(
+                _execute_night_min_flow_query, _nmf_sn, _nmf_ft, _nmf_from, _nmf_to
+            )
+        except Exception as e:
+            logger.warning(f"야간최소유량 테이블 조회 실패: {e}")
+            rows, columns = [], []
         # answer_template 오버라이드
         _site = params.get("sitename", "")
         _ftype = params.get("facilitytype", "소블록")
