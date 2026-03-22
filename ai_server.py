@@ -3543,6 +3543,105 @@ _NO_DATA_HINTS: dict[tuple[str, str], str] = {
 }
 
 
+def _diagnose_no_data(intent: str, params: dict) -> str | None:
+    """데이터 없음의 원인을 동적으로 진단하여 구체적 메시지 반환."""
+    sn = params.get("sitename", "")
+    ft = params.get("facilitytype", "")
+    di = params.get("datainfo", "")
+
+    if not sn or sn in ("%%", "전체"):
+        return None
+
+    # 트렌드/시계열 인텐트만 진단
+    _TREND_INTENTS = {
+        "FACILITY_TREND", "FACILITY_MIXED_TREND",
+        "FACILITY_ANALOG_TIMESERIES_TABLE", "FACILITY_TAG_DATA_TABLE",
+        "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE", "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE",
+        "NIGHT_MIN_FLOW_STATUS", "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+    }
+    if intent not in _TREND_INTENTS:
+        return None
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            # 1) 시설 존재 여부
+            cur.execute(
+                "SELECT COUNT(*) FROM tb_tag_info WHERE sitename = %s AND facilitytype = %s",
+                (sn, ft),
+            )
+            tag_count = cur.fetchone()[0]
+            if tag_count == 0:
+                # 시설 자체가 없는지 확인
+                cur.execute("SELECT COUNT(*) FROM tb_tag_info WHERE sitename = %s", (sn,))
+                site_exists = cur.fetchone()[0] > 0
+                if not site_exists:
+                    return f"'{sn}' 현장이 등록되어 있지 않습니다. 현장명을 확인해 주세요."
+                return f"{sn} {ft}에 등록된 태그가 없습니다."
+
+            # 2) 해당 데이터항목(datainfo) 태그 존재 여부
+            if di and di not in ("%%", ".*"):
+                cur.execute(
+                    "SELECT COUNT(*) FROM tb_tag_info WHERE sitename = %s AND facilitytype = %s"
+                    " AND datainfo ~ %s AND tagtype = 'Analog Input'",
+                    (sn, ft, di),
+                )
+                di_count = cur.fetchone()[0]
+                if di_count == 0:
+                    # 어떤 데이터항목이 있는지 안내
+                    cur.execute(
+                        "SELECT DISTINCT datainfo FROM tb_tag_info"
+                        " WHERE sitename = %s AND facilitytype = %s"
+                        " AND tagtype = 'Analog Input' AND datainfo NOT LIKE '%%알람%%'"
+                        " AND datainfo NOT LIKE '%%SET%%' AND datainfo NOT LIKE '%%상태%%'"
+                        " ORDER BY datainfo LIMIT 5",
+                        (sn, ft),
+                    )
+                    available = [r[0] for r in cur.fetchall()]
+                    avail_str = ", ".join(available) if available else "없음"
+                    return f"{sn} {ft}에는 '{di}' 관련 아날로그 태그가 없습니다. 조회 가능 항목: {avail_str}"
+
+            # 3) 조회 기간 내 데이터 존재 여부
+            from_ts = params.get("from_ts", "")
+            to_ts = params.get("to_ts", "")
+            if from_ts and to_ts:
+                cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM tb_tag_raw_data r"
+                    " JOIN tb_tag_info t ON r.tagsn = t.tagsn"
+                    " WHERE t.sitename = %s AND t.facilitytype = %s"
+                    " AND r.logtime >= %s::timestamptz AND r.logtime < %s::timestamptz"
+                    " LIMIT 1)",
+                    (sn, ft, from_ts, to_ts),
+                )
+                has_data = cur.fetchone()[0]
+                if not has_data:
+                    return f"{sn} {ft}의 조회 기간({from_ts} ~ {to_ts}) 내 데이터가 없습니다."
+
+            # 4) 데이터는 있지만 트렌드 함수가 결과를 못 찾은 경우
+            #    (카탈로그 미등록, 태그 매핑 누락 등)
+            cur.execute(
+                "SELECT DISTINCT datainfo FROM tb_tag_info"
+                " WHERE sitename = %s AND facilitytype = %s"
+                " AND tagtype = 'Analog Input' AND datainfo NOT LIKE '%%알람%%'"
+                " AND datainfo NOT LIKE '%%SET%%' AND datainfo NOT LIKE '%%상태%%'"
+                " ORDER BY datainfo LIMIT 8",
+                (sn, ft),
+            )
+            available = [r[0] for r in cur.fetchall()]
+            if available:
+                avail_str = ", ".join(available)
+                return f"{sn} {ft}에 '{di}' 트렌드 카탈로그가 등록되지 않았습니다. 조회 가능 항목: {avail_str}"
+
+            cur.close()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"no-data 진단 실패 (무시): {e}")
+
+    return None
+
+
 def build_no_data_response(
     intent: str,
     answer_template: dict,
@@ -3551,12 +3650,16 @@ def build_no_data_response(
 ) -> dict:
     """
     조회 결과 없음 응답을 생성한다.
-    docs/ai_server_plan.md 6.3절 참조:
-    - 상태: OK
-    - 메시지: "조회된 데이터가 없습니다."
+    1) 동적 진단 → 2) 정적 힌트 → 3) 기본 메시지
     """
-    ft = (params or {}).get("facilitytype", "")
-    hint = _NO_DATA_HINTS.get((intent, ft)) or _NO_DATA_HINTS.get((intent, ""))
+    _params = params or {}
+    ft = _params.get("facilitytype", "")
+
+    # 동적 진단 시도
+    hint = _diagnose_no_data(intent, _params)
+    # 정적 힌트 폴백
+    if not hint:
+        hint = _NO_DATA_HINTS.get((intent, ft)) or _NO_DATA_HINTS.get((intent, ""))
     summary = hint if hint else "조회된 데이터가 없습니다."
     result = {
         "summary": summary,
