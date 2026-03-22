@@ -1745,7 +1745,12 @@
       "심야유량 현황은?",
       "야간유량 현황은?",
       "야간 최소 유량을 알려줘",
-      "최소야간유량은 얼마야?"
+      "최소야간유량은 얼마야?",
+      "남산1 소블록 야간최소유량 현황은?",
+      "합덕2 소블록 야간최소유량은?",
+      "신평 배수지 야간최소유량 현황은?",
+      "죽동 배수지 야간최소유량은 얼마야?",
+      "송산 가압장 야간최소유량 현황을 알려줘"
     ],
     "sql": "WITH current_nmf AS (\n    SELECT\n        log_time,\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        val AS current_val\n    FROM fn_night_min_flow_summary(\n            '{sitename}',\n            '{facilitytype}',\n            (now() - interval '1 day')::date,\n            now()::date\n    )\n    ORDER BY log_time DESC\n    LIMIT 1\n),\navg_nmf AS (\n    SELECT\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        period_type,\n        ROUND(AVG(val), 2) AS avg_val\n    FROM (\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'year' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 year')::date, now()::date)\n        UNION ALL\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'month' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 month')::date, now()::date)\n    ) t\n    GROUP BY sitename, facilitytype, label, datadesc, unit, period_type\n)\nSELECT\n    c.sitename,\n    c.facilitytype,\n    c.label,\n    c.datadesc,\n    c.current_val,\n    c.unit,\n    c.log_time,\n    MAX(CASE WHEN a.period_type = 'month' THEN a.avg_val END) AS avg_month,\n    MAX(CASE WHEN a.period_type = 'year'  THEN a.avg_val END) AS avg_year\nFROM current_nmf c\nLEFT JOIN avg_nmf a\n  ON c.sitename = a.sitename\n AND c.facilitytype = a.facilitytype\n AND c.label = a.label\n AND c.datadesc = a.datadesc\nGROUP BY c.sitename, c.facilitytype, c.label, c.datadesc, c.current_val, c.unit, c.log_time;",
     "answer_template": {
