@@ -1037,7 +1037,8 @@ def _compute_flow_baselines() -> dict[str, float]:
                 for tsn, avg_val in cur.fetchall():
                     if avg_val is not None and avg_val > 0.01:
                         baselines.setdefault(tsn, []).append(float(avg_val))
-            except Exception:
+            except Exception as e:
+                logger.error(f"기준선 청크 조회 실패: {e}")
                 conn.rollback()
                 continue
 
@@ -1163,8 +1164,8 @@ def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
         if conn:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"데이터 품질 conn.close 실패: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1367,8 +1368,8 @@ def _detect_equipment_failures(
         if conn:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"설비 장애 역추적 conn.close 실패: {e}")
 
 
 def _apply_worst_failure(
@@ -1711,11 +1712,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_allowed_origins = os.environ.get(
+    "CORS_ORIGINS", "https://localhost:3000,http://localhost:3000"
+).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["content-type", "authorization"],
+    allow_credentials=True,
 )
 
 # =============================================================================
@@ -1796,7 +1801,8 @@ def _demo_restore_json_fields(body: bytes, fields: tuple[str, ...] = ("user_ques
     import json as _json
     try:
         obj = _json.loads(body.decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.debug(f"DEMO JSON 역변환 파싱 실패 (비JSON body): {e}")
         return body
 
     changed = False
@@ -1883,7 +1889,8 @@ async def demo_anonymize_middleware(request: Request, call_next):
             body_text = body_bytes.decode("utf-8")
             anonymized = _demo_replace_text(body_text)
             new_body = anonymized.encode("utf-8")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"DEMO 응답 익명화 실패 (바이너리 body): {e}")
             new_body = body_bytes
 
         from starlette.responses import Response as StarletteResponse
@@ -1907,7 +1914,9 @@ DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = os.environ.get("DB_PORT", "5433")
 DB_NAME = os.environ.get("DB_NAME", "slm")
 DB_USER = os.environ.get("DB_USER", "slm_dev")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+if not DB_PASSWORD:
+    logger.warning("DB_PASSWORD 환경변수가 설정되지 않았습니다. .env 파일을 확인하세요.")
 
 
 # =============================================================================
@@ -2470,6 +2479,22 @@ def get_db_connection():
     )
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def db_conn():
+    """DB 커넥션 컨텍스트 매니저 — 자동 close 보장, 에러 시 rollback."""
+    conn = get_db_connection()
+    try:
+        yield conn
+    except Exception as e:
+        logger.error(f"db_conn 컨텍스트 내 에러, rollback 수행: {e}")
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
     statements = []
@@ -2524,7 +2549,7 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
         if placeholder in sql:
             if value is not None:
                 # SQL 인젝션 방지를 위한 이스케이프
-                escaped_value = str(value).replace("'", "''")
+                escaped_value = _sql_escape_literal(str(value))
                 if key in _QUOTE_PARAMS:
                     escaped_value = f"'{escaped_value}'"
                 sql = sql.replace(placeholder, escaped_value)
@@ -3046,6 +3071,11 @@ _ANOMALY_FILTER_INTENTS = {
 }
 
 
+def _sql_escape_literal(value: str) -> str:
+    """SQL 문자열 리터럴 이스케이프 — 싱글쿼트 이중화 + 백슬래시 제거."""
+    return value.replace("\\", "").replace("'", "''")
+
+
 def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
     """ANOMALY 인텐트에 대해 선택적 sitename/facilitytype/group_code WHERE 절 생성."""
     alias = _ANOMALY_FILTER_INTENTS.get(intent_name)
@@ -3055,14 +3085,16 @@ def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
     site = params.get("sitename", "")
     ftype = params.get("facilitytype", "")
     if site and site not in ("전체", "%%", ""):
-        parts.append(f"AND {alias}.sitename = '{site}'")
+        site_esc = _sql_escape_literal(site)
+        parts.append(f"AND {alias}.sitename = '{site_esc}'")
     if ftype and ftype not in ("전체", "%%", ""):
-        parts.append(f"AND {alias}.facilitytype = '{ftype}'")
+        ftype_esc = _sql_escape_literal(ftype)
+        parts.append(f"AND {alias}.facilitytype = '{ftype_esc}'")
     # group_code 필터 (센서 유형별 점검: 유량/압력/수질 등)
     gc = params.get("group_code", "")
     if gc and alias == "ti":
         resolved = _resolve_group_codes(gc)
-        gc_sql = ", ".join(f"'{c}'" for c in resolved)
+        gc_sql = ", ".join(f"'{_sql_escape_literal(c)}'" for c in resolved)
         parts.append(
             f"AND {alias}.tagsn IN ("
             f"SELECT gm.tagsn FROM tb_tag_group_map gm "
@@ -3104,7 +3136,7 @@ def _filter_anomaly_cache_rows(
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
-                gc_sql = ", ".join(f"'{c}'" for c in resolved)
+                gc_sql = ", ".join(f"'{_sql_escape_literal(c)}'" for c in resolved)
                 cur.execute(f"""
                     SELECT gm.tagsn FROM tb_tag_group_map gm
                     JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
@@ -3113,7 +3145,8 @@ def _filter_anomaly_cache_rows(
                 gc_tagsns = {r[0] for r in cur.fetchall()}
                 cur.close()
                 conn.close()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"group_code 필터 DB 조회 실패, 필터 생략: {e}")
                 gc_tagsns = None  # 실패 시 필터 없이
 
     filtered = []
@@ -3299,7 +3332,8 @@ def compute_anomaly_zones(
                 dt_prev = datetime.fromisoformat(prev_t.replace("Z", "+00:00") if "Z" in prev_t else prev_t)
                 dt_cur = datetime.fromisoformat(t.replace("Z", "+00:00") if "Z" in t else t)
                 gap_minutes = abs((dt_cur - dt_prev).total_seconds()) / 60
-            except Exception:
+            except Exception as e:
+                logger.debug(f"이상구간 시간 파싱 실패, 비연속 처리: {e}")
                 gap_minutes = 999
 
             if gap_minutes <= 15:  # 15분 이내 → 연속 구간
@@ -6431,10 +6465,10 @@ async def ask(request: AskRequest):
         _site = params.get("sitename")
         _category = params.get("datainfo")
         if _site:
-            _site_esc = _site.replace("'", "''")
+            _site_esc = _sql_escape_literal(_site)
             where_parts.append(f"sitename = '{_site_esc}'")
         if _category:
-            _cat_esc = _category.replace("'", "''")
+            _cat_esc = _sql_escape_literal(_category)
             where_parts.append(f"alarm_category = '{_cat_esc}'")
         where_clause = " AND ".join(where_parts)
         sql_combined = (
@@ -6457,7 +6491,7 @@ async def ask(request: AskRequest):
 
         where_parts = ["alarm_status = '진행중'"]
         if _ftype:
-            _ftype_esc = _ftype.replace("'", "''")
+            _ftype_esc = _sql_escape_literal(_ftype)
             where_parts.append(f"facilitytype = '{_ftype_esc}'")
         where_base = " AND ".join(where_parts)
         if alarm_filter_clause:
@@ -7773,10 +7807,10 @@ async def ask_stream(request: AskRequest):
             _site = params.get("sitename")
             _category = params.get("datainfo")
             if _site:
-                _site_esc = _site.replace("'", "''")
+                _site_esc = _sql_escape_literal(_site)
                 where_parts.append(f"sitename = '{_site_esc}'")
             if _category:
-                _cat_esc = _category.replace("'", "''")
+                _cat_esc = _sql_escape_literal(_category)
                 where_parts.append(f"alarm_category = '{_cat_esc}'")
             where_clause = " AND ".join(where_parts)
             sql_combined = (
@@ -7799,7 +7833,7 @@ async def ask_stream(request: AskRequest):
 
             where_parts = ["alarm_status = '진행중'"]
             if _ftype:
-                _ftype_esc = _ftype.replace("'", "''")
+                _ftype_esc = _sql_escape_literal(_ftype)
                 where_parts.append(f"facilitytype = '{_ftype_esc}'")
             where_base = " AND ".join(where_parts)
             if alarm_filter_clause:
@@ -9000,8 +9034,8 @@ async def upload_facility_file(
             try:
                 cur.execute("DELETE FROM tb_file_storage WHERE file_id = %s", (old_file_id,))
                 conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"이전 시설 파일 DB 삭제 실패 (file_id={old_file_id}): {e}")
             old_path = os.path.join(FACILITY_FILE_BASE_DIR, file_type, old_stored_name)
             if os.path.exists(old_path):
                 os.remove(old_path)
@@ -10515,7 +10549,8 @@ async def get_causal_rules():
         total_facilities = cur.fetchone()[0]
         cur.close()
         conn.close()
-    except Exception:
+    except Exception as e:
+        logger.warning(f"인과 규칙 전체 시설 수 조회 실패, 폴백 사용: {e}")
         total_facilities = len(facilities)
 
     summary = {
@@ -11540,7 +11575,8 @@ async def get_flow_map_realtime():
                         "avg_usage": float(row[6]) if row[6] is not None else None,
                         "night_min_flow": float(row[7]) if row[7] is not None else None,
                     }
-            except Exception:
+            except Exception as e:
+                logger.warning(f"배수지 공급가능시간 조회 실패: {e}")
                 conn.rollback()  # 컬럼 미존재 시 롤백 후 계속
 
         # 4-b2) 배수지 적산 유량 (현재적산 + 금일적산)
@@ -11590,7 +11626,8 @@ async def get_flow_map_realtime():
                         key_today = f"{flow_dir}_accum_today"
                         reservoir_supply[sn][key_curr] = float(current_val) if current_val is not None else None
                         reservoir_supply[sn][key_today] = float(today_accum) if today_accum is not None else None
-            except Exception:
+            except Exception as e:
+                logger.warning(f"배수지 적산유량 조회 실패: {e}")
                 conn.rollback()
 
         # 4-c) 가압장 펌프 가동 상태 조회
@@ -11621,7 +11658,8 @@ async def get_flow_map_realtime():
                         "total": int(row[1]),
                         "running": int(row[2]),
                     }
-            except Exception:
+            except Exception as e:
+                logger.warning(f"가압장 펌프 가동 상태 조회 실패: {e}")
                 conn.rollback()
 
         # 5) 노드 데이터 구성 — 같은 그룹의 활성 태그 합산
@@ -14669,7 +14707,8 @@ async def get_canvas_layout():
                 GROUP BY sitename, facilitytype
             """)
             equip_counts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
-        except Exception:
+        except Exception as e:
+            logger.warning(f"캔버스 설비 카운트 조회 실패: {e}")
             conn.rollback()
 
         # 5) 카탈로그 카운트 (테이블 없으면 빈 맵)
@@ -14681,7 +14720,8 @@ async def get_canvas_layout():
                 GROUP BY sitename, facilitytype
             """)
             catalog_counts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
-        except Exception:
+        except Exception as e:
+            logger.warning(f"캔버스 카탈로그 카운트 조회 실패: {e}")
             conn.rollback()
 
         # 6) 모니터링 플래그 (테이블 없으면 빈 맵)
@@ -14692,7 +14732,8 @@ async def get_canvas_layout():
                 FROM tb_admin_site_settings
             """)
             monitoring_map = {r[0]: r[1] for r in cur.fetchall()}
-        except Exception:
+        except Exception as e:
+            logger.warning(f"캔버스 모니터링 플래그 조회 실패: {e}")
             conn.rollback()
 
         cur.close()
@@ -14876,7 +14917,8 @@ async def get_canvas_node_detail(sitename: str, facilitytype: str):
             """, (sitename,))
             row = cur.fetchone()
             site_meta = row[0] if row else {}
-        except Exception:
+        except Exception as e:
+            logger.warning(f"캔버스 사이트 메타 조회 실패 ({sitename}): {e}")
             conn.rollback()
 
         cur.close()
