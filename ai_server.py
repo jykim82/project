@@ -85,7 +85,6 @@ from site_profiler import SiteProfiler
 from db_sync import DbSyncWorker  # [임시] 개발 완료 후 제거 예정
 from snmp_poller import SnmpPoller
 from endpoints.facility_crud import router as facility_crud_router, init as init_facility_crud
-from trend_stats import compute_trend_summary
 from endpoints.network_crud import router as network_crud_router, init as init_network_crud
 from endpoints.canvas_crud import router as canvas_crud_router, init as init_canvas_crud
 
@@ -6267,7 +6266,7 @@ async def ask(request: AskRequest):
             }
         }
 
-    # FACILITY_TREND (일반): answer_template 오버라이드 + 통계 요약
+    # FACILITY_TREND (일반): answer_template 오버라이드
     if intent == "FACILITY_TREND" and not _is_night_min_flow:
         _site = params.get("sitename", "")
         _ftype = params.get("facilitytype", "")
@@ -6279,17 +6278,8 @@ async def ask(request: AskRequest):
             _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
         else:
             _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
-
-        # 트렌드 통계 요약 생성 (rows가 있으면)
-        _trend_detail = [{"prefix": "ㆍ", "text": f"{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다."}]
-        if rows and columns:
-            _stats_items = compute_trend_summary(rows, columns)
-            if _stats_items:
-                _trend_detail.extend(_stats_items)
-
         answer_template = {
-            "summary": _period_line,
-            "detail": _trend_detail,
+            "summary": f"{_period_line}\n{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다.",
             "recommend_questions": {
                 "title": "다음은 추천질의입니다.",
                 "items": [
@@ -7620,7 +7610,7 @@ async def ask_stream(request: AskRequest):
                 }
             }
 
-        # FACILITY_TREND (일반): answer_template 오버라이드 + 통계 요약 (rows 확보 후 삽입)
+        # FACILITY_TREND (일반): answer_template 오버라이드
         if intent == "FACILITY_TREND" and not _is_night_min_flow:
             _site = params.get("sitename", "")
             _ftype = params.get("facilitytype", "")
@@ -7633,8 +7623,7 @@ async def ask_stream(request: AskRequest):
             else:
                 _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
             answer_template = {
-                "summary": _period_line,
-                "detail": [{"prefix": "ㆍ", "text": f"{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다."}],
+                "summary": f"{_period_line}\n{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다.",
                 "recommend_questions": {
                     "title": "다음은 추천질의입니다.",
                     "items": [
@@ -8563,17 +8552,6 @@ async def ask_stream(request: AskRequest):
                     "baseline_stddev": cr["baseline_stddev"],
                     "leak_status": cr["leak_status"],
                 }
-
-        # 트렌드 통계 요약: rows 확보 후 answer_template에 삽입
-        if (intent == "FACILITY_TREND"
-                and not _is_night_min_flow
-                and rows and columns):
-            _stats_items = compute_trend_summary(rows, columns)
-            if _stats_items:
-                _site = params.get("sitename", "")
-                _ftype = params.get("facilitytype", "")
-                _dinfo = params.get("datainfo", "")
-                rendered_answer["detail"] = rendered_answer.get("detail", []) + _stats_items
 
         # 트렌드 이상구간 강조: Z-Score 기반 anomaly zones
         _anomaly_zones = None
