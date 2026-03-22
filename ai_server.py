@@ -8787,33 +8787,38 @@ async def dashboard_overview():
     else:
         result["anomaly"] = None
 
-    # 2) 최근 경보 (진행중 + 최근 해제 12건)
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT alarm_start_time, tagsn, alarm_status, alarm_severity,
-                   alarm_category, alarm_msg, sitename, facilitytype
-            FROM tb_equipment_alarm_report
-            WHERE alarm_start_time > NOW() - INTERVAL '24 hours'
-            ORDER BY alarm_start_time DESC
-            LIMIT 20
-        """)
-        alarm_cols = [d[0] for d in cur.description]
-        alarm_rows = cur.fetchall()
-        result["recent_alarms"] = [dict(zip(alarm_cols, r)) for r in alarm_rows]
-        # 진행중 카운트
-        ongoing = [r for r in result["recent_alarms"] if r.get("alarm_status") == "진행중"]
-        result["ongoing_alarm_count"] = len(ongoing)
-        result["ongoing_alarm_severity"] = {
-            "경고": sum(1 for a in ongoing if a.get("alarm_severity") == "경고"),
-            "주의": sum(1 for a in ongoing if a.get("alarm_severity") == "주의"),
-        }
-        cur.close()
-    except Exception as e:
-        logger.warning(f"dashboard/overview 경보 조회 실패: {e}")
-        result["recent_alarms"] = []
-        result["ongoing_alarm_count"] = 0
+    # 2) 최근 경보 (진행중 + 최근 해제 12건) — asyncio.to_thread로 블로킹 방지
+    def _fetch_recent_alarms() -> dict:
+        alarms_result: dict = {}
+        try:
+            with db_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT alarm_start_time, tagsn, alarm_status, alarm_severity,
+                           alarm_category, alarm_msg, sitename, facilitytype
+                    FROM tb_equipment_alarm_report
+                    WHERE alarm_start_time > NOW() - INTERVAL '24 hours'
+                    ORDER BY alarm_start_time DESC
+                    LIMIT 20
+                """)
+                alarm_cols = [d[0] for d in cur.description]
+                alarm_rows = cur.fetchall()
+                alarms_result["recent_alarms"] = [dict(zip(alarm_cols, r)) for r in alarm_rows]
+                ongoing = [r for r in alarms_result["recent_alarms"] if r.get("alarm_status") == "진행중"]
+                alarms_result["ongoing_alarm_count"] = len(ongoing)
+                alarms_result["ongoing_alarm_severity"] = {
+                    "경고": sum(1 for a in ongoing if a.get("alarm_severity") == "경고"),
+                    "주의": sum(1 for a in ongoing if a.get("alarm_severity") == "주의"),
+                }
+                cur.close()
+        except Exception as e:
+            logger.warning(f"dashboard/overview 경보 조회 실패: {e}")
+            alarms_result["recent_alarms"] = []
+            alarms_result["ongoing_alarm_count"] = 0
+        return alarms_result
+
+    alarm_data = await asyncio.to_thread(_fetch_recent_alarms)
+    result.update(alarm_data)
 
     return result
 
