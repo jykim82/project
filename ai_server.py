@@ -4409,8 +4409,6 @@ def _execute_tag_daily_summary_query(
 # 2단계(tb_tag_info 조회 → 청크별 raw 쿼리)로 분리하여 우회한다.
 
 _TIMESERIES_CHUNK_INTENTS = frozenset({
-    "FACILITY_TREND",
-    "FACILITY_MIXED_TREND",
     "FACILITY_ANALOG_TIMESERIES_TABLE",
     "FACILITY_TAG_DATA_TABLE",
     "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
