@@ -371,7 +371,15 @@
       "배수지 하루 급수량은?",
       "배수지 일평균 사용량은?",
       "신평 배수지 일공급량은?",
-      "배수지 급수량은 얼마야?"
+      "배수지 급수량은 얼마야?",
+      "신평 배수지 유입유량은?",
+      "남산 배수지 유입유량은?",
+      "배수지 유입유량 알려줘",
+      "행정 배수지 유입유량 현황",
+      "남산 배수지 평균사용량은?",
+      "신평 평균사용량은?",
+      "배수지 평균사용량 알려줘",
+      "배수지 시간당 평균 사용량은?"
     ],
     "sql": "SELECT\n  sitename,\n  avg_usage,\n  usage_unit,\n  avg_inflow,\n  avg_inflow_unit,\n  avg_outflow,\n  avg_outflow_unit\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -538,7 +546,12 @@
       "배수지 유출량은?",
       "전체 유출현황은?",
       "금일 유출량을 알려줘",
-      "배수지별 유출량은 얼마야?"
+      "배수지별 유출량은 얼마야?",
+      "신평 배수지 유출유량은?",
+      "남산 배수지 유출유량은?",
+      "배수지 유출유량 알려줘",
+      "행정 배수지 유출유량 현황",
+      "석문 유출유량은 얼마야?"
     ],
     "sql": "SELECT *\nFROM fn_today_outflow_all(CURRENT_DATE);",
     "answer_template": {

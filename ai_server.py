@@ -861,13 +861,13 @@ def cleanup_old_csv_files():
 
 
 async def _site_profiling_loop():
-    """백그라운드: 서버 시작 60초 후 첫 실행, 이후 24시간마다 현장 프로파일링"""
-    await asyncio.sleep(60)
+    """백그라운드: 서버 시작 5초 후 첫 실행, 이후 24시간마다 현장 프로파일링"""
+    await asyncio.sleep(5)
     while True:
         try:
             logger.info("현장 프로파일링 시작...")
             await asyncio.to_thread(site_profiler.run_daily_profiling)
-            profile_count = len(site_profiler.profiles)
+            profile_count = len(site_profiler.profiles) if site_profiler and site_profiler.profiles else 0
             logger.info(f"현장 프로파일링 완료: {profile_count}개 현장 분류")
         except Exception as e:
             logger.error(f"현장 프로파일링 실패: {e}")
@@ -888,12 +888,12 @@ async def _snmp_polling_loop():
 
 
 async def _iforest_training_loop():
-    """백그라운드: 서버 시작 90초 후 첫 실행, 이후 24시간마다 IForest 학습."""
+    """백그라운드: 서버 시작 10초 후 첫 실행, 이후 24시간마다 IForest 학습."""
     from anomaly_iforest import RETRAIN_INTERVAL_HOURS
-    await asyncio.sleep(90)
+    await asyncio.sleep(10)
     while True:
         try:
-            _profiles = site_profiler.profiles if site_profiler else None
+            _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
             logger.info("IForest 백그라운드 학습 시작...")
             await asyncio.to_thread(iforest_manager.train_all, get_db_connection, site_profiles=_profiles)
             logger.info(f"IForest 백그라운드 학습 완료: {iforest_manager.model_count}개 모델")
@@ -903,13 +903,19 @@ async def _iforest_training_loop():
 
 
 async def _anomaly_scan_cache_loop():
-    """백그라운드: 서버 시작 150초 후 첫 실행, 이후 5분마다 ANOMALY_SCAN_ALL 전체 캐시 갱신.
+    """백그라운드: 프로파일링 완료 대기 후 첫 실행, 이후 5분마다 ANOMALY_SCAN_ALL 전체 캐시 갱신.
 
     전체 파이프라인(SQL + IForest + 교차검증)을 미리 실행하여 캐시에 저장.
     사용자 요청 시 캐시 반환 (<1s).
     """
     global _ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME
-    await asyncio.sleep(150)
+    # 프로파일링 완료 대기 (최대 120초, 5초 간격 체크)
+    for _ in range(24):
+        if site_profiler and site_profiler.profiles:
+            break
+        await asyncio.sleep(5)
+    if not (site_profiler and site_profiler.profiles):
+        logger.warning("ANOMALY_SCAN_ALL: 프로파일 미완성 상태로 캐시 빌드 시작")
     while True:
         try:
             t0 = datetime.now()
@@ -927,10 +933,25 @@ async def _anomaly_scan_cache_loop():
         await asyncio.sleep(_ANOMALY_SCAN_CACHE_TTL)
 
 
+def _filter_flow_balance_edges(edges: list, sitename: str | None) -> list:
+    """sitename이 주어지면 해당 시설이 upstream 또는 downstream에 포함된 엣지만 반환."""
+    if not sitename or sitename in ("%%", "%"):
+        return edges
+    filtered = []
+    for e in edges:
+        if e.get("upstream_sitename") == sitename:
+            filtered.append(e)
+            continue
+        ds_names = [d.get("sitename", "") for d in e.get("downstream_facilities", [])]
+        if sitename in ds_names:
+            filtered.append(e)
+    return filtered if filtered else edges  # 매칭 없으면 전체 반환 (폴백)
+
+
 async def _flow_balance_cache_loop():
-    """백그라운드: 서버 시작 200초 후 첫 실행, 이후 30분마다 물 수지 캐시 갱신."""
+    """백그라운드: 서버 시작 30초 후 첫 실행, 이후 30분마다 물 수지 캐시 갱신."""
     global _FLOW_BALANCE_CACHE, _FLOW_BALANCE_CACHE_TIME
-    await asyncio.sleep(200)
+    await asyncio.sleep(30)
     while True:
         try:
             from flow_balance import compute_flow_balance_all
@@ -970,7 +991,7 @@ async def _flow_baseline_cache_loop():
 
 def _compute_flow_baselines() -> dict[str, float]:
     """7일간 동일 요일·시간대(±1h) 평균값을 태그별로 계산."""
-    conn = _get_conn()
+    conn = get_db_connection()
     cur = conn.cursor()
     try:
         now = datetime.now()
@@ -1382,8 +1403,10 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
     sql_combined = "\n".join(sql_raw) if isinstance(sql_raw, list) else sql_raw
 
     # 1단계: SQL 실행 (365일 stats + 3h latest + comm_error)
+    # 플레이스홀더 치환 (캐시는 전체 조회이므로 필터 없음)
+    cache_params = {"anomaly_facility_filter": "", "anomaly_scope": "", "alarm_filter_clause": ""}
     try:
-        rows, columns = execute_sql(sql_combined, {})
+        rows, columns = execute_sql(sql_combined, cache_params)
     except Exception as e:
         logger.error(f"SCAN_ALL 캐시 SQL 실패: {e}")
         return None
@@ -1414,7 +1437,7 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
             logger.warning(f"SCAN_ALL 캐시 교차검증 실패: {e}")
 
     # 4단계: 교차검증 결과를 per-row cross_status/verdict로 병합
-    _profiles = site_profiler.profiles if site_profiler.profiles else None
+    _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
     _cross_list = processed_data.get("cross_facility_mismatches")
     enrich_rows_with_cross_verdict(rows, columns, _cross_list, site_profiles=_profiles)
 
@@ -1625,7 +1648,7 @@ async def lifespan(app: FastAPI):
     # 현장 프로파일링 백그라운드 태스크 (기존 DB 프로파일 로드 후 시작)
     try:
         site_profiler.load_from_db()
-        if site_profiler.profiles:
+        if site_profiler and site_profiler.profiles:
             logger.info(f"기존 현장 프로파일 로드: {len(site_profiler.profiles)}개")
     except Exception as e:
         logger.warning(f"기존 프로파일 로드 실패 (서버 시작 후 재생성): {e}")
@@ -5472,7 +5495,7 @@ def process_sql_result(
     # 이상 스캔: Z-Score + Isolation Forest 기반 전체 스캔
     # -------------------------------------------------
     if intent == "ANOMALY_SCAN_ALL":
-        _profiles = site_profiler.profiles if site_profiler.profiles else None
+        _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
         counts = count_anomaly_levels(rows, columns)
         data["total_tag_count"] = len(rows)
         data["error_count"] = counts["이상"]
@@ -5537,7 +5560,7 @@ def process_sql_result(
     # 시설 정밀 진단: Z-Score + 방향전환 + IF 복합 판정
     # -------------------------------------------------
     if intent == "ANOMALY_FACILITY_DETAIL":
-        _profiles = site_profiler.profiles if site_profiler.profiles else None
+        _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
         _site = params.get("sitename", "")
         _ft = params.get("facilitytype", "")
         counts = count_anomaly_levels(rows, columns)
@@ -6534,14 +6557,15 @@ async def ask(request: AskRequest):
 
     # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용, 인과 인덱스 + 시계열 직접 조회)
     if intent == "ANOMALY_FLOW_BALANCE":
+        _fb_sitename = params.get("sitename")
         try:
             if _FLOW_BALANCE_CACHE and _FLOW_BALANCE_CACHE_TIME:
                 cache_age = (datetime.now() - _FLOW_BALANCE_CACHE_TIME).total_seconds()
                 if cache_age < _FLOW_BALANCE_CACHE_TTL:
-                    params["_flow_balance_edges"] = _FLOW_BALANCE_CACHE
+                    params["_flow_balance_edges"] = _filter_flow_balance_edges(_FLOW_BALANCE_CACHE, _fb_sitename)
                     rows = [["flow_balance_cached"]]
                     columns = ["status"]
-                    logger.info(f"ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전)")
+                    logger.info(f"ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전), sitename={_fb_sitename}")
                 else:
                     raise ValueError("cache expired")
             else:
@@ -6554,10 +6578,10 @@ async def ask(request: AskRequest):
                     compute_flow_balance_all,
                     _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
                 )
-                params["_flow_balance_edges"] = edges
+                params["_flow_balance_edges"] = _filter_flow_balance_edges(edges, _fb_sitename)
                 rows = [["flow_balance_done"]]
                 columns = ["status"]
-                logger.info(f"ANOMALY_FLOW_BALANCE: {len(edges)}엣지")
+                logger.info(f"ANOMALY_FLOW_BALANCE: {len(edges)}엣지, sitename={_fb_sitename}")
             except Exception as e2:
                 logger.error(f"ANOMALY_FLOW_BALANCE 실패: {e2}")
                 params["_flow_balance_edges"] = []
@@ -7091,7 +7115,7 @@ async def ask(request: AskRequest):
                 processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
             logger.info(f"SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
             # per-row cross_status/verdict 병합
-            _profiles = site_profiler.profiles if site_profiler.profiles else None
+            _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
             enrich_rows_with_cross_verdict(rows, columns, cross_mismatches, site_profiles=_profiles)
             _vd_idx = columns.index("verdict") if "verdict" in columns else None
             if _vd_idx is not None:
@@ -7874,14 +7898,15 @@ async def ask_stream(request: AskRequest):
 
         # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용)
         if intent == "ANOMALY_FLOW_BALANCE":
+            _fb_sitename = params.get("sitename")
             try:
                 if _FLOW_BALANCE_CACHE and _FLOW_BALANCE_CACHE_TIME:
                     cache_age = (datetime.now() - _FLOW_BALANCE_CACHE_TIME).total_seconds()
                     if cache_age < _FLOW_BALANCE_CACHE_TTL:
-                        params["_flow_balance_edges"] = _FLOW_BALANCE_CACHE
+                        params["_flow_balance_edges"] = _filter_flow_balance_edges(_FLOW_BALANCE_CACHE, _fb_sitename)
                         rows = [["flow_balance_cached"]]
                         columns = ["status"]
-                        logger.info(f"[SSE] ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전)")
+                        logger.info(f"[SSE] ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전), sitename={_fb_sitename}")
                     else:
                         raise ValueError("cache expired")
                 else:
@@ -7894,10 +7919,10 @@ async def ask_stream(request: AskRequest):
                         compute_flow_balance_all,
                         _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
                     )
-                    params["_flow_balance_edges"] = edges
+                    params["_flow_balance_edges"] = _filter_flow_balance_edges(edges, _fb_sitename)
                     rows = [["flow_balance_done"]]
                     columns = ["status"]
-                    logger.info(f"[SSE] ANOMALY_FLOW_BALANCE: {len(edges)}엣지")
+                    logger.info(f"[SSE] ANOMALY_FLOW_BALANCE: {len(edges)}엣지, sitename={_fb_sitename}")
                 except Exception as e2:
                     logger.error(f"[SSE] ANOMALY_FLOW_BALANCE 실패: {e2}")
                     params["_flow_balance_edges"] = []
@@ -8429,7 +8454,7 @@ async def ask_stream(request: AskRequest):
                     processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
                 logger.info(f"[SSE] SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
                 # per-row cross_status/verdict 병합
-                _profiles = site_profiler.profiles if site_profiler.profiles else None
+                _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
                 enrich_rows_with_cross_verdict(rows, columns, cross_mismatches, site_profiles=_profiles)
                 _vd_idx = columns.index("verdict") if "verdict" in columns else None
                 if _vd_idx is not None:
@@ -8730,7 +8755,7 @@ async def dashboard_overview():
 
     # 2) 최근 경보 (진행중 + 최근 해제 12건)
     try:
-        conn = _get_conn()
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
             SELECT alarm_start_time, tagsn, alarm_status, alarm_severity,
@@ -8782,7 +8807,7 @@ async def health_check():
 @app.get("/anomaly/profiles")
 async def get_anomaly_profiles():
     """현재 현장 프로파일링 결과를 반환한다 (디버깅/모니터링용)."""
-    profiles = site_profiler.profiles
+    profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else {}
     result = []
     for (sitename, ft), p in sorted(profiles.items()):
         result.append({
@@ -10104,6 +10129,56 @@ async def get_alarm_analysis():
             conn.close()
 
 
+@app.get("/crisis/alarm-analysis/detail")
+async def get_alarm_analysis_detail(tagsn: str, alarm_start_time: str):
+    """단건 경보분석 상세 조회 (tagsn + alarm_start_time PK)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
+                TO_CHAR(alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
+                tagsn,
+                COALESCE(sitename, '') AS sitename,
+                COALESCE(facilitytype, '') AS facilitytype,
+                COALESCE(equipmenttype, '') AS equipmenttype,
+                COALESCE(equipment_id, '') AS equipment_id,
+                alarm_category, alarm_msg, alarm_value,
+                alarm_status, alarm_severity,
+                diagnosed_cause, action_plan, user_cause_description,
+                meta,
+                COALESCE(alarm_confirm_yn, 'N') AS alarm_confirm_yn,
+                countermeasure,
+                COALESCE(off_alarm_confirm_yn, 'N') AS off_alarm_confirm_yn,
+                is_false_alarm, false_alarm_notes, info_updated,
+                COALESCE(tagtype, '') AS tagtype,
+                stat, diagnosed_msg
+            FROM tb_equipment_alarm_report
+            WHERE tagsn = %s AND alarm_start_time = %s::timestamptz
+        """, (tagsn, alarm_start_time))
+        columns = [desc[0] for desc in cur.description]
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return {"status": "NOT_FOUND"}
+        rec = {}
+        for i, col in enumerate(columns):
+            val = row[i]
+            if col == "meta" and val is not None:
+                rec[col] = val if isinstance(val, dict) else {}
+            else:
+                rec[col] = val
+        return rec
+    except psycopg2.Error as e:
+        logger.error(f"경보분석 단건 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
 @app.get("/crisis/alarm-dashboard")
 async def get_alarm_dashboard_summary():
     """경보관리현황 대시보드 요약 (진행중 알람 집계)"""
@@ -11032,13 +11107,86 @@ async def get_monitoring_catalog_sites(facilitytype: str = ""):
         cur = conn.cursor()
         placeholders = ",".join(["%s"] * len(ftypes))
         cur.execute(
-            f"SELECT DISTINCT sitename FROM tb_monitoring_catalog WHERE facilitytype IN ({placeholders}) ORDER BY sitename",
+            f"SELECT DISTINCT sitename FROM tb_tag_info WHERE facilitytype IN ({placeholders}) AND sitename IS NOT NULL ORDER BY sitename",
             ftypes,
         )
         sites = [r[0] for r in cur.fetchall()]
         return {"status": "OK", "sites": sites}
     except Exception as e:
         logger.error(f"모니터링 사이트 목록 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/monitoring/catalogs/site-groups")
+async def get_monitoring_site_groups(facilitytype: str = ""):
+    """블록/소블록 등 하위 시설을 상류 시설 기준으로 그룹핑하여 반환"""
+    if not facilitytype:
+        return {"status": "ERROR", "message": "facilitytype 필수"}
+    ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        ph = ",".join(["%s"] * len(ftypes))
+        # 상류 시설 기준 그룹핑 (재귀 BFS — 최상위 정수장/배수지까지 추적)
+        cur.execute(f"""
+            WITH RECURSIVE all_sites AS (
+                SELECT DISTINCT sitename FROM tb_tag_info
+                WHERE facilitytype IN ({ph}) AND sitename IS NOT NULL
+            ),
+            root_trace AS (
+                -- 시드: 대상 시설의 직접 상류
+                SELECT f.downstream_sitename AS sitename,
+                       f.upstream_sitename AS ancestor,
+                       f.upstream_facilitytype AS ancestor_ft,
+                       1 AS depth
+                FROM tb_facility_flow_map f
+                WHERE f.downstream_facilitytype IN ({ph})
+                UNION ALL
+                -- 재귀: 상류의 상류를 추적 (최대 6단계)
+                SELECT rt.sitename,
+                       f.upstream_sitename,
+                       f.upstream_facilitytype,
+                       rt.depth + 1
+                FROM root_trace rt
+                JOIN tb_facility_flow_map f
+                    ON f.downstream_sitename = rt.ancestor
+                   AND f.downstream_facilitytype = rt.ancestor_ft
+                WHERE rt.depth < 6
+            ),
+            best_root AS (
+                -- 각 시설별 최상위 정수장 우선, 없으면 배수지, 없으면 가압장
+                SELECT DISTINCT ON (sitename)
+                    sitename,
+                    ancestor || ' ' || ancestor_ft AS group_label
+                FROM root_trace
+                WHERE ancestor_ft IN ('정수장','배수지','가압장','감압시설')
+                ORDER BY sitename,
+                    CASE ancestor_ft
+                        WHEN '정수장' THEN 1
+                        WHEN '배수지' THEN 2
+                        WHEN '가압장' THEN 3
+                        ELSE 4
+                    END,
+                    depth DESC
+            )
+            SELECT a.sitename,
+                   COALESCE(br.group_label, '미분류') AS group_label
+            FROM all_sites a
+            LEFT JOIN best_root br ON a.sitename = br.sitename
+            ORDER BY group_label, a.sitename
+        """, ftypes + ftypes)
+        rows = cur.fetchall()
+        # 그룹별 정리
+        groups: dict[str, list[str]] = {}
+        for sitename, group_label in rows:
+            groups.setdefault(group_label, []).append(sitename)
+        return {"status": "OK", "groups": groups}
+    except Exception as e:
+        logger.error(f"사이트 그룹핑 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn:
@@ -11358,24 +11506,123 @@ async def get_flow_map_realtime():
 
         # 4-a) 후보 전체 유지 (노드 구성 시 활성 태그 합산)
 
-        # 4-b) 배수지 용수공급가능시간 조회
-        reservoir_supply: dict[str, dict] = {}  # sitename -> {hours, status, reason}
+        # 4-b) 배수지 용수공급가능시간 + 일평균 유입/유출/사용량 조회
+        reservoir_supply: dict[str, dict] = {}  # sitename -> {hours, status, reason, avg_inflow, avg_outflow, avg_usage}
         reservoir_sites = [sn for sn, ft in node_set if ft == "배수지"]
         if reservoir_sites:
             try:
                 cur.execute("""
-                    SELECT sitename, total_supply_time, supply_time_status, supply_time_reason
-                    FROM tb_service_reservoir_status
-                    WHERE sitename = ANY(%s)
+                    SELECT s.sitename, s.total_supply_time, s.supply_time_status, s.supply_time_reason,
+                           v.avg_inflow, v.avg_outflow, v.avg_usage,
+                           nmf.night_min_flow
+                    FROM tb_service_reservoir_status s
+                    LEFT JOIN v_reservoir_info_status v ON s.sitename = v.sitename
+                    LEFT JOIN LATERAL (
+                        SELECT round(MIN(r.val)::numeric, 2) AS night_min_flow
+                        FROM tb_tag_raw_data r
+                        JOIN tb_tag_info ti ON r.tagsn = ti.tagsn
+                        WHERE ti.sitename = s.sitename
+                          AND ti.facilitytype = '배수지'
+                          AND ti.datainfo ILIKE '%%유출%%유량%%순시%%'
+                          AND EXTRACT(HOUR FROM r.logtime) BETWEEN 2 AND 4
+                          AND r.logtime >= now() - interval '7 days'
+                    ) nmf ON true
+                    WHERE s.sitename = ANY(%s)
                 """, (reservoir_sites,))
-                for sn, hours, status, reason in cur.fetchall():
+                for row in cur.fetchall():
+                    sn = row[0]
                     reservoir_supply[sn] = {
-                        "hours": float(hours) if hours is not None else None,
-                        "status": status or "",
-                        "reason": reason or "",
+                        "hours": float(row[1]) if row[1] is not None else None,
+                        "status": row[2] or "",
+                        "reason": row[3] or "",
+                        "avg_inflow": float(row[4]) if row[4] is not None else None,
+                        "avg_outflow": float(row[5]) if row[5] is not None else None,
+                        "avg_usage": float(row[6]) if row[6] is not None else None,
+                        "night_min_flow": float(row[7]) if row[7] is not None else None,
                     }
             except Exception:
                 conn.rollback()  # 컬럼 미존재 시 롤백 후 계속
+
+        # 4-b2) 배수지 적산 유량 (현재적산 + 금일적산)
+        if reservoir_sites:
+            try:
+                cur.execute("""
+                    WITH accum_tags AS (
+                        SELECT ti.sitename, ti.tagsn, ti.datainfo,
+                            CASE WHEN ti.datainfo ILIKE '%%유입%%' THEN 'inflow'
+                                 WHEN ti.datainfo ILIKE '%%유출%%' THEN 'outflow'
+                            END AS flow_dir
+                        FROM tb_tag_info ti
+                        WHERE ti.sitename = ANY(%s)
+                          AND ti.facilitytype = '배수지'
+                          AND ti.datainfo ILIKE '%%적산%%'
+                          AND (ti.datainfo ILIKE '%%유입%%' OR ti.datainfo ILIKE '%%유출%%')
+                          AND ti.tagtype = 'Analog Input'
+                    ),
+                    latest AS (
+                        SELECT a.sitename, a.flow_dir, a.tagsn,
+                            (SELECT r.val FROM tb_tag_raw_data r
+                             WHERE r.tagsn = a.tagsn AND r.logtime >= now() - interval '10 minutes'
+                             ORDER BY r.logtime DESC LIMIT 1) AS current_val
+                        FROM accum_tags a
+                    ),
+                    midnight AS (
+                        SELECT a.sitename, a.flow_dir, a.tagsn,
+                            (SELECT r.val FROM tb_tag_raw_data r
+                             WHERE r.tagsn = a.tagsn
+                               AND r.logtime >= date_trunc('day', now())
+                               AND r.logtime < date_trunc('day', now()) + interval '10 minutes'
+                             ORDER BY r.logtime ASC LIMIT 1) AS midnight_val
+                        FROM accum_tags a
+                    )
+                    SELECT l.sitename, l.flow_dir,
+                           l.current_val,
+                           CASE WHEN l.current_val IS NOT NULL AND m.midnight_val IS NOT NULL
+                                THEN l.current_val - m.midnight_val ELSE NULL END AS today_accum
+                    FROM latest l
+                    LEFT JOIN midnight m ON l.sitename = m.sitename AND l.flow_dir = m.flow_dir AND l.tagsn = m.tagsn
+                    WHERE l.current_val IS NOT NULL
+                """, (reservoir_sites,))
+                for row in cur.fetchall():
+                    sn, flow_dir, current_val, today_accum = row
+                    if sn in reservoir_supply:
+                        key_curr = f"{flow_dir}_accum_current"
+                        key_today = f"{flow_dir}_accum_today"
+                        reservoir_supply[sn][key_curr] = float(current_val) if current_val is not None else None
+                        reservoir_supply[sn][key_today] = float(today_accum) if today_accum is not None else None
+            except Exception:
+                conn.rollback()
+
+        # 4-c) 가압장 펌프 가동 상태 조회
+        booster_pump_status: dict[str, dict] = {}  # sitename -> {running, total}
+        booster_sites = [sn for sn, ft in node_set if ft == "가압장"]
+        if booster_sites:
+            try:
+                cur.execute("""
+                    SELECT ti.sitename, COUNT(*) AS total_pumps,
+                           SUM(CASE WHEN r.val = 1 THEN 1 ELSE 0 END) AS running_pumps
+                    FROM tb_tag_info ti
+                    JOIN LATERAL (
+                        SELECT val FROM tb_tag_raw_data r
+                        WHERE r.tagsn = ti.tagsn
+                          AND r.logtime >= now() - interval '10 minutes'
+                        ORDER BY logtime DESC LIMIT 1
+                    ) r ON true
+                    WHERE ti.sitename = ANY(%s)
+                      AND ti.facilitytype = '가압장'
+                      AND ti.equipmenttype ~ '가압펌프'
+                      AND (ti.datainfo ~* '운전|동작' OR ti.datadesc ~* 'RUN|동작')
+                      AND NOT ti.datainfo ~* 'FAULT|FLT|STOP|정지'
+                      AND ti.tagtype = 'Digital Input'
+                    GROUP BY ti.sitename
+                """, (booster_sites,))
+                for row in cur.fetchall():
+                    booster_pump_status[row[0]] = {
+                        "total": int(row[1]),
+                        "running": int(row[2]),
+                    }
+            except Exception:
+                conn.rollback()
 
         # 5) 노드 데이터 구성 — 같은 그룹의 활성 태그 합산
         node_data: dict[str, dict] = {}
@@ -11463,6 +11710,11 @@ async def get_flow_map_realtime():
             # 배수지: 용수공급가능시간 추가
             if ft == "배수지" and sn in reservoir_supply:
                 node_entry["supply_time"] = reservoir_supply[sn]
+            # 가압장: 펌프 가동 수 (DI 운전/동작/RUN 태그 중 val=1인 수)
+            if ft == "가압장":
+                pump_info = booster_pump_status.get(sn)
+                if pump_info:
+                    node_entry["pump_status"] = pump_info
             node_data[nid] = node_entry
 
         # 5-b) 진행 중인 알람 조회 — 시설별 가장 심각한 알람 등급 판정

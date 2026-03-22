@@ -1,5 +1,5 @@
 {
-  "hash": "f3dda740b07a2f2db2611963ef9a2ad4",
+  "hash": "0ec91c90e34489e95f69449be3e1c22e",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -234,6 +234,38 @@
       "배수지 급수량은 얼마야?"
     ],
     [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "신평 배수지 유입유량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "남산 배수지 유입유량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 유입유량 알려줘"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "행정 배수지 유입유량 현황"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "남산 배수지 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "신평 평균사용량은?"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 평균사용량 알려줘"
+    ],
+    [
+      "TODAY_RESERVOIR_AVG_USAGE",
+      "배수지 시간당 평균 사용량은?"
+    ],
+    [
       "TODAY_RESERVOIR_AVG_USAGE_ALL",
       "배수지 평균사용량은?"
     ],
@@ -336,6 +368,26 @@
     [
       "TODAY_OUTFLOW_ALL_STATUS",
       "배수지별 유출량은 얼마야?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "신평 배수지 유출유량은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "남산 배수지 유출유량은?"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "배수지 유출유량 알려줘"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "행정 배수지 유출유량 현황"
+    ],
+    [
+      "TODAY_OUTFLOW_ALL_STATUS",
+      "석문 유출유량은 얼마야?"
     ],
     [
       "BOOSTER_STATION_OVERVIEW",
@@ -2208,6 +2260,6 @@
   ],
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
-  "count": 551,
-  "built_at": "2026-03-11 23:01:52"
+  "count": 564,
+  "built_at": "2026-03-21 23:48:47"
 }
