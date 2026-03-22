@@ -4516,6 +4516,8 @@ def _execute_tag_daily_summary_query(
 # 2단계(tb_tag_info 조회 → 청크별 raw 쿼리)로 분리하여 우회한다.
 
 _TIMESERIES_CHUNK_INTENTS = frozenset({
+    "FACILITY_TREND",
+    "FACILITY_MIXED_TREND",
     "FACILITY_ANALOG_TIMESERIES_TABLE",
     "FACILITY_TAG_DATA_TABLE",
     "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE",
@@ -8324,12 +8326,14 @@ async def ask_stream(request: AskRequest):
             elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
                 _group = _group or "FLOW_CUMULATIVE"
 
+            logger.info(f"[SSE] TIMESERIES 쿼리 시작: intent={intent}, site={_sn}, ft={_ft_ts}, tagtype={_tagtype}, di_pat={_di_pat}, group={_group}, from={_from}, to={_to}")
             try:
                 _ts_rows, _ts_cols = await asyncio.to_thread(
                     _execute_timeseries_query,
                     _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
                     _group,
                 )
+                logger.info(f"[SSE] TIMESERIES 쿼리 완료: {len(_ts_rows)}행")
                 if _ts_rows:
                     rows = _ts_rows
                     columns = _ts_cols
