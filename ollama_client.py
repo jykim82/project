@@ -105,6 +105,7 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": CLASSIFIER_TEMPERATURE,
+                "num_ctx": 4096,  # 컨텍스트 제한 — 실사용 ~500토큰, 131K 기본값은 VRAM 낭비
             },
         }
 
