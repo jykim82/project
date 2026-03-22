@@ -5320,6 +5320,40 @@ def process_sql_result(
     if intent == "RESERVOIR_LEVEL_STATUS":
         data["level_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["level_detail_block"] = build_level_detail_block(rows, columns)
+        # 한달/일년 평균 수위 + 단위 추출 (첫 행 기준 or 전체 평균)
+        _level_vals = []
+        _month_vals = []
+        _year_vals = []
+        _level_unit = ""
+        for row in rows:
+            rd = dict(zip(columns, row))
+            lv = rd.get("latest_val")
+            am = rd.get("avg_month")
+            ay = rd.get("avg_year")
+            if lv is not None:
+                try:
+                    _level_vals.append(float(lv))
+                except (ValueError, TypeError):
+                    pass
+            if am is not None:
+                try:
+                    _month_vals.append(float(am))
+                except (ValueError, TypeError):
+                    pass
+            if ay is not None:
+                try:
+                    _year_vals.append(float(ay))
+                except (ValueError, TypeError):
+                    pass
+            if not _level_unit:
+                _level_unit = rd.get("unit", "m")
+        if _level_vals:
+            data["avg_latest"] = round(sum(_level_vals) / len(_level_vals), 2)
+        if _month_vals:
+            data["avg_month"] = round(sum(_month_vals) / len(_month_vals), 2)
+        if _year_vals:
+            data["avg_year"] = round(sum(_year_vals) / len(_year_vals), 2)
+        data["unit"] = _level_unit or "m"
 
     # -------------------------------------------------
     # 금일 적산 현황: 개별 적산 데이터 조립
