@@ -936,11 +936,13 @@ async def _anomaly_scan_cache_loop():
                 _ANOMALY_SCAN_CACHE_TIME = datetime.now()
                 row_count = len(result.get("rows", []))
                 logger.info(f"ANOMALY_SCAN_ALL 캐시 갱신: {row_count}행, {elapsed:.1f}초")
+                await asyncio.sleep(_ANOMALY_SCAN_CACHE_TTL)
             else:
-                logger.warning("ANOMALY_SCAN_ALL 캐시 갱신 실패: 빈 결과")
+                logger.warning("ANOMALY_SCAN_ALL 캐시 갱신 실패: 빈 결과 — 30초 후 재시도")
+                await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"ANOMALY_SCAN_ALL 캐시 갱신 실패: {e}")
-        await asyncio.sleep(_ANOMALY_SCAN_CACHE_TTL)
+            await asyncio.sleep(30)
 
 
 def _filter_flow_balance_edges(edges: list, sitename: str | None) -> list:
@@ -1010,8 +1012,9 @@ def _compute_flow_baselines() -> dict[str, float]:
 
         # 모니터링 대상 Analog Input 태그 전체
         cur.execute("""
-            SELECT tagsn FROM tb_tag_group_map
-            WHERE group_code IN (
+            SELECT m.tagsn FROM tb_tag_group_map m
+            JOIN tb_tag_data_group g ON m.group_id = g.group_id
+            WHERE g.group_code IN (
                 'FLOW_OUTLET','FLOW_INSTANT','FLOW_INLET','FLOW_CUMULATIVE',
                 'WATER_LEVEL','PRESSURE_OUTLET','PRESSURE_INLET',
                 'PRESSURE_DISCHARGE','PRESSURE'
