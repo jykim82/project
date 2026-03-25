@@ -3213,6 +3213,10 @@
           "text": "<<error:이상>> {error_count}건, <<warn:주의>> {warn_count}건, <<ok:정상>> {ok_count}건 | 통신장애 {comm_error_sites}건"
         },
         {
+          "prefix": "•",
+          "text": "ML(Isolation Forest) 분석: {ml_model_count}개 모델 적용, ML 이상 탐지 {ml_anomaly_count}건 (Z-Score 동의 {ml_agree_count}건)"
+        },
+        {
           "prefix": "",
           "text": "{anomaly_scan_detail_block}"
         }
@@ -3239,6 +3243,10 @@
           {
             "prefix": "•",
             "text": "통신장애는 해당 사이트의 통신이상 태그(10분 내)를 기준으로 판정합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "Isolation Forest는 다변량 ML 모델로, Z-Score와 독립적으로 이상을 판정합니다. 양쪽 모두 이상으로 판정한 건(동의)이 신뢰도가 높습니다."
           }
         ]
       },
@@ -3429,6 +3437,10 @@
           "text": "<<error:이상>> {error_count}건, <<warn:주의>> {warn_count}건, <<ok:정상>> {ok_count}건"
         },
         {
+          "prefix": "•",
+          "text": "ML(Isolation Forest) 이상 탐지: {ml_anomaly_count}건"
+        },
+        {
           "prefix": "",
           "text": "{anomaly_facility_detail_block}"
         }
@@ -3451,6 +3463,10 @@
           {
             "prefix": "•",
             "text": "간헐 가동 장비는 가동 중 데이터만으로 평균을 산출합니다."
+          },
+          {
+            "prefix": "•",
+            "text": "Isolation Forest: 다변량 ML 모델로 센서 간 상관관계를 고려한 이상 판정. Z-Score와 독립 분석 후 결과를 종합합니다."
           }
         ]
       },

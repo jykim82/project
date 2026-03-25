@@ -5596,6 +5596,9 @@ def process_sql_result(
         data["comm_error_sites"] = count_comm_error_sites(rows, columns)
 
         # Isolation Forest ML 보강 (백그라운드 학습 — ensure_trained 불필요)
+        data["ml_model_count"] = 0
+        data["ml_anomaly_count"] = 0
+        data["ml_agree_count"] = 0
         try:
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
@@ -5670,6 +5673,7 @@ def process_sql_result(
                 data["site_group"] = _group
 
         # Isolation Forest ML 보강
+        data["ml_anomaly_count"] = 0
         try:
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
