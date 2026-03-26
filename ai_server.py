@@ -9651,38 +9651,34 @@ async def get_alarm_analysis():
 
         cur.execute("""
             SELECT
-                TO_CHAR(r.alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
-                TO_CHAR(r.alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
-                r.tagsn,
-                COALESCE(r.sitename, '') AS sitename,
-                COALESCE(r.facilitytype, '') AS facilitytype,
-                COALESCE(r.equipmenttype, '') AS equipmenttype,
-                COALESCE(r.equipment_id, '') AS equipment_id,
-                r.alarm_category,
-                r.alarm_msg,
-                r.alarm_value,
-                r.alarm_status,
-                r.alarm_severity,
-                COALESCE(m.cause, r.diagnosed_cause) AS diagnosed_cause,
-                r.action_plan,
-                r.user_cause_description,
-                r.meta,
-                COALESCE(r.alarm_confirm_yn, 'N') AS alarm_confirm_yn,
-                COALESCE(m.action, r.countermeasure) AS countermeasure,
-                COALESCE(r.off_alarm_confirm_yn, 'N') AS off_alarm_confirm_yn,
-                r.is_false_alarm,
-                r.false_alarm_notes,
-                r.info_updated,
-                COALESCE(r.tagtype, '') AS tagtype,
-                r.stat,
-                r.diagnosed_msg,
-                m.title AS diag_title,
-                m.extra AS diag_extra
-            FROM tb_equipment_alarm_report r
-            LEFT JOIN tb_alarm_diagnosis_meta m
-                ON r.alarm_start_time = m.alarm_start_time AND r.tagsn = m.tagsn
-            WHERE r.alarm_start_time >= NOW() - INTERVAL '30 days'
-            ORDER BY r.alarm_start_time DESC
+                TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
+                TO_CHAR(alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
+                tagsn,
+                COALESCE(sitename, '') AS sitename,
+                COALESCE(facilitytype, '') AS facilitytype,
+                COALESCE(equipmenttype, '') AS equipmenttype,
+                COALESCE(equipment_id, '') AS equipment_id,
+                alarm_category,
+                alarm_msg,
+                alarm_value,
+                alarm_status,
+                alarm_severity,
+                COALESCE(meta->>'cause', diagnosed_cause) AS diagnosed_cause,
+                action_plan,
+                user_cause_description,
+                meta,
+                COALESCE(alarm_confirm_yn, 'N') AS alarm_confirm_yn,
+                COALESCE(meta->>'action', countermeasure) AS countermeasure,
+                COALESCE(off_alarm_confirm_yn, 'N') AS off_alarm_confirm_yn,
+                is_false_alarm,
+                false_alarm_notes,
+                info_updated,
+                COALESCE(tagtype, '') AS tagtype,
+                stat,
+                diagnosed_msg
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY alarm_start_time DESC
             LIMIT 500
         """)
         columns = [desc[0] for desc in cur.description]
