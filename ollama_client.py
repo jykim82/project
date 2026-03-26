@@ -99,13 +99,22 @@ class OllamaClient:
 
         use_model = model or get_model()
 
+        # AI 런타임 설정에서 파라미터 로드 (UI에서 변경 가능)
+        try:
+            from ai_server import _ai_settings
+            num_ctx = _ai_settings.num_ctx
+            temperature = _ai_settings.temperature
+        except (ImportError, AttributeError):
+            num_ctx = 4096
+            temperature = CLASSIFIER_TEMPERATURE
+
         payload = {
             "model": use_model,
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": CLASSIFIER_TEMPERATURE,
-                "num_ctx": 4096,  # 컨텍스트 제한 — 실사용 ~500토큰, 131K 기본값은 VRAM 낭비
+                "temperature": temperature,
+                "num_ctx": num_ctx,
             },
         }
 

@@ -1935,6 +1935,19 @@ if not DB_PASSWORD:
 
 
 # =============================================================================
+# AI 런타임 설정 (UI에서 변경 가능)
+# =============================================================================
+class _AiRuntimeSettings:
+    """서버 재시작 없이 변경 가능한 AI 파라미터"""
+    def __init__(self):
+        self.num_ctx: int = 4096
+        self.temperature: float = 0.0
+        self.timeout: int = 30
+
+_ai_settings = _AiRuntimeSettings()
+
+
+# =============================================================================
 # 요청 모델
 # =============================================================================
 class AskRequest(BaseModel):
@@ -9324,7 +9337,7 @@ async def delete_facility_file(facility_file_id: int):
 
 @app.get("/admin/site-settings")
 async def get_site_settings():
-    """사이트 설정 조회 (랜딩 페이지 활성화 등)"""
+    """사이트 설정 조회 (랜딩/DB접속/AI파라미터)"""
     conn = None
     try:
         conn = get_db_connection()
@@ -9341,9 +9354,37 @@ async def get_site_settings():
             if comm_cd == "LANDING_ENABLED":
                 settings["landing_enabled"] = use_yn == "Y"
 
-        # 레코드가 없으면 기본값
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
+
+        # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
+        settings["db"] = {
+            "host": DB_HOST,
+            "port": int(DB_PORT),
+            "name": DB_NAME,
+            "user": DB_USER,
+            "password_masked": "****" if DB_PASSWORD else "(미설정)",
+            "status": "connected",
+        }
+        try:
+            test_conn = get_db_connection()
+            test_conn.close()
+        except Exception:
+            settings["db"]["status"] = "disconnected"
+
+        # AI 모델 파라미터
+        from slm_config import (
+            OLLAMA_BASE_URL, OLLAMA_TIMEOUT,
+            CLASSIFIER_TEMPERATURE, get_model,
+        )
+        settings["ai"] = {
+            "base_url": OLLAMA_BASE_URL,
+            "model": get_model(),
+            "num_ctx": getattr(_ai_settings, "num_ctx", 4096),
+            "temperature": getattr(_ai_settings, "temperature", CLASSIFIER_TEMPERATURE),
+            "timeout": getattr(_ai_settings, "timeout", OLLAMA_TIMEOUT),
+            "ollama_available": ollama_client.health_check() if ollama_client else False,
+        }
 
         return settings
 
@@ -9357,16 +9398,16 @@ async def get_site_settings():
 
 @app.put("/admin/site-settings")
 async def update_site_settings(request: Request):
-    """사이트 설정 업데이트"""
+    """사이트 설정 업데이트 (랜딩/AI파라미터)"""
     conn = None
     try:
         body = await request.json()
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # 랜딩 페이지 설정
         if "landing_enabled" in body:
             use_yn = "Y" if body["landing_enabled"] else "N"
-            # UPSERT: 있으면 UPDATE, 없으면 INSERT
             cur.execute(
                 """
                 INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn, create_dt)
@@ -9378,8 +9419,28 @@ async def update_site_settings(request: Request):
             )
             conn.commit()
 
+        # AI 파라미터 변경 (서버 재시작 없이 즉시 반영)
+        ai = body.get("ai")
+        if ai:
+            if "num_ctx" in ai:
+                val = max(1024, min(32768, int(ai["num_ctx"])))
+                _ai_settings.num_ctx = val
+                logger.info(f"AI num_ctx 변경: {val}")
+            if "temperature" in ai:
+                val = max(0.0, min(1.0, float(ai["temperature"])))
+                _ai_settings.temperature = val
+                logger.info(f"AI temperature 변경: {val}")
+            if "timeout" in ai:
+                val = max(10, min(120, int(ai["timeout"])))
+                _ai_settings.timeout = val
+                logger.info(f"AI timeout 변경: {val}")
+            if "model" in ai:
+                from slm_config import set_model
+                set_model(ai["model"])
+                logger.info(f"AI model 변경: {ai['model']}")
+
         cur.close()
-        return {"status": "OK", "landing_enabled": body.get("landing_enabled", True)}
+        return {"status": "OK"}
 
     except Exception as e:
         if conn:
