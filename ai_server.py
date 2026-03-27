@@ -188,7 +188,8 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
     {
         "facilitytype": "가압장",
         "chain": [
-            {"step": 1, "group_code": "PUMP_STATUS",        "role": "cause",  "signal": "ON",      "expected": None},
+            {"step": 1, "group_code": "PUMP_STATUS",        "role": "cause",  "signal": "ON",      "expected": None,
+             "requires": [{"group_code": "VALVE_STATUS", "condition": "OPEN"}, {"group_code": "POWER_FAULT", "condition": "NORMAL"}]},
             {"step": 2, "group_code": "PRESSURE_DISCHARGE",  "role": "effect", "signal": None,      "expected": "RISE", "lag_min": 1, "lag_max": 5},
             {"step": 3, "group_code": "FLOW_OUTLET",         "role": "effect", "signal": None,      "expected": "RISE", "lag_min": 1, "lag_max": 5},
         ],
@@ -198,6 +199,31 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             "lag_min": 5,
             "lag_max": 30,
         },
+        "safety_interlocks": [
+            {"id": "SI_BOOSTER_01", "label": "토출압력 HH → 펌프 정지",
+             "trigger_gc": "PRESSURE_DISCHARGE", "trigger_condition": ">=HH",
+             "action_gc": "PUMP_STATUS", "action_expected": "OFF",
+             "direction": "self", "lag_min": 0, "lag_max": 1},
+            {"id": "SI_BOOSTER_02", "label": "하류 배수지 수위 HH → 펌프 정지",
+             "trigger_gc": "WATER_LEVEL", "trigger_condition": ">=HH",
+             "action_gc": "PUMP_STATUS", "action_expected": "OFF",
+             "direction": "downstream", "target_facilitytype": "배수지", "lag_min": 0, "lag_max": 3},
+        ],
+        "and_conditions": [
+            {"id": "AND_BOOSTER_01", "label": "펌프ON + 밸브OPEN + 전원정상 → 유출유량 > 0",
+             "conditions": [
+                 {"group_code": "PUMP_STATUS", "condition": "ON"},
+                 {"group_code": "VALVE_STATUS", "condition": "OPEN"},
+                 {"group_code": "POWER_FAULT", "condition": "NORMAL"},
+             ],
+             "effect_gc": "FLOW_OUTLET", "effect_expected": "NONZERO", "lag_min": 1, "lag_max": 5},
+        ],
+        "reverse_diagnostics": [
+            {"id": "RD_BOOSTER_01", "label": "유출유량 0 → 밸브 폐쇄 또는 펌프 정지 확인",
+             "observation_gc": "FLOW_OUTLET", "observation_condition": "ZERO",
+             "diagnose_gc": "PUMP_STATUS", "diagnose_expected": "OFF", "direction": "self"},
+        ],
+        "propagation": {"max_hops": 3, "forward_enabled": True, "backward_enabled": True},
     },
     # === 배수지: 수위 감시 → 밸브 개방 → 유출유량 → [하류 유입유량] ===
     {
@@ -213,6 +239,27 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             "lag_min": 5,
             "lag_max": 20,
         },
+        "safety_interlocks": [
+            {"id": "SI_RESERVOIR_01", "label": "수위 HH → 상류 가압장 펌프 정지 요청",
+             "trigger_gc": "WATER_LEVEL", "trigger_condition": ">=HH",
+             "action_gc": "PUMP_STATUS", "action_expected": "OFF",
+             "direction": "upstream", "target_facilitytype": "가압장", "lag_min": 0, "lag_max": 3},
+            {"id": "SI_RESERVOIR_02", "label": "수위 LL → 밸브 폐쇄 확인",
+             "trigger_gc": "WATER_LEVEL", "trigger_condition": "<=LL",
+             "action_gc": "VALVE_STATUS", "action_expected": "CLOSED",
+             "direction": "self", "lag_min": 0, "lag_max": 2},
+        ],
+        "and_conditions": [
+            {"id": "AND_RESERVOIR_01", "label": "밸브OPEN → 유출유량 > 0",
+             "conditions": [{"group_code": "VALVE_STATUS", "condition": "OPEN"}],
+             "effect_gc": "FLOW_OUTLET", "effect_expected": "NONZERO", "lag_min": 0, "lag_max": 3},
+        ],
+        "reverse_diagnostics": [
+            {"id": "RD_RESERVOIR_01", "label": "수위 하강 + 유출유량 0 → 누수 의심",
+             "observation_gc": "WATER_LEVEL", "observation_condition": "FALLING",
+             "diagnose_gc": "FLOW_OUTLET", "diagnose_expected": "ZERO", "direction": "self"},
+        ],
+        "propagation": {"max_hops": 3, "forward_enabled": True, "backward_enabled": True},
     },
     # === 감압시설: 유입압력 감시 → 밸브 조절 → 유출압력 안정 → [하류 유입압력] ===
     {
@@ -228,8 +275,17 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             "lag_min": 1,
             "lag_max": 10,
         },
+        "safety_interlocks": [
+            {"id": "SI_PRV_01", "label": "유출압력 HH → 밸브 추가 개방",
+             "trigger_gc": "PRESSURE_OUTLET", "trigger_condition": ">=HH",
+             "action_gc": "VALVE_STATUS", "action_expected": "REGULATE",
+             "direction": "self", "lag_min": 0, "lag_max": 2},
+        ],
+        "and_conditions": [],
+        "reverse_diagnostics": [],
+        "propagation": {"max_hops": 2, "forward_enabled": True, "backward_enabled": True},
     },
-    # === 소블록: 유량순시 감시 → 압력 상관 (FLOW_INSTANT 우선, FLOW_INLET 폴백) ===
+    # === 소블록: 유량순시 감시 → 압력 상관 ===
     {
         "facilitytype": "소블록",
         "chain": [
@@ -237,6 +293,10 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             {"step": 2, "group_code": "PRESSURE",       "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
         ],
         "cross_facility": None,
+        "safety_interlocks": [],
+        "and_conditions": [],
+        "reverse_diagnostics": [],
+        "propagation": {"max_hops": 1, "forward_enabled": False, "backward_enabled": True},
     },
     # === 소소블록: 소블록과 동일 ===
     {
@@ -246,6 +306,10 @@ CAUSAL_CHAIN_TEMPLATES: list[dict] = [
             {"step": 2, "group_code": "PRESSURE",       "role": "effect",  "signal": None,        "expected": "CORRELATE", "lag_min": 0, "lag_max": 10},
         ],
         "cross_facility": None,
+        "safety_interlocks": [],
+        "and_conditions": [],
+        "reverse_diagnostics": [],
+        "propagation": {"max_hops": 1, "forward_enabled": False, "backward_enabled": True},
     },
 ]
 
@@ -10026,6 +10090,10 @@ async def get_causal_rules():
         templates[t["facilitytype"]] = {
             "chain": t["chain"],
             "cross_facility": t.get("cross_facility"),
+            "safety_interlocks": t.get("safety_interlocks", []),
+            "and_conditions": t.get("and_conditions", []),
+            "reverse_diagnostics": t.get("reverse_diagnostics", []),
+            "propagation": t.get("propagation"),
         }
 
     # 2) 오버라이드 목록 (sitename, facilitytype, zone)
@@ -10169,6 +10237,10 @@ async def verify_causal(sitename: str, facilitytype: str):
         "downstream": info.get("downstream", []),
         "chain_steps": steps,
         "cross_facility": template.get("cross_facility"),
+        "safety_interlocks": template.get("safety_interlocks", []),
+        "and_conditions": template.get("and_conditions", []),
+        "reverse_diagnostics": template.get("reverse_diagnostics", []),
+        "propagation": template.get("propagation"),
     }
 
 

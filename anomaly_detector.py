@@ -1085,6 +1085,18 @@ _CAUSAL_PATTERNS = {
         "label": "유입압력활성+유출압력없음",
         "possible_causes": ["감압밸브 고착", "관로 막힘", "압력센서 이상"],
     },
+    "PREREQUISITE_FAILED": {
+        "label": "선행조건 미충족",
+        "possible_causes": ["밸브 미개방", "전원 이상", "설비 정지 상태에서 동작 시도"],
+    },
+    "SAFETY_INTERLOCK_VIOLATED": {
+        "label": "안전연동 위반",
+        "possible_causes": ["HH/LL 초과 시 설비 미정지", "연동 제어 실패", "센서 이상"],
+    },
+    "AND_CONDITION_VIOLATED": {
+        "label": "복합조건 위반",
+        "possible_causes": ["복수 조건 충족인데 결과 무반응", "설비 고장", "센서 이상"],
+    },
 }
 
 # 방향 판정 임계값 (%)
@@ -1124,6 +1136,26 @@ def _check_direction(values: list[float], expected: str) -> tuple[bool, str]:
     if expected == "CORRELATE":
         return (True, actual)  # 단순 감시: 항상 통과
     return (actual == expected, actual)
+
+
+def _check_prerequisite(value: float, condition: str) -> bool:
+    """선행조건 충족 여부를 판정한다.
+
+    Args:
+        value: 최신 태그값
+        condition: "ON" | "OFF" | "OPEN" | "CLOSED" | "NORMAL"
+
+    Returns:
+        True if prerequisite is met
+    """
+    cond_upper = condition.upper()
+    if cond_upper in ("ON", "OPEN"):
+        return value > 0
+    if cond_upper in ("OFF", "CLOSED"):
+        return value == 0
+    if cond_upper == "NORMAL":
+        return value == 0  # POWER_FAULT/COMM_ERROR: 0 = 정상
+    return True  # 알 수 없는 조건은 통과
 
 
 def _detect_sudden_drop(values: list[float]) -> bool:
@@ -1313,6 +1345,39 @@ def verify_causal_context(
                     "tagsn": tsn,
                 })
 
+        # ── 선행조건(requires) 검증 ──
+        requires = step_info.get("requires", [])
+        for req in requires:
+            req_gc = req["group_code"]
+            req_tagsns = tag_map.get(req_gc, [])
+            if not req_tagsns:
+                results.append({
+                    "step": step_info["step"],
+                    "group_code": req_gc,
+                    "role": "prerequisite",
+                    "condition": req["condition"],
+                    "met": False,
+                    "detail": f"{req_gc} 태그 없음",
+                })
+                continue
+            try:
+                req_data = query_func(req_tagsns, lookback_minutes)
+            except Exception:
+                continue
+            for req_tsn, req_vals in req_data.items():
+                if not req_vals:
+                    continue
+                req_met = _check_prerequisite(req_vals[-1], req["condition"])
+                results.append({
+                    "step": step_info["step"],
+                    "group_code": req_gc,
+                    "role": "prerequisite",
+                    "condition": req["condition"],
+                    "met": req_met,
+                    "tagsn": req_tsn,
+                    "actual_value": req_vals[-1],
+                })
+
     # ── 순방향 추적: 이후 step들 + 하류 시설 ──
     downstream_impacts = []
     for step_info in chain:
@@ -1401,6 +1466,11 @@ def _determine_pattern(
     facilitytype: str,
 ) -> str:
     """step_results를 분석하여 인과 패턴을 판정한다."""
+    # 선행조건 실패 체크 (최우선)
+    prereq_failures = [r for r in step_results if r.get("role") == "prerequisite" and r.get("met") is False]
+    if prereq_failures:
+        return "PREREQUISITE_FAILED"
+
     # cause 역할 태그의 상태 수집
     cause_active = None
     for r in step_results:
@@ -1575,6 +1645,151 @@ def _check_intra_effect(values: list[float], check_type: str) -> bool:
             return True
         return (second - first) / abs(first) * 100 >= -15.0
     return True
+
+
+def verify_safety_interlocks(
+    query_func,
+    sitename: str,
+    facilitytype: str,
+    causal_index: dict,
+    lookback_minutes: int = 30,
+    zone: str | None = None,
+) -> list[dict]:
+    """안전 연동 규칙 검증. trigger 조건 충족 시 action 기대 상태 확인."""
+    info = causal_index.get((sitename, facilitytype, zone)) if zone else None
+    if not info:
+        info = causal_index.get((sitename, facilitytype))
+    if not info:
+        return []
+
+    template = info["template"]
+    tag_map = info["tag_map"]
+    interlocks = template.get("safety_interlocks", [])
+    results = []
+
+    for si in interlocks:
+        trigger_tagsns = tag_map.get(si["trigger_gc"], [])
+        if not trigger_tagsns:
+            continue
+        try:
+            trigger_data = query_func(trigger_tagsns, lookback_minutes)
+        except Exception:
+            continue
+
+        trigger_val = None
+        for vals in trigger_data.values():
+            if vals:
+                trigger_val = vals[-1]
+                break
+        if trigger_val is None:
+            continue
+
+        # action 태그 조회
+        direction = si.get("direction", "self")
+        if direction == "self":
+            action_tagsns = tag_map.get(si["action_gc"], [])
+        else:
+            action_tagsns = _get_neighbor_tags(
+                causal_index, info, direction, si["action_gc"], si.get("target_facilitytype"))
+
+        if not action_tagsns:
+            continue
+        try:
+            action_data = query_func(action_tagsns, si.get("lag_max", 5))
+        except Exception:
+            continue
+
+        for tsn, vals in action_data.items():
+            if not vals:
+                continue
+            action_met = _check_prerequisite(vals[-1], si["action_expected"])
+            results.append({
+                "id": si["id"], "label": si["label"],
+                "trigger_value": trigger_val, "action_met": action_met,
+                "action_value": vals[-1], "tagsn": tsn,
+                "violated": not action_met,
+            })
+    return results
+
+
+def verify_and_conditions(
+    query_func,
+    sitename: str,
+    facilitytype: str,
+    causal_index: dict,
+    lookback_minutes: int = 30,
+    zone: str | None = None,
+) -> list[dict]:
+    """AND 조건 검증. 모든 conditions 충족 시 effect 기대."""
+    info = causal_index.get((sitename, facilitytype, zone)) if zone else None
+    if not info:
+        info = causal_index.get((sitename, facilitytype))
+    if not info:
+        return []
+
+    template = info["template"]
+    tag_map = info["tag_map"]
+    results = []
+
+    for ac in template.get("and_conditions", []):
+        all_met = True
+        cond_details = []
+        for cond in ac["conditions"]:
+            tagsns = tag_map.get(cond["group_code"], [])
+            met = False
+            if tagsns:
+                try:
+                    data = query_func(tagsns, lookback_minutes)
+                    for vals in data.values():
+                        if vals and _check_prerequisite(vals[-1], cond["condition"]):
+                            met = True
+                            break
+                except Exception:
+                    pass
+            cond_details.append({"group_code": cond["group_code"], "condition": cond["condition"], "met": met})
+            if not met:
+                all_met = False
+
+        if not all_met:
+            continue
+
+        # effect 확인
+        effect_tagsns = tag_map.get(ac["effect_gc"], [])
+        if not effect_tagsns:
+            continue
+        try:
+            effect_data = query_func(effect_tagsns, ac.get("lag_max", 5))
+        except Exception:
+            continue
+
+        for tsn, vals in effect_data.items():
+            if not vals:
+                continue
+            effect_ok = vals[-1] > 0 if ac["effect_expected"] == "NONZERO" else (vals[-1] == 0 if ac["effect_expected"] == "ZERO" else True)
+            results.append({
+                "id": ac["id"], "label": ac["label"],
+                "conditions_met": True, "effect_ok": effect_ok,
+                "effect_value": vals[-1], "tagsn": tsn,
+                "violated": not effect_ok,
+                "condition_details": cond_details,
+            })
+    return results
+
+
+def _get_neighbor_tags(
+    causal_index: dict, info: dict, direction: str,
+    group_code: str, target_facilitytype: str | None = None,
+) -> list[str]:
+    """상류/하류 시설의 특정 group_code 태그를 조회."""
+    neighbors = info.get("upstream" if direction == "upstream" else "downstream", [])
+    tagsns = []
+    for key in neighbors:
+        if target_facilitytype and len(key) >= 2 and key[1] != target_facilitytype:
+            continue
+        nb_info = causal_index.get(key)
+        if nb_info:
+            tagsns.extend(nb_info["tag_map"].get(group_code, []))
+    return tagsns
 
 
 def verify_intra_facility(
