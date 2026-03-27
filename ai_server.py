@@ -10742,6 +10742,78 @@ async def get_dashboard_summary():
 
 
 # =============================================================================
+# GIS 스파크라인 트렌드
+# =============================================================================
+
+@app.get("/trend/facility-sparkline")
+async def get_facility_sparkline(sitename: str, facilitytype: str, hours: int = 24):
+    """시설별 주요 태그 24h 스파크라인 데이터 (GIS 상세 패널용)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # 주요 아날로그 태그 최대 4개 (수위/유량/압력 우선)
+        cur.execute("""
+            SELECT tagsn, datainfo FROM tb_tag_info
+            WHERE sitename = %s AND facilitytype = %s
+              AND tagtype = 'Analog Input'
+              AND datainfo !~* 'HH|LL|알람|SET|상태|적산'
+            ORDER BY
+                CASE WHEN datainfo ~* '수위' THEN 1
+                     WHEN datainfo ~* '유량' THEN 2
+                     WHEN datainfo ~* '압력' THEN 3
+                     ELSE 4 END,
+                tagsn
+            LIMIT 4
+        """, (sitename, facilitytype))
+        tags = cur.fetchall()
+        if not tags:
+            cur.close()
+            return []
+
+        tagsn_list = [t[0] for t in tags]
+        tag_info = {t[0]: t[1] for t in tags}
+
+        # 시계열 조회 (5분 간격 다운샘플링)
+        cur.execute("""
+            SELECT tagsn,
+                   time_bucket('5 minutes', logtime) AS bucket,
+                   AVG(val) AS val
+            FROM tb_tag_raw_data
+            WHERE tagsn = ANY(%s)
+              AND logtime >= NOW() - INTERVAL '%s hours'
+            GROUP BY tagsn, bucket
+            ORDER BY tagsn, bucket
+        """, (tagsn_list, hours))
+        rows = cur.fetchall()
+        cur.close()
+
+        # 태그별 그룹핑
+        result = []
+        tag_data: dict[str, list] = {tsn: [] for tsn in tagsn_list}
+        for tsn, bucket, val in rows:
+            if tsn in tag_data and val is not None:
+                tag_data[tsn].append({"logtime": str(bucket), "val": round(float(val), 2)})
+
+        for tsn in tagsn_list:
+            if tag_data[tsn]:
+                result.append({
+                    "tagsn": tsn,
+                    "datainfo": tag_info.get(tsn, tsn),
+                    "data": tag_data[tsn],
+                })
+
+        return result
+
+    except Exception as e:
+        logger.error(f"스파크라인 조회 실패: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # 모니터링 카탈로그 CRUD
 # =============================================================================
 
