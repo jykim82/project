@@ -10813,6 +10813,71 @@ async def get_facility_sparkline(sitename: str, facilitytype: str, hours: int = 
             conn.close()
 
 
+@app.get("/gis/facility-info")
+async def get_gis_facility_info(sitename: str, facilitytype: str):
+    """GIS 시설 상세 정보 — 배수지/가압장 뷰 데이터 반환."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        result: dict = {"sitename": sitename, "facilitytype": facilitytype}
+
+        if facilitytype == "배수지":
+            cur.execute("""
+                SELECT install_year, service_area, zone_count,
+                       avg_reservoir_level, water_level_unit,
+                       avg_inflow, avg_inflow_unit, avg_outflow, avg_outflow_unit,
+                       avg_usage, usage_unit, total_supply_time,
+                       alarm_high_water_level, alarm_low_water_level,
+                       site_photo_url, system_diagram_url, general_overview
+                FROM v_reservoir_info_status WHERE sitename = %s
+            """, (sitename,))
+            row = cur.fetchone()
+            if row:
+                cols = [d[0] for d in cur.description]
+                result["info"] = {cols[i]: row[i] for i in range(len(cols)) if row[i] is not None}
+
+        elif facilitytype == "가압장":
+            cur.execute("""
+                SELECT linked_reservoir_name, pump_type,
+                       normal_operation_pump_count, pump_control_mode,
+                       running_pump_count, pump_start_threshold, pump_stop_threshold,
+                       pump_start_pressure, booster_inlet_pressure,
+                       booster_outlet_pressure, booster_avg_pressure,
+                       pressure_unit, site_photo_url, system_diagram_url, general_overview
+                FROM v_booster_station_info_status WHERE sitename = %s
+            """, (sitename,))
+            row = cur.fetchone()
+            if row:
+                cols = [d[0] for d in cur.description]
+                result["info"] = {cols[i]: row[i] for i in range(len(cols)) if row[i] is not None}
+
+        # 최근 알람 (7일)
+        cur.execute("""
+            SELECT TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI') AS start_time,
+                   alarm_severity, alarm_msg, alarm_status, alarm_category,
+                   COALESCE(meta->>'cause', diagnosed_cause) AS cause,
+                   COALESCE(meta->>'action', countermeasure) AS action,
+                   meta->>'title' AS diag_title
+            FROM tb_equipment_alarm_report
+            WHERE sitename = %s AND alarm_start_time >= NOW() - INTERVAL '7 days'
+            ORDER BY alarm_start_time DESC LIMIT 20
+        """, (sitename,))
+        alarm_cols = [d[0] for d in cur.description]
+        result["alarms"] = [dict(zip(alarm_cols, r)) for r in cur.fetchall()]
+
+        cur.close()
+        return result
+
+    except Exception as e:
+        logger.error(f"GIS 시설정보 조회 실패: {e}")
+        return {"sitename": sitename, "facilitytype": facilitytype, "info": {}, "alarms": []}
+    finally:
+        if conn:
+            conn.close()
+
+
 # =============================================================================
 # 모니터링 카탈로그 CRUD
 # =============================================================================
