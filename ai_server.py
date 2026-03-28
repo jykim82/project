@@ -3209,6 +3209,40 @@ def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
     return "\n    ".join(parts)
 
 
+def _filter_by_sitename(items: list | None, sitename: str | None) -> list | None:
+    """리스트 내 dict의 sitename 필드로 필터링. sitename 미지정/전체이면 원본 반환."""
+    if not items or not sitename or sitename in ("전체", "%%", ""):
+        return items
+    return [
+        item for item in items
+        if isinstance(item, dict) and (
+            item.get("sitename", "") == sitename
+            or sitename in str(item.get("sitename", ""))
+            or sitename in str(item.get("description", ""))
+            or sitename in str(item.get("tagsn", ""))
+        )
+    ] or None
+
+
+def _filter_flow_balance(summary: dict | None, sitename: str | None) -> dict | None:
+    """물 수지 요약에서 sitename이 포함된 엣지만 필터링."""
+    if not summary or not sitename or sitename in ("전체", "%%", ""):
+        return summary
+    worst = summary.get("worst_edges", [])
+    filtered = [
+        e for e in worst
+        if sitename in str(e.get("source", "")) or sitename in str(e.get("target", ""))
+    ]
+    if not filtered and not worst:
+        return None
+    total = summary.get("total_edges", 0)
+    return {
+        "total_edges": total,
+        "imbalance_count": len(filtered),
+        "worst_edges": filtered,
+    }
+
+
 def _filter_anomaly_cache_rows(
     rows: list, columns: list, params: dict,
 ) -> list:
@@ -6887,10 +6921,10 @@ async def ask(request: AskRequest):
                 cross_facility_mismatches=_c_data.get("cross_facility_mismatches"),
                 cross_facility_mismatch_count=_c_data.get("cross_facility_mismatch_count"),
                 cross_anomaly_count=_c_data.get("cross_anomaly_count"),
-                data_quality_issues=_c_data.get("data_quality_issues"),
-                equipment_failure_impacts=_c_data.get("equipment_failure_impacts"),
-                equipment_failure_count=_c_data.get("equipment_failure_count"),
-                flow_balance_summary=_c_data.get("flow_balance_summary"),
+                data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
+                equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
+                equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+                flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
             )
 
     # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (fn_night_min_flow_stats 대체, 53s→~10s)
