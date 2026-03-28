@@ -10855,7 +10855,7 @@ async def get_gis_facility_info(sitename: str, facilitytype: str):
                 cols = [d[0] for d in cur.description]
                 result["info"] = {cols[i]: row[i] for i in range(len(cols)) if row[i] is not None}
 
-        # 최근 알람 (7일)
+        # 알람: 진행중은 기간 무제한 + 해제는 최근 30일
         cur.execute("""
             SELECT TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI') AS start_time,
                    alarm_severity, alarm_msg, alarm_status, alarm_category,
@@ -10863,8 +10863,12 @@ async def get_gis_facility_info(sitename: str, facilitytype: str):
                    COALESCE(meta->>'action', countermeasure) AS action,
                    meta->>'title' AS diag_title
             FROM tb_equipment_alarm_report
-            WHERE sitename = %s AND alarm_start_time >= NOW() - INTERVAL '7 days'
-            ORDER BY alarm_start_time DESC LIMIT 20
+            WHERE sitename = %s
+              AND (alarm_status = '진행중' OR alarm_start_time >= NOW() - INTERVAL '30 days')
+            ORDER BY
+              CASE WHEN alarm_status = '진행중' THEN 0 ELSE 1 END,
+              alarm_start_time DESC
+            LIMIT 30
         """, (sitename,))
         alarm_cols = [d[0] for d in cur.description]
         result["alarms"] = [dict(zip(alarm_cols, r)) for r in cur.fetchall()]
