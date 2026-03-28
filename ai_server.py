@@ -10827,33 +10827,23 @@ async def get_gis_facility_info(sitename: str, facilitytype: str):
 
         if facilitytype == "배수지":
             cur.execute("""
-                SELECT install_year, service_area, zone_count,
-                       avg_reservoir_level, water_level_unit,
-                       avg_inflow, avg_inflow_unit, avg_outflow, avg_outflow_unit,
-                       avg_usage, usage_unit, total_supply_time,
-                       alarm_high_water_level, alarm_low_water_level,
-                       site_photo_url, system_diagram_url, general_overview
+                SELECT general_overview, meta
                 FROM v_reservoir_info_status WHERE sitename = %s
             """, (sitename,))
             row = cur.fetchone()
             if row:
-                cols = [d[0] for d in cur.description]
-                result["info"] = {cols[i]: row[i] for i in range(len(cols)) if row[i] is not None}
+                result["general_overview"] = row[0] if row[0] else None
+                result["equipment_meta"] = row[1] if row[1] else None
 
         elif facilitytype == "가압장":
             cur.execute("""
-                SELECT linked_reservoir_name, pump_type,
-                       normal_operation_pump_count, pump_control_mode,
-                       running_pump_count, pump_start_threshold, pump_stop_threshold,
-                       pump_start_pressure, booster_inlet_pressure,
-                       booster_outlet_pressure, booster_avg_pressure,
-                       pressure_unit, site_photo_url, system_diagram_url, general_overview
+                SELECT general_overview, meta
                 FROM v_booster_station_info_status WHERE sitename = %s
             """, (sitename,))
             row = cur.fetchone()
             if row:
-                cols = [d[0] for d in cur.description]
-                result["info"] = {cols[i]: row[i] for i in range(len(cols)) if row[i] is not None}
+                result["general_overview"] = row[0] if row[0] else None
+                result["equipment_meta"] = row[1] if row[1] else None
 
         # 알람: 진행중은 기간 무제한 + 해제는 최근 30일
         cur.execute("""
