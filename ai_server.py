@@ -10752,19 +10752,21 @@ async def get_facility_sparkline(sitename: str, facilitytype: str, hours: int = 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # 주요 아날로그 태그 최대 4개 (수위/유량/압력 우선)
+        # 주요 아날로그 태그 최대 6개 (수위/유량순시/적산/압력 우선)
         cur.execute("""
             SELECT tagsn, datainfo FROM tb_tag_info
             WHERE sitename = %s AND facilitytype = %s
               AND tagtype = 'Analog Input'
-              AND datainfo !~* 'HH|LL|알람|SET|상태|적산'
+              AND datainfo !~* 'HH|LL|알람|SET|상태'
             ORDER BY
                 CASE WHEN datainfo ~* '수위' THEN 1
-                     WHEN datainfo ~* '유량' THEN 2
-                     WHEN datainfo ~* '압력' THEN 3
-                     ELSE 4 END,
+                     WHEN datainfo ~* '유량' AND datainfo ~* '순시' THEN 2
+                     WHEN datainfo ~* '적산' THEN 3
+                     WHEN datainfo ~* '유량' THEN 4
+                     WHEN datainfo ~* '압력' THEN 5
+                     ELSE 6 END,
                 tagsn
-            LIMIT 4
+            LIMIT 6
         """, (sitename, facilitytype))
         tags = cur.fetchall()
         if not tags:
