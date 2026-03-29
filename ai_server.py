@@ -9597,6 +9597,225 @@ async def get_alarm_notifications():
 
 
 # =============================================================================
+# 경보 관리 API (프론트엔드 /alarm 페이지용)
+# =============================================================================
+
+# 장비유형별 기본 unit 매핑
+_EQUIP_DEFAULT_UNIT = {"수위계": "m", "압력계": "kgf/㎠", "유량계": "㎥/h"}
+
+
+def _extract_alarm_level(alarm_msg: str) -> str:
+    """alarm_msg에서 HH/H/L/LL 레벨 추출"""
+    if not alarm_msg:
+        return "H"
+    if "HH" in alarm_msg:
+        return "HH"
+    if "LL" in alarm_msg:
+        return "LL"
+    # H/L 단독: ' H ', 'H 상태', '#n H' 등
+    import re
+    if re.search(r"(?<![HL])\bH\b|H\s*상태", alarm_msg):
+        return "H"
+    if re.search(r"(?<![HL])\bL\b|L\s*상태", alarm_msg):
+        return "L"
+    return "H"
+
+
+def _derive_related_tags(tagsn: str):
+    """AMA/LEA 경보태그 → (설정값 태그, 측정값 태그) 도출"""
+    setpoint_tag, measure_tag = None, None
+    if "_AMA_" in tagsn:
+        setpoint_tag = tagsn.replace("_AMA_", "_AMC_")
+        parts = tagsn.split("_AMA_N0")
+        if len(parts) == 2 and len(parts[1]) >= 1:
+            pool = int(parts[1][0]) + 1
+            measure_tag = f"{parts[0]}_LEI_N00{pool}"
+    elif "_LEA_" in tagsn:
+        setpoint_tag = tagsn.replace("_LEA_", "_LEC_")
+        parts = tagsn.split("_LEA_N0")
+        if len(parts) == 2 and len(parts[1]) >= 1:
+            pool = int(parts[1][0]) + 1
+            measure_tag = f"{parts[0]}_LEI_N00{pool}"
+    return setpoint_tag, measure_tag
+
+
+def _clean_tag_name(alarm_msg: str) -> str:
+    """alarm_msg → 표시용 태그명 (접두사/레벨 제거)"""
+    name = (alarm_msg or "").replace("경보_", "")
+    for sfx in (" HH 상태", " LL 상태", " H 상태", " L 상태",
+                 " HH", " LL"):
+        name = name.replace(sfx, "")
+    return name.strip()
+
+
+@app.get("/alarm/list")
+async def get_alarm_list(
+    date_from: str = "",
+    date_to: str = "",
+    level: str = "",
+    facility: str = "",
+):
+    """경보 이력 조회 — 실제 측정값/설정값 포함 AlarmRecord 형식"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # ── 1. 알람 레코드 조회 ──
+        conditions: list[str] = []
+        params: list = []
+        if date_from:
+            conditions.append("alarm_start_time >= %s::timestamp")
+            params.append(f"{date_from} 00:00:00")
+        if date_to:
+            conditions.append("alarm_start_time <= %s::timestamp")
+            params.append(f"{date_to} 23:59:59")
+        if facility:
+            conditions.append("facilitytype = %s")
+            params.append(facility)
+        where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        cur.execute(f"""
+            SELECT alarm_start_time, tagsn, sitename, facilitytype,
+                   equipmenttype, alarm_msg, alarm_status, alarm_value
+            FROM tb_equipment_alarm_report
+            {where_sql}
+            ORDER BY alarm_start_time DESC
+            LIMIT 500
+        """, params)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        # ── 2. 관련 태그 매핑 수집 ──
+        sp_map: dict[str, str] = {}   # alarm_tagsn → setpoint_tagsn
+        ms_map: dict[str, str] = {}   # alarm_tagsn → measure_tagsn
+        for row in rows:
+            sp, ms = _derive_related_tags(row["tagsn"])
+            if sp:
+                sp_map[row["tagsn"]] = sp
+            if ms:
+                ms_map[row["tagsn"]] = ms
+
+        # ── 3. 설정값(AMC/LEC) 배치 조회 ──
+        sp_vals: dict[str, float] = {}
+        uniq_sp = list(set(sp_map.values()))
+        if uniq_sp:
+            cur.execute("""
+                SELECT DISTINCT ON (tagsn) tagsn, val
+                FROM tb_tag_raw_data
+                WHERE tagsn = ANY(%s)
+                ORDER BY tagsn, logtime DESC
+            """, (uniq_sp,))
+            for tagsn, val in cur.fetchall():
+                if val is not None:
+                    sp_vals[tagsn] = float(val)
+
+        # ── 4. 측정값(LEI) + unit 배치 조회 ──
+        ms_vals: dict[str, float] = {}
+        ms_units: dict[str, str] = {}
+        uniq_ms = list(set(ms_map.values()))
+        if uniq_ms:
+            cur.execute("""
+                SELECT DISTINCT ON (tagsn) tagsn, val
+                FROM tb_tag_raw_data
+                WHERE tagsn = ANY(%s)
+                ORDER BY tagsn, logtime DESC
+            """, (uniq_ms,))
+            for tagsn, val in cur.fetchall():
+                if val is not None:
+                    ms_vals[tagsn] = float(val)
+            cur.execute("""
+                SELECT tagsn, COALESCE(unit, '') FROM tb_tag_info
+                WHERE tagsn = ANY(%s)
+            """, (uniq_ms,))
+            for tagsn, unit in cur.fetchall():
+                ms_units[tagsn] = unit or ""
+
+        cur.close()
+
+        # ── 5. AlarmRecord 조립 ──
+        results = []
+        for idx, row in enumerate(rows):
+            alarm_level = _extract_alarm_level(row["alarm_msg"])
+            if level and alarm_level != level:
+                continue
+
+            tagsn = row["tagsn"]
+            sp_tag = sp_map.get(tagsn)
+            ms_tag = ms_map.get(tagsn)
+
+            threshold = sp_vals.get(sp_tag) if sp_tag else None
+            value = ms_vals.get(ms_tag) if ms_tag else None
+            unit = ms_units.get(ms_tag, "") if ms_tag else ""
+
+            # unit 없으면 장비유형 기본값
+            if not unit:
+                unit = _EQUIP_DEFAULT_UNIT.get(row["equipmenttype"] or "", "")
+
+            # value 없으면 alarm_value fallback
+            if value is None:
+                av = row["alarm_value"]
+                value = float(av) if av is not None else 0
+
+            status = "발생중" if row["alarm_status"] == "진행중" else "복귀"
+
+            results.append({
+                "id": idx + 1,
+                "occurredAt": row["alarm_start_time"].strftime("%Y-%m-%d %H:%M:%S") if row["alarm_start_time"] else "",
+                "siteName": row["sitename"] or "",
+                "facilityType": row["facilitytype"] or "",
+                "alarmLevel": alarm_level,
+                "tagName": _clean_tag_name(row["alarm_msg"]),
+                "value": round(value, 2),
+                "threshold": round(threshold, 2) if threshold else 0,
+                "unit": unit,
+                "status": status,
+            })
+
+        return results
+
+    except psycopg2.Error as e:
+        logger.error(f"알람 목록 조회 실패: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/alarm/summary")
+async def get_alarm_summary():
+    """경보 요약 통계 (최근 30일)"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE alarm_msg ~* 'HH') AS hh_count,
+                COUNT(*) FILTER (WHERE alarm_msg ~* 'LL') AS ll_count,
+                COUNT(*) FILTER (WHERE alarm_status = '알람해제') AS recovered
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= NOW() - INTERVAL '30 days'
+        """)
+        total, hh, ll, recovered = cur.fetchone()
+        cur.close()
+        # hCount = total - hh - ll (HH/LL 아닌 나머지 = H/L/기타)
+        return {
+            "totalCount": total or 0,
+            "hhCount": (hh or 0) + (ll or 0),
+            "hCount": (total or 0) - (hh or 0) - (ll or 0),
+            "recoveredCount": recovered or 0,
+        }
+    except psycopg2.Error as e:
+        logger.error(f"알람 요약 조회 실패: {e}")
+        return {"totalCount": 0, "hhCount": 0, "hCount": 0, "recoveredCount": 0}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # 자동완성 후보 API
 # =============================================================================
 
@@ -9962,8 +10181,12 @@ async def confirm_alarm_report_api(request: Request):
 @app.get("/crisis/tasks")
 async def get_tasks(
     sitename: str = Query("", description="현장명 필터"),
+    facilitytype: str = Query("", description="시설유형 필터"),
     task_category: str = Query("", description="카테고리 필터"),
     active_only: bool = Query(False, description="진행중만"),
+    date_from: str = Query("", description="작업일자 시작"),
+    date_to: str = Query("", description="작업일자 종료"),
+    keyword: str = Query("", description="내용 키워드"),
 ):
     """작업 목록 조회."""
     conn = None
@@ -9975,11 +10198,23 @@ async def get_tasks(
         if sitename:
             conditions.append("sitename ILIKE %s")
             params.append(f"%{sitename}%")
+        if facilitytype and facilitytype != "all":
+            conditions.append("facilitytype = %s")
+            params.append(facilitytype)
         if task_category and task_category != "all":
             conditions.append("task_category = %s")
             params.append(task_category)
         if active_only:
             conditions.append("(task_end_time IS NULL OR task_end_time > NOW())")
+        if date_from:
+            conditions.append("task_start_time >= %s::timestamptz")
+            params.append(date_from)
+        if date_to:
+            conditions.append("(task_end_time IS NULL OR task_end_time <= %s::timestamptz + INTERVAL '1 day')")
+            params.append(date_to)
+        if keyword:
+            conditions.append("task_content ILIKE %s")
+            params.append(f"%{keyword}%")
         where = " AND ".join(conditions)
         cur.execute(f"""
             SELECT task_id, sitename, facilitytype, task_category,
