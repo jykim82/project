@@ -9956,6 +9956,151 @@ async def confirm_alarm_report_api(request: Request):
 
 
 # =============================================================================
+# 작업관리 CRUD API
+# =============================================================================
+
+@app.get("/crisis/tasks")
+async def get_tasks(
+    sitename: str = Query("", description="현장명 필터"),
+    task_category: str = Query("", description="카테고리 필터"),
+    active_only: bool = Query(False, description="진행중만"),
+):
+    """작업 목록 조회."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        conditions = ["1=1"]
+        params: list = []
+        if sitename:
+            conditions.append("sitename ILIKE %s")
+            params.append(f"%{sitename}%")
+        if task_category and task_category != "all":
+            conditions.append("task_category = %s")
+            params.append(task_category)
+        if active_only:
+            conditions.append("(task_end_time IS NULL OR task_end_time > NOW())")
+        where = " AND ".join(conditions)
+        cur.execute(f"""
+            SELECT task_id, sitename, facilitytype, task_category,
+                   TO_CHAR(task_start_time, 'YYYY-MM-DD HH24:MI:SS') AS task_start_time,
+                   TO_CHAR(task_end_time, 'YYYY-MM-DD HH24:MI:SS') AS task_end_time,
+                   suspend_alarm_types, task_content, alarm_report_id,
+                   TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
+                   TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at
+            FROM tb_task_master
+            WHERE {where}
+            ORDER BY task_start_time DESC
+            LIMIT 200
+        """, params)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": rows}
+    except Exception as e:
+        logger.error(f"작업 목록 조회 실패: {e}")
+        return {"status": "error", "message": str(e), "data": []}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/crisis/tasks")
+async def create_task(body: dict = Body(...)):
+    """작업 등록."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO tb_task_master
+                (sitename, facilitytype, task_category, task_start_time, task_end_time,
+                 suspend_alarm_types, task_content, alarm_report_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING task_id
+        """, (
+            body.get("sitename", ""),
+            body.get("facilitytype", ""),
+            body.get("task_category", "점검"),
+            body.get("task_start_time"),
+            body.get("task_end_time") or None,
+            json.dumps(body.get("suspend_alarm_types", [])),
+            body.get("task_content", ""),
+            body.get("alarm_report_id") or None,
+        ))
+        task_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "task_id": task_id}
+    except Exception as e:
+        logger.error(f"작업 등록 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.put("/crisis/tasks/{task_id}")
+async def update_task(task_id: int, body: dict = Body(...)):
+    """작업 수정."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tb_task_master SET
+                sitename = %s, facilitytype = %s, task_category = %s,
+                task_start_time = %s, task_end_time = %s,
+                suspend_alarm_types = %s, task_content = %s,
+                updated_at = NOW()
+            WHERE task_id = %s
+        """, (
+            body.get("sitename", ""),
+            body.get("facilitytype", ""),
+            body.get("task_category", "점검"),
+            body.get("task_start_time"),
+            body.get("task_end_time") or None,
+            json.dumps(body.get("suspend_alarm_types", [])),
+            body.get("task_content", ""),
+            task_id,
+        ))
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        logger.error(f"작업 수정 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.delete("/crisis/tasks/{task_id}")
+async def delete_task(task_id: int):
+    """작업 삭제."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tb_task_master WHERE task_id = %s", (task_id,))
+        conn.commit()
+        cur.close()
+        return {"status": "OK"}
+    except Exception as e:
+        logger.error(f"작업 삭제 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # 태그 마스터 API
 # =============================================================================
 
@@ -10861,23 +11006,29 @@ async def get_gis_facility_info(sitename: str, facilitytype: str):
 
         if facilitytype == "배수지":
             cur.execute("""
-                SELECT general_overview, meta
-                FROM v_reservoir_info_status WHERE sitename = %s
+                SELECT v.general_overview, v.meta, i.site_photo_url
+                FROM v_reservoir_info_status v
+                LEFT JOIN tb_service_reservoir_info i ON i.sitename = v.sitename
+                WHERE v.sitename = %s
             """, (sitename,))
             row = cur.fetchone()
             if row:
                 result["general_overview"] = row[0] if row[0] else None
                 result["equipment_meta"] = row[1] if row[1] else None
+                result["site_photo_url"] = row[2] if row[2] else None
 
         elif facilitytype == "가압장":
             cur.execute("""
-                SELECT general_overview, meta
-                FROM v_booster_station_info_status WHERE sitename = %s
+                SELECT v.general_overview, v.meta, i.site_photo_url
+                FROM v_booster_station_info_status v
+                LEFT JOIN tb_service_booster_station_info i ON i.sitename = v.sitename
+                WHERE v.sitename = %s
             """, (sitename,))
             row = cur.fetchone()
             if row:
                 result["general_overview"] = row[0] if row[0] else None
                 result["equipment_meta"] = row[1] if row[1] else None
+                result["site_photo_url"] = row[2] if row[2] else None
 
         # 알람: 진행중은 기간 무제한 + 해제는 최근 30일
         cur.execute("""
