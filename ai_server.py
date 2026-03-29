@@ -1021,7 +1021,7 @@ def _filter_flow_balance_edges(edges: list, sitename: str | None) -> list:
         ds_names = [d.get("sitename", "") for d in e.get("downstream_facilities", [])]
         if sitename in ds_names:
             filtered.append(e)
-    return filtered if filtered else edges  # 매칭 없으면 전체 반환 (폴백)
+    return filtered  # 매칭 없으면 빈 리스트
 
 
 async def _flow_balance_cache_loop():
@@ -3210,28 +3210,25 @@ def build_anomaly_facility_filter(intent_name: str, params: dict) -> str:
 
 
 def _filter_by_sitename(items: list | None, sitename: str | None) -> list | None:
-    """리스트 내 dict의 sitename 필드로 필터링. sitename 미지정/전체이면 원본 반환."""
+    """리스트 내 dict의 sitename 필드로 필터링. sitename 미지정/전체이면 원본 반환.
+    정확 매칭 우선, 없으면 빈 리스트 반환."""
     if not items or not sitename or sitename in ("전체", "%%", ""):
         return items
     return [
         item for item in items
-        if isinstance(item, dict) and (
-            item.get("sitename", "") == sitename
-            or sitename in str(item.get("sitename", ""))
-            or sitename in str(item.get("description", ""))
-            or sitename in str(item.get("tagsn", ""))
-        )
+        if isinstance(item, dict) and item.get("sitename", "") == sitename
     ] or None
 
 
 def _filter_flow_balance(summary: dict | None, sitename: str | None) -> dict | None:
-    """물 수지 요약에서 sitename이 포함된 엣지만 필터링."""
+    """물 수지 요약에서 sitename이 정확히 일치하는 엣지만 필터링."""
     if not summary or not sitename or sitename in ("전체", "%%", ""):
         return summary
     worst = summary.get("worst_edges", [])
     filtered = [
         e for e in worst
-        if sitename in str(e.get("source", "")) or sitename in str(e.get("target", ""))
+        if e.get("upstream_sitename", "") == sitename
+        or e.get("downstream_sitename", "") == sitename
     ]
     if not filtered and not worst:
         return None
@@ -3241,6 +3238,20 @@ def _filter_flow_balance(summary: dict | None, sitename: str | None) -> dict | N
         "imbalance_count": len(filtered),
         "worst_edges": filtered,
     }
+
+
+def _filter_cross_mismatches(mismatches: list | None, sitename: str | None) -> list | None:
+    """교차검증 불일치 목록에서 sitename이 정확히 일치하는 항목만 필터링."""
+    if not mismatches or not sitename or sitename in ("전체", "%%", ""):
+        return mismatches
+    return [
+        m for m in mismatches
+        if isinstance(m, dict) and (
+            m.get("sitename", "") == sitename
+            or m.get("upstream_sitename", "") == sitename
+            or m.get("downstream_sitename", "") == sitename
+        )
+    ] or None
 
 
 def _filter_anomaly_cache_rows(
@@ -6918,9 +6929,9 @@ async def ask(request: AskRequest):
                 data_truncated=_trunc,
                 intent_candidates=intent_candidates,
                 site_group_distribution=_c_data.get("site_group_distribution"),
-                cross_facility_mismatches=_c_data.get("cross_facility_mismatches"),
-                cross_facility_mismatch_count=_c_data.get("cross_facility_mismatch_count"),
                 cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+                cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
+                cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
                 data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
                 equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
                 equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
