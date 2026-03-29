@@ -6876,7 +6876,7 @@ async def ask(request: AskRequest):
     if intent == "ANOMALY_SCAN_ALL" and _ANOMALY_SCAN_CACHE and _ANOMALY_SCAN_CACHE_TIME:
         cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
         if cache_age < _ANOMALY_SCAN_CACHE_TTL:
-            logger.info(f"ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전)")
+            logger.info(f"ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전) sitename={params.get('sitename')!r} facilitytype={params.get('facilitytype')!r}")
             _c = _ANOMALY_SCAN_CACHE
             _c_rows = _c["rows"]
             _c_cols = _c["columns"]
@@ -7524,10 +7524,13 @@ async def ask(request: AskRequest):
         site_group_distribution=processed_data.get("site_group_distribution"),
         site_group=processed_data.get("site_group"),
         pattern_analysis=processed_data.get("pattern_analysis"),
-        cross_facility_mismatches=processed_data.get("cross_facility_mismatches"),
-        cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
+        cross_facility_mismatches=_filter_cross_mismatches(processed_data.get("cross_facility_mismatches"), params.get("sitename")),
+        cross_facility_mismatch_count=len(_filter_cross_mismatches(processed_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
         cross_anomaly_count=processed_data.get("cross_anomaly_count"),
-        flow_balance_summary=processed_data.get("flow_balance_summary"),
+        data_quality_issues=_filter_by_sitename(processed_data.get("data_quality_issues"), params.get("sitename")),
+        equipment_failure_impacts=_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")),
+        equipment_failure_count=len(_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+        flow_balance_summary=_filter_flow_balance(processed_data.get("flow_balance_summary"), params.get("sitename")),
         intra_facility=processed_data.get("intra_facility"),
     )
 
@@ -8264,13 +8267,13 @@ async def ask_stream(request: AskRequest):
                     data_truncated=_trunc,
                     intent_candidates=intent_candidates,
                     site_group_distribution=_c_data.get("site_group_distribution"),
-                    cross_facility_mismatches=_c_data.get("cross_facility_mismatches"),
-                    cross_facility_mismatch_count=_c_data.get("cross_facility_mismatch_count"),
                     cross_anomaly_count=_c_data.get("cross_anomaly_count"),
-                    data_quality_issues=_c_data.get("data_quality_issues"),
-                    equipment_failure_impacts=_c_data.get("equipment_failure_impacts"),
-                    equipment_failure_count=_c_data.get("equipment_failure_count"),
-                    flow_balance_summary=_c_data.get("flow_balance_summary"),
+                    cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
+                    cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
+                    data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
+                    equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
+                    equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+                    flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
                 ))
                 return
 
@@ -8852,10 +8855,13 @@ async def ask_stream(request: AskRequest):
             site_group_distribution=processed_data.get("site_group_distribution"),
             site_group=processed_data.get("site_group"),
             pattern_analysis=processed_data.get("pattern_analysis"),
-            cross_facility_mismatches=processed_data.get("cross_facility_mismatches"),
-            cross_facility_mismatch_count=processed_data.get("cross_facility_mismatch_count"),
             cross_anomaly_count=processed_data.get("cross_anomaly_count"),
-            flow_balance_summary=processed_data.get("flow_balance_summary"),
+            cross_facility_mismatches=_filter_cross_mismatches(processed_data.get("cross_facility_mismatches"), params.get("sitename")),
+            cross_facility_mismatch_count=len(_filter_cross_mismatches(processed_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
+            data_quality_issues=_filter_by_sitename(processed_data.get("data_quality_issues"), params.get("sitename")),
+            equipment_failure_impacts=_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")),
+            equipment_failure_count=len(_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+            flow_balance_summary=_filter_flow_balance(processed_data.get("flow_balance_summary"), params.get("sitename")),
             intra_facility=processed_data.get("intra_facility"),
         )
 
