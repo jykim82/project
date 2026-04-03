@@ -45,6 +45,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import psycopg2
+import psycopg2.pool
 from fastapi import FastAPI, Request, UploadFile, File, Form, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -87,6 +88,7 @@ from snmp_poller import SnmpPoller
 from endpoints.facility_crud import router as facility_crud_router, init as init_facility_crud
 from endpoints.network_crud import router as network_crud_router, init as init_network_crud
 from endpoints.canvas_crud import router as canvas_crud_router, init as init_canvas_crud
+from endpoints.auth_crud import router as auth_crud_router, init as init_auth_crud
 
 # =============================================================================
 # 로깅 설정
@@ -1585,6 +1587,9 @@ async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
     global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, _sync_task, site_profiler, _sync_worker
 
+    # DB 커넥션 풀 초기화 (get_db_connection보다 먼저)
+    _init_db_pool()
+
     # site_profiler 초기화 (get_db_connection 정의 후)
     site_profiler = SiteProfiler(get_db_connection)
 
@@ -1771,6 +1776,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # shutdown
+    if _db_pool:
+        _db_pool.closeall()
+        logger.info("DB 커넥션 풀 정리 완료")
     if _sync_worker:
         _sync_worker.stop()
     for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _flow_baseline_task, _sync_task):
@@ -1994,8 +2002,27 @@ DB_PORT = os.environ.get("DB_PORT", "5433")
 DB_NAME = os.environ.get("DB_NAME", "slm")
 DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+DB_POOL_MIN = int(os.environ.get("DB_POOL_MIN", "2"))
+DB_POOL_MAX = int(os.environ.get("DB_POOL_MAX", "10"))
 if not DB_PASSWORD:
     logger.warning("DB_PASSWORD 환경변수가 설정되지 않았습니다. .env 파일을 확인하세요.")
+
+_db_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
+
+
+def _init_db_pool() -> None:
+    """커넥션 풀 초기화 — get_db_connection() 첫 호출 전에 실행되어야 한다."""
+    global _db_pool
+    _db_pool = psycopg2.pool.ThreadedConnectionPool(
+        minconn=DB_POOL_MIN,
+        maxconn=DB_POOL_MAX,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+    )
+    logger.info(f"DB 커넥션 풀 초기화 완료 (min={DB_POOL_MIN}, max={DB_POOL_MAX})")
 
 
 # =============================================================================
@@ -2557,18 +2584,46 @@ def match_intent(user_question: str) -> Optional[dict]:
 # - psycopg2 사용
 # - SQL 템플릿이 빈 문자열이면 실행하지 않는다
 # =============================================================================
+class _PooledConnection:
+    """
+    psycopg2 연결 래퍼 — close() 호출 시 실제 연결을 닫지 않고 풀에 반환한다.
+    기존 CRUD 모듈의 finally: conn.close() 패턴과 완전 호환된다.
+    psycopg2 연결 객체는 C 확장 타입이라 속성 패치가 불가하므로 래퍼로 처리.
+    """
+
+    __slots__ = ("_pool", "_conn")
+
+    def __init__(self, pool: psycopg2.pool.ThreadedConnectionPool, conn) -> None:
+        self._pool = pool
+        self._conn = conn
+
+    def close(self) -> None:
+        """풀에 연결을 반환한다."""
+        self._pool.putconn(self._conn)
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
 def get_db_connection():
     """
-    psycopg2를 사용하여 DB 연결을 반환한다.
-    docs/ai_server_plan.md 6.1절 참조: DB 접속 오류 처리
+    커넥션 풀에서 연결을 가져온다.
+    반환된 연결의 close()를 호출하면 풀로 반환된다.
     """
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-    )
+    if _db_pool is None:
+        # 풀 미초기화 시 직접 연결 (안전 fallback)
+        logger.warning("DB 풀이 초기화되지 않았습니다. 직접 연결로 fallback합니다.")
+        return psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+    return _PooledConnection(_db_pool, _db_pool.getconn())
 
 
 from contextlib import contextmanager
@@ -2598,6 +2653,10 @@ app.include_router(network_crud_router)
 # 캔버스 레이아웃 엔드포인트 모듈 초기화
 init_canvas_crud(get_db_connection)
 app.include_router(canvas_crud_router)
+
+# 인증 엔드포인트 모듈 초기화
+init_auth_crud(get_db_connection)
+app.include_router(auth_crud_router)
 
 
 def _split_sql_statements(sql: str) -> list:
@@ -5041,6 +5100,180 @@ def _execute_catalog_trend_query_inner(
     return rows, columns
 
 
+# ── RESERVOIR SUPPLY QUERY ────────────────────────────────────────────
+
+
+_SUPPLY_INTENTS = frozenset({
+    "RESERVOIR_DAILY_SUPPLY_TABLE",
+    "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+    "RESERVOIR_DAILY_SUPPLY_CHART",
+    "RESERVOIR_MONTHLY_SUPPLY_CHART",
+})
+
+
+def _execute_reservoir_supply_query(
+    conn,
+    mode: str,  # "daily" or "monthly"
+    from_date,  # datetime.date
+    to_date,    # datetime.date
+) -> tuple[list, list]:
+    """
+    유량적산(유출) 기반 배수지 일별/월별 공급량 계산.
+
+    경계값 = 해당 기간 시작점의 첫 기록 (00:00:00 우선).
+    공급량 = 다음 경계값 - 현재 경계값 (음수 → 0, 통신홀딩 기간은 0).
+    적산유량 센서 없는 현장은 "적산유량이 없는 현장" 표기.
+    """
+    from datetime import timedelta as _td
+
+    cur = conn.cursor()
+
+    # 1. 적산유량(유출) 태그 목록
+    cur.execute("""
+        SELECT t.tagsn, t.sitename, t.datainfo, COALESCE(t.unit, '㎥')
+        FROM tb_tag_info t
+        WHERE t.facilitytype = '배수지'
+          AND t.tagtype = 'Analog Input'
+          AND (
+            t.datainfo ILIKE '%유출유량적산%'
+            OR t.datainfo ILIKE '%유출적산유량%'
+            OR (t.datainfo ILIKE '%유량적산%' AND t.datainfo NOT ILIKE '%유입%')
+          )
+        ORDER BY t.sitename, t.datainfo
+    """)
+    tag_rows = cur.fetchall()
+
+    # 2. 전체 배수지 현장 목록
+    cur.execute("""
+        SELECT DISTINCT sitename
+        FROM tb_service_reservoir_info
+        ORDER BY sitename
+    """)
+    all_sites = [r[0] for r in cur.fetchall()]
+
+    # sitename → [(tagsn, datainfo, unit)]
+    site_tags: dict = {}
+    tagsn_to_meta: dict = {}
+    for tagsn, sn, di, unit in tag_rows:
+        site_tags.setdefault(sn, []).append((tagsn, di, unit))
+        tagsn_to_meta[tagsn] = (sn, di, unit)
+
+    # 3. 경계 날짜 목록 생성 (periods: [(start_str, end_str, label)])
+    if mode == "daily":
+        periods = []
+        d = from_date
+        while d <= to_date:
+            d_prev = d - _td(days=1)
+            periods.append((d_prev.strftime("%Y-%m-%d"), d.strftime("%Y-%m-%d"), d.strftime("%Y-%m-%d")))
+            d += _td(days=1)
+        # LATERAL 쿼리용 경계 날짜 범위 (from_date-1 ~ to_date)
+        bdate_start = from_date - _td(days=1)
+        bdate_end = to_date
+        interval_expr = "INTERVAL '1 day'"
+    else:  # monthly
+        periods = []
+        m = from_date.replace(day=1)
+        end_m = to_date.replace(day=1)
+        while m <= end_m:
+            m_next = (m + _td(days=32)).replace(day=1)
+            label = m.strftime("%Y-%m")
+            periods.append((m.strftime("%Y-%m-%d"), m_next.strftime("%Y-%m-%d"), label))
+            m = m_next
+        # LATERAL 쿼리용 경계 날짜 범위 (from_month 1일 ~ to_month 다음달 1일)
+        bdate_start = from_date.replace(day=1)
+        bdate_end = (to_date.replace(day=1) + _td(days=32)).replace(day=1)
+        interval_expr = "INTERVAL '1 month'"
+
+    # 4. LATERAL 인덱스 스캔으로 경계값 조회
+    # idx_tag_raw_tagsn_time(tagsn, logtime DESC) 활용 → 경계 날짜별 첫 기록 1건만 조회
+    # 기존 full-scan(~97만 행) 대비 경계점만 조회(~700행)로 10배 이상 속도 향상
+    # generate_series를 서브쿼리로 date 캐스팅 → bdate::text = 'YYYY-MM-DD' 포맷 보장
+    all_tagsn = list(tagsn_to_meta.keys())
+    boundary_vals: dict = {}  # (tagsn, date_str) → (val, tag_stat)
+    if all_tagsn and periods:
+        cur.execute(f"""
+            SELECT t.tagsn, d.bdate::text, r.val, r.tag_stat
+            FROM unnest(%s::text[]) AS t(tagsn)
+            CROSS JOIN (
+                SELECT gs::date AS bdate
+                FROM generate_series(%s::date, %s::date, {interval_expr}) AS gs
+            ) AS d
+            LEFT JOIN LATERAL (
+                SELECT val, tag_stat
+                FROM tb_tag_raw_data
+                WHERE tagsn = t.tagsn
+                  AND logtime >= d.bdate::timestamp
+                  AND logtime < (d.bdate + {interval_expr})::timestamp
+                  AND val IS NOT NULL
+                ORDER BY logtime ASC
+                LIMIT 1
+            ) AS r ON true
+        """, (all_tagsn, bdate_start, bdate_end))
+        for tagsn, bdate, val, tag_stat in cur.fetchall():
+            if val is not None:
+                boundary_vals[(tagsn, bdate)] = (float(val), tag_stat)
+
+    # 5. 공급량 계산
+    col_label = "date" if mode == "daily" else "month"
+    columns = ["sitename", col_label, "supply_m3", "unit", "note"]
+    rows = []
+
+    for sn in sorted(set(all_sites)):
+        tags_for_site = site_tags.get(sn, [])
+        if not tags_for_site:
+            # 적산유량 센서 없는 현장 → 첫 기간 행에만 표시
+            first_label = periods[0][2] if periods else "-"
+            rows.append((sn, first_label, None, "-", "<<warn:적산유량이 없는 현장>>"))
+            continue
+
+        for tagsn, di, unit in tags_for_site:
+            for start_str, end_str, label in periods:
+                bv_s = boundary_vals.get((tagsn, start_str))
+                bv_e = boundary_vals.get((tagsn, end_str))
+                v_s = bv_s[0] if bv_s else None
+                t_s = bv_s[1] if bv_s else None
+                v_e = bv_e[0] if bv_e else None
+                t_e = bv_e[1] if bv_e else None
+
+                if v_s is None or v_e is None:
+                    rows.append((sn, label, None, unit, "<<warn:데이터 없음>>"))
+                    continue
+
+                delta = v_e - v_s
+                is_holding = (
+                    (t_s and t_s != "GOOD!!") or (t_e and t_e != "GOOD!!")
+                )
+                if delta < 0:
+                    supply, note = 0.0, "<<warn:리셋>>"
+                elif delta == 0 and is_holding:
+                    supply, note = 0.0, "<<warn:통신홀딩>>"
+                else:
+                    supply, note = round(delta, 2), ""
+
+                rows.append((sn, label, supply, unit, note))
+
+    return rows, columns
+
+
+def _execute_reservoir_supply_query_with_conn(
+    mode: str, from_date, to_date
+) -> tuple[list, list]:
+    """DB 연결 포함 공급량 쿼리 wrapper (asyncio.to_thread 호환).
+    병렬 쿼리 비활성화 옵션을 연결 레벨에서 적용한다.
+    """
+    # options로 세션 GUC 설정 (병렬 worker 비활성화 → shared memory 부족 방지)
+    conn = psycopg2.connect(
+        host=DB_HOST, port=DB_PORT, database=DB_NAME,
+        user=DB_USER, password=DB_PASSWORD,
+        options="-c max_parallel_workers_per_gather=0 -c enable_parallel_hash=off",
+    )
+    conn.autocommit = True
+    try:
+        return _execute_reservoir_supply_query(conn, mode, from_date, to_date)
+    finally:
+        conn.close()
+
+
 def _get_catalog_trend_filter(question: str, datainfo: str) -> tuple[str, str, str]:
     """질문에서 카탈로그 필터 (trend_name, label_pattern, display_name)를 추출한다.
 
@@ -6390,7 +6623,17 @@ async def ask(request: AskRequest):
                      f"ft={new_params['facilitytype']}, "
                      f"from={new_params['from_ts']}, to={new_params['to_ts']}")
 
-    # 4.10. ANOMALY 인텐트: 선택적 시설 필터 + 범위 라벨 설정
+    # 4.10. RESERVOIR SUPPLY 인텐트: 기본 날짜 설정
+    if intent_name in _SUPPLY_INTENTS:
+        _is_monthly = "MONTHLY" in intent_name
+        if not new_params.get("from_ts"):
+            _days_back = 365 if _is_monthly else 30
+            new_params["from_ts"] = (datetime.now() - timedelta(days=_days_back)).strftime("%Y-%m-%d")
+        if not new_params.get("to_ts"):
+            new_params["to_ts"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        logger.info(f"SUPPLY defaults: intent={intent_name}, from={new_params['from_ts']}, to={new_params['to_ts']}")
+
+    # 4.11. ANOMALY 인텐트: 선택적 시설 필터 + 범위 라벨 설정
     if intent_name in _ANOMALY_FILTER_INTENTS:
         new_params["anomaly_facility_filter"] = build_anomaly_facility_filter(
             intent_name, new_params
@@ -6452,6 +6695,14 @@ async def ask(request: AskRequest):
         clause, label = _extract_alarm_filter(request.user_question or "")
         params["alarm_filter_clause"] = clause
         params["alarm_label"] = label
+        # {limit} 기본값: 질문에서 추출, 없으면 10
+        if not params.get("limit"):
+            params["limit"] = str(extract_limit(request.user_question or ""))
+        # {from_ts}/{to_ts} 기본값: 최근 30일
+        if not params.get("from_ts"):
+            params["from_ts"] = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        if not params.get("to_ts"):
+            params["to_ts"] = datetime.now().strftime("%Y-%m-%d")
 
     # 세션 업데이트 (OK)
     session_manager.update_session(
@@ -6469,7 +6720,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"} | _SUPPLY_INTENTS
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -6759,6 +7010,24 @@ async def ask(request: AskRequest):
         except Exception as e:
             logger.error(f"FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
         # sql_combined은 빈 상태 — 아래 execute_sql 단계를 건너뜀
+
+    # RESERVOIR SUPPLY: 유량적산 기반 일별/월별 공급량
+    if intent in _SUPPLY_INTENTS:
+        _mode = "monthly" if "MONTHLY" in intent else "daily"
+        _from_str = params.get("from_ts", "")
+        _to_str = params.get("to_ts", "")
+        try:
+            _from_d = datetime.strptime(_from_str[:10], "%Y-%m-%d").date()
+            _to_d = datetime.strptime(_to_str[:10], "%Y-%m-%d").date()
+            _sup_rows, _sup_cols = await asyncio.to_thread(
+                _execute_reservoir_supply_query_with_conn, _mode, _from_d, _to_d
+            )
+            if _sup_rows:
+                rows = _sup_rows
+                columns = _sup_cols
+            params["total_count"] = str(len(_sup_rows))
+        except Exception as e:
+            logger.error(f"RESERVOIR SUPPLY 쿼리 실패 ({intent}): {e}")
 
     # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용, 인과 인덱스 직접 조회)
     if intent == "ANOMALY_CROSS_FACILITY":
@@ -7744,7 +8013,17 @@ async def ask_stream(request: AskRequest):
                          f"ft={new_params['facilitytype']}, "
                          f"from={new_params['from_ts']}, to={new_params['to_ts']}")
 
-        # 4.10. ANOMALY 인텐트: 선택적 시설 필터 + 범위 라벨 설정
+        # 4.10. RESERVOIR SUPPLY 인텐트: 기본 날짜 설정
+        if intent_name in _SUPPLY_INTENTS:
+            _is_monthly_sse = "MONTHLY" in intent_name
+            if not new_params.get("from_ts"):
+                _days_back_sse = 365 if _is_monthly_sse else 30
+                new_params["from_ts"] = (datetime.now() - timedelta(days=_days_back_sse)).strftime("%Y-%m-%d")
+            if not new_params.get("to_ts"):
+                new_params["to_ts"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            logger.info(f"[SSE] SUPPLY defaults: intent={intent_name}, from={new_params['from_ts']}, to={new_params['to_ts']}")
+
+        # 4.11. ANOMALY 인텐트: 선택적 시설 필터 + 범위 라벨 설정
         if intent_name in _ANOMALY_FILTER_INTENTS:
             new_params["anomaly_facility_filter"] = build_anomaly_facility_filter(
                 intent_name, new_params
@@ -7806,6 +8085,14 @@ async def ask_stream(request: AskRequest):
             clause, label = _extract_alarm_filter(request.user_question or "")
             params["alarm_filter_clause"] = clause
             params["alarm_label"] = label
+            # {limit} 기본값: 질문에서 추출, 없으면 10
+            if not params.get("limit"):
+                params["limit"] = str(extract_limit(request.user_question or ""))
+            # {from_ts}/{to_ts} 기본값: 최근 30일
+            if not params.get("from_ts"):
+                params["from_ts"] = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            if not params.get("to_ts"):
+                params["to_ts"] = datetime.now().strftime("%Y-%m-%d")
 
         session_manager.update_session(
             session,
@@ -7821,7 +8108,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"}
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"} | _SUPPLY_INTENTS
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -8103,6 +8390,24 @@ async def ask_stream(request: AskRequest):
                     columns = _cat_cols
             except Exception as e:
                 logger.error(f"[SSE] FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
+
+        # RESERVOIR SUPPLY: 유량적산 기반 일별/월별 공급량
+        if intent in _SUPPLY_INTENTS:
+            _mode = "monthly" if "MONTHLY" in intent else "daily"
+            _from_str = params.get("from_ts", "")
+            _to_str = params.get("to_ts", "")
+            try:
+                _from_d = datetime.strptime(_from_str[:10], "%Y-%m-%d").date()
+                _to_d = datetime.strptime(_to_str[:10], "%Y-%m-%d").date()
+                _sup_rows, _sup_cols = await asyncio.to_thread(
+                    _execute_reservoir_supply_query_with_conn, _mode, _from_d, _to_d
+                )
+                if _sup_rows:
+                    rows = _sup_rows
+                    columns = _sup_cols
+                params["total_count"] = str(len(_sup_rows))
+            except Exception as e:
+                logger.error(f"[SSE] RESERVOIR SUPPLY 쿼리 실패 ({intent}): {e}")
 
         # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용)
         if intent == "ANOMALY_CROSS_FACILITY":

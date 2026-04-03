@@ -303,7 +303,8 @@ class IntentClassifier:
                 or "추이" in question
                 or "같이 보" in question or "함께 보" in question)
         _is_night_min = ("야간최소유량" in question or "야간 최소유량" in question or "최소유량" in question)
-        if _is_trend_kw and not _is_night_min:
+        _is_supply = "공급량" in question  # 배수지 공급량 전용 인텐트 — 트렌드보다 우선
+        if _is_trend_kw and not _is_night_min and not _is_supply:
             logger.info("Stage1 키워드 매칭: '트렌드/그래프/추이/같이' → 트렌드")
             return "트렌드", "keyword"
 
