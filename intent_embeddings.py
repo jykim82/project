@@ -38,8 +38,8 @@ EMBED_DIM = 1024
 EMBED_TIMEOUT = 120  # 배치 임베딩 타임아웃 (초)
 
 # 검색 설정
-VECTOR_THRESHOLD = 0.75  # cosine 유사도 확정 임계값
-VECTOR_CANDIDATE_THRESHOLD = 0.70  # LLM 후보 제공 임계값
+VECTOR_THRESHOLD = 0.68  # cosine 유사도 확정 임계값 (0.75→0.68: 표현 변형 커버리지 확대)
+VECTOR_CANDIDATE_THRESHOLD = 0.63  # LLM 후보 제공 임계값
 
 
 class IntentEmbeddingIndex:

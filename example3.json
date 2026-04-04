@@ -9,7 +9,15 @@
       "배수지 기본정보는?",
       "배수지 시설개요는?",
       "배수지 시설정보를 알려줘",
-      "배수지 기본 사항은?"
+      "배수지 기본 사항은?",
+      "행정 배수지 일반 현황은?",
+      "송악1 배수지 일반 현황은?",
+      "송악2 배수지 일반 현황은?",
+      "XX 배수지 개요를 알려줘",
+      "배수지 기본 정보는?",
+      "XX 배수지 정보 알려줘",
+      "천의리 배수지 일반현황은",
+      "죽동배수지 일반현황은"
     ],
     "sql": "SELECT\n  sitename,\n  general_overview ->> 'install_location'     AS install_location,\n  general_overview ->> 'operating_status'     AS operating_status,\n  general_overview ->> 'supply_population'    AS supply_population,\n  service_area,\n  general_overview -> 'reservoir_spec' ->> 'facility_capacity_m3' AS facility_capacity,\n  general_overview -> 'reservoir_spec' ->> 'count' AS reservoir_count,\n  general_overview -> 'reservoir_spec' ->> 'H.W.L' AS hwl,\n  general_overview -> 'reservoir_spec' ->> 'L.W.L' AS lwl,\n  CASE\n    WHEN general_overview ? 'emergency_water_plan'\n     AND jsonb_typeof(general_overview -> 'emergency_water_plan') = 'array'\n     AND jsonb_array_length(general_overview -> 'emergency_water_plan') > 0\n    THEN\n      '비상 용수 공급 방안은 '\n      || (\n        SELECT string_agg(value, ', ')\n        FROM jsonb_array_elements_text(\n          general_overview -> 'emergency_water_plan'\n        )\n      )\n      || ' 입니다.'\n    ELSE NULL\n  END AS emergency_water_plan_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_accessible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_accessible' = 'true'\n        THEN '비상 시 물차 진입이 가능합니다.'\n        ELSE '비상 시 물차 진입이 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_accessible_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_turning_possible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_turning_possible' = 'true'\n        THEN '물차 회차가 가능합니다.'\n        ELSE '물차 회차가 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_turning_possible_sentence,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -78,7 +86,14 @@
       "신평 배수지에 어떤 설비들이 있나요?",
       "배수지 장비현황은?",
       "배수지 기기현황은?",
-      "배수지 장비 상태를 알려줘"
+      "배수지 장비 상태를 알려줘",
+      "고대리 배수지 설비현황은?",
+      "남산배수지 설비현황은?",
+      "신평 배수지 설비 현황을 알려줘",
+      "가압장 설비 현황은?",
+      "XX 설비현황을 알려줘",
+      "배수지 설비 목록은?",
+      "설비 장비 현황"
     ],
     "sql": "SELECT \n  sitename,\n  meta,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -172,7 +187,14 @@
       "신평배수지 현재 운영현황을 알려줘",
       "배수지 가동상태는?",
       "배수지 운영 상태를 알려줘",
-      "배수지 작동현황은?"
+      "배수지 작동현황은?",
+      "행정배수지 운영현황은?",
+      "남산배수지 운영현황은?",
+      "XX 배수지 운영 현황을 알려줘",
+      "배수지 가동현황은?",
+      "XX 배수지 현재 가동 상태는?",
+      "죽동배수지 운영현황은?",
+      "합덕배수지 운영현황은?"
     ],
     "sql": "SELECT\n  sitename,\n  general_overview ->> 'operating_status' AS operating_status,\n  avg_outflow,\n  avg_outflow_unit,\n  avg_usage,\n  usage_unit,\n  avg_reservoir_level,\n  water_level_unit,\n  alarm_high_water_level,\n  alarm_low_water_level,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -604,7 +626,14 @@
       "행정 가압장 기본 정보는?",
       "가압장 기본정보는?",
       "가압장 시설개요는?",
-      "가압장 시설정보를 알려줘"
+      "가압장 시설정보를 알려줘",
+      "신평가압장 일반현황은?",
+      "고대리 가압장 일반 현황은?",
+      "XX 가압장 일반 현황을 알려줘",
+      "가압장 개요를 알려줘",
+      "XX 가압장 기본 정보는?",
+      "순성가압장 일반현황은?",
+      "기지시 가압장 일반현황은?"
     ],
     "sql": "SELECT \n  sitename,\n  general_overview,\n  running_pump_count,\n  booster_avg_pressure,\n  booster_inlet_pressure,\n  booster_outlet_pressure,\n  pressure_unit\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -746,7 +775,12 @@
       "가압장에 어떤 설비들이 있나요?",
       "가압장 장비현황은?",
       "가압장 기기현황은?",
-      "가압장 장비 목록을 알려줘"
+      "가압장 장비 목록을 알려줘",
+      "고대리 가압장 설비현황은?",
+      "신평가압장 설비 현황은?",
+      "XX 가압장 설비 목록을 알려줘",
+      "가압장 장비 현황은?",
+      "XX 가압장 설비 현황을 보여줘"
     ],
     "sql": "SELECT \n    sitename,\n    meta,\n    running_pump_count,\n    pressure_unit,\n    booster_avg_pressure,\n    booster_inlet_pressure,\n    booster_outlet_pressure\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -1750,7 +1784,25 @@
       "합덕2 소블록 야간최소유량은?",
       "신평 배수지 야간최소유량 현황은?",
       "죽동 배수지 야간최소유량은 얼마야?",
-      "송산 가압장 야간최소유량 현황을 알려줘"
+      "송산 가압장 야간최소유량 현황을 알려줘",
+      "XX 배수지 야간 최소유량은?",
+      "XX 야간최소유량은?",
+      "XX 소블록 야간최소유량은?",
+      "야간최소유량 알려줘",
+      "XX 야간최소유량 알려줘",
+      "XX 배수지 야간최소유량 현황 알려줘",
+      "합덕1소블록 야간최소유량은?",
+      "남산1 소블록 야간최소유량은?",
+      "소블록 야간최소유량 트렌드 보여줘",
+      "소블록 야간최소유량 그래프 보여줘",
+      "야간최소유량 트렌드를 보여줘",
+      "소소블록 야간최소유량 현황은?",
+      "중블록 야간최소유량 현황은?",
+      "XX 소블록 야간최소유량 트렌드 보여줘",
+      "XX 소블록 야간최소유량 그래프",
+      "블록 야간최소유량을 알려줘",
+      "야간 최소 유량 트렌드",
+      "MNF 트렌드 보여줘"
     ],
     "sql": "WITH current_nmf AS (\n    SELECT\n        log_time,\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        val AS current_val\n    FROM fn_night_min_flow_summary(\n            '{sitename}',\n            '{facilitytype}',\n            (now() - interval '1 day')::date,\n            now()::date\n    )\n    ORDER BY log_time DESC\n    LIMIT 1\n),\navg_nmf AS (\n    SELECT\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        period_type,\n        ROUND(AVG(val), 2) AS avg_val\n    FROM (\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'year' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 year')::date, now()::date)\n        UNION ALL\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'month' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 month')::date, now()::date)\n    ) t\n    GROUP BY sitename, facilitytype, label, datadesc, unit, period_type\n)\nSELECT\n    c.sitename,\n    c.facilitytype,\n    c.label,\n    c.datadesc,\n    c.current_val,\n    c.unit,\n    c.log_time,\n    MAX(CASE WHEN a.period_type = 'month' THEN a.avg_val END) AS avg_month,\n    MAX(CASE WHEN a.period_type = 'year'  THEN a.avg_val END) AS avg_year\nFROM current_nmf c\nLEFT JOIN avg_nmf a\n  ON c.sitename = a.sitename\n AND c.facilitytype = a.facilitytype\n AND c.label = a.label\n AND c.datadesc = a.datadesc\nGROUP BY c.sitename, c.facilitytype, c.label, c.datadesc, c.current_val, c.unit, c.log_time;",
     "answer_template": {
@@ -1917,7 +1969,12 @@
       "배수지 주소를 알려줘",
       "신평 배수지 주소는?",
       "가압장 주소는 어디야?",
-      "소블록 주소를 알려줘"
+      "소블록 주소를 알려줘",
+      "XX 배수지의 주소는?",
+      "XX 배수지 위치는?",
+      "XX 배수지 소재지는?",
+      "배수지 위치를 알려줘",
+      "XX 배수지 어디 있어?"
     ],
     "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -1967,7 +2024,13 @@
       "가압장 주소를 알려줘",
       "고대리 가압장 주소를 알려줘",
       "천의리 가압장 주소는?",
-      "행정 가압장 주소는 어디야?"
+      "행정 가압장 주소는 어디야?",
+      "XX 가압장 주소는?",
+      "XX 가압장 위치는?",
+      "XX 가압장 소재지는?",
+      "가압장 위치 알려줘",
+      "고대리 가압장 주소는?",
+      "신평 가압장 주소는?"
     ],
     "sql": "SELECT\n  general_overview ->> 'install_location' AS install_location,\n  site_photo_url\nFROM v_booster_station_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
@@ -2288,7 +2351,15 @@
       "실시간 압력은?",
       "최신 측정값을 알려줘",
       "지금 수위 얼마야?",
-      "현재 측정값은?"
+      "현재 측정값은?",
+      "최근 10분간 배수지 수위는?",
+      "최근 30분간 가압장 압력은?",
+      "지금 이 시간 신평 배수지 수위를 알려줘",
+      "현재 시점 배수지 수위는?",
+      "최근 수위 데이터를 보여줘",
+      "지금 압력 얼마야?",
+      "지금 수위 현황은?",
+      "현재 유량 데이터는?"
     ],
     "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  i.datainfo,\n  i.datadesc,\n  r.tagsn,\n  last(r.val, r.logtime) AS latest_val,\n  to_char(max(r.logtime), 'YYYY-MM-DD HH24:MI:SS') AS latest_time\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND (\n        i.datadesc ILIKE '%{datakey}%'\n     OR i.datainfo ILIKE '%{datakey}%'\n  )\nGROUP BY i.sitename, i.facilitytype, i.datainfo, i.datadesc, r.tagsn\nORDER BY r.tagsn;",
     "answer_template": {
@@ -2338,7 +2409,13 @@
       "배수지 비상급수시간은?",
       "배수지 공급가능시간은?",
       "비상시 공급가능 시간을 알려줘",
-      "배수지 물이 얼마나 버틸 수 있어?"
+      "배수지 물이 얼마나 버틸 수 있어?",
+      "XX 배수지 용수 공급 가능 시간은?",
+      "XX 배수지의 용수공급가능시간은?",
+      "배수지 공급 가능 시간은?",
+      "용수 공급 가능 시간 알려줘",
+      "XX 배수지 용수공급 가능시간은",
+      "XX배수지 공급가능시간은?"
     ],
     "sql": "SELECT * FROM fn_reservoir_supply_hours('{sitename}');",
     "answer_template": {
@@ -2403,7 +2480,16 @@
     "questions": [
       "현재 남산1 소블록 유량을 표로 보여줘",
       "현재 남산1 소블록 유량값을 표로 보여줘",
-      "현재 남산1 소블록 유량 데이터를 표로 보여줘"
+      "현재 남산1 소블록 유량 데이터를 표로 보여줘",
+      "현재 유량은?",
+      "XX 유량 현황은?",
+      "XX 현재 유량은?",
+      "XX 유출량은?",
+      "XX 유입량은?",
+      "XX 순시유량은?",
+      "현재 XX 소블록 유량은?",
+      "지금 XX 유량 알려줘",
+      "XX 배수지 유출유량은?"
     ],
     "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  r.tagsn,\n  r.val,\n  i.datainfo,\n  to_char(r.logtime, 'YYYY-MM-DD HH24:MI:SS') AS logtime,\n  i.datadesc\nFROM tb_tag_info i\nJOIN LATERAL (\n  SELECT tagsn, val, logtime\n  FROM tb_tag_raw_data r\n  WHERE r.tagsn = i.tagsn\n    AND r.logtime >= {from_ts}\n    AND r.logtime < {to_ts}\n  ORDER BY r.logtime DESC\n  LIMIT 1\n) r ON true\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND i.tagtype = 'Analog Input'\n  AND i.datainfo ~ '{datainfo}';",
     "answer_template": {
@@ -2641,7 +2727,12 @@
       "합덕3 소블록 야간최소유량을 표로 보여줘",
       "MNF 데이터를 표로 보여줘",
       "야간유량 데이터를 표로 보여줘",
-      "심야유량을 표로 보여줘"
+      "심야유량을 표로 보여줘",
+      "소블록 야간최소유량 데이터 표로 보여줘",
+      "소블록 야간최소유량을 표로 출력해줘",
+      "야간최소유량 데이터를 표로 보여줘",
+      "소블록 MNF 데이터 표",
+      "블록 야간최소유량 표"
     ],
     "sql": "SELECT * FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', {from_ts}, {to_ts});",
     "answer_template": {
@@ -3033,7 +3124,17 @@
       "수위하고 유량하고 함께 트렌드 보여줘",
       "배수지 수위와 유입유량을 같이 그래프로 보여줘",
       "수위 유량 함께 보기",
-      "두 가지 데이터를 같이 보여줘"
+      "두 가지 데이터를 같이 보여줘",
+      "유량과 야간최소유량을 함께 트렌드로 보여줘",
+      "수위와 야간최소유량을 같이 그래프로 보여줘",
+      "유량이랑 야간최소유량이랑 같이 보고 싶어",
+      "배수지 유량과 야간최소유량 함께 트렌드",
+      "XX 소블록 유량과 야간최소유량을 함께 트렌드로 보여줘",
+      "두 소블록의 야간최소유량을 같이 트렌드로 보여줘",
+      "XX과 XX 소블록 야간최소유량 트렌드 비교",
+      "XX와 XX 배수지 수위를 함께 그래프로 보여줘",
+      "두 시설 데이터를 함께 트렌드로 보여줘",
+      "같은 기간 두 배수지 수위 비교 트렌드"
     ],
     "sql": [
       "SELECT * FROM fn_trend_period_summary('{sitename}', '{facilitytype}', '{analog_datainfo}', {from_ts}, {to_ts})",
@@ -4155,5 +4256,233 @@
       "{sitename} {facilitytype} 밸브를 표로 보여줘"
     ],
     "table_type": "summary"
+  },
+  {
+    "intent": "RESERVOIR_DAILY_SUPPLY_TABLE",
+    "questions": [
+      "한달간 전체 배수지의 일별 공급량을 표로 보여줘",
+      "전체 배수지 일별 공급량 표",
+      "배수지 일별 공급량을 표로 보여줘",
+      "최근 한달 배수지 일일 공급량은?",
+      "배수지별 일별 공급량을 알려줘",
+      "전체 배수지의 일공급량 현황을 표로 보여줘",
+      "배수지 일별 유출 공급량을 표로 보여줘",
+      "일별 배수지 공급량 표를 보여줘",
+      "배수지 일별 공급량 데이터를 보여줘",
+      "한달간 배수지 공급량을 일별로 보여줘"
+    ],
+    "sql": "",
+    "graph_type": "table",
+    "table_type": "summary",
+    "table_columns": [
+      "sitename",
+      "date",
+      "supply_m3",
+      "unit",
+      "note"
+    ],
+    "answer_template": {
+      "summary": "전체 배수지 일별 공급량 현황 ({from_ts} ~ {to_ts})입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "조회 기간 내 총 {total_count}건의 일별 공급량 데이터를 조회했습니다."
+        },
+        {
+          "prefix": "•",
+          "text": "공급량은 유출유량 적산값 기준이며, 적산유량 센서가 없는 현장은 별도 표기됩니다."
+        }
+      ],
+      "reference": {
+        "title": "참고 사항",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "공급량(㎥) = 해당일 00:00:00 적산값 - 전일 00:00:00 적산값 (없으면 첫 기록값 기준)"
+          },
+          {
+            "prefix": "2.",
+            "text": "통신 홀딩 기간(tag_stat ≠ GOOD!!) 또는 값 변화 없는 날은 공급량 0으로 처리"
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "추가 질의를 추천드립니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "한달간 전체 배수지의 일별 공급량을 그래프로 보여줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "월별 전체 배수지의 공급량을 표로 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "금일 전체 배수지 유출 현황은?"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "intent": "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+    "questions": [
+      "월별 전체 배수지의 공급량을 표로 보여줘",
+      "전체 배수지 월별 공급량 표",
+      "배수지 월별 공급량을 표로 보여줘",
+      "배수지별 월별 공급량을 알려줘",
+      "전체 배수지의 월공급량 현황을 표로 보여줘",
+      "배수지 월별 유출 공급량을 표로 보여줘",
+      "월별 배수지 공급량 표를 보여줘",
+      "1년간 배수지 월별 공급량은?",
+      "배수지 월별 공급량 데이터를 보여줘",
+      "배수지 월별 공급량 현황을 알려줘"
+    ],
+    "sql": "",
+    "graph_type": "table",
+    "table_type": "summary",
+    "table_columns": [
+      "sitename",
+      "month",
+      "supply_m3",
+      "unit",
+      "note"
+    ],
+    "answer_template": {
+      "summary": "전체 배수지 월별 공급량 현황 ({from_ts} ~ {to_ts})입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "조회 기간 내 총 {total_count}건의 월별 공급량 데이터를 조회했습니다."
+        },
+        {
+          "prefix": "•",
+          "text": "공급량은 유출유량 적산값 기준이며, 적산유량 센서가 없는 현장은 별도 표기됩니다."
+        }
+      ],
+      "reference": {
+        "title": "참고 사항",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "공급량(㎥) = 해당월 1일 00:00:00 적산값 - 전월 1일 00:00:00 적산값 (없으면 첫 기록값 기준)"
+          },
+          {
+            "prefix": "2.",
+            "text": "통신 홀딩 기간 또는 값 변화 없는 월은 공급량 0으로 처리"
+          }
+        ]
+      },
+      "recommend_questions": {
+        "title": "추가 질의를 추천드립니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "월별 전체 배수지의 공급량을 그래프로 보여줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "한달간 전체 배수지의 일별 공급량을 표로 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "금일 전체 배수지 유출 현황은?"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "intent": "RESERVOIR_DAILY_SUPPLY_CHART",
+    "questions": [
+      "한달간 전체 배수지의 일별 공급량을 그래프로 보여줘",
+      "배수지 일별 공급량 차트로 보여줘",
+      "전체 배수지 일공급량 트렌드 보여줘",
+      "배수지 일별 공급량을 차트로 표현해줘",
+      "배수지 일공급량 그래프를 보여줘",
+      "배수지 일별 공급량을 시각화해줘",
+      "일별 배수지 공급량 바 차트로 보여줘",
+      "배수지 일별 공급량 트렌드 그래프",
+      "전체 배수지 일공급량을 그래프로 시각화해줘"
+    ],
+    "sql": "",
+    "graph_type": "table",
+    "table_type": "supply_chart",
+    "table_columns": [
+      "sitename",
+      "date",
+      "supply_m3",
+      "unit",
+      "note"
+    ],
+    "answer_template": {
+      "summary": "전체 배수지 일별 공급량 차트 ({from_ts} ~ {to_ts})입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "각 배수지의 일별 공급량(유출유량 적산 기준)을 막대 차트로 표시합니다."
+        }
+      ],
+      "recommend_questions": {
+        "title": "추가 질의를 추천드립니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "한달간 전체 배수지의 일별 공급량을 표로 보여줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "월별 전체 배수지의 공급량을 그래프로 보여줘"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "intent": "RESERVOIR_MONTHLY_SUPPLY_CHART",
+    "questions": [
+      "월별 전체 배수지의 공급량을 그래프로 보여줘",
+      "배수지 월별 공급량 차트로 보여줘",
+      "전체 배수지 월공급량 트렌드 보여줘",
+      "배수지 월별 공급량을 차트로 표현해줘",
+      "배수지 월공급량 그래프를 보여줘",
+      "배수지 월별 공급량을 시각화해줘",
+      "월별 배수지 공급량 바 차트로 보여줘",
+      "배수지 월별 공급량 트렌드 그래프",
+      "전체 배수지 월공급량을 그래프로 시각화해줘"
+    ],
+    "sql": "",
+    "graph_type": "table",
+    "table_type": "supply_chart",
+    "table_columns": [
+      "sitename",
+      "month",
+      "supply_m3",
+      "unit",
+      "note"
+    ],
+    "answer_template": {
+      "summary": "전체 배수지 월별 공급량 차트 ({from_ts} ~ {to_ts})입니다.",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "각 배수지의 월별 공급량(유출유량 적산 기준)을 막대 차트로 표시합니다."
+        }
+      ],
+      "recommend_questions": {
+        "title": "추가 질의를 추천드립니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "월별 전체 배수지의 공급량을 표로 보여줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "한달간 전체 배수지의 일별 공급량을 그래프로 보여줘"
+          }
+        ]
+      }
+    }
   }
 ]

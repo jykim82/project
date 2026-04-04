@@ -1,5 +1,5 @@
 {
-  "hash": "0ec91c90e34489e95f69449be3e1c22e",
+  "hash": "0cd8dc80b66098deb57a9df4b01e7624",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -34,6 +34,38 @@
       "배수지 기본 사항은?"
     ],
     [
+      "RESERVOIR_OVERVIEW",
+      "행정 배수지 일반 현황은?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "송악1 배수지 일반 현황은?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "송악2 배수지 일반 현황은?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "XX 배수지 개요를 알려줘"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "배수지 기본 정보는?"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "XX 배수지 정보 알려줘"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "천의리 배수지 일반현황은"
+    ],
+    [
+      "RESERVOIR_OVERVIEW",
+      "죽동배수지 일반현황은"
+    ],
+    [
       "RESERVOIR_EQUIPMENT_STATUS",
       "배수지 설비현황은?"
     ],
@@ -60,6 +92,34 @@
     [
       "RESERVOIR_EQUIPMENT_STATUS",
       "배수지 장비 상태를 알려줘"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "고대리 배수지 설비현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "남산배수지 설비현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "신평 배수지 설비 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "가압장 설비 현황은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "XX 설비현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "배수지 설비 목록은?"
+    ],
+    [
+      "RESERVOIR_EQUIPMENT_STATUS",
+      "설비 장비 현황"
     ],
     [
       "RESERVOIR_INITIAL_RESPONSE_MANUAL",
@@ -100,6 +160,34 @@
     [
       "RESERVOIR_OPERATION_STATUS",
       "배수지 작동현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "행정배수지 운영현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "남산배수지 운영현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "XX 배수지 운영 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "배수지 가동현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "XX 배수지 현재 가동 상태는?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "죽동배수지 운영현황은?"
+    ],
+    [
+      "RESERVOIR_OPERATION_STATUS",
+      "합덕배수지 운영현황은?"
     ],
     [
       "RESERVOIR_FACILITY_CAPACITY",
@@ -418,6 +506,34 @@
       "가압장 시설정보를 알려줘"
     ],
     [
+      "BOOSTER_STATION_OVERVIEW",
+      "신평가압장 일반현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "고대리 가압장 일반 현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "XX 가압장 일반 현황을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "가압장 개요를 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "XX 가압장 기본 정보는?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "순성가압장 일반현황은?"
+    ],
+    [
+      "BOOSTER_STATION_OVERVIEW",
+      "기지시 가압장 일반현황은?"
+    ],
+    [
       "BOOSTER_STATION_OPERATION_STATUS",
       "가압장 운영현황은?"
     ],
@@ -472,6 +588,26 @@
     [
       "BOOSTER_STATION_EQUIPMENT_STATUS",
       "가압장 장비 목록을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "고대리 가압장 설비현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "신평가압장 설비 현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "XX 가압장 설비 목록을 알려줘"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "가압장 장비 현황은?"
+    ],
+    [
+      "BOOSTER_STATION_EQUIPMENT_STATUS",
+      "XX 가압장 설비 현황을 보여줘"
     ],
     [
       "BOOSTER_STATION_INITIAL_RESPONSE_MANUAL",
@@ -894,6 +1030,98 @@
       "최소야간유량은 얼마야?"
     ],
     [
+      "NIGHT_MIN_FLOW_STATUS",
+      "남산1 소블록 야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "합덕2 소블록 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "신평 배수지 야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "죽동 배수지 야간최소유량은 얼마야?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "송산 가압장 야간최소유량 현황을 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 배수지 야간 최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 소블록 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간최소유량 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 야간최소유량 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 배수지 야간최소유량 현황 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "합덕1소블록 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "남산1 소블록 야간최소유량은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "소블록 야간최소유량 트렌드 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "소블록 야간최소유량 그래프 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간최소유량 트렌드를 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "소소블록 야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "중블록 야간최소유량 현황은?"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 소블록 야간최소유량 트렌드 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "XX 소블록 야간최소유량 그래프"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "블록 야간최소유량을 알려줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "야간 최소 유량 트렌드"
+    ],
+    [
+      "NIGHT_MIN_FLOW_STATUS",
+      "MNF 트렌드 보여줘"
+    ],
+    [
       "FACILITY_COMMUNICATION_TOPOLOGY",
       "통신 구성을 알려줘"
     ],
@@ -994,6 +1222,26 @@
       "소블록 주소를 알려줘"
     ],
     [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "XX 배수지의 주소는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "XX 배수지 위치는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "XX 배수지 소재지는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "배수지 위치를 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_RESERVOIR",
+      "XX 배수지 어디 있어?"
+    ],
+    [
       "FACILITY_ADDRESS_INFO_BOOSTER",
       "가압장 주소를 알려줘"
     ],
@@ -1008,6 +1256,30 @@
     [
       "FACILITY_ADDRESS_INFO_BOOSTER",
       "행정 가압장 주소는 어디야?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "XX 가압장 주소는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "XX 가압장 위치는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "XX 가압장 소재지는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "가압장 위치 알려줘"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "고대리 가압장 주소는?"
+    ],
+    [
+      "FACILITY_ADDRESS_INFO_BOOSTER",
+      "신평 가압장 주소는?"
     ],
     [
       "FACILITY_ADDRESS_INFO_BLOCK",
@@ -1222,6 +1494,38 @@
       "현재 측정값은?"
     ],
     [
+      "FACILITY_TAG_LATEST_VALUE",
+      "최근 10분간 배수지 수위는?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "최근 30분간 가압장 압력은?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "지금 이 시간 신평 배수지 수위를 알려줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 시점 배수지 수위는?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "최근 수위 데이터를 보여줘"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "지금 압력 얼마야?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "지금 수위 현황은?"
+    ],
+    [
+      "FACILITY_TAG_LATEST_VALUE",
+      "현재 유량 데이터는?"
+    ],
+    [
       "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
       "배수지 용수공급가능 시간은?"
     ],
@@ -1254,6 +1558,30 @@
       "배수지 물이 얼마나 버틸 수 있어?"
     ],
     [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "XX 배수지 용수 공급 가능 시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "XX 배수지의 용수공급가능시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "배수지 공급 가능 시간은?"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "용수 공급 가능 시간 알려줘"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "XX 배수지 용수공급 가능시간은"
+    ],
+    [
+      "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "XX배수지 공급가능시간은?"
+    ],
+    [
       "FACILITY_FLOW_CURRENT_TABLE",
       "현재 남산1 소블록 유량을 표로 보여줘"
     ],
@@ -1264,6 +1592,42 @@
     [
       "FACILITY_FLOW_CURRENT_TABLE",
       "현재 남산1 소블록 유량 데이터를 표로 보여줘"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "현재 유량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 유량 현황은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 현재 유량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 유출량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 유입량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 순시유량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "현재 XX 소블록 유량은?"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "지금 XX 유량 알려줘"
+    ],
+    [
+      "FACILITY_FLOW_CURRENT_TABLE",
+      "XX 배수지 유출유량은?"
     ],
     [
       "FACILITY_VALVE_STATUS_CURRENT_TABLE",
@@ -1372,6 +1736,26 @@
     [
       "NIGHT_MIN_FLOW_SUMMARY_TABLE",
       "심야유량을 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "소블록 야간최소유량 데이터 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "소블록 야간최소유량을 표로 출력해줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "야간최소유량 데이터를 표로 보여줘"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "소블록 MNF 데이터 표"
+    ],
+    [
+      "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "블록 야간최소유량 표"
     ],
     [
       "TAG_DAILY_MISSING_SUMMARY",
@@ -1830,6 +2214,46 @@
       "두 가지 데이터를 같이 보여줘"
     ],
     [
+      "FACILITY_MIXED_TREND",
+      "유량과 야간최소유량을 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "수위와 야간최소유량을 같이 그래프로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "유량이랑 야간최소유량이랑 같이 보고 싶어"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "배수지 유량과 야간최소유량 함께 트렌드"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "XX 소블록 유량과 야간최소유량을 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "두 소블록의 야간최소유량을 같이 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "XX과 XX 소블록 야간최소유량 트렌드 비교"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "XX와 XX 배수지 수위를 함께 그래프로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "두 시설 데이터를 함께 트렌드로 보여줘"
+    ],
+    [
+      "FACILITY_MIXED_TREND",
+      "같은 기간 두 배수지 수위 비교 트렌드"
+    ],
+    [
       "ANOMALY_SCAN_ALL",
       "전체 이상 스캔해줘"
     ],
@@ -2256,10 +2680,162 @@
     [
       "FACILITY_CATALOG_TREND_TABLE",
       "1년간 전체 배수지 압력을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "한달간 전체 배수지의 일별 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "전체 배수지 일별 공급량 표"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "배수지 일별 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "최근 한달 배수지 일일 공급량은?"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "배수지별 일별 공급량을 알려줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "전체 배수지의 일공급량 현황을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "배수지 일별 유출 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "일별 배수지 공급량 표를 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "배수지 일별 공급량 데이터를 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_TABLE",
+      "한달간 배수지 공급량을 일별로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "월별 전체 배수지의 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "전체 배수지 월별 공급량 표"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "배수지 월별 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "배수지별 월별 공급량을 알려줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "전체 배수지의 월공급량 현황을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "배수지 월별 유출 공급량을 표로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "월별 배수지 공급량 표를 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "1년간 배수지 월별 공급량은?"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "배수지 월별 공급량 데이터를 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_TABLE",
+      "배수지 월별 공급량 현황을 알려줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "한달간 전체 배수지의 일별 공급량을 그래프로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "배수지 일별 공급량 차트로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "전체 배수지 일공급량 트렌드 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "배수지 일별 공급량을 차트로 표현해줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "배수지 일공급량 그래프를 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "배수지 일별 공급량을 시각화해줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "일별 배수지 공급량 바 차트로 보여줘"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "배수지 일별 공급량 트렌드 그래프"
+    ],
+    [
+      "RESERVOIR_DAILY_SUPPLY_CHART",
+      "전체 배수지 일공급량을 그래프로 시각화해줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "월별 전체 배수지의 공급량을 그래프로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "배수지 월별 공급량 차트로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "전체 배수지 월공급량 트렌드 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "배수지 월별 공급량을 차트로 표현해줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "배수지 월공급량 그래프를 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "배수지 월별 공급량을 시각화해줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "월별 배수지 공급량 바 차트로 보여줘"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "배수지 월별 공급량 트렌드 그래프"
+    ],
+    [
+      "RESERVOIR_MONTHLY_SUPPLY_CHART",
+      "전체 배수지 월공급량을 그래프로 시각화해줘"
     ]
   ],
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
-  "count": 564,
-  "built_at": "2026-03-21 23:48:47"
+  "count": 708,
+  "built_at": "2026-04-04 21:50:14"
 }

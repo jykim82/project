@@ -1132,6 +1132,7 @@ def _compute_flow_baselines() -> dict[str, float]:
         return {}
     finally:
         cur.close()
+        conn.close()
 
 
 def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
@@ -2236,12 +2237,44 @@ def normalize_question(question: str) -> str:
     - 연속 공백을 단일 공백으로
     - 앞뒤 공백 제거
     - 한글과 숫자 사이 공백 제거 (띄어쓰기 오류 보정: "행정 1-1" → "행정1-1")
+    - 한글 숫자 기간 표현 → 숫자 변환 ("한달간" → "30일간")
+    - 도메인 오타 정규화 ("트랜드" → "트렌드")
     """
     result = re.sub(r"\s+", " ", question.strip())
     # 한글 뒤 공백 + 숫자 → 공백 제거 (예: "행정 1-1" → "행정1-1", "남산 1" → "남산1")
     result = re.sub(r"([\uac00-\ud7a3])\s+(\d)", r"\1\2", result)
-    return result
 
+    # 한글 숫자 기간 표현 → 숫자 변환 (긴 표현부터 매칭)
+    _KOREAN_PERIOD = [
+        ("삼주일", "21일"), ("이주일", "14일"), ("일주일", "7일"), ("한주일", "7일"), ("한주", "7일"),
+        ("십이개월", "365일"), ("십일개월", "330일"), ("십개월", "300일"),
+        ("구개월", "270일"), ("팔개월", "240일"), ("칠개월", "210일"),
+        ("육개월", "180일"), ("오개월", "150일"), ("사개월", "120일"),
+        ("삼개월", "90일"), ("이개월", "60일"), ("일개월", "30일"),
+        ("여섯달", "180일"), ("다섯달", "150일"), ("넉달", "120일"),
+        ("세달", "90일"), ("석달", "90일"), ("두달", "60일"), ("한달", "30일"),
+        ("삼년", "1095일"), ("이년", "730일"), ("일년", "365일"),
+        ("세해", "1095일"), ("두해", "730일"), ("한해", "365일"),
+    ]
+    for kor, num in _KOREAN_PERIOD:
+        if kor in result:
+            result = result.replace(kor, num)
+
+    # 숫자+달 기간 표현 변환 (예: "3달동안" → "90일동안", "6달간" → "180일간")
+    # 한글 숫자 변환 후 남은 숫자+달 패턴 처리 (1~12달만)
+    result = re.sub(r'(\d{1,2})\s*달', lambda m: str(int(m.group(1)) * 30) + '일', result)
+
+    # 숫자+개년 기간 표현 변환 (예: "3개년간" → "1095일간")
+    # 주의: "2025년" 같은 연도는 "개년" 형태가 아니므로 안전
+    result = re.sub(r'(\d+)\s*개년', lambda m: str(int(m.group(1)) * 365) + '일', result)
+
+    # 도메인 오타 정규화
+    result = result.replace("작산", "적산")   # "적산"의 오타 ("10월 작산" → "10월 적산")
+    result = result.replace("트트렌드", "트렌드")
+    result = result.replace("트랜트", "트렌드")
+    result = result.replace("트랜드", "트렌드")
+
+    return result
 
 def normalize_for_matching(text: str) -> str:
     """
@@ -6757,9 +6790,25 @@ async def ask(request: AskRequest):
         _nmf_from = params.get("from_ts", "")
         _nmf_to = params.get("to_ts", "")
         try:
-            rows, columns = await asyncio.to_thread(
-                _execute_night_min_flow_query, _nmf_sn, _nmf_ft, _nmf_from, _nmf_to
-            )
+            # 다중 시설 지원: extra_sitenames도 NMF 조회
+            _nmf_site_list = [_nmf_sn]
+            if extra_sitenames:
+                _nmf_site_list.extend(extra_sitenames)
+                extra_sitenames = None  # 이중 처리 방지
+            _all_nmf_rows: list = []
+            _nmf_cols_ref = None
+            for _sn_i in _nmf_site_list:
+                _r_i, _c_i = await asyncio.to_thread(
+                    _execute_night_min_flow_query, _sn_i, _nmf_ft, _nmf_from, _nmf_to
+                )
+                if _r_i:
+                    _all_nmf_rows.extend(_r_i)
+                    if _nmf_cols_ref is None:
+                        _nmf_cols_ref = _c_i
+            rows = _all_nmf_rows
+            columns = _nmf_cols_ref or []
+            if len(_nmf_site_list) > 1:
+                params["sitename"] = ", ".join(_nmf_site_list)
         except Exception as e:
             logger.warning(f"야간최소유량 테이블 조회 실패: {e}")
             rows, columns = [], []
@@ -7266,42 +7315,44 @@ async def ask(request: AskRequest):
         except Exception as e:
             logger.warning(f"LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
-    # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (tb_tag_group_map 폴백 포함)
+    # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (다중 시설 지원)
     if intent == "NIGHT_MIN_FLOW_STATUS":
-        _nfs_sn = params.get("sitename", "")
         _nfs_ft = params.get("facilitytype", "소블록")
-        try:
-            _now = datetime.now()
-            # current: 최근 1일
-            _cur_rows, _cur_cols = await asyncio.to_thread(
-                _execute_night_min_flow_query,
-                _nfs_sn, _nfs_ft,
-                (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
-                _now.strftime("%Y-%m-%d"),
-            )
-            if not _cur_rows:
-                logger.info(f"NIGHT_MIN_FLOW_STATUS 데이터 없음: {_nfs_sn} {_nfs_ft}")
-            else:
-                # avg month: 최근 1달
+        # 다중 시설 처리: 메인 sitename + extra_sitenames
+        _nfs_site_list = [params.get("sitename", "")]
+        if extra_sitenames:
+            _nfs_site_list.extend(extra_sitenames)
+            extra_sitenames = None  # 이중 처리 방지
+        _nfs_result_cols = ["sitename", "facilitytype", "label", "datadesc",
+                            "current_val", "unit", "log_time", "avg_month", "avg_year"]
+        _all_nfs_rows: list = []
+        from collections import defaultdict
+        for _nfs_sn in _nfs_site_list:
+            if not _nfs_sn:
+                continue
+            try:
+                _now = datetime.now()
+                _cur_rows, _cur_cols = await asyncio.to_thread(
+                    _execute_night_min_flow_query,
+                    _nfs_sn, _nfs_ft,
+                    (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                    _now.strftime("%Y-%m-%d"),
+                )
+                if not _cur_rows:
+                    logger.info(f"NIGHT_MIN_FLOW_STATUS 데이터 없음: {_nfs_sn} {_nfs_ft}")
+                    continue
                 _mon_rows, _ = await asyncio.to_thread(
                     _execute_night_min_flow_query,
                     _nfs_sn, _nfs_ft,
                     (_now - timedelta(days=30)).strftime("%Y-%m-%d"),
                     _now.strftime("%Y-%m-%d"),
                 )
-                # avg year: 최근 1년
                 _yr_rows, _ = await asyncio.to_thread(
                     _execute_night_min_flow_query,
                     _nfs_sn, _nfs_ft,
                     (_now - timedelta(days=365)).strftime("%Y-%m-%d"),
                     _now.strftime("%Y-%m-%d"),
                 )
-                # 결과 집계: current_val = 최신 row, avg_month/avg_year = 평균
-                _last = dict(zip(_cur_cols, _cur_rows[-1]))
-                _result_cols = ["sitename", "facilitytype", "label", "datadesc",
-                                "current_val", "unit", "log_time", "avg_month", "avg_year"]
-                # 태그별 그룹핑
-                from collections import defaultdict
                 _tag_vals_m: dict[str, list] = defaultdict(list)
                 _tag_vals_y: dict[str, list] = defaultdict(list)
                 for r in _mon_rows:
@@ -7310,9 +7361,7 @@ async def ask(request: AskRequest):
                 for r in _yr_rows:
                     rd = dict(zip(_cur_cols, r))
                     _tag_vals_y[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
-                # 태그별 최신 row → 결과 행 생성
                 _seen: set = set()
-                _result_rows = []
                 for r in reversed(_cur_rows):
                     rd = dict(zip(_cur_cols, r))
                     _tsn = rd.get("tagsn", "")
@@ -7322,21 +7371,23 @@ async def ask(request: AskRequest):
                     _cv = float(rd.get("val") or 0)
                     _mv = _tag_vals_m.get(_tsn, [])
                     _yv = _tag_vals_y.get(_tsn, [])
-                    _am = round(sum(_mv) / len(_mv), 2) if _mv else None
-                    _ay = round(sum(_yv) / len(_yv), 2) if _yv else None
-                    _result_rows.append((
+                    _all_nfs_rows.append((
                         rd.get("sitename", ""), rd.get("facilitytype", ""),
                         rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
                         round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
-                        _am, _ay,
+                        round(sum(_mv) / len(_mv), 2) if _mv else None,
+                        round(sum(_yv) / len(_yv), 2) if _yv else None,
                     ))
-                if _result_rows:
-                    sql_combined = "-- custom handler"
-                    rows = _result_rows
-                    columns = _result_cols
-                    logger.info(f"NIGHT_MIN_FLOW_STATUS 커스텀: {len(_result_rows)}행")
-        except Exception as e:
-            logger.warning(f"NIGHT_MIN_FLOW_STATUS 커스텀 실패, 원본 SQL 폴백: {e}")
+                logger.info(f"NIGHT_MIN_FLOW_STATUS '{_nfs_sn}': {len(_all_nfs_rows)}행 누적")
+            except Exception as e:
+                logger.warning(f"NIGHT_MIN_FLOW_STATUS '{_nfs_sn}' 커스텀 실패, 폴백: {e}")
+        if _all_nfs_rows:
+            sql_combined = "-- custom handler"
+            rows = _all_nfs_rows
+            columns = _nfs_result_cols
+            if len([s for s in _nfs_site_list if s]) > 1:
+                params["sitename"] = ", ".join(s for s in _nfs_site_list if s)
+            logger.info(f"NIGHT_MIN_FLOW_STATUS 커스텀 완료: {len(_all_nfs_rows)}행")
 
     # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
     if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
@@ -8641,19 +8692,30 @@ async def ask_stream(request: AskRequest):
             except Exception as e:
                 logger.warning(f"SSE LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
-        # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (tb_tag_group_map 폴백 포함)
+        # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (다중 시설 지원)
         if intent == "NIGHT_MIN_FLOW_STATUS":
-            _nfs_sn = params.get("sitename", "")
             _nfs_ft = params.get("facilitytype", "소블록")
-            try:
-                _now = datetime.now()
-                _cur_rows, _cur_cols = await asyncio.to_thread(
-                    _execute_night_min_flow_query,
-                    _nfs_sn, _nfs_ft,
-                    (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
-                    _now.strftime("%Y-%m-%d"),
-                )
-                if _cur_rows:
+            _nfs_site_list = [params.get("sitename", "")]
+            if extra_sitenames:
+                _nfs_site_list.extend(extra_sitenames)
+                extra_sitenames = None
+            _nfs_result_cols = ["sitename", "facilitytype", "label", "datadesc",
+                                "current_val", "unit", "log_time", "avg_month", "avg_year"]
+            _all_nfs_rows: list = []
+            from collections import defaultdict
+            for _nfs_sn in _nfs_site_list:
+                if not _nfs_sn:
+                    continue
+                try:
+                    _now = datetime.now()
+                    _cur_rows, _cur_cols = await asyncio.to_thread(
+                        _execute_night_min_flow_query,
+                        _nfs_sn, _nfs_ft,
+                        (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                        _now.strftime("%Y-%m-%d"),
+                    )
+                    if not _cur_rows:
+                        continue
                     _mon_rows, _ = await asyncio.to_thread(
                         _execute_night_min_flow_query,
                         _nfs_sn, _nfs_ft,
@@ -8666,7 +8728,6 @@ async def ask_stream(request: AskRequest):
                         (_now - timedelta(days=365)).strftime("%Y-%m-%d"),
                         _now.strftime("%Y-%m-%d"),
                     )
-                    from collections import defaultdict
                     _tag_vals_m: dict[str, list] = defaultdict(list)
                     _tag_vals_y: dict[str, list] = defaultdict(list)
                     for r in _mon_rows:
@@ -8675,10 +8736,7 @@ async def ask_stream(request: AskRequest):
                     for r in _yr_rows:
                         rd = dict(zip(_cur_cols, r))
                         _tag_vals_y[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
-                    _result_cols = ["sitename", "facilitytype", "label", "datadesc",
-                                    "current_val", "unit", "log_time", "avg_month", "avg_year"]
                     _seen: set = set()
-                    _result_rows = []
                     for r in reversed(_cur_rows):
                         rd = dict(zip(_cur_cols, r))
                         _tsn = rd.get("tagsn", "")
@@ -8688,21 +8746,23 @@ async def ask_stream(request: AskRequest):
                         _cv = float(rd.get("val") or 0)
                         _mv = _tag_vals_m.get(_tsn, [])
                         _yv = _tag_vals_y.get(_tsn, [])
-                        _am = round(sum(_mv) / len(_mv), 2) if _mv else None
-                        _ay = round(sum(_yv) / len(_yv), 2) if _yv else None
-                        _result_rows.append((
+                        _all_nfs_rows.append((
                             rd.get("sitename", ""), rd.get("facilitytype", ""),
                             rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
                             round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
-                            _am, _ay,
+                            round(sum(_mv) / len(_mv), 2) if _mv else None,
+                            round(sum(_yv) / len(_yv), 2) if _yv else None,
                         ))
-                    if _result_rows:
-                        sql_combined = "-- custom handler"
-                        rows = _result_rows
-                        columns = _result_cols
-                        logger.info(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀: {len(_result_rows)}행")
-            except Exception as e:
-                logger.warning(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀 실패, 원본 SQL 폴백: {e}")
+                    logger.info(f"SSE NIGHT_MIN_FLOW_STATUS '{_nfs_sn}': {len(_all_nfs_rows)}행 누적")
+                except Exception as e:
+                    logger.warning(f"SSE NIGHT_MIN_FLOW_STATUS '{_nfs_sn}' 커스텀 실패, 폴백: {e}")
+            if _all_nfs_rows:
+                sql_combined = "-- custom handler"
+                rows = _all_nfs_rows
+                columns = _nfs_result_cols
+                if len([s for s in _nfs_site_list if s]) > 1:
+                    params["sitename"] = ", ".join(s for s in _nfs_site_list if s)
+                logger.info(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀 완료: {len(_all_nfs_rows)}행")
 
         # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
         if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
