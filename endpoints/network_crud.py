@@ -96,10 +96,26 @@ async def get_network_topology():
         conn = _get_db_connection()
         cur = conn.cursor()
 
-        # 노드: 전체 장비 (최신 상태 포함, MAX(check_time) 기반 최적화)
+        # 노드: 전체 장비 (IP 보유 → tb_network_status, IP 없는 시리얼 → DI 통신이상 태그)
         cur.execute("""
-            WITH latest_time AS (
+            WITH latest_network AS (
                 SELECT MAX(check_time) AS ct FROM tb_network_status
+            ),
+            -- 시리얼 장비: 통신이상 DI 태그 최신값으로 sitename+facilitytype별 상태 결정
+            serial_status AS (
+                SELECT
+                    t.sitename,
+                    t.facilitytype,
+                    CASE WHEN MAX(CASE WHEN r.val = 1 THEN 1 ELSE 0 END) = 1
+                         THEN '이상' ELSE '정상' END AS status_code
+                FROM tb_tag_info t
+                JOIN LATERAL (
+                    SELECT val FROM tb_tag_raw_data
+                    WHERE tagsn = t.tagsn ORDER BY logtime DESC LIMIT 1
+                ) r ON true
+                WHERE t.tagtype = 'Digital Input'
+                  AND t.datadesc ILIKE '%통신이상%'
+                GROUP BY t.sitename, t.facilitytype
             )
             SELECT
                 e.equipment_id,
@@ -108,7 +124,7 @@ async def get_network_topology():
                 e.equipmenttype,
                 e.sitename,
                 n.ip_address,
-                ns.status_code,
+                COALESCE(ns.status_code, ss.status_code, '정상') AS status_code,
                 (n.ip_address IS NOT NULL) AS has_ip,
                 ns.rtt_ms,
                 TO_CHAR(ns.check_time, 'HH24:MI:SS') AS check_time
@@ -116,7 +132,11 @@ async def get_network_topology():
             LEFT JOIN tb_network_info n ON e.equipment_id = n.equipment_id
             LEFT JOIN tb_network_status ns
                 ON ns.equipment_id = e.equipment_id
-                AND ns.check_time = (SELECT ct FROM latest_time)
+                AND ns.check_time = (SELECT ct FROM latest_network)
+            LEFT JOIN serial_status ss
+                ON ss.sitename = e.sitename
+                AND ss.facilitytype = e.facilitytype
+                AND n.ip_address IS NULL   -- 시리얼 장비에만 DI 상태 적용
             ORDER BY e.sitename, e.equipmenttype
         """)
         node_cols = [
@@ -189,6 +209,85 @@ async def get_network_status_summary():
     except psycopg2.Error as e:
         logger.error(f"네트워크 상태 요약 조회 실패: {e}")
         return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": {}}
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.get("/network/comm-alarms")
+async def get_comm_alarms():
+    """통신이상 알람 조회 — 시리얼(DI 태그) + 이더넷(tb_network_status) 통합
+
+    - 시리얼: IP 미보유 장비의 통신이상 DI 태그 최신값 val=1 항목
+    - 이더넷: tb_network_status 최신 스냅샷에서 status_code='이상' 장비
+    """
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            WITH
+            -- 1) 시리얼 통신이상: DI 태그 직접 조회
+            serial_alarms AS (
+                SELECT
+                    t.sitename,
+                    t.facilitytype,
+                    t.datadesc                                          AS alarm_msg,
+                    TO_CHAR(r.logtime, 'YYYY-MM-DD HH24:MI:SS')        AS alarm_start_time,
+                    '시리얼'                                             AS comm_type
+                FROM tb_tag_info t
+                JOIN LATERAL (
+                    SELECT val, logtime
+                    FROM tb_tag_raw_data
+                    WHERE tagsn = t.tagsn
+                    ORDER BY logtime DESC
+                    LIMIT 1
+                ) r ON true
+                WHERE t.tagtype = 'Digital Input'
+                  AND t.datadesc ILIKE '%통신이상%'
+                  AND r.val = 1
+            ),
+            -- 2) 이더넷 통신이상: 최신 네트워크 상태 스냅샷
+            latest_network AS (
+                SELECT MAX(check_time) AS ct FROM tb_network_status
+            ),
+            ethernet_alarms AS (
+                SELECT
+                    e.sitename,
+                    e.facilitytype,
+                    e.equipmenttype || ' 네트워크 통신이상'              AS alarm_msg,
+                    TO_CHAR(ns.check_time, 'YYYY-MM-DD HH24:MI:SS')    AS alarm_start_time,
+                    '이더넷'                                             AS comm_type
+                FROM tb_network_status ns
+                JOIN tb_equipment_info e ON e.equipment_id = ns.equipment_id
+                WHERE ns.check_time = (SELECT ct FROM latest_network)
+                  AND ns.status_code = '이상'
+            )
+            SELECT sitename, facilitytype, alarm_msg, alarm_start_time, comm_type
+            FROM serial_alarms
+            UNION ALL
+            SELECT sitename, facilitytype, alarm_msg, alarm_start_time, comm_type
+            FROM ethernet_alarms
+            ORDER BY comm_type DESC, sitename, facilitytype
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        result = [
+            {
+                "sitename": r[0] or "",
+                "facilitytype": r[1] or "",
+                "alarm_msg": r[2] or "",
+                "alarm_severity": None,
+                "alarm_start_time": r[3] or "",
+                "alarm_status": "진행중",
+                "comm_type": r[4] or "",
+            }
+            for r in rows
+        ]
+        return {"status": "OK", "data": result}
+    except psycopg2.Error as e:
+        logger.error(f"통신이상 알람 조회 실패: {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": []}
     finally:
         if conn:
             conn.close()
