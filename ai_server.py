@@ -11590,6 +11590,7 @@ async def get_gis_facility_info(sitename: str, facilitytype: str):
         # 알람: 진행중은 기간 무제한 + 해제는 최근 30일
         cur.execute("""
             SELECT TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI') AS start_time,
+                   tagsn,
                    alarm_severity, alarm_msg, alarm_status, alarm_category,
                    COALESCE(meta->>'cause', diagnosed_cause) AS cause,
                    COALESCE(meta->>'action', countermeasure) AS action,
