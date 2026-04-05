@@ -1295,25 +1295,32 @@ def _detect_equipment_failures(
         cur = conn.cursor()
 
         # --- A. 네트워크 장애 설비 ---
+        # 전체 장비가 is_alive=false이면 망 분리 환경(로컬 개발) → SNMP 폴링 결과 신뢰 불가, 스킵
         failed_equips: dict[str, dict] = {}
         try:
             cur.execute("""
                 WITH lt AS (SELECT MAX(check_time) AS ct FROM tb_network_status)
-                SELECT ns.equipment_id, e.equipmenttype, e.sitename, e.facilitytype,
+                SELECT ns.is_alive, ns.equipment_id, e.equipmenttype, e.sitename, e.facilitytype,
                        ns.error_message
                 FROM tb_network_status ns
                 JOIN lt ON ns.check_time = lt.ct
                 JOIN tb_equipment_info e ON ns.equipment_id = e.equipment_id
-                WHERE ns.is_alive = false
             """)
-            for eid, etype, sn, ft, emsg in cur.fetchall():
-                failed_equips[eid] = {
-                    "equipmenttype": etype or "",
-                    "sitename": sn or "",
-                    "facilitytype": ft or "",
-                    "failure_type": "network_down",
-                    "failure_detail": emsg or "네트워크 응답 없음",
-                }
+            ns_rows = cur.fetchall()
+            alive_count = sum(1 for r in ns_rows if r[0] is True)
+            if alive_count == 0 and ns_rows:
+                # 전체 Timeout → 로컬 서버가 현장 망에 접근 불가 상태 → network_down 판단 생략
+                logger.info(f"tb_network_status 전체 is_alive=false ({len(ns_rows)}개) → 망 분리 환경으로 판단, network_down 스킵")
+            else:
+                for is_alive, eid, etype, sn, ft, emsg in ns_rows:
+                    if not is_alive:
+                        failed_equips[eid] = {
+                            "equipmenttype": etype or "",
+                            "sitename": sn or "",
+                            "facilitytype": ft or "",
+                            "failure_type": "network_down",
+                            "failure_detail": emsg or "네트워크 응답 없음",
+                        }
         except Exception as e:
             logger.debug(f"네트워크 장애 조회 실패(무시): {e}")
 
