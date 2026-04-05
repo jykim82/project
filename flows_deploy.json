@@ -8589,7 +8589,7 @@
       "type": "function",
       "z": "672f4483740464f9",
       "name": "위기대응 메시지",
-      "func": "// 알람 메시지 기반 자동 진단 생성 함수\nconst alarm_msg = (msg.payload.alarm_msg || \"\").toLowerCase();\nconst equipmenttype = (msg.payload.equipmenttype || \"\").toLowerCase();\n\nlet cause = \"설비에서 일반 경보 신호가 감지되었습니다.\";\nlet action = \"현장 설비 점검이 필요합니다.\";\n\n// 간단한 includes 함수\nconst has = (keyword) => alarm_msg.includes(keyword.toLowerCase())\n  || equipmenttype.includes(keyword.toLowerCase());\n\n// ---------------------------\n// 1) 통신 / 네트워크 계열\n// ---------------------------\nif (!has(\"UPS\") &&!has(\"인버터\")&&!has(\"UPS\")&&!has(\"UPS\")&&(has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"모뎀 장비 또는 통신사 통신 장애 발생\";\n  action =\n    \"모뎀 전원 및 작동 상태 점검 후 통신사 통신 상태 점검<br>\" +\n    \"※ 통신 설비 점검 업체: JS정보통신(010-3944-0643), KT콜센터(02-500-6000)\";\n}\n\n// ---------------------------\n// 2) UPS / 전원 계열\n// ---------------------------\nelse if (has(\"UPS\")&&(has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"UPS 통신 모듈 또는 소프트웨어 오류\";\n  action = \"UPS 통신모듈 및 PLC 통신카드 간 통신상태 점검<br>\"+\n           \"※ 계장 설비 점검 관리 업체: 동양산전(010 - 5457 - 3368), 제우씨엔아이(010 - 3774 - 4226), 오라테크(010 - 7228 - 5369) \";\n}\n\nelse if (has(\"UPS\")&&(has(\"battery\") || has(\"배터리\") || has(\"BAT\"))) {\n  cause = \"배터리 수명 소진(교체필요) 또는 충전 모듈 불량\";\n  action = \"배터리 수명 및 전압 상태 점검<br>\" +\n           \"※ 계장 설비 점검 관리 업체: 동양산전(010 - 5457 - 3368), 제우씨엔아이(010 - 3774 - 4226), 오라테크(010 - 7228 - 5369) \";\n}\n\nelse if (has(\"UPS\") && (has(\"fault\") || has(\"고장\") || has(\"FLT\"))) {\n  cause = \"UPS 메인보드 또는 인버터 오류\";\n  action = \"UPS 작동 상태 점검<br>\" +\n           \"※ 계장 설비 점검 관리 업체 : 동양산전 (010-5457-3368), 제우씨엔아이 (010-3774-4226), 오라테크 (010-7228-5369)\";\n}\n\nelse if (has(\"정전\")) {\n  cause = \"메인 전원 정전\";\n  action = \"현장 메인 차단기 상태 확인 후 정상 시 한전 점검 요청<br>\" +\n    \"※ 계장 설비 점검 관리 업체 : 동양산전 (010-5457-3368), 제우씨엔아이 (010-3774-4226), 오라테크 (010-7228-5369), 한국전력 당진지사(041-350-2361)\";\n}\n\n// ---------------------------\n// 3) 펌프 / 모터류\n// ---------------------------\nelse if (has(\"펌프\") || has(\"pump\") || has(\"motor\") || has(\"overload\") || has(\"ol\")) {\n  cause = \"펌프 또는 모터 구동부에서 이상 부하 또는 장비 장애 발생\";\n  action = \"전동기 부하, 모터 온도, 회전체 상태, 윤활 상태 등을 점검\";\n}\n\n// ---------------------------\n// 4) 밸브 계열 (확장)\n// ---------------------------\nelse if (\n  has(\"밸브\") || has(\"valve\") ||\n  has(\"유입밸브\") || has(\"배출밸브\") || has(\"흡입밸브\") ||\n  has(\"inlet\") || has(\"outlet\")\n) {\n  cause = \"밸브 액추에이터 또는 통신 불량 발생\";\n  action = \"밸브 상태 복구 후 점검업체 점검<br>\" +\n           \"※ 아세아상사 (010-4455-1022)\";\n}\n\n// ---------------------------\n// 5) 기타 (fallback)\n// ---------------------------\nelse {\n  cause = \"설비에서 일반 경보 신호 감지\";\n  action = \"장비 상태와 관련 로그 점검\";\n}\n\n// 출력\nmsg.cause = cause;\nmsg.action = action;\n\nreturn msg;\n",
+      "func": "// 알람 메시지 기반 자동 진단 생성 함수 (비상연락처 DB 동적 조회)\nconst alarm_msg = (msg.payload.alarm_msg || \"\").toLowerCase();\nconst equipmenttype = (msg.payload.equipmenttype || \"\").toLowerCase();\n\nlet cause = \"설비에서 일반 경보 신호가 감지되었습니다.\";\nlet action = \"현장 설비 점검이 필요합니다.\";\n\n// 연락처 캐시에서 ※ 라인 동적 생성\nconst contactsCache = global.get('alarm_contacts_cache') || {};\nfunction contactLine(category, label) {\n  const list = contactsCache[category] || [];\n  if (!list.length) return '';\n  return '<br>※ ' + label + ': ' + list.map(c => c.company + '(' + c.phone + ')').join(', ');\n}\n\n// 간단한 includes 함수\nconst has = (keyword) => alarm_msg.includes(keyword.toLowerCase())\n  || equipmenttype.includes(keyword.toLowerCase());\n\n// ---------------------------\n// 1) 통신 / 네트워크 계열\n// ---------------------------\nif (!has(\"UPS\") && !has(\"인버터\") && (has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"모뎀 장비 또는 통신사 통신 장애 발생\";\n  action = \"모뎀 전원 및 작동 상태 점검 후 통신사 통신 상태 점검\" +\n           contactLine('네트워크', '통신 설비 점검 업체');\n}\n\n// ---------------------------\n// 2) UPS / 전원 계열\n// ---------------------------\nelse if (has(\"UPS\") && (has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"UPS 통신 모듈 또는 소프트웨어 오류\";\n  action = \"UPS 통신모듈 및 PLC 통신카드 간 통신상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"UPS\") && (has(\"battery\") || has(\"배터리\") || has(\"BAT\"))) {\n  cause = \"배터리 수명 소진(교체필요) 또는 충전 모듈 불량\";\n  action = \"배터리 수명 및 전압 상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"UPS\") && (has(\"fault\") || has(\"고장\") || has(\"FLT\"))) {\n  cause = \"UPS 메인보드 또는 인버터 오류\";\n  action = \"UPS 작동 상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"정전\")) {\n  cause = \"메인 전원 정전\";\n  action = \"현장 메인 차단기 상태 확인 후 정상 시 한전 점검 요청\" +\n           contactLine('정전', '점검 업체');\n}\n\n// ---------------------------\n// 3) 펌프 / 모터류\n// ---------------------------\nelse if (has(\"펌프\") || has(\"pump\") || has(\"motor\") || has(\"overload\") || has(\"ol\")) {\n  cause = \"펌프 또는 모터 구동부에서 이상 부하 또는 장비 장애 발생\";\n  action = \"전동기 부하, 모터 온도, 회전체 상태, 윤활 상태 등을 점검\" +\n           contactLine('펌프', '펌프 점검 업체');\n}\n\n// ---------------------------\n// 4) 밸브 계열 (확장)\n// ---------------------------\nelse if (\n  has(\"밸브\") || has(\"valve\") ||\n  has(\"유입밸브\") || has(\"배출밸브\") || has(\"흡입밸브\") ||\n  has(\"inlet\") || has(\"outlet\")\n) {\n  cause = \"밸브 액추에이터 또는 통신 불량 발생\";\n  action = \"밸브 상태 복구 후 점검업체 점검\" +\n           contactLine('밸브', '밸브 점검 업체');\n}\n\n// ---------------------------\n// 5) 기타 (fallback)\n// ---------------------------\nelse {\n  cause = \"설비에서 일반 경보 신호 감지\";\n  action = \"장비 상태와 관련 로그 점검\";\n}\n\n// 출력\nmsg.cause = cause;\nmsg.action = action;\n\nreturn msg;\n",
       "outputs": 1,
       "timeout": "",
       "noerr": 0,
@@ -9726,7 +9726,7 @@
       "type": "function",
       "z": "672f4483740464f9",
       "name": "위기대응 메시지",
-      "func": "// 알람 메시지 기반 자동 진단 생성 함수\nconst alarm_msg = (msg.payload.alarm_msg || \"\").toLowerCase();\nconst equipmenttype = (msg.payload.equipmenttype || \"\").toLowerCase();\n\nlet cause = \"설비에서 일반 경보 신호가 감지되었습니다.\";\nlet action = \"현장 설비 점검이 필요합니다.\";\n\n// 간단한 includes 함수\nconst has = (keyword) => alarm_msg.includes(keyword.toLowerCase())\n  || equipmenttype.includes(keyword.toLowerCase());\n\n// ---------------------------\n// 1) 통신 / 네트워크 계열\n// ---------------------------\nif (!has(\"UPS\") &&!has(\"인버터\")&&!has(\"UPS\")&&!has(\"UPS\")&&(has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"모뎀 장비 또는 통신사 통신 장애 발생\";\n  action =\n    \"모뎀 전원 및 작동 상태 점검 후 통신사 통신 상태 점검<br>\" +\n    \"※ 통신 설비 점검 업체: JS정보통신(010-3944-0643), KT콜센터(02-500-6000)\";\n}\n\n// ---------------------------\n// 2) UPS / 전원 계열\n// ---------------------------\nelse if (has(\"UPS\")&&(has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"UPS 통신 모듈 또는 소프트웨어 오류\";\n  action = \"UPS 통신모듈 및 PLC 통신카드 간 통신상태 점검<br>\"+\n           \"※ 계장 설비 점검 관리 업체: 동양산전(010 - 5457 - 3368), 제우씨엔아이(010 - 3774 - 4226), 오라테크(010 - 7228 - 5369) \";\n}\n\nelse if (has(\"UPS\")&&(has(\"battery\") || has(\"배터리\") || has(\"BAT\"))) {\n  cause = \"배터리 수명 소진(교체필요) 또는 충전 모듈 불량\";\n  action = \"배터리 수명 및 전압 상태 점검<br>\" +\n           \"※ 계장 설비 점검 관리 업체: 동양산전(010 - 5457 - 3368), 제우씨엔아이(010 - 3774 - 4226), 오라테크(010 - 7228 - 5369) \";\n}\n\nelse if (has(\"UPS\") && (has(\"fault\") || has(\"고장\") || has(\"FLT\"))) {\n  cause = \"UPS 메인보드 또는 인버터 오류\";\n  action = \"UPS 작동 상태 점검<br>\" +\n           \"※ 계장 설비 점검 관리 업체 : 동양산전 (010-5457-3368), 제우씨엔아이 (010-3774-4226), 오라테크 (010-7228-5369)\";\n}\n\nelse if (has(\"정전\")) {\n  cause = \"메인 전원 정전\";\n  action = \"현장 메인 차단기 상태 확인 후 정상 시 한전 점검 요청<br>\" +\n    \"※ 계장 설비 점검 관리 업체 : 동양산전 (010-5457-3368), 제우씨엔아이 (010-3774-4226), 오라테크 (010-7228-5369), 한국전력 당진지사(041-350-2361)\";\n}\n\n// ---------------------------\n// 3) 펌프 / 모터류\n// ---------------------------\nelse if (has(\"펌프\") || has(\"pump\") || has(\"motor\") || has(\"overload\") || has(\"ol\")) {\n  cause = \"펌프 또는 모터 구동부에서 이상 부하 또는 장비 장애 발생\";\n  action = \"전동기 부하, 모터 온도, 회전체 상태, 윤활 상태 등을 점검\";\n}\n\n// ---------------------------\n// 4) 밸브 계열 (확장)\n// ---------------------------\nelse if (\n  has(\"밸브\") || has(\"valve\") ||\n  has(\"유입밸브\") || has(\"배출밸브\") || has(\"흡입밸브\") ||\n  has(\"inlet\") || has(\"outlet\")\n) {\n  cause = \"밸브 액추에이터 또는 통신 불량 발생\";\n  action = \"밸브 상태 복구 후 점검업체 점검<br>\" +\n           \"※ 아세아상사 (010-4455-1022)\";\n}\n\n// ---------------------------\n// 5) 기타 (fallback)\n// ---------------------------\nelse {\n  cause = \"설비에서 일반 경보 신호 감지\";\n  action = \"장비 상태와 관련 로그 점검\";\n}\n\n// 출력\nmsg.cause = cause;\nmsg.action = action;\n\nreturn msg;\n",
+      "func": "// 알람 메시지 기반 자동 진단 생성 함수 (비상연락처 DB 동적 조회)\nconst alarm_msg = (msg.payload.alarm_msg || \"\").toLowerCase();\nconst equipmenttype = (msg.payload.equipmenttype || \"\").toLowerCase();\n\nlet cause = \"설비에서 일반 경보 신호가 감지되었습니다.\";\nlet action = \"현장 설비 점검이 필요합니다.\";\n\n// 연락처 캐시에서 ※ 라인 동적 생성\nconst contactsCache = global.get('alarm_contacts_cache') || {};\nfunction contactLine(category, label) {\n  const list = contactsCache[category] || [];\n  if (!list.length) return '';\n  return '<br>※ ' + label + ': ' + list.map(c => c.company + '(' + c.phone + ')').join(', ');\n}\n\n// 간단한 includes 함수\nconst has = (keyword) => alarm_msg.includes(keyword.toLowerCase())\n  || equipmenttype.includes(keyword.toLowerCase());\n\n// ---------------------------\n// 1) 통신 / 네트워크 계열\n// ---------------------------\nif (!has(\"UPS\") && !has(\"인버터\") && (has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"모뎀 장비 또는 통신사 통신 장애 발생\";\n  action = \"모뎀 전원 및 작동 상태 점검 후 통신사 통신 상태 점검\" +\n           contactLine('네트워크', '통신 설비 점검 업체');\n}\n\n// ---------------------------\n// 2) UPS / 전원 계열\n// ---------------------------\nelse if (has(\"UPS\") && (has(\"통신\") || has(\"comm\") || has(\"network\") || has(\"link\") || has(\"disconnect\"))) {\n  cause = \"UPS 통신 모듈 또는 소프트웨어 오류\";\n  action = \"UPS 통신모듈 및 PLC 통신카드 간 통신상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"UPS\") && (has(\"battery\") || has(\"배터리\") || has(\"BAT\"))) {\n  cause = \"배터리 수명 소진(교체필요) 또는 충전 모듈 불량\";\n  action = \"배터리 수명 및 전압 상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"UPS\") && (has(\"fault\") || has(\"고장\") || has(\"FLT\"))) {\n  cause = \"UPS 메인보드 또는 인버터 오류\";\n  action = \"UPS 작동 상태 점검\" +\n           contactLine('UPS', '계장 설비 점검 관리 업체');\n}\n\nelse if (has(\"정전\")) {\n  cause = \"메인 전원 정전\";\n  action = \"현장 메인 차단기 상태 확인 후 정상 시 한전 점검 요청\" +\n           contactLine('정전', '점검 업체');\n}\n\n// ---------------------------\n// 3) 펌프 / 모터류\n// ---------------------------\nelse if (has(\"펌프\") || has(\"pump\") || has(\"motor\") || has(\"overload\") || has(\"ol\")) {\n  cause = \"펌프 또는 모터 구동부에서 이상 부하 또는 장비 장애 발생\";\n  action = \"전동기 부하, 모터 온도, 회전체 상태, 윤활 상태 등을 점검\" +\n           contactLine('펌프', '펌프 점검 업체');\n}\n\n// ---------------------------\n// 4) 밸브 계열 (확장)\n// ---------------------------\nelse if (\n  has(\"밸브\") || has(\"valve\") ||\n  has(\"유입밸브\") || has(\"배출밸브\") || has(\"흡입밸브\") ||\n  has(\"inlet\") || has(\"outlet\")\n) {\n  cause = \"밸브 액추에이터 또는 통신 불량 발생\";\n  action = \"밸브 상태 복구 후 점검업체 점검\" +\n           contactLine('밸브', '밸브 점검 업체');\n}\n\n// ---------------------------\n// 5) 기타 (fallback)\n// ---------------------------\nelse {\n  cause = \"설비에서 일반 경보 신호 감지\";\n  action = \"장비 상태와 관련 로그 점검\";\n}\n\n// 출력\nmsg.cause = cause;\nmsg.action = action;\n\nreturn msg;\n",
       "outputs": 1,
       "timeout": "",
       "noerr": 0,
@@ -20496,6 +20496,61 @@
         ]
       ],
       "d": true
+    },
+    {
+      "id": "ac_inject_001",
+      "type": "inject",
+      "z": "672f4483740464f9",
+      "name": "비상연락처 로드",
+      "props": [],
+      "repeat": "300",
+      "crontab": "",
+      "once": true,
+      "onceDelay": "2",
+      "topic": "",
+      "x": 170,
+      "y": 50,
+      "wires": [
+        [
+          "ac_query_001"
+        ]
+      ]
+    },
+    {
+      "id": "ac_query_001",
+      "type": "postgresql",
+      "z": "672f4483740464f9",
+      "name": "연락처 조회",
+      "query": "SELECT category, company, phone, sort_order FROM tb_alarm_contact WHERE region='water' ORDER BY category, sort_order",
+      "postgreSQLConfig": "71827310c941a9d1",
+      "split": false,
+      "rowsPerMsg": "",
+      "outputs": 1,
+      "x": 380,
+      "y": 50,
+      "wires": [
+        [
+          "ac_cache_001"
+        ]
+      ]
+    },
+    {
+      "id": "ac_cache_001",
+      "type": "function",
+      "z": "672f4483740464f9",
+      "name": "연락처 캐시 저장",
+      "func": "// tb_alarm_contact → global context 캐시\nconst cache = {};\nfor (const row of (msg.payload || [])) {\n  if (!cache[row.category]) cache[row.category] = [];\n  cache[row.category].push({ company: row.company, phone: row.phone });\n}\nglobal.set('alarm_contacts_cache', cache);\nnode.log('비상연락처 캐시 갱신: ' + Object.keys(cache).map(k => k + '(' + cache[k].length + ')').join(', '));\nreturn null;\n",
+      "outputs": 1,
+      "timeout": "",
+      "noerr": 0,
+      "initialize": "",
+      "finalize": "",
+      "libs": [],
+      "x": 600,
+      "y": 50,
+      "wires": [
+        []
+      ]
     }
   ]
 }
