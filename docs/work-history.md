@@ -2,6 +2,43 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-05 — AI 파이프라인 3종 성능 최적화)
+
+#### 병목 분석 및 개선 결과
+
+| 병목 | 원인 | 개선 전 | 개선 후 |
+|------|------|---------|---------|
+| 임베딩 중복 계산 | `classify()`에서 `embed_query()` 2회 호출 | +1~4s 낭비 | 1회로 통합 |
+| SLM 날짜 추출 오작동 | `_DATE_KW`에 `"분"/"간"/"주"` 단독 포함 → "분析/야간/주소" 오매칭 | +11~17s | 0~1ms (스킵) |
+| FACILITY_TREND DB | `fn_trend_period_summary` 2회 풀스캔(287K blocks) | 2,852ms | 78~131ms (30×) |
+
+#### 1. `intent_classifier.py` — 임베딩 1회 계산 공유
+- `classify()` 내 `embed_query()` 2회 호출 → 1회로 통합 (query_vec 전달)
+- `_get_vector_candidates()`, `_classify_by_vector()` 모두 `query_vec=None` 파라미터 추가
+- 타이밍 로그 추가: `⏱ 임베딩 Xms`, `⏱ 분류(keyword/vector/slm) kw=Xms embed=Xms total=Xms`
+
+#### 2. `param_extractor.py` — SLM 날짜 추출 조건부 스킵
+- `_DATE_KW` 단독 한글자(`"분"/"간"/"주"`) 제거 → 복합 표현만 유지
+  - `"분"` → `"분간"/"분 전"` (기존 "분析" 오매칭 방지)
+  - `"간"` → 완전 제거 (기존 "야간/기간/구간" 오매칭 방지)
+  - `"주"` → `"주간"/"주일"` (기존 "주소/주요" 오매칭 방지)
+- `_has_date_hint = False`이면 Ollama 호출 없이 기본값 사용
+- 타이밍 로그 추가: `⏱ 추출 Phase1=Xms Phase2(날짜)=Xms 합계=Xms slm_date=Y/N`
+
+#### 3. `ai_server.py` — 전구간 타이밍 계측 + DB 함수 최적화
+- `/ask`, `/ask/stream` 양쪽에 단계별 `⏱` 로그 추가
+  - `분류=Xms 추출=Xms SQL=Xms 합계=Xms rows=N`
+- `execute_sql()` 내 SQL 실행 시간 로그: `⏱ SQL Xms → N행`
+- `fn_trend_period_summary` PostgreSQL 함수 재작성
+  - 기존: `tag_counts` CTE COUNT(*) + `ranked` CTE 풀스캔 — 동적 JOIN으로 인덱스 미사용
+  - 개선: `ARRAY(SELECT tagsn...)` 사전 추출 → `WHERE r.tagsn = ANY(v_tagsns)` 인덱스 스캔
+  - 결과: 2,852ms → **78~131ms** (약 30배 개선)
+
+#### 최종 응답 성능 (server9 기준, 웜업 후)
+- `FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS` ("신평 배수지 야간최소유량 표준편차 분析"):
+  - 임베딩=400ms, 분류=0ms, 추출(Phase2)=**0ms** (SLM 스킵), DB=~3ms
+  - 전체 ≈ **2초** 이내 (이전: 분析/야간 오매칭으로 SLM 11~17s 낭비)
+
 ### 완료 (2026-04-05 — 비상연락처 관리 기능 + Node-RED 인코딩 수정)
 
 #### 1. 비상연락처 관리 시스템 구축 (`tb_alarm_contact` → API → Web UI → Node-RED)
