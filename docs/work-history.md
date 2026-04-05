@@ -2,6 +2,17 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-05 — fn_reservoir_level_summary DB 함수 최적화)
+
+#### RESERVOIR_LEVEL_STATUS ("남산 배수지 수위 현황") SQL 13~26s → 11ms
+
+- **원인**: `latest` CTE가 `tb_tag_info JOIN tb_tag_raw_data` 시간 범위 없이 전체 스캔 → `read=168K blocks`
+- **수정** (`fix_reservoir_level.py` → PostgreSQL 함수 재작성):
+  1. `v_tagsns` 배열을 `tb_tag_info` 단독 스캔으로 사전 추출
+  2. `latest` CTE: `r.tagsn = ANY(v_tagsns) AND r.logtime >= NOW()-7일` → `idx_tag_raw_tagsn_time` 인덱스 스캔
+  3. `tag_info` CTE 별도 분리 (RETURNS TABLE `unit` 변수 충돌 → `i.unit AS tag_unit`으로 해결)
+- **결과**: 13~26s → **11ms** (~100배 개선), 전체 응답 ~250ms
+
 ### 완료 (2026-04-05 — AI 파이프라인 3종 성능 최적화)
 
 #### 병목 분석 및 개선 결과
