@@ -89,6 +89,7 @@ from endpoints.facility_crud import router as facility_crud_router, init as init
 from endpoints.network_crud import router as network_crud_router, init as init_network_crud
 from endpoints.canvas_crud import router as canvas_crud_router, init as init_canvas_crud
 from endpoints.auth_crud import router as auth_crud_router, init as init_auth_crud
+from endpoints.alarm_contacts import router as alarm_contacts_router, init as init_alarm_contacts
 
 # =============================================================================
 # 로깅 설정
@@ -2691,6 +2692,10 @@ app.include_router(canvas_crud_router)
 # 인증 엔드포인트 모듈 초기화
 init_auth_crud(get_db_connection)
 app.include_router(auth_crud_router)
+
+# 비상연락처 엔드포인트 모듈 초기화
+init_alarm_contacts(get_db_connection)
+app.include_router(alarm_contacts_router)
 
 
 def _split_sql_statements(sql: str) -> list:
