@@ -2,6 +2,83 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-05 — psycopg2 한글 인코딩 수정 + 경보분석 필터 정상화)
+
+#### 1. psycopg2 `client_encoding` 누락 수정 (`D:/slm/ai_server.py`)
+- **증상**: 경보분석 페이지(`/crisis/alarm-analysis`)에 `alarm_severity = '정상'`인 성북2 알람이 계속 출현
+- **원인**: `_init_db_pool()` 에 `client_encoding` 미지정 → psycopg2가 Windows cp949 인코딩으로 연결
+  - SQL 인라인 한글 리터럴 `IS DISTINCT FROM '정상'`의 인코딩 불일치 → 필터 조건 비교 실패
+- **수정**:
+  1. `ThreadedConnectionPool` 에 `options="-c client_encoding=utf8"` 추가
+  2. `/crisis/alarm-analysis` 쿼리 인라인 한글 → 파라미터화: `IS DISTINCT FROM %s` + `('정상',)` 튜플
+- **결과**: API 응답에서 성북2 알람 0건, 필터 정상 동작 확인
+
+#### 2. Node-RED 헌팅(Hunting) 필터링 로직 분석 (`flows_deploy.json`)
+- **경보_송산2산단(배) 생활 2지 수위 LL [alarm_value=2.09]** 가 "필터링" 표시되는 원인 확인
+- **Node-RED 3단계 흐름**:
+  1. **CASE 2 노드** (SQL): 최근 5분간 아날로그 수위 데이터 `(max-min)/min × 100 ≥ 10%` → `hunting_detected='Y'`
+  2. **LL/HH 판단 노드** (JS): `hunting === 'Y'` 이면 "헌팅 Y (필터링)" 경로로 라우팅
+  3. **헌팅 필터링 UPDATE 노드** (SQL): `is_false_alarm='Y'`, `false_alarm_notes='이상데이터(헌팅) 감지에 의한 필터링'` 업데이트
+- **결론**: DB의 `is_false_alarm='Y'` 값이 정상적으로 설정된 것임, 수위 헌팅으로 인한 올바른 필터링
+
+#### 3. 사양 확정 — 경보분석 "필터링" 표시 기준
+- `getDisplayStatus` (`AlarmAnalysisPanel.tsx`): `is_false_alarm === 'Y'` OR `task_suppressed === true` 중 하나면 "필터링"
+- `alarm_severity = '정상'` 단독은 "필터링" 조건 아님 (진행중/알람해제로 분류)
+- `/crisis/alarm-analysis` API: `alarm_severity IS DISTINCT FROM '정상'` 로 정상 등급 알람 자체 제외
+
+---
+
+### 사양 확정 (2026-04-05 — 경보분석 "필터링" 표시 기준)
+
+#### 필터링 컬럼 표시 대상 (`getDisplayStatus` in `AlarmAnalysisPanel.tsx`)
+- **조건 1**: Node-RED 필터링기능 탭 로직 처리 → `is_false_alarm = 'Y'`
+- **조건 2**: Web 작업관리설정 억제 알람 유형/태그 → `task_suppressed = true`
+- 위 두 조건 중 하나라도 해당하면 "필터링" 뱃지 + 필터링 탭으로 분류
+- `alarm_severity = '정상'` 단독으로는 "필터링" 조건 아님 (진행중/알람해제로 분류됨)
+
+---
+
+### 완료 (2026-04-05 — 경보분석 위기대응 카드뷰 개선 v2)
+
+#### 1. `AlarmAnalysisDetail` — React Hooks 위반 수정 (`src/components/crisis/AlarmAnalysisDetail.tsx`)
+- **버그**: `useMemo`를 early return(`if (!report)`) 이후에 호출 → Rules of Hooks 위반
+  - null → non-null 전환 시 hook 수 불일치로 렌더링 실패 (경보 선택 시 섹션 미표출)
+- **수정**: `useMemo`를 early return 전으로 이동, `report?.diagnosed_msg` 옵셔널 체이닝 사용
+
+#### 2. 탁도계 통신이상 `alarm_severity` 정상화 (DB 직접 실행)
+- `alarm_msg LIKE '%탁도계 통신이상%'` 레코드 1790건 `alarm_severity = '정상'` 업데이트
+- 헌팅성 통신이상으로 필터링 처리 필요한 알람
+
+#### 3. 심각도 키워드 색상 최종 확정
+- `정상` → `text-green-500`, `주의` → `text-amber-500`, `이상`/`경고` → `text-red-500`
+- `경보` 키워드 색상 제외 — "경보" = 일반 단어(경보등급, 경보 필터링 결과), 경고와 혼동하지 않도록
+- `isNumericContext` 적용: "3.5m 이상" 등 수치 비교 표현의 "이상"은 색상 제외
+
+---
+
+### 완료 (2026-04-05 — 경보분석 위기대응 카드뷰 개선)
+
+#### 1. `AlarmAnalysisDetail` — diagnosed_msg 파싱 카드 렌더링 (`src/components/crisis/AlarmAnalysisDetail.tsx`)
+- **변경 전**: `diagnosed_msg` 있으면 iframe으로 표출 (다크모드 CSS 주입 방식), `diagnosed_cause`/`countermeasure` 있으면 구조화 카드
+- **변경 후**: `diagnosed_msg` → DOMParser로 섹션 파싱 → 카드 뷰 렌더링 (iframe 완전 제거)
+- **파싱 로직** (`parseDiagnosedMsg`):
+  - `section.section` 요소 순회, `1. 경보 경과` 섹션은 헤더에 이미 표시되므로 스킵
+  - `.label` 클래스(red/green/blue) → `bgColor` Tailwind 매핑
+  - 자식 DOM 순서 보존: `<p>` → `TextBlock`, `<ul>/<ol>` → `ListBlock`, `.info/.info-box` → `InfoBlock`
+  - `InfoBlock` 파싱: `<p><strong>(Key)</strong> value</p>` 패턴 정규식 `/^\(([^)]+)\)\s*(.*)/`
+- **우선순위**: `diagnosed_msg` 파싱 성공 → 파싱 카드 / 실패 시 기존 `diagnosed_cause`/`countermeasure`/`meta.operations` fallback
+- **제거**: `DiagnosedMsgIframe`, `DARK_MODE_CSS`, `FLOWCHART_LAYOUT_CSS`, `injectDarkMode`, `injectFlowchartLayout` 전부 삭제
+
+#### 2. 심각도 키워드 색상 하이라이팅 (`HighlightedText` 컴포넌트)
+- 텍스트 내 `정상` → `text-green-500`, `주의` → `text-amber-500`, `이상`/`경고` → `text-red-500`
+- 적용 범위: TextBlock(단락), ListBlock(목록 항목), InfoBlock(key-value 값) 전체
+
+#### 3. 로컬 DB ↔ 원격 DB 동기화 확인
+- `44270_24700_AMA_N001` (경보_송악2(배) 1지 수위 HH 상태, 2026-04-05 13:16:00)
+- `diagnosed_msg` 3922자, `diagnosed_cause`, `countermeasure`, `alarm_severity` 모두 identical 확인 → 동기화 불필요
+
+---
+
 ### 완료 (2026-04-05 — Node-RED 위기대응 HTML 개선 + DB 알람 적재 수정)
 
 #### 1. 위기대응 메시지 경보등급 동적 표시 (`flows_deploy.json`)
