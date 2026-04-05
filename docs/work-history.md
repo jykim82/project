@@ -26,7 +26,11 @@
 1. **알람 테이블 meta 컬럼 NULL 원인 파악** — Node-RED에서 meta가 채워지지 않는 흐름 탐색 및 수정
 2. **용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치** — 원인 파악 + 사양 확정 + 통일
 3. **`expected_impact_assessment` "정보없음개 수용가 용수공급차질" 수정** — 수용가 수 정보가 없을 때 "정보없음개" 접두어 제거, "수용가 용수공급차질"로 단순화
-4. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
+4. **네트워크 상태 동기화 Node-RED 신규 로직** — 개발 기간 동안 원격 DB → 로컬 DB 동기화
+   - 현재 Node-RED SNMP 폴링 탭 비활성화 유지 (현장 망 접근 불가)
+   - 신규: inject(주기) → postgresql(원격 DB에서 tb_network_status SELECT) → function(가공) → postgresql(로컬 DB INSERT/UPSERT)
+   - 원격 DB: 112.166.183.65:25479, 로컬 DB: 172.17.0.1:5433 (Docker bridge)
+5. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
 
 ---
 
