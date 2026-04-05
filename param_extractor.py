@@ -12,6 +12,7 @@ Phase 2 (SLM): 날짜 추출 — TREND/TIMESERIES 계열 INTENT에만 적용
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -156,6 +157,8 @@ class ParamExtractor:
         self._month_only = None
         self._corrections = []
 
+        _t0 = time.perf_counter()
+
         # Phase 1: 프로그래밍적 추출
         block_level = self._extract_block_level(question)
         sitename = self._extract_sitename(question)
@@ -168,6 +171,8 @@ class ParamExtractor:
         analog_datainfo = self._extract_analog_datainfo(question)
         digital_datainfo = self._extract_digital_datainfo(question)
 
+        _t_p1 = time.perf_counter()
+
         # Phase 2: SLM 날짜 추출 (해당 INTENT에만)
         from_ts = None
         to_ts = None
@@ -179,13 +184,29 @@ class ParamExtractor:
         user_specified_period = from_ts is not None or to_ts is not None
 
         # 프로그래밍적으로 실패하고, 날짜 필요 INTENT이면 SLM 시도
+        # 단, 날짜 키워드가 전혀 없으면 SLM도 알 수 없으므로 건너뜀 (기본값 사용)
+        _DATE_KW = (
+            # 절대 날짜 단위 (단독 또는 숫자+단위 형태로만 사용)
+            "년간", "년 전", "개년",
+            "개월", "달간",
+            "일간", "주일", "주간",
+            "시간 전", "분간",
+            # 상대 시점 표현 (오매칭 없음)
+            "최근", "지난", "이번", "한달", "작년", "올해", "오늘", "어제",
+            "저번달", "전달", "다음달",
+            # 범위 마커
+            "부터", "까지", "동안",
+        )
+        _has_date_hint = any(kw in question for kw in _DATE_KW)
         if (from_ts is None or to_ts is None) and intent_name in DATE_REQUIRED_INTENTS:
-            if self._ollama:
+            if self._ollama and _has_date_hint:
                 slm_from, slm_to = self._extract_date_slm(question)
                 if from_ts is None and slm_from:
                     from_ts = slm_from
                 if to_ts is None and slm_to:
                     to_ts = slm_to
+            elif not _has_date_hint:
+                logger.debug("날짜 키워드 없음 → SLM 날짜 추출 생략, 기본값 사용")
 
         # SLM이 from_ts >= to_ts를 반환한 경우 보정/무효화
         if from_ts and to_ts:
@@ -273,6 +294,15 @@ class ParamExtractor:
             facility_pairs = self._extract_facility_datainfo_pairs(question)
             if facility_pairs:
                 result["_facility_pairs"] = facility_pairs
+
+        _t_end = time.perf_counter()
+        _slm_used = intent_name in DATE_REQUIRED_INTENTS and _has_date_hint
+        logger.info(
+            f"⏱ 추출 Phase1={(_t_p1-_t0)*1000:.0f}ms "
+            f"Phase2(날짜)={(_t_end-_t_p1)*1000:.0f}ms "
+            f"합계={(_t_end-_t0)*1000:.0f}ms "
+            f"slm_date={'Y' if _slm_used else 'N'}"
+        )
 
         return result
 

@@ -32,6 +32,7 @@ import glob as glob_module
 import json
 import logging
 import os
+import time
 
 # .env 파일 로드 (python-dotenv 설치 시)
 try:
@@ -2764,6 +2765,7 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
 
     conn = None
     cur = None
+    _sql_t0 = time.perf_counter()
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -2802,6 +2804,8 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
                                 for a, b in zip(all_rows, rows)
                             ]
 
+        _sql_elapsed = (time.perf_counter() - _sql_t0) * 1000
+        logger.info(f"⏱ SQL {_sql_elapsed:.0f}ms → {len(all_rows)}행")
         return all_rows, all_columns
     finally:
         if cur:
@@ -6493,6 +6497,7 @@ async def ask(request: AskRequest):
     6. 질의 검증 → NEED_CORRECTION이면 정정 응답
     7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
     """
+    _t_start = time.perf_counter()
     raw_question = request.user_question
     # DEMO_MODE: 사용자 입력의 익명 코드를 원본 현장명으로 복원
     if DEMO_MODE and _DEMO_REVERSE_MAP:
@@ -6548,10 +6553,14 @@ async def ask(request: AskRequest):
             f"Intent 분류: name={intent_name}, category={category}, method={classify_method}"
         )
 
+    _t_classified = time.perf_counter()
+
     # 4. 하이브리드 파라미터 추출
     new_params = await asyncio.to_thread(
         param_extractor_instance.extract_all, user_question, intent_name
     )
+
+    _t_extracted = time.perf_counter()
 
     # 4.4. 다중 sitename 추출
     extra_sitenames = new_params.pop("_extra_sitenames", None)
@@ -7501,6 +7510,7 @@ async def ask(request: AskRequest):
             logger.error(f"TIMESERIES 청크 쿼리 실패 ({intent}): {e}")
 
     # 커스텀 핸들러에서 rows/columns가 이미 채워진 경우 SQL 실행 건너뜀
+    _t_sql_start = time.perf_counter()
     if not rows:
         try:
             rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
@@ -7525,6 +7535,7 @@ async def ask(request: AskRequest):
                 message=user_msg,
                 session_id=sid,
             )
+    _t_sql_end = time.perf_counter()
 
     # 다중 sitename: 시설별 datainfo 페어링이 있으면 개별 SQL 실행
     if facility_pairs and len(facility_pairs) > 1:
@@ -7830,6 +7841,16 @@ async def ask(request: AskRequest):
         except Exception as e:
             logger.warning(f"Anomaly zone computation failed: {e}")
 
+    _t_end = time.perf_counter()
+    logger.info(
+        f"⏱ /ask [{intent}|{classify_method}] "
+        f"분류={(_t_classified - _t_start)*1000:.0f}ms "
+        f"추출={(_t_extracted - _t_classified)*1000:.0f}ms "
+        f"SQL={(_t_sql_end - _t_sql_start)*1000:.0f}ms "
+        f"합계={(_t_end - _t_start)*1000:.0f}ms "
+        f"rows={len(rows)}"
+    )
+
     return build_success_response(
         intent=intent,
         answer=rendered_answer,
@@ -7886,6 +7907,7 @@ async def ask_stream(request: AskRequest):
     요청: { "user_question": "...", "session_id": "..." (선택) }
     """
     async def event_generator():
+        _t_start = time.perf_counter()
         raw_question = request.user_question
         # DEMO_MODE: 사용자 입력의 익명 코드를 원본 현장명으로 복원
         if DEMO_MODE and _DEMO_REVERSE_MAP:
@@ -7948,6 +7970,8 @@ async def ask_stream(request: AskRequest):
                 f"[SSE] Intent 분류: name={intent_name}, category={category}, method={classify_method}"
             )
 
+        _t_classified = time.perf_counter()
+
         # --- 진행 2: 파라미터 추출 ---
         yield _sse_event("progress", {
             "step": "extract",
@@ -7960,6 +7984,8 @@ async def ask_stream(request: AskRequest):
         new_params = await asyncio.to_thread(
             param_extractor_instance.extract_all, user_question, intent_name
         )
+
+        _t_extracted = time.perf_counter()
 
         # 4.4. 다중 sitename 추출
         extra_sitenames = new_params.pop("_extra_sitenames", None)
@@ -8884,6 +8910,7 @@ async def ask_stream(request: AskRequest):
         await asyncio.sleep(0)
 
         # 커스텀 핸들러에서 rows/columns가 이미 채워진 경우 SQL 실행 건너뜀
+        _t_sql_start = time.perf_counter()
         if not rows:
             try:
                 rows, columns = await asyncio.to_thread(execute_sql, sql_combined, params)
@@ -8907,6 +8934,7 @@ async def ask_stream(request: AskRequest):
                     "session_id": sid,
                 })
                 return
+        _t_sql_end = time.perf_counter()
 
         # 다중 sitename: 시설별 datainfo 페어링이 있으면 개별 SQL 실행
         if facility_pairs and len(facility_pairs) > 1:
@@ -9205,6 +9233,16 @@ async def ask_stream(request: AskRequest):
                     _az_conn.close()
             except Exception as e:
                 logger.warning(f"Anomaly zone computation failed (SSE): {e}")
+
+        _t_end = time.perf_counter()
+        logger.info(
+            f"⏱ /ask/stream [{intent}|{classify_method}] "
+            f"분류={(_t_classified - _t_start)*1000:.0f}ms "
+            f"추출={(_t_extracted - _t_classified)*1000:.0f}ms "
+            f"SQL={(_t_sql_end - _t_sql_start)*1000:.0f}ms "
+            f"합계={(_t_end - _t_start)*1000:.0f}ms "
+            f"rows={len(rows)}"
+        )
 
         final_response = build_success_response(
             intent=intent,

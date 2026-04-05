@@ -10,6 +10,7 @@ Stage 2: SLM 분류 (Phi-4-mini — 폴백)
 
 import logging
 import re
+import time
 from typing import Optional
 
 from ollama_client import OllamaClient, OllamaConnectionError
@@ -93,11 +94,22 @@ class IntentClassifier:
             "vector_candidates": list or None,  # 벡터 후보 목록 (SLM 폴백 시)
         }
         """
+        _t0 = time.perf_counter()
+
         # Stage 0: 키워드 기반 카테고리 + 인텐트 분류
         category, stage0_method = self._classify_category(question)
+        _t_kw = time.perf_counter()
 
-        # 벡터 후보 미리 조회 (사후 보정 UI용)
-        vector_candidates = self._get_vector_candidates(question)
+        # 임베딩 1회 계산 — _get_vector_candidates + _classify_by_vector 공유
+        query_vec = None
+        if self._embedding_index and self._embedding_index.ready:
+            query_vec = embed_query(question)
+        _t_embed = time.perf_counter()
+        if query_vec is not None:
+            logger.info(f"⏱ 임베딩 {(_t_embed - _t_kw)*1000:.0f}ms")
+
+        # 벡터 후보 미리 조회 (사후 보정 UI용) — 사전 계산된 query_vec 재사용
+        vector_candidates = self._get_vector_candidates(question, query_vec=query_vec)
 
         def _with_candidates(result: dict) -> dict:
             """확정된 인텐트를 제외한 벡터 후보를 결과에 첨부."""
@@ -120,6 +132,7 @@ class IntentClassifier:
             if intent_name and keyword_method == "keyword":
                 intent_def = self._index.get_definition(intent_name)
                 if intent_def:
+                    logger.info(f"⏱ 분류(keyword) kw={(_t_kw-_t0)*1000:.0f}ms embed={(_t_embed-_t_kw)*1000:.0f}ms total={(_t_embed-_t0)*1000:.0f}ms")
                     return _with_candidates({
                         "intent_name": intent_name,
                         "category": category,
@@ -127,9 +140,11 @@ class IntentClassifier:
                         "method": "keyword",
                     })
 
-        # Stage 1: 벡터 유사도 검색 (범위외 포함)
-        vector_result = self._classify_by_vector(question)
+        # Stage 1: 벡터 유사도 검색 (범위외 포함) — 사전 계산된 query_vec 재사용
+        vector_result = self._classify_by_vector(question, query_vec=query_vec)
         if vector_result:
+            _t_vec = time.perf_counter()
+            logger.info(f"⏱ 분류(vector) kw={(_t_kw-_t0)*1000:.0f}ms embed={(_t_embed-_t_kw)*1000:.0f}ms search={(_t_vec-_t_embed)*1000:.0f}ms")
             return _with_candidates(vector_result)
 
         # 범위외 판정 후 벡터도 미확정이면 종료
@@ -142,6 +157,7 @@ class IntentClassifier:
             })
 
         # Stage 2: SLM 분류 (기존 로직)
+        _t_slm_start = time.perf_counter()
         if not intent_name:
             intent_name, stage2_method = self._classify_intent_slm(question, category)
             slm_failed = (stage2_method == "slm_error")
@@ -152,6 +168,8 @@ class IntentClassifier:
         if intent_name:
             intent_def = self._index.get_definition(intent_name)
             if intent_def:
+                _t_slm_end = time.perf_counter()
+                logger.info(f"⏱ 분류(slm) kw={(_t_kw-_t0)*1000:.0f}ms embed={(_t_embed-_t_kw)*1000:.0f}ms slm={(_t_slm_end-_t_slm_start)*1000:.0f}ms total={(_t_slm_end-_t0)*1000:.0f}ms")
                 return _with_candidates({
                     "intent_name": intent_name,
                     "category": category,
@@ -197,7 +215,7 @@ class IntentClassifier:
             "method": stage0_method,
         })
 
-    def _classify_by_vector(self, question: str) -> Optional[dict]:
+    def _classify_by_vector(self, question: str, query_vec=None) -> Optional[dict]:
         """
         Stage 1: 인메모리 벡터 유사도 검색.
         cosine ≥ VECTOR_THRESHOLD(0.75) → 즉시 확정.
@@ -207,7 +225,8 @@ class IntentClassifier:
         if not self._embedding_index or not self._embedding_index.ready:
             return None
 
-        query_vec = embed_query(question)
+        if query_vec is None:
+            query_vec = embed_query(question)
         if query_vec is None:
             logger.warning("벡터 임베딩 실패 → SLM 폴백")
             return None
@@ -250,7 +269,7 @@ class IntentClassifier:
 
         return None
 
-    def _get_vector_candidates(self, question: str) -> list[dict]:
+    def _get_vector_candidates(self, question: str, query_vec=None) -> list[dict]:
         """
         벡터 검색으로 상위 후보 인텐트 목록을 반환한다 (사후 보정 UI용).
         반환: [{"intent": str, "description": str, "score": float}, ...]
@@ -258,7 +277,8 @@ class IntentClassifier:
         if not self._embedding_index or not self._embedding_index.ready:
             return []
 
-        query_vec = embed_query(question)
+        if query_vec is None:
+            query_vec = embed_query(question)
         if query_vec is None:
             return []
 
