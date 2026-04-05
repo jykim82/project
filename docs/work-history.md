@@ -2,6 +2,37 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-05 — 비상연락처 관리 기능 + Node-RED 인코딩 수정)
+
+#### 1. 비상연락처 관리 시스템 구축 (`tb_alarm_contact` → API → Web UI → Node-RED)
+- **DB**: `tb_alarm_contact` 테이블 신규 생성, 시드 10건 (UPS 3, 정전 4, 통신이상 2, 밸브 1)
+- **Python API** (`D:/slm/endpoints/alarm_contacts.py`):
+  - `GET /crisis/alarm-contacts?category=` → 목록 조회
+  - `GET /crisis/alarm-contacts/categories` → 카테고리 목록
+  - `POST/PUT/DELETE /crisis/alarm-contacts[/{id}]` → CRUD
+- **Web UI**: `/setup/alarm-contacts` 신규 페이지 (카테고리별 그룹 테이블, CRUD 다이얼로그)
+  - 기존 카테고리 선택 + 신규 카테고리 직접 입력 지원
+  - 사이드바 메뉴 '비상연락처' 추가 (M200-14, Phone 아이콘)
+- **Node-RED**: `HTML 위기대응 표시` 3개 노드 UPDATE에 meta 서브쿼리 추가
+  - `diagnosed_msg` 업데이트 시 `tb_alarm_contact` 서브쿼리로 `meta.contacts` 동시 저장
+  - 대상: a1ff5115e65d1474, 820cf7cd8e67c2f9, a655fae0839ec028
+
+#### 2. flows_deploy.json 한글 인코딩 깨짐 전면 수정
+- **원인**: Node-RED 편집기가 일부 한글 문자를 U+FFFD(대체 문자)로 저장
+- **범위**: 39개 노드, 122개 U+FFFD → 모두 올바른 한글로 복원
+- **대표 예시**: `윤활 [?]태` → `윤활 상태`, `가[?]중` → `가동중`, `[?]력계` → `압력계` 등
+
+#### 3. "통신이상감지" Node-RED 탭 비활성화 (`flows_deploy.json`)
+- **원인**: 사양에 없는 탭이 60초 주기로 "통신이상 N개 태그 감지" 알람 자동 생성
+- **수정**: 탭 ID `a1b2c3d4e5f60001` 및 하위 7개 노드 `d: true`로 비활성화
+
+#### 4. meta NULL 원인 분석
+- **원인**: Node-RED INSERT/UPDATE 쿼리에 meta 컬럼 포함 안 됨 (미구현)
+- **해결**: 연락처 관리 구축 후 `HTML 위기대응 표시` UPDATE에 meta 서브쿼리 추가
+- **반영 범위**: alarm_category에 대응하는 연락처가 있을 때 meta.contacts 자동 채움
+
+---
+
 ### 완료 (2026-04-05 — psycopg2 한글 인코딩 수정 + 경보분석 필터 정상화)
 
 #### 1. psycopg2 `client_encoding` 누락 수정 (`D:/slm/ai_server.py`)
