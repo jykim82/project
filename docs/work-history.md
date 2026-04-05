@@ -2,11 +2,30 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-05 — 이상 시설 TOP network_down 혼입 수정)
+
+#### 원인 분석
+- `tb_network_status`는 로컬 AI 서버의 `snmp_poller`가 직접 작성 (db_sync 동기화 대상 아님)
+- 로컬 개발 서버는 현장 PLC/LTE 장비와 다른 망 → SNMP 폴링 전부 Timeout
+- **178개 장비 전체 `is_alive=false`** (실제 장애가 아닌 망 분리 때문)
+- `_detect_equipment_failures()`가 이것을 진짜 `network_down`으로 판단 → 합덕 배수지 수위 태그 전체에 마킹
+- 결과: 이상 시설 TOP에 수위알람 + network_down 배지가 함께 표시 (오탐)
+
+#### 수정 (`ai_server.py` — `_detect_equipment_failures`)
+- 최신 체크 시점의 `is_alive=true` 장비가 **0개**이면 → 망 분리 환경으로 판단, A소스(network_down) 전체 스킵
+- 운영 환경(현장 망과 동일)에서는 `is_alive=true` 장비가 있으므로 기존 로직 정상 작동
+- 로그: `tb_network_status 전체 is_alive=false (N개) → 망 분리 환경으로 판단, network_down 스킵`
+
+#### 사양 확정
+- **기준**: 알람 기준(tb_equipment_alarm_report) + DI fault 태그(B소스) — 운영 환경에서만 네트워크 상태(A소스) 추가
+- **개발 환경**: A소스 자동 비활성화 (전체 Timeout 감지)
+- **운영 환경 배포 시**: 동일 망에서 SNMP 폴링되므로 A소스 정상 동작
+
 ### 내일 할 일 (2026-04-06)
 
 1. **알람 테이블 meta 컬럼 NULL 원인 파악** — Node-RED에서 meta가 채워지지 않는 흐름 탐색 및 수정
 2. **용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치** — 원인 파악 + 사양 확정 + 통일
-3. **이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유** — 원인 파악 + 사양 확정
+3. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
 
 ---
 
