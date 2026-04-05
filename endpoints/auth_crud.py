@@ -225,10 +225,10 @@ def _log_access(conn, *, region: str, user_id: str, request: Request) -> None:
             cur.execute(
                 """
                 INSERT INTO tb_access_log
-                    (region, user_id, request_path, request_method, client_ip, user_agent, access_time)
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    (region, user_id, request_path, request_method, client_ip, access_time)
+                VALUES (%s, %s, %s, %s, %s, NOW())
                 """,
-                (region, user_id, "/api/auth/login", "POST", client_ip, ua[:200]),
+                (region, user_id, "/api/auth/login", "POST", client_ip),
             )
         conn.commit()
     except Exception as e:
@@ -473,6 +473,14 @@ async def list_users(region: str = "R01", current_user: dict = Depends(_get_curr
                 (region,),
             )
             rows = cur.fetchall()
+        def _fmt(v) -> Optional[str]:
+            """timestamp or string → ISO string, None → None."""
+            if v is None:
+                return None
+            if hasattr(v, "isoformat"):
+                return v.isoformat()
+            return str(v)
+
         return [
             {
                 "user_id": r[0],
@@ -481,8 +489,8 @@ async def list_users(region: str = "R01", current_user: dict = Depends(_get_curr
                 "use_yn": str(r[3]).strip() if r[3] else "Y",
                 "lock_cnt": int(r[4]) if r[4] is not None else 0,
                 "is_locked": (int(r[4]) if r[4] is not None else 0) >= MAX_LOGIN_ATTEMPTS,
-                "last_login": r[5].isoformat() if r[5] else None,
-                "created_at": r[6].isoformat() if r[6] else None,
+                "last_login": _fmt(r[5]),
+                "created_at": _fmt(r[6]),
             }
             for r in rows
         ]
@@ -521,7 +529,14 @@ async def create_user(body: UserCreateRequest, current_user: dict = Depends(_get
             )
         conn.commit()
         logger.info(f"[auth] 사용자 생성: {body.user_id} by {caller_id}")
-        return {"message": f"사용자 '{body.user_id}'가 생성되었습니다."}
+        return {
+            "user_id": body.user_id,
+            "user_nm": body.user_nm,
+            "user_auth": body.user_auth,
+            "use_yn": "Y",
+            "lock_cnt": 0,
+            "last_login": None,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -592,6 +607,7 @@ async def update_user(
 
 
 @router.post("/users/{user_id}/unlock")
+@router.put("/users/{user_id}/unlock")
 async def unlock_user(user_id: str, current_user: dict = Depends(_get_current_user)):
     """계정 잠금 해제 — ADMIN 이상."""
     _require_auth_level("ADMIN", current_user)
@@ -610,6 +626,58 @@ async def unlock_user(user_id: str, current_user: dict = Depends(_get_current_us
         conn.rollback()
         logger.error(f"[auth] 잠금 해제 오류: {e}")
         raise HTTPException(status_code=500, detail="잠금 해제 오류")
+    finally:
+        conn.close()
+
+
+class ToggleActiveRequest(BaseModel):
+    use_yn: str  # "Y" | "N"
+
+
+@router.put("/users/{user_id}/active")
+async def toggle_user_active(
+    user_id: str, body: ToggleActiveRequest, current_user: dict = Depends(_get_current_user)
+):
+    """사용자 활성/비활성 토글 — ADMIN 이상."""
+    _require_auth_level("ADMIN", current_user)
+    region = current_user.get("region", "R01")
+    conn = _db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tb_user SET use_yn=%s, updated_at=NOW() WHERE region=%s AND user_id=%s",
+                (body.use_yn, region, user_id),
+            )
+        conn.commit()
+        logger.info(f"[auth] 활성상태 변경: {user_id} → {body.use_yn} by {current_user.get('sub')}")
+        return {"message": "상태가 변경되었습니다."}
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[auth] 활성 토글 오류: {e}")
+        raise HTTPException(status_code=500, detail="상태 변경 오류")
+    finally:
+        conn.close()
+
+
+@router.post("/users/{user_id}/session-end")
+async def end_user_session(user_id: str, current_user: dict = Depends(_get_current_user)):
+    """사용자 세션 강제 종료 — ADMIN 이상."""
+    _require_auth_level("ADMIN", current_user)
+    region = current_user.get("region", "R01")
+    conn = _db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tb_user SET current_session_id=NULL, updated_at=NOW() WHERE region=%s AND user_id=%s",
+                (region, user_id),
+            )
+        conn.commit()
+        logger.info(f"[auth] 세션 종료: {user_id} by {current_user.get('sub')}")
+        return {"message": f"'{user_id}' 세션이 종료되었습니다."}
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[auth] 세션 종료 오류: {e}")
+        raise HTTPException(status_code=500, detail="세션 종료 오류")
     finally:
         conn.close()
 

@@ -2022,6 +2022,7 @@ def _init_db_pool() -> None:
         database=DB_NAME,
         user=DB_USER,
         password=DB_PASSWORD,
+        options="-c client_encoding=utf8",
     )
     logger.info(f"DB 커넥션 풀 초기화 완료 (min={DB_POOL_MIN}, max={DB_POOL_MAX})")
 
@@ -10253,7 +10254,10 @@ async def get_alarm_reports(
     alarm_severity: str = "",
     alarm_category: str = "",
 ):
-    """경보발생이력 목록 조회 (tb_equipment_alarm_report — 직접 컬럼)"""
+    """경보발생이력 목록 조회 (tb_equipment_alarm_report — 직접 컬럼).
+    진행중인 작업(tb_task_master)의 suspend_alarm_types에 해당하는 경보는
+    task_suppressed=True 플래그로 표시한다.
+    """
     conn = None
     try:
         conn = get_db_connection()
@@ -10319,6 +10323,9 @@ async def get_alarm_reports(
         rows = cur.fetchall()
         cur.close()
 
+        # 현재 진행중인 작업의 (sitename, suspend_alarm_types) 집합 조회
+        active_tasks = _get_active_task_suppressions(conn)
+
         results = []
         for row in rows:
             rec = {}
@@ -10328,6 +10335,13 @@ async def get_alarm_reports(
                     rec[col] = val if isinstance(val, dict) else {}
                 else:
                     rec[col] = val
+            # 억제 여부 판정 (alarm_msg 기반 개별 태그명 매칭 포함)
+            rec["task_suppressed"] = _is_alarm_suppressed(
+                rec.get("sitename", ""),
+                rec.get("alarm_category", "") or "",
+                rec.get("alarm_msg", "") or "",
+                active_tasks,
+            )
             results.append(rec)
 
         return results
@@ -10338,6 +10352,69 @@ async def get_alarm_reports(
     finally:
         if conn:
             conn.close()
+
+
+def _get_active_task_suppressions(conn) -> list[dict]:
+    """현재 진행중인 작업(task_start_time <= now <= task_end_time)의
+    (sitename, suspend_alarm_types) 목록을 반환한다."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT sitename, suspend_alarm_types
+                FROM tb_task_master
+                WHERE task_start_time <= NOW()
+                  AND (task_end_time IS NULL OR task_end_time >= NOW())
+                """,
+            )
+            rows = cur.fetchall()
+        result = []
+        for site, types_raw in rows:
+            if isinstance(types_raw, list):
+                types = types_raw
+            elif isinstance(types_raw, str):
+                try:
+                    import json as _json
+                    types = _json.loads(types_raw)
+                except Exception:
+                    types = []
+            else:
+                types = []
+            result.append({"sitename": site, "types": types})
+        return result
+    except Exception as e:
+        logger.warning(f"[alarm-suppress] active task 조회 실패 (무시): {e}")
+        return []
+
+
+# 표준 알람 분류 카테고리 (개별 태그명과 구분하기 위한 기준)
+_ALARM_CATEGORY_NAMES = frozenset(
+    ["전체", "수위", "압력", "유량", "펌프", "밸브", "통신", "네트워크", "UPS", "수질"]
+)
+
+
+def _is_alarm_suppressed(
+    sitename: str,
+    alarm_category: str,
+    alarm_msg: str,
+    active_tasks: list[dict],
+) -> bool:
+    """해당 경보가 진행중인 작업에 의해 억제되는지 판정한다.
+    - '전체' → 사이트 전체 알람 억제
+    - alarm_category 일치 → 해당 분류 억제
+    - 개별 태그명(datainfo)이 alarm_msg에 포함 → 해당 태그 억제
+    """
+    for task in active_tasks:
+        if task["sitename"] != sitename:
+            continue
+        types: list = task.get("types", [])
+        for t in types:
+            if t == "전체" or t == alarm_category:
+                return True
+            # 개별 태그명: alarm_msg 포함 여부로 판정
+            if t not in _ALARM_CATEGORY_NAMES and alarm_msg and t in alarm_msg:
+                return True
+    return False
 
 
 @app.get("/crisis/alarm-analysis")
@@ -10377,9 +10454,10 @@ async def get_alarm_analysis():
                 diagnosed_msg
             FROM tb_equipment_alarm_report
             WHERE alarm_start_time >= NOW() - INTERVAL '30 days'
+              AND alarm_severity IS DISTINCT FROM %s
             ORDER BY alarm_start_time DESC
             LIMIT 500
-        """)
+        """, ('정상',))
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
         cur.close()
