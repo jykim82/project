@@ -47,6 +47,14 @@
 - **개발 환경**: A소스 자동 비활성화 (전체 Timeout 감지)
 - **운영 환경 배포 시**: 동일 망에서 SNMP 폴링되므로 A소스 정상 동작
 
+### 완료 (2026-04-06 — GIS 관망도 유량 흐름 시각화 설계 + 프로토타입)
+
+- **디자인 방안 수립**: 용수 흐름도의 유량 표현(두께/색상/애니메이션)을 GIS 관망도에 적용하는 4가지 기술 방안 비교 (line-dasharray / line-gradient / Custom WebGL / data-driven)
+- **Phase 1**: `line-width` + `line-color` data-driven — `flowToWidth()`, `flowToColor()` 로직 MapLibre expression으로 이식
+- **Phase 2**: `line-gradient` + rAF 30fps — `line-progress` [0→1]으로 흐름 방향 셔머 애니메이션
+- **프로토타입 HTML**: `docs/gis-flow-animation-prototype.html` — 샘플 7개 시설 네트워크, 불균형 경보 점선, 토글 컨트롤, 다크/라이트 모드
+- **핵심 발견**: `line-gradient` 레이어는 `lineMetrics: true` 필수, `line-width` data-driven 불가 (상수만 허용), `line-cap`/`line-join`은 `layout`이 아닌 MapLibre 4.x에서 별도 처리
+
 ### 내일 할 일 (2026-04-06)
 
 1. **알람 테이블 meta 컬럼 NULL 원인 파악** — Node-RED에서 meta가 채워지지 않는 흐름 탐색 및 수정

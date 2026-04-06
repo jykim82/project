@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GIS 관망도 — 유량 흐름 시각화 프로토타입</title>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:          #0b1120;
+      --surface:     rgba(15,23,42,0.96);
+      --border:      rgba(51,65,85,0.75);
+      --text:        #e2e8f0;
+      --text-muted:  #64748b;
+      --text-sub:    #94a3b8;
+      --accent:      #38bdf8;
+      --popup-bg:    rgba(10,20,40,0.97);
+      --popup-brd:   rgba(14,165,233,0.3);
+    }
+    body.light {
+      --bg:          #f1f5f9;
+      --surface:     rgba(255,255,255,0.97);
+      --border:      rgba(203,213,225,0.9);
+      --text:        #0f172a;
+      --text-muted:  #6b7280;
+      --text-sub:    #475569;
+      --accent:      #0284c7;
+      --popup-bg:    rgba(255,255,255,0.98);
+      --popup-brd:   #cbd5e1;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+    }
+    #map { width: 100vw; height: 100vh; }
+
+    /* ── 공통 패널 ── */
+    .panel {
+      position: absolute;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      backdrop-filter: blur(10px);
+      z-index: 100;
+    }
+    .panel-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-sub);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── 컨트롤 패널 ── */
+    #ctrl-panel { top: 12px; left: 12px; width: 230px; }
+
+    .ctrl-section { padding: 8px 14px; }
+    .ctrl-section + .ctrl-section { border-top: 1px solid var(--border); }
+
+    .ctrl-group-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3px 0;
+    }
+    .ctrl-label { font-size: 12px; color: var(--text); }
+    .ctrl-sub   { font-size: 11px; color: var(--text-sub); }
+
+    /* 토글 스위치 */
+    .toggle { position: relative; display: inline-flex; cursor: pointer; }
+    .toggle input { display: none; }
+    .toggle-track {
+      width: 34px; height: 18px;
+      background: #334155;
+      border-radius: 9px;
+      transition: background 0.2s;
+    }
+    .toggle input:checked + .toggle-track { background: #0ea5e9; }
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 12px; height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+
+    /* 슬라이더 */
+    .speed-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+    .speed-row label { font-size: 11px; color: var(--text-sub); white-space: nowrap; }
+    .speed-row input[type=range] {
+      flex: 1;
+      height: 3px;
+      accent-color: #0ea5e9;
+      cursor: pointer;
+    }
+    .speed-val { font-size: 11px; color: var(--accent); width: 28px; text-align: right; }
+
+    /* ── 범례 패널 ── */
+    #legend-panel { bottom: 24px; left: 12px; width: 200px; padding-bottom: 12px; }
+
+    .legend-section { padding: 8px 14px 0; }
+    .legend-section + .legend-section { border-top: 1px solid var(--border); padding-top: 8px; }
+
+    .legend-label { font-size: 10px; color: var(--text-sub); margin-bottom: 6px; }
+
+    .legend-gradient-bar {
+      height: 7px;
+      border-radius: 4px;
+      background: linear-gradient(to right, #475569, #38bdf8 50%, #1e40af);
+      margin-bottom: 3px;
+    }
+    body.light .legend-gradient-bar {
+      background: linear-gradient(to right, #94a3b8, #0ea5e9 50%, #1e3a8a);
+    }
+    .legend-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .legend-width-demo {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 2px;
+    }
+    .legend-width-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-sub);
+    }
+    .legend-line-w {
+      background: #38bdf8;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    body.light .legend-line-w { background: #0284c7; }
+
+    .legend-items { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text);
+    }
+    .lseg {
+      width: 28px; height: 0;
+      border-top: 2.5px dashed;
+      flex-shrink: 0;
+    }
+    .lseg.solid { border-style: solid; height: 3px; border-top: none; background: #38bdf8; border-radius: 2px; }
+    body.light .lseg.solid { background: #0284c7; }
+
+    /* ── 테마 버튼 ── */
+    #theme-btn {
+      position: absolute;
+      top: 12px;
+      right: 56px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12px;
+      color: var(--text-sub);
+      cursor: pointer;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+      transition: color 0.15s;
+    }
+    #theme-btn:hover { color: var(--text); }
+
+    /* ── 엣지 툴팁 ── */
+    #edge-tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: var(--popup-bg);
+      border: 1px solid var(--popup-brd);
+      border-radius: 8px;
+      padding: 9px 13px;
+      font-size: 12px;
+      color: var(--text);
+      z-index: 300;
+      display: none;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    }
+    .tt-title {
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+    .tt-row { color: var(--text-sub); line-height: 1.7; }
+    .tt-row span { color: var(--text); font-weight: 600; }
+    .tt-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .badge-경고  { background: rgba(239,68,68,0.18);  color: #f87171; }
+    .badge-주의  { background: rgba(249,115,22,0.18); color: #fb923c; }
+    .badge-관심  { background: rgba(250,204,21,0.18); color: #fcd34d; }
+
+    /* ── MapLibre 팝업 오버라이드 ── */
+    .maplibregl-popup-content {
+      background: var(--popup-bg) !important;
+      border: 1px solid var(--popup-brd) !important;
+      border-radius: 8px !important;
+      padding: 10px 14px !important;
+      font-size: 12px !important;
+      color: var(--text) !important;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+    }
+    .maplibregl-popup-close-button {
+      color: var(--text-muted) !important;
+      font-size: 16px !important;
+      padding: 4px 8px !important;
+    }
+    .maplibregl-popup-tip { display: none !important; }
+    .popup-name { font-weight: 700; color: var(--accent); margin-bottom: 4px; font-size: 13px; }
+    .popup-type { font-size: 10px; color: var(--text-muted); margin-bottom: 8px; }
+    .popup-metric { color: var(--text-sub); line-height: 1.8; }
+    .popup-metric span { color: var(--text); font-weight: 600; }
+
+    /* ── Phase 배지 ── */
+    .phase-badge {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 6px;
+      z-index: 100;
+    }
+    .phase-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      color: var(--text-sub);
+      backdrop-filter: blur(8px);
+    }
+    .phase-chip.active { border-color: #0ea5e9; color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- 컨트롤 패널 -->
+  <div class="panel" id="ctrl-panel">
+    <div class="panel-title">유량 흐름 시각화</div>
+
+    <!-- Phase 1: 유량 두께/색상 -->
+    <div class="ctrl-section">
+      <div class="ctrl-group-title">Phase 1 — 데이터 기반 표현</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">유량 두께·색상</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-flow-base" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">유량 글로우 효과</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-flow-glow" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">불균형 경보 점선</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-imbalance" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Phase 2: 흐름 방향 애니메이션 -->
+    <div class="ctrl-section">
+      <div class="ctrl-group-title">Phase 2 — 흐름 방향 애니메이션</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">방향 셔머 효과</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-anim" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="speed-row">
+        <label>속도</label>
+        <input type="range" id="anim-speed" min="1" max="10" value="4">
+        <span class="speed-val" id="speed-val">×4</span>
+      </div>
+    </div>
+
+    <!-- 배경 레이어 -->
+    <div class="ctrl-section">
+      <div class="ctrl-group-title">배경 레이어</div>
+      <div class="ctrl-row">
+        <span class="ctrl-sub">기본 관로 (PMTiles 대체)</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-bg-pipe" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-sub">시설 노드 마커</span>
+        <label class="toggle">
+          <input type="checkbox" id="tog-nodes" checked>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 범례 -->
+  <div class="panel" id="legend-panel">
+    <div class="panel-title">범례</div>
+
+    <div class="legend-section">
+      <div class="legend-label">유량 색상 (m³/h)</div>
+      <div class="legend-gradient-bar"></div>
+      <div class="legend-ticks">
+        <span>0</span><span>200</span><span>400+</span>
+      </div>
+    </div>
+
+    <div class="legend-section">
+      <div class="legend-label">유량 두께</div>
+      <div class="legend-width-demo">
+        <div class="legend-width-row">
+          <div class="legend-line-w" style="width:28px; height:2px;"></div>
+          <span>낮음 (0~30%)</span>
+        </div>
+        <div class="legend-width-row">
+          <div class="legend-line-w" style="width:28px; height:6px;"></div>
+          <span>중간 (30~70%)</span>
+        </div>
+        <div class="legend-width-row">
+          <div class="legend-line-w" style="width:28px; height:12px;"></div>
+          <span>높음 (70~100%)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend-section">
+      <div class="legend-label">경보 상태</div>
+      <div class="legend-items">
+        <div class="legend-item">
+          <div class="lseg solid"></div>
+          <span>정상 흐름</span>
+        </div>
+        <div class="legend-item">
+          <div class="lseg" style="border-color:#fcd34d;"></div>
+          <span>관심 (불균형)</span>
+        </div>
+        <div class="legend-item">
+          <div class="lseg" style="border-color:#fb923c;"></div>
+          <span>주의 (불균형)</span>
+        </div>
+        <div class="legend-item">
+          <div class="lseg" style="border-color:#f87171;"></div>
+          <span>경고 (불균형)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 테마 버튼 -->
+  <button id="theme-btn">☀️ 라이트</button>
+
+  <!-- 엣지 툴팁 -->
+  <div id="edge-tooltip"></div>
+
+  <script>
+  // ═══════════════════════════════════════════════
+  // 샘플 데이터 (실제 구현에서는 API에서 수신)
+  // ═══════════════════════════════════════════════
+  const MAX_FLOW = 400; // m³/h 기준
+
+  const FACILITIES = [
+    { id: 'wtp',      name: '갈산 정수장',     type: '정수장', lon: 126.588, lat: 36.928 },
+    { id: 'res_a',    name: '갈산(가) 배수지',  type: '배수지', lon: 126.628, lat: 36.908 },
+    { id: 'res_b',    name: '송악 배수지',      type: '배수지', lon: 126.556, lat: 36.890 },
+    { id: 'booster',  name: '합덕 가압장',      type: '가압장', lon: 126.662, lat: 36.882 },
+    { id: 'blk_a',    name: '합덕 소블록',      type: '소블록', lon: 126.677, lat: 36.863 },
+    { id: 'blk_b',    name: '신평 소블록',      type: '소블록', lon: 126.624, lat: 36.855 },
+    { id: 'blk_c',    name: '송악 소블록',      type: '소블록', lon: 126.550, lat: 36.866 },
+  ];
+
+  // 메트릭 (실시간 데이터 시뮬레이션)
+  const FACILITY_METRICS = {
+    wtp:     { '생산 유량': '600 m³/h',  '운전 펌프': '2대' },
+    res_a:   { '수위': '4.2 m (84%)',    '유입 유량': '380 m³/h' },
+    res_b:   { '수위': '3.8 m (76%)',    '유입 유량': '220 m³/h' },
+    booster: { '압력': '2.8 kgf/cm²',   '유입 유량': '180 m³/h' },
+    blk_a:   { '공급 유량': '90 m³/h',   '야간최소': '12 m³/h' },
+    blk_b:   { '공급 유량': '120 m³/h',  '야간최소': '18 m³/h' },
+    blk_c:   { '공급 유량': '85 m³/h',   '야간최소': '9 m³/h' },
+  };
+
+  // 엣지 — from → to, 실시간 유량, 불균형 등급
+  const FLOW_EDGES = [
+    { id: 'e1', from: 'wtp',     to: 'res_a',   flow: 380, grade: '' },
+    { id: 'e2', from: 'wtp',     to: 'res_b',   flow: 220, grade: '' },
+    { id: 'e3', from: 'res_a',   to: 'booster', flow: 180, grade: '' },
+    { id: 'e4', from: 'booster', to: 'blk_a',   flow: 90,  grade: '관심' },
+    { id: 'e5', from: 'booster', to: 'blk_b',   flow: 38,  grade: '주의' }, // 불균형
+    { id: 'e6', from: 'res_b',   to: 'blk_b',   flow: 125, grade: '' },
+    { id: 'e7', from: 'res_b',   to: 'blk_c',   flow: 88,  grade: '' },
+    { id: 'e8', from: 'blk_a',   to: 'blk_b',   flow: 14,  grade: '경고' }, // 역류/불균형
+  ];
+
+  // ═══════════════════════════════════════════════
+  // 유틸리티
+  // ═══════════════════════════════════════════════
+
+  /** 유량 → 엣지 두께 (flowToWidth 이식) */
+  function flowToWidth(ratio) {
+    const MIN = 2, MAX = 14;
+    if (ratio <= 0) return MIN;
+    return MIN + (MAX - MIN) * Math.sqrt(ratio);
+  }
+
+  /** 유량 → RGBA 색상 (flowToColor 이식, isDark 지원) */
+  function flowToColor(ratio, isDark) {
+    if (ratio <= 0) return isDark ? 'rgba(100,116,139,0.40)' : 'rgba(100,116,139,0.60)';
+    const r = Math.round(56  - 30 * ratio);
+    const g = Math.round(189 - 80 * ratio);
+    const b = Math.round(248 - 20 * ratio);
+    const a = isDark ? (0.55 + 0.35 * ratio) : (0.75 + 0.20 * ratio);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function getFacility(id) { return FACILITIES.find(f => f.id === id); }
+
+  function buildFlowGeoJSON(isDark) {
+    return {
+      type: 'FeatureCollection',
+      features: FLOW_EDGES.map(edge => {
+        const from = getFacility(edge.from);
+        const to   = getFacility(edge.to);
+        const ratio = Math.min(edge.flow / MAX_FLOW, 1);
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            // 중간 제어점으로 약간의 곡선 효과 (실제는 관로 좌표 사용)
+            coordinates: [
+              [from.lon, from.lat],
+              [(from.lon + to.lon) / 2, (from.lat + to.lat) / 2 + (Math.random() * 0.002 - 0.001)],
+              [to.lon, to.lat],
+            ]
+          },
+          properties: {
+            id:         edge.id,
+            from_id:    edge.from,
+            to_id:      edge.to,
+            from_name:  from.name,
+            to_name:    to.name,
+            flow:       edge.flow,
+            flow_ratio: ratio,
+            width:      flowToWidth(ratio),
+            color:      flowToColor(ratio, isDark),
+            grade:      edge.grade,
+          }
+        };
+      })
+    };
+  }
+
+  function buildFacilityGeoJSON() {
+    return {
+      type: 'FeatureCollection',
+      features: FACILITIES.map(f => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [f.lon, f.lat] },
+        properties: f,
+      }))
+    };
+  }
+
+  // ═══════════════════════════════════════════════
+  // 맵 초기화
+  // ═══════════════════════════════════════════════
+  let isDark = true;
+
+  function getStyle() {
+    return isDark
+      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+      : 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+  }
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: getStyle(),
+    center: [126.613, 36.891],
+    zoom: 11.8,
+    attributionControl: false,
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
+
+  // ── 애니메이션 상태 ──
+  let animRafId   = null;
+  let animEnabled = true;
+  let animSpeed   = 4;
+  let animProg    = 0;
+  let lastFrame   = 0;
+
+  // ─────────────────────────────────────────────
+  // 레이어 구성
+  // ─────────────────────────────────────────────
+  function addLayers() {
+    const flowData     = buildFlowGeoJSON(isDark);
+    const facilityData = buildFacilityGeoJSON();
+
+    // ── 기본 관로 배경 (PMTiles 관로 레이어 역할) ──
+    map.addSource('bg-pipes-src', {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: FLOW_EDGES.map(e => {
+          const f = getFacility(e.from), t = getFacility(e.to);
+          return {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [[f.lon, f.lat], [t.lon, t.lat]] },
+            properties: {}
+          };
+        })
+      }
+    });
+    map.addLayer({
+      id: 'bg-pipe-layer',
+      type: 'line',
+      source: 'bg-pipes-src',
+
+      paint: {
+        'line-color': isDark ? '#1e293b' : '#cbd5e1',
+        'line-width': 4,
+        'line-opacity': 0.8,
+      }
+    });
+
+    // ── 유량 오버레이 소스 (lineMetrics: true — line-gradient 필수) ──
+    map.addSource('flow-src', {
+      type: 'geojson',
+      data: flowData,
+      lineMetrics: true,
+    });
+
+    // ── Phase 1: 유량 글로우 (블러 그림자) ──
+    map.addLayer({
+      id: 'flow-glow',
+      type: 'line',
+      source: 'flow-src',
+
+      paint: {
+        'line-color': isDark ? 'rgba(56,189,248,0.18)' : 'rgba(14,165,233,0.15)',
+        'line-width': [
+          'interpolate', ['linear'], ['get', 'flow_ratio'],
+          0, 10, 0.5, 22, 1.0, 36
+        ],
+        'line-blur': 8,
+      }
+    });
+
+    // ── Phase 1: 유량 기본 (data-driven 두께/색상) ──
+    // 주의: line-gradient와 line-color는 같은 레이어에 공존 불가
+    // → flow-base는 line-color(data), flow-anim은 line-gradient(anim)로 분리
+    map.addLayer({
+      id: 'flow-base',
+      type: 'line',
+      source: 'flow-src',
+
+      paint: {
+        'line-color': [
+          'interpolate', ['linear'], ['get', 'flow_ratio'],
+          0,    isDark ? '#475569' : '#94a3b8',
+          0.15, isDark ? '#38bdf8' : '#0ea5e9',
+          0.5,  isDark ? '#0ea5e9' : '#0284c7',
+          1.0,  isDark ? '#1e40af' : '#1e3a8a',
+        ],
+        'line-width': [
+          'interpolate', ['linear'], ['get', 'flow_ratio'],
+          0, 2, 0.25, 5, 0.6, 9, 1.0, 14
+        ],
+        'line-opacity': 0.95,
+      }
+    });
+
+    // ── Phase 2: 흐름 방향 셔머 (line-gradient + rAF) ──
+    // 주의: line-gradient 레이어는 data-driven paint 속성 사용 불가 → line-width 상수
+    // GeoJSON 좌표 순서 = 흐름 방향 (from → to)
+    map.addLayer({
+      id: 'flow-anim',
+      type: 'line',
+      source: 'flow-src',
+
+      paint: {
+        'line-width': 14,  // 상수값만 허용 (line-gradient 레이어 제약)
+        'line-gradient': [
+          'interpolate', ['linear'], ['line-progress'],
+          0, 'rgba(186,230,253,0)',
+          1, 'rgba(186,230,253,0)',
+        ],
+        'line-opacity': 0.9,
+      }
+    });
+
+    // ── Phase 1: 불균형 경보 점선 오버레이 ──
+    map.addSource('imbalance-src', {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: flowData.features.filter(f => f.properties.grade !== '')
+      }
+    });
+    map.addLayer({
+      id: 'flow-imbalance',
+      type: 'line',
+      source: 'imbalance-src',
+      paint: {
+        'line-color': [
+          'match', ['get', 'grade'],
+          '경고', '#ef4444',
+          '주의', '#f97316',
+          '관심', '#facc15',
+          'transparent'
+        ],
+        'line-width': [
+          'match', ['get', 'grade'],
+          '경고', 3, '주의', 2.5, '관심', 2, 1
+        ],
+        'line-dasharray': [5, 4],
+        'line-opacity': 0.95,
+        'line-offset': 6,
+      }
+    });
+
+    // ── 시설 노드 ──
+    map.addSource('facilities-src', {
+      type: 'geojson',
+      data: facilityData,
+    });
+
+    // 시설 타입별 색상
+    const typeStroke = isDark
+      ? { '정수장': '#38bdf8', '배수지': '#34d399', '가압장': '#a78bfa', '소블록': '#94a3b8' }
+      : { '정수장': '#0284c7', '배수지': '#059669', '가압장': '#7c3aed', '소블록': '#64748b' };
+
+    // 펄스 링 (중요 시설)
+    map.addLayer({
+      id: 'facility-pulse',
+      type: 'circle',
+      source: 'facilities-src',
+      filter: ['in', ['get', 'type'], ['literal', ['정수장', '배수지']]],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 18, 14, 24, 16, 30],
+        'circle-color': 'transparent',
+        'circle-stroke-color': [
+          'match', ['get', 'type'],
+          '정수장', isDark ? 'rgba(56,189,248,0.2)' : 'rgba(2,132,199,0.15)',
+          isDark   ? 'rgba(52,211,153,0.2)' : 'rgba(5,150,105,0.15)',
+        ],
+        'circle-stroke-width': 6,
+      }
+    });
+
+    // 시설 원
+    map.addLayer({
+      id: 'facility-circle',
+      type: 'circle',
+      source: 'facilities-src',
+      paint: {
+        'circle-radius': [
+          'match', ['get', 'type'],
+          '정수장', 13, '배수지', 11, '가압장', 10, 8
+        ],
+        'circle-color': [
+          'match', ['get', 'type'],
+          '정수장', isDark ? '#0c4a6e' : '#e0f2fe',
+          '배수지', isDark ? '#064e3b' : '#d1fae5',
+          '가압장', isDark ? '#4c1d95' : '#ede9fe',
+          isDark   ? '#1e293b' : '#f1f5f9',
+        ],
+        'circle-stroke-color': [
+          'match', ['get', 'type'],
+          '정수장', '#38bdf8',
+          '배수지', '#34d399',
+          '가압장', '#a78bfa',
+          '#94a3b8',
+        ],
+        'circle-stroke-width': 2.5,
+        'circle-opacity': 1,
+      }
+    });
+
+    // 시설 아이콘 (이모지 텍스트)
+    map.addLayer({
+      id: 'facility-icon',
+      type: 'symbol',
+      source: 'facilities-src',
+      layout: {
+        'text-field': [
+          'match', ['get', 'type'],
+          '정수장', '💧', '배수지', '🏗', '가압장', '⚡', '소블록', '🔵', '○'
+        ],
+        'text-size': 13,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      }
+    });
+
+    // 시설명 라벨
+    map.addLayer({
+      id: 'facility-label',
+      type: 'symbol',
+      source: 'facilities-src',
+      minzoom: 11,
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-size': 11,
+        'text-offset': [0, 2.3],
+        'text-anchor': 'top',
+        'text-allow-overlap': false,
+      },
+      paint: {
+        'text-color': isDark ? '#e2e8f0' : '#0f172a',
+        'text-halo-color': isDark ? '#0b1120' : '#ffffff',
+        'text-halo-width': 1.5,
+      }
+    });
+
+    // 애니메이션 시작
+    startAnim();
+
+    // 인터랙션 등록
+    setupInteraction();
+  }
+
+  // ─────────────────────────────────────────────
+  // Phase 2: 흐름 방향 셔머 애니메이션
+  // ─────────────────────────────────────────────
+  // 원리: line-gradient의 line-progress [0→1]을 따라 밝은 점이 이동
+  //       → 선의 시작(from)→끝(to) 방향으로 빛이 흐르는 시각 효과
+  //       → rAF + 30fps cap으로 GPU 부하 최소화
+  const FPS_CAP   = 30;
+  const HALF      = 0.13; // 셔머 반폭 (값이 클수록 긴 빛줄기)
+
+  function startAnim() {
+    if (animRafId) cancelAnimationFrame(animRafId);
+    function frame(now) {
+      animRafId = requestAnimationFrame(frame);
+      if (!animEnabled) return;
+
+      const delta = now - lastFrame;
+      if (delta < 1000 / FPS_CAP) return;
+      lastFrame = now;
+
+      // 속도 = animSpeed × 기본속도
+      animProg = (animProg + 0.003 * animSpeed) % 1;
+      const p  = animProg;
+      const p0 = Math.max(0.0001, p - HALF);
+      const p2 = Math.min(0.9999, p + HALF);
+
+      if (map.getLayer('flow-anim')) {
+        map.setPaintProperty('flow-anim', 'line-gradient', [
+          'interpolate', ['linear'], ['line-progress'],
+          0,   'rgba(186,230,253,0.0)',
+          p0,  'rgba(186,230,253,0.0)',
+          p,   'rgba(186,230,253,0.88)',  // 피크: 밝은 하늘색
+          p2,  'rgba(186,230,253,0.0)',
+          1,   'rgba(186,230,253,0.0)',
+        ]);
+      }
+    }
+    animRafId = requestAnimationFrame(frame);
+  }
+
+  // ─────────────────────────────────────────────
+  // 인터랙션
+  // ─────────────────────────────────────────────
+  function setupInteraction() {
+    const tooltip = document.getElementById('edge-tooltip');
+
+    // 엣지 호버
+    ['flow-base', 'flow-glow'].forEach(lid => {
+      map.on('mouseenter', lid, e => {
+        map.getCanvas().style.cursor = 'pointer';
+        const p = e.features[0]?.properties;
+        if (!p) return;
+        const badgeHtml = p.grade
+          ? `<span class="tt-badge badge-${p.grade}">${p.grade}</span>`
+          : '';
+        tooltip.innerHTML = `
+          <div class="tt-title">${p.from_name} → ${p.to_name}${badgeHtml}</div>
+          <div class="tt-row">유량: <span>${Number(p.flow).toLocaleString('ko-KR')} m³/h</span></div>
+          <div class="tt-row">최대 대비: <span>${Math.round(p.flow_ratio * 100)}%</span></div>
+          <div class="tt-row">관로 두께: <span>${Number(p.width).toFixed(1)}px</span></div>
+        `;
+        tooltip.style.display = 'block';
+        posTooltip(e.point);
+      });
+      map.on('mousemove', lid, e => posTooltip(e.point));
+      map.on('mouseleave', lid, () => {
+        map.getCanvas().style.cursor = '';
+        tooltip.style.display = 'none';
+      });
+    });
+
+    function posTooltip(pt) {
+      const margin = 14;
+      const tw = tooltip.offsetWidth;
+      const th = tooltip.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let x = pt.x + margin;
+      let y = pt.y - th / 2;
+      if (x + tw > vw - 8) x = pt.x - tw - margin;
+      if (y < 8) y = 8;
+      if (y + th > vh - 8) y = vh - th - 8;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top  = y + 'px';
+    }
+
+    // 시설 노드 클릭
+    map.on('click', 'facility-circle', e => {
+      const p = e.features[0]?.properties;
+      if (!p) return;
+      const metrics = FACILITY_METRICS[p.id] || {};
+      const mRows = Object.entries(metrics)
+        .map(([k, v]) => `<div class="popup-metric">${k}: <span>${v}</span></div>`)
+        .join('');
+      new maplibregl.Popup({ closeButton: true, offset: 18 })
+        .setLngLat(e.lngLat)
+        .setHTML(`
+          <div class="popup-name">${p.name}</div>
+          <div class="popup-type">${p.type}</div>
+          ${mRows || '<div class="popup-metric">데이터 없음</div>'}
+        `)
+        .addTo(map);
+    });
+
+    map.on('mouseenter', 'facility-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'facility-circle', () => { map.getCanvas().style.cursor = ''; });
+  }
+
+  // ─────────────────────────────────────────────
+  // 레이어 토글 제어
+  // ─────────────────────────────────────────────
+  function setVis(ids, on) {
+    ids.forEach(id => {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    });
+  }
+
+  document.getElementById('tog-flow-base').addEventListener('change', e =>
+    setVis(['flow-base'], e.target.checked));
+
+  document.getElementById('tog-flow-glow').addEventListener('change', e =>
+    setVis(['flow-glow'], e.target.checked));
+
+  document.getElementById('tog-imbalance').addEventListener('change', e =>
+    setVis(['flow-imbalance'], e.target.checked));
+
+  document.getElementById('tog-anim').addEventListener('change', e => {
+    animEnabled = e.target.checked;
+    if (!animEnabled && map.getLayer('flow-anim')) {
+      // 애니메이션 비활성화 시 투명하게 초기화
+      map.setPaintProperty('flow-anim', 'line-gradient', [
+        'interpolate', ['linear'], ['line-progress'],
+        0, 'rgba(186,230,253,0)', 1, 'rgba(186,230,253,0)',
+      ]);
+    }
+  });
+
+  document.getElementById('tog-bg-pipe').addEventListener('change', e =>
+    setVis(['bg-pipe-layer'], e.target.checked));
+
+  document.getElementById('tog-nodes').addEventListener('change', e =>
+    setVis(['facility-pulse', 'facility-circle', 'facility-icon', 'facility-label'], e.target.checked));
+
+  // 속도 슬라이더
+  document.getElementById('anim-speed').addEventListener('input', e => {
+    animSpeed = parseInt(e.target.value);
+    document.getElementById('speed-val').textContent = `×${animSpeed}`;
+  });
+
+  // ─────────────────────────────────────────────
+  // 다크/라이트 모드 전환
+  // ─────────────────────────────────────────────
+  document.getElementById('theme-btn').addEventListener('click', () => {
+    isDark = !isDark;
+    document.body.classList.toggle('light', !isDark);
+    document.getElementById('theme-btn').textContent = isDark ? '☀️ 라이트' : '🌙 다크';
+
+    if (animRafId) { cancelAnimationFrame(animRafId); animRafId = null; }
+    map.setStyle(getStyle());
+    // 스타일 교체 후 레이어 재추가 — once('idle')로 완전 로드 후 1회만 실행
+    map.once('idle', addLayers);
+  });
+
+  // ─────────────────────────────────────────────
+  // 초기 로드 — load 이벤트만 사용 (styledata 중복 방지)
+  // ─────────────────────────────────────────────
+  map.on('load', addLayers);
+  </script>
+</body>
+</html>
