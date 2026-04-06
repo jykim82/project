@@ -2,6 +2,32 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-06 — AI Server 시작 hang 수정 + start-services.bat 개선)
+
+#### AI Server hang 원인 및 수정
+
+**원인**: AI Server 강제 종료 시 PostgreSQL에 좀비 연결 잔류 → 테이블 락 점유
+- 이전 프로세스 백그라운드 태스크(`_anomaly_scan_cache_loop`)가 `cagg_5min_raw_stats_ai` 365일 조회 쿼리 실행 중 강제 종료
+- 연결이 `idle in transaction` 또는 `active` 상태로 PostgreSQL에 남아 테이블 락 점유
+- 새 서버 시작 시 `_auto_classify_tags()` → `DELETE FROM tb_tag_group_map` 에서 락 대기 → 무한 hang
+
+**수정 2종**:
+1. `ai_server.py` `_auto_classify_tags()`: `SET lock_timeout = '10000'` 추가 → 10초 초과 시 예외 발생 → lifespan catch로 처리 (무한 hang 방지)
+2. `start-services.bat` 2단계 추가: AI Server 시작 전 `pg_terminate_backend`로 `slm` DB의 좀비 연결 자동 정리
+
+#### start-services.bat 개선 이력
+- Docker Desktop 로직 제거 (WSL Docker로 전환)
+- BOM 제거 + CP949 인코딩 저장 (한글 깨짐 수정)
+- `chcp 949` 강제 설정
+- `netstat | findstr` → PowerShell TcpClient 체크 → 포트 체크 제거 (WSL 관리로 불필요)
+- AI Server 실행: `python` → `venv\Scripts\python.exe` (가상환경 명시)
+- PostgreSQL 좀비 연결 정리 단계 추가 (2단계)
+- AI Server 대기: 10초 → 15초
+
+#### load_dotenv 수정
+- `ai_server.py` `load_dotenv()` → `load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))`
+- 이유: 실행 디렉토리가 다를 경우 `.env` 파일을 못 찾아 DB_PASSWORD 미설정 → DB 연결 실패
+
 ### 완료 (2026-04-05 — 이상 시설 TOP network_down 혼입 수정)
 
 #### 원인 분석
@@ -30,7 +56,22 @@
    - 현재 Node-RED SNMP 폴링 탭 비활성화 유지 (현장 망 접근 불가)
    - 신규: inject(주기) → postgresql(원격 DB에서 tb_network_status SELECT) → function(가공) → postgresql(로컬 DB INSERT/UPSERT)
    - 원격 DB: 112.166.183.65:25479, 로컬 DB: 172.17.0.1:5433 (Docker bridge)
-5. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
+5. **수위 현황 응답 "2.73None" 표기 버그 수정** (`ai_server.py` `build_level_detail_block`)
+   - 원인: DB unit 컬럼 NULL → `row_dict.get("unit", "")` 키 존재 시 default 무시 → `None` 반환
+   - 수정: `unit = row_dict.get("unit") or ""` (or "" 패턴으로 None 방어)
+   - 영향: 동일 패턴 `build_today_flow_detail_block` 등 unit 포함 모든 응답 함수 동일 수정 필요
+6. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
+   - **사전 확인**: 실제 DB `equipmenttype` 값 (UTM/SSLVPN/LTE 문자열 확인)
+   - **인텐트명(안)**: `NETWORK_UPSTREAM_FAULT_ANALYSIS`
+   - **트리거 키워드**: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인", "집단 통신이상"
+   - **로직**: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
+   - **판단 규칙**:
+     - 특정 SSLVPN 하위 LTE 80%+ 다운 → "해당 SSLVPN 장애 가능성"
+     - 전체 SSLVPN 80%+ 다운 → "UTM 장애 가능성"
+     - 1~2개만 다운 → "현장 개별 장애 (상위 문제 아님)"
+   - **응답 형식**: `graph_type: document` (계층 트리 텍스트)
+   - **사양 확정 필요**: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장 여부
+7. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
 
 ---
 
