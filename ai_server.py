@@ -9603,8 +9603,19 @@ async def dashboard_overview():
         result["equipment_failures"] = pd.get("equipment_failure_impacts", [])
         result["equipment_failure_count"] = pd.get("equipment_failure_count", 0)
 
-        # 물수지 요약
-        result["flow_balance"] = pd.get("flow_balance_summary")
+        # 물수지 요약 — _FLOW_BALANCE_CACHE 직접 참조 (ANOMALY_SCAN 스냅샷 타이밍 불일치 방지)
+        if _FLOW_BALANCE_CACHE:
+            _imbalance_edges = [
+                e for e in _FLOW_BALANCE_CACHE
+                if e.get("grade") != "정상" and e.get("status") == "ok"
+            ]
+            result["flow_balance"] = {
+                "total_edges": len(_FLOW_BALANCE_CACHE),
+                "imbalance_count": len(_imbalance_edges),
+                "worst_edges": sorted(_imbalance_edges, key=lambda e: -abs(e.get("imbalance_pct", 0)))[:5],
+            }
+        else:
+            result["flow_balance"] = pd.get("flow_balance_summary")
 
         # 캐시 시간
         if _ANOMALY_SCAN_CACHE_TIME:
