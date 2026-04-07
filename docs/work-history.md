@@ -157,6 +157,23 @@
   - 원격 DB user: `postgres` (dj_post 아님, db_sync.py 참조)
   - 테스트: 수동 트리거 → 1,780건 UPSERT 성공 (178장비, 정상138/이상40)
 
+### 완료 (2026-04-07 — 계정 권한 Phase 3~4: 메뉴 접근 권한 매트릭스)
+
+#### 구현 내역
+- **DB 시드**: `tb_menu` 35건 + `tb_auth_menu` 84건 (MASTER 35 + ADMIN 35 + USER 14)
+  - 정적 사이드바 메뉴 구조를 DB로 완전 이관
+  - `/api/auth/me`가 `tb_auth_menu` 기반 권한별 메뉴 필터링 동작 확인
+- **백엔드 API 3종** (`auth_crud.py`)
+  - `GET /api/auth/menu-permissions`: 전체 메뉴 + 권한별(MASTER/ADMIN/USER) 허용 매트릭스
+  - `PUT /api/auth/menu-permissions`: 권한별 메뉴 허용/차단 토글 (use_yn Y/N)
+  - `PUT /api/auth/menu-visibility`: 메뉴 전체 표시/숨김 (tb_menu.use_yn)
+- **프론트엔드**: `MenuPermissionMatrix.tsx` 신규
+  - 메뉴 관리 페이지에 "메뉴 트리" / "접근 권한" 탭 추가 (MASTER 전용)
+  - 체크박스 매트릭스: 부모/자식 메뉴 × 마스터/관리자/일반 3열
+  - Eye 아이콘: 메뉴 전체 표시/숨김 토글 (DB 영속화)
+  - MASTER는 항상 전체 접근 (체크 비활성)
+- **`tb_auth_menu`**: PK `(region, auth_idn, menu_idn)` + `use_yn`, `menu_order` 컬럼 추가
+
 ### 완료 (2026-04-07 — 네트워크 토폴로지 초기화면 + 전체화면 버튼)
 
 #### 구현 내역
@@ -1426,9 +1443,7 @@
    - 트리거 키워드: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인"
    - 로직: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
    - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
-2. **계정 권한 관리 Phase 3~4** — Phase 1(인증API), Phase 2(동적메뉴) 완료
-   - Phase 3: 메뉴 접근 제어 강화 — tb_auth_menu 기반 권한별 메뉴 트리 서버사이드 필터링
-   - Phase 4: MASTER 전용 기능 — 메뉴 숨김/표시 토글, 시스템 설정 접근, 사용자 권한 변경
+2. ~~**계정 권한 관리 Phase 3~4**~~ — 완료 (04-07, 권한 매트릭스 UI + DB 시드 + API 3종)
 3. **GIS 속성 필터 UI** — 관경/관종 등 SHP 속성 기반 필터 (메모리 기록)
 4. **시스템 설정 UI** — DB 접속정보 + AI 모델 파라미터(num_ctx/temperature) UI 조정
 5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
@@ -1464,6 +1479,7 @@
 - ~~인과관계 내재화 6종~~ — 완료 (PUMP_ON_NO_PRESSURE/FLOW, VALVE_OPEN_NO_FLOW, INLET_FLOW_NO_LEVEL_RISE, LEVEL_DROP_NO_OUTFLOW, INLET_PRESSURE_NO_OUTLET)
 - ~~알람→작업관리 억제 로직 #36~~ — 완료 (04-05, alarm-reports task_suppressed)
 - ~~계정 권한 Phase 1(인증API) + Phase 2(동적메뉴)~~ — 완료 (04-03 auth_crud.py + 04-05 use-sidebar-menus.ts)
+- ~~계정 권한 Phase 3(메뉴 접근 제어) + Phase 4(MASTER 메뉴 관리)~~ — 완료 (04-07 권한 매트릭스 UI + DB 시드)
 - ~~GIS 관망도 유량 흐름 오버레이~~ — 완료 (04-06~07, Phase 1~4)
 - ~~ai_server.py 모듈 분리 추가~~ — 완료 (04-07, 3개 모듈 추출, 12,724줄)
 
