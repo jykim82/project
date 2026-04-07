@@ -1,5 +1,5 @@
 {
-  "hash": "0cd8dc80b66098deb57a9df4b01e7624",
+  "hash": "17da2d71a97c42ba36178dcb84f80477",
   "labels": [
     [
       "RESERVOIR_OVERVIEW",
@@ -2832,10 +2832,46 @@
     [
       "RESERVOIR_MONTHLY_SUPPLY_CHART",
       "전체 배수지 월공급량을 그래프로 시각화해줘"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "통신이상이 왜 이렇게 많아?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "UTM 이상이야?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "SSLVPN 문제야?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "상위 장비 문제가 있어?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "집단 통신이상 원인이 뭐야?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "전체 통신이상 원인을 분석해줘"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "왜 다 통신이상이야?"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "통신이상 원인을 알려줘"
+    ],
+    [
+      "NETWORK_UPSTREAM_FAULT_ANALYSIS",
+      "네트워크 상위 장비 상태는?"
     ]
   ],
   "model": "snowflake-arctic-embed2",
   "dim": 1024,
-  "count": 708,
-  "built_at": "2026-04-04 21:50:14"
+  "count": 717,
+  "built_at": "2026-04-07 16:39:44"
 }
