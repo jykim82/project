@@ -2,6 +2,17 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-07 — 용수 흐름 ↔ 대시보드 유량 불균형 수치 통일 + KPI 레이블 명확화)
+
+#### 원인 분석
+- **유량 불균형 불일치**: `dashboard_overview()`가 `_ANOMALY_SCAN_CACHE` 내 스냅샷을 사용 (ANOMALY_SCAN 5분 + FLOW_BALANCE 30분 복합 지연 가능) → 용수 흐름 페이지의 `_FLOW_BALANCE_CACHE` 직접 참조와 타이밍 불일치
+- **교차검증 이상 불일치**: 알고리즘 차이 (대시보드=AI 스캔 verdict "교차이상" 시설 수, 용수 흐름=실시간 유량 비교 노드 수) → 의도적 차이, 레이블로 명확화
+
+#### 수정 내역
+- **`ai_server.py` `dashboard_overview()`**: `flow_balance`를 `_ANOMALY_SCAN_CACHE` 스냅샷 대신 `_FLOW_BALANCE_CACHE` 직접 계산 → 용수 흐름 페이지와 동일 소스 사용
+- **`dashboard/page.tsx`**: `교차검증 이상` sub "엣지 불일치 N건" → "5분 스캔 · 불일치 N건" (스캔 기반임 명시)
+- **`monitoring/flow/page.tsx`**: `교차검증 이상` sub "실시간", `유량 불균형` sub "30분 갱신" 추가
+
 ### 완료 (2026-04-06 — GIS 관망도 유량 흐름 오버레이 구현)
 
 #### 구현 내역
