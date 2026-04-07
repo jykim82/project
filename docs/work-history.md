@@ -157,6 +157,18 @@
   - 원격 DB user: `postgres` (dj_post 아님, db_sync.py 참조)
   - 테스트: 수동 트리거 → 1,780건 UPSERT 성공 (178장비, 정상138/이상40)
 
+### 완료 (2026-04-07 — 이상감지→설비 역추적 Phase 3: 연결 설비 건강 진단)
+
+#### 구현 내역
+- **`_diagnose_equipment_for_tags()`** (`ai_server.py`): 이상 태그 → tb_equipment_tag_map 역추적 → 연결 설비 건강 진단
+  - 5단계 진단: 태그-설비 매핑 → 전체 태그수 → 네트워크 상태 → DI 장애 → 건강점수
+  - 건강 점수 0~100 (장애 유형별 감점: equip_fault -40, power_fault -30, network_down -25, comm_error -15)
+  - 건강 등급: 정상(≥80) / 주의(≥50) / 위험(<50)
+- **ANOMALY_FACILITY_DETAIL 핸들러**: 이상 태그 수집 → `_diagnose_equipment_for_tags` 호출 → `data["equipment_diagnosis"]`
+- **프론트엔드**: `EquipmentDiagnosis` 타입 + `AnomalyDetailView` 보라 테두리 카드
+  - 설비 ID + 유형 + 건강점수 + 이상태그/전체태그 비율 + 장애 라벨
+  - chat-response-mapper `equipment_diagnosis` 패스스루
+
 ### 완료 (2026-04-07 — 계정 권한 Phase 3~4: 메뉴 접근 권한 매트릭스)
 
 #### 구현 내역
@@ -1432,9 +1444,9 @@
 - 채팅 SSE 진행 표시 라벨+도트 스타일 (분류→추출→조회→렌더링)
 
 ### 남은 항목 (미완료만)
-1. **미들웨어 정리** — 테스트용 우회 경로 정리, 프로덕션 인증 복원
+1. ~~**미들웨어 정리**~~ — 이미 완료 (withAuth + PUBLIC_PATHS 4개 + dev 계정 삭제 확인)
 2. **엑셀 템플릿 보고서** — 프롬프트 기반 SLM 확장 (후순위)
-3. **이상감지→설비 역추적 연동 (Phase 3)** — 이상 태그 → 연결 설비 역추적 → 설비 상태 종합 진단
+3. ~~**이상감지→설비 역추적 Phase 3**~~ — 완료 (이상태그→tb_equipment_tag_map 역추적→건강점수+장애유형 진단)
 4. **인과관계 내재화 확장** — 가압장→소블록 cross-facility 등 신규 규칙 추가 (기존 6개 intra-rule 완료)
 
 ### 향후 진행 예정 (미완료만)
@@ -1445,7 +1457,7 @@
    - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
 2. ~~**계정 권한 관리 Phase 3~4**~~ — 완료 (04-07, 권한 매트릭스 UI + DB 시드 + API 3종)
 3. ~~**GIS 속성 필터 UI**~~ — 이미 구현 완료 (관경 12종 + 관재질 10종 버튼 필터, GisLayerPanel PipeFilterSection)
-4. **시스템 설정 UI** — DB 접속정보 + AI 모델 파라미터(num_ctx/temperature) UI 조정
+4. ~~**시스템 설정 UI**~~ — 이미 구현 완료 (/admin/site-settings, DB 접속정보+AI 파라미터 슬라이더+랜딩토글)
 5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
 6. **트렌드 AI 요약 설명** — 트렌드 차트 선택 시 Gemma4가 수치·패턴을 2문장으로 요약 (권고 없음, 순수 데이터 설명)
    - gemma4:latest(e4b) 테스트 완료 — 지시 준수 양호, 응답 3~5초
