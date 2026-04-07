@@ -2,6 +2,33 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-06 — GIS 관망도 유량 흐름 오버레이 구현)
+
+#### 구현 내역
+- **`GisFlowOverlayLayer.tsx`** (신규): MapLibre GL 직접 레이어 컴포넌트
+  - Phase 1: 유량 비례 굵기(2~14px) + 색상(회색→하늘→파랑) 라인
+  - Phase 2: rAF 30fps shimmer 애니메이션 (line-gradient, ANIM_SPEED=0.004)
+  - Phase 3: 불균형 강조 dashed 오렌지/빨강 오버레이 (imbalance_grade 기반)
+  - 레이어 ID: `gis-flow-glow`, `gis-flow-base`, `gis-flow-anim`, `gis-flow-imbalance`
+  - 시설 마커 레이어 아래 삽입 (facility-clusters 이전) → 기존 아이콘/클러스터 보존
+  - visible prop으로 on/off 토글 (map.setLayoutProperty visibility)
+  - pendingDataRef 패턴: map load 지연 시 데이터 누락 방지
+- **`use-gis-facilities.ts`** 확장: edges, flowNodes, edgeImbalance 추가 반환
+  - `GisFlowEdge` 인터페이스 export
+- **`monitoring/gis/page.tsx`** 헤더 토글 버튼 추가: "유량 흐름" (기존 "전체보기" 옆)
+  - showFlowOverlay state (기본 true), 버튼 색상 active/inactive 구분
+
+#### 핵심 MapLibre 제약 (재확인)
+- `lineMetrics: true` source 필수 → `line-gradient` 사용 조건
+- `line-gradient` 레이어는 `line-width` constant만 허용 (data-driven 불가)
+  → `gis-flow-base`(data-driven width+color) + `gis-flow-anim`(constant width, gradient) 분리
+- `line-cap`/`line-join` → layout 속성 (paint에 넣으면 MapLibre 4.x 검증 오류)
+- shimmer p0~p2 범위가 겹치면 "ascending order" 에러 → clamp(0.0001, 0.9999) 필수
+
+#### 필수 조건 (유지됨)
+- 기존 GIS 레이어(SHP, 시설 아이콘, 클러스터, 팝업) 변경 없음
+- additive only: 새 레이어 추가만, 기존 레이어 수정 없음
+
 ### 완료 (2026-04-06 — AI Server 시작 hang 수정 + start-services.bat 개선)
 
 #### AI Server hang 원인 및 수정
@@ -55,7 +82,7 @@
 - **프로토타입 HTML**: `docs/gis-flow-animation-prototype.html` — 샘플 7개 시설 네트워크, 불균형 경보 점선, 토글 컨트롤, 다크/라이트 모드
 - **핵심 발견**: `line-gradient` 레이어는 `lineMetrics: true` 필수, `line-width` data-driven 불가 (상수만 허용), `line-cap`/`line-join`은 `layout`이 아닌 MapLibre 4.x에서 별도 처리
 
-### 내일 할 일 (2026-04-06)
+### 내일 할 일 (2026-04-07)
 
 1. **알람 테이블 meta 컬럼 NULL 원인 파악** — Node-RED에서 meta가 채워지지 않는 흐름 탐색 및 수정
 2. **용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치** — 원인 파악 + 사양 확정 + 통일
@@ -80,6 +107,57 @@
    - **응답 형식**: `graph_type: document` (계층 트리 텍스트)
    - **사양 확정 필요**: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장 여부
 7. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
+8. **GIS 용수 흐름 기능 통합** — 용수 흐름 페이지의 핵심 분석 기능을 GIS 관망도에 구현
+   - **교차검증 이상**: 유입/유출 불균형 노드를 GIS 지도 위에 경보 오버레이로 표시 (imbalance_grade 기반 파선/색상)
+   - **물수지 불균형**: 시설별 수지 비율(유입 대비 유출 차이) 히트맵/색상 레이어
+   - **흐름 방향 표시**: 관로 위 shimmer 애니메이션 방향 = 실제 유량 흐름 방향 (양/음 부호 기반)
+   - **팝업 연동**: GIS 시설 클릭 시 해당 시설의 교차검증·물수지 요약 정보 팝업에 추가
+   - **참고**: 기존 `GisFlowOverlayLayer` Phase3(imbalance)가 기반, 데이터는 `/flow/realtime` API 재사용
+   - **원칙**: additive only — 기존 GIS 레이어/아이콘/팝업 변경 없이 신규 레이어만 추가
+
+9. **ai_server.py 분할 최적화** — 13,699줄 / 591KB 단일 파일 → 모듈 분리 (분석·계획 먼저, 구현은 승인 후)
+
+   **[1단계] 분석 (먼저 수행)**
+   - 현재 파일 논리 구조 전체 분석 및 의존성 맵 작성
+   - 분리 가능한 모듈 경계 식별 (순환 import 위험 구간 사전 파악)
+   - 예상 모듈 구성안 (초안):
+     ```
+     D:\slm\
+     ├── ai_server.py          # 진입점 (app 생성, lifespan, middleware만)
+     ├── core/
+     │   ├── db.py             # DB 풀, get_db_connection, execute_sql
+     │   ├── settings.py       # _AiRuntimeSettings, 환경변수
+     │   └── startup.py        # lifespan 태스크, 캐시 빌드
+     ├── intent/
+     │   ├── classifier.py     # match_intent, normalize_question, extract_*
+     │   ├── handlers.py       # 56개 인텐트 핸들러 (/ask, /ask/stream)
+     │   └── templates.py      # render_answer_template, apply_corrections
+     ├── routers/
+     │   ├── alarm.py          # /alarm/*, /crisis/*
+     │   ├── flow_map.py       # /flow-map/*
+     │   ├── monitoring.py     # /monitoring/*, /trend/*, /gis/*
+     │   ├── tags.py           # /tags/*, /causal/*
+     │   ├── admin.py          # /admin/*
+     │   └── imports.py        # */import/csv 엔드포인트
+     ├── services/
+     │   ├── anomaly.py        # _detect_equipment_failures, iforest
+     │   ├── flow_balance.py   # _flow_balance_cache_loop, 교차검증
+     │   └── causal.py         # _build_causal_index, causal chain
+     └── demo/
+         └── middleware.py     # demo_anonymize_middleware
+     ```
+
+   **[동시 다중 요청 처리 최적화 — 분석 핵심 항목]**
+   - **현재 문제**: 단일 파일에 전역 상태(캐시, DB 풀, 잠금) 혼재 → 동시 요청 시 경합 발생 위험
+   - **DB 풀 검토**: `_PooledConnection` + `threading.Lock` 구조 → asyncio 환경에서 blocking 여부 확인
+     - `execute_sql()` 내부 sync psycopg2 → `asyncio.run_in_executor` 래핑 필요 여부
+   - **전역 캐시 안전성**: `_anomaly_cache`, `_flow_balance_cache`, `_flow_baseline_cache` 등
+     - 읽기는 다중 가능, 쓰기는 `asyncio.Lock` 또는 `threading.Lock` 사용 여부 확인
+   - **인텐트 핸들러**: `/ask/stream` SSE 동시 N개 요청 시 Ollama(Gemma4) 직렬화 여부 확인
+     - Ollama는 단일 요청 처리 → 큐잉 또는 타임아웃 처리 로직 필요 여부
+   - **개선 방향**: 모듈 분리 시 각 router를 `APIRouter`로 독립화 → FastAPI 내장 동시성 활용
+   - **[2단계] 계획 문서 작성** → `docs/ai-server-refactor-plan.md`에 모듈별 이동 대상 함수 목록, 의존성 방향, 동시성 위험 구간, 개선 방안 명시
+   - **[3단계] 승인 후 구현** — 계획 검토 후 단계별 분리 (한 번에 전체 X, 모듈 1개씩 이동 + 테스트)
 
 ---
 
