@@ -34,10 +34,10 @@ import logging
 import os
 import time
 
-# .env 파일 로드 (python-dotenv 설치 시)
+# .env 파일 로드 (python-dotenv 설치 시) — 스크립트 위치 기준 절대경로
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 except ImportError:
     pass  # python-dotenv 미설치 시 환경변수만 사용
 import re
@@ -371,6 +371,7 @@ def _auto_classify_tags(conn) -> int:
     반환: 분류된 태그 수
     """
     cur = conn.cursor()
+    cur.execute("SET lock_timeout = '10000'")  # 10초 초과 시 LockNotAvailable 예외 → lifespan catch로 처리
 
     # 1. tb_tag_data_group UPSERT
     for idx, (code, name, parent, tagtype, keywords) in enumerate(TAG_DATA_GROUPS):
@@ -3703,7 +3704,7 @@ def _extract_stddev_stats(data_row: dict) -> Optional[dict]:
         return None
 
     result = {
-        "unit": data_row.get("unit", ""),
+        "unit": data_row.get("unit") or "",
         "avg_month": data_row.get("avg_month"),
         "avg_year": data_row.get("avg_year"),
     }
@@ -4049,7 +4050,7 @@ def build_level_detail_block(rows: list, columns: list) -> list:
         datainfo = row_dict.get("out_datainfo", "")
         latest_val = row_dict.get("latest_val")
         avg_month = row_dict.get("avg_month")
-        unit = row_dict.get("unit", "")
+        unit = row_dict.get("unit") or ""
         if latest_val is None:
             continue
         # 월평균 대비 편차 기반 마커
@@ -4081,7 +4082,7 @@ def build_today_flow_detail_block(rows: list, columns: list) -> list:
         row_dict = dict(zip(columns, row))
         datainfo = row_dict.get("datainfo", "")
         today_outflow = row_dict.get("today_outflow")
-        unit = row_dict.get("unit", "")
+        unit = row_dict.get("unit") or ""
         if today_outflow is None:
             continue
         try:
@@ -5439,7 +5440,7 @@ def build_pressure_detail_block(rows: list, columns: list) -> list:
         val = row_dict.get("pressure_val")
         log_time = row_dict.get("log_time", "")
         month_avg = row_dict.get("month_avg")
-        unit = row_dict.get("unit", "")
+        unit = row_dict.get("unit") or ""
         dedup_key = (datainfo, val, log_time)
         if val is not None and dedup_key not in seen:
             seen.add(dedup_key)
@@ -5478,7 +5479,7 @@ def build_pressure_reference_block(rows: list, columns: list) -> list:
             continue
         month_avg = row_dict.get("month_avg")
         year_avg = row_dict.get("year_avg")
-        unit = row_dict.get("unit", "")
+        unit = row_dict.get("unit") or ""
         dedup_key = (datainfo, month_avg, year_avg)
         if dedup_key not in seen:
             seen.add(dedup_key)
@@ -5627,6 +5628,88 @@ def build_avg_usage_detail_block(rows: list, columns: list) -> list:
         if is_null == "Y" or avg_usage is None:
             continue
         items.append({"prefix": "-", "text": f"{sitename}: {avg_usage}{usage_unit}"})
+    return items
+
+
+def build_upstream_fault_block(rows: list, columns: list) -> list:
+    """
+    NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 기반 통신이상 원인 분석 결과를 조립한다.
+    반환 컬럼: sslvpn_id, total_lte, down_lte, sslvpn_alive,
+               total_utm, down_utm, global_lte_total, global_lte_down
+    """
+    if not rows:
+        return [{"prefix": "-", "text": "네트워크 상태 데이터가 없습니다."}]
+
+    items = []
+    first = dict(zip(columns, rows[0]))
+    global_lte_total = int(first.get("global_lte_total") or 0)
+    global_lte_down = int(first.get("global_lte_down") or 0)
+    total_utm = int(first.get("total_utm") or 0)
+    down_utm = int(first.get("down_utm") or 0)
+
+    # 망 분리 환경 체크: LTE + UTM 전부 다운 → SNMP 폴링 불가
+    if global_lte_total > 0 and global_lte_total == global_lte_down and total_utm > 0 and down_utm == total_utm:
+        items.append({"prefix": "•", "text": "<<warn:현재 네트워크 상태 데이터를 신뢰할 수 없습니다>>"})
+        items.append({"prefix": "-", "text": f"전체 장비 {global_lte_total + total_utm}대가 모두 응답 없음으로 기록되어 있습니다."})
+        items.append({"prefix": "-", "text": "원인: 현장 망과 분리된 환경(개발 서버)에서는 SNMP 폴링이 불가합니다."})
+        items.append({"prefix": "-", "text": "조치: 운영 서버 또는 tb_network_status 동기화 후 재조회 바랍니다."})
+        return items
+
+    # UTM 상태
+    if total_utm > 0:
+        if down_utm == 0:
+            utm_text = f"<<ok:정상>> ({total_utm}대 모두 응답)"
+        elif down_utm == total_utm:
+            utm_text = f"<<error:전체 장애>> ({down_utm}/{total_utm}대 다운)"
+        else:
+            utm_text = f"<<warn:부분 장애>> ({down_utm}/{total_utm}대 다운)"
+        items.append({"prefix": "•", "text": f"UTM(인터넷 방화벽): {utm_text}"})
+
+    # SSLVPN별 LTE 하위 장애 분석
+    for row in rows:
+        rd = dict(zip(columns, row))
+        sslvpn_id = rd.get("sslvpn_id", "")
+        total_lte = int(rd.get("total_lte") or 0)
+        down_lte = int(rd.get("down_lte") or 0)
+        sslvpn_alive = rd.get("sslvpn_alive")
+
+        if total_lte == 0:
+            continue
+
+        down_pct = round(down_lte / total_lte * 100)
+
+        if sslvpn_alive is False:
+            sslvpn_status = "<<error:응답없음>>"
+        elif sslvpn_alive is True:
+            sslvpn_status = "<<ok:정상>>"
+        else:
+            sslvpn_status = "<<warn:상태없음>>"
+
+        items.append({"prefix": "•", "text": f"{sslvpn_id}: {sslvpn_status}"})
+        items.append({"prefix": "-", "text": f"하위 LTE 현황: {down_lte}/{total_lte}대 다운 ({down_pct}%)"})
+
+        if down_pct >= 80:
+            items.append({"prefix": "-", "text": f"<<error:판정: {sslvpn_id} 장애로 인한 집단 통신이상 가능성>>"})
+        elif down_pct >= 30:
+            items.append({"prefix": "-", "text": f"<<warn:판정: {sslvpn_id} 하위 다수 LTE 다운 — SSLVPN 점검 필요>>"})
+        elif down_lte <= 2:
+            items.append({"prefix": "-", "text": "<<ok:판정: 개별 현장 통신이상 (상위 장비 무관)>>"})
+        else:
+            items.append({"prefix": "-", "text": f"<<warn:판정: {down_lte}개 현장 개별 통신이상>>"})
+
+    # 종합 판정
+    if total_utm > 0 and down_utm == total_utm:
+        items.append({"prefix": "•", "text": "<<error:종합 판정: UTM 전체 장애 → 전 현장 통신이상 원인 가능성>>"})
+        items.append({"prefix": "-", "text": "권장 조치: UTM 장비 상태 확인 및 재시작"})
+    elif global_lte_total > 0:
+        gdown_pct = round(global_lte_down / global_lte_total * 100)
+        if gdown_pct < 10:
+            items.append({"prefix": "•", "text": f"<<ok:종합 판정: 전체 LTE 다운율 {gdown_pct}% — 상위 장비 정상, 개별 현장 통신이상>>"})
+        elif gdown_pct >= 80:
+            items.append({"prefix": "•", "text": f"<<error:종합 판정: 전체 LTE {gdown_pct}% 다운 — 상위 장비 장애 가능성>>"})
+        else:
+            items.append({"prefix": "•", "text": f"<<warn:종합 판정: 전체 LTE 다운율 {gdown_pct}% — 일부 상위 장비 또는 다수 현장 이상>>"})
+
     return items
 
 
@@ -5925,6 +6008,13 @@ def process_sql_result(
     if intent == "FACILITY_COMMUNICATION_STATUS":
         data["network_status_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["network_status_block"] = build_network_status_block(rows, columns)
+
+    # -------------------------------------------------
+    # 상위 장비 통신이상 원인 분석
+    # -------------------------------------------------
+    if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
+        data["upstream_fault_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["upstream_fault_block"] = build_upstream_fault_block(rows, columns)
 
     # -------------------------------------------------
     # 태그 최신값: 다중 행 최신값 리스트 조립
@@ -6775,7 +6865,7 @@ async def ask(request: AskRequest):
         sql_combined = sql_template or ""
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"} | _SUPPLY_INTENTS
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -7044,6 +7134,67 @@ async def ask(request: AskRequest):
                 ]
             }
         }
+
+    # NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 통신이상 원인 분석
+    if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
+        sql_combined = """
+WITH latest_status AS (
+    SELECT equipment_id, is_alive,
+           ROW_NUMBER() OVER (PARTITION BY equipment_id ORDER BY check_time DESC) AS rn
+    FROM tb_network_status
+),
+current_status AS (
+    SELECT equipment_id, is_alive
+    FROM latest_status WHERE rn = 1
+),
+lte_with_upstream AS (
+    SELECT
+        nl.source_equipment_id AS lte_id,
+        nl.target_equipment_id AS sslvpn_id,
+        COALESCE(cs.is_alive, false) AS lte_alive
+    FROM tb_network_link nl
+    LEFT JOIN current_status cs ON cs.equipment_id = nl.source_equipment_id
+    WHERE nl.source_equipment_id LIKE 'lte%'
+      AND nl.target_equipment_id LIKE 'sslvpn%'
+),
+sslvpn_summary AS (
+    SELECT
+        sslvpn_id,
+        COUNT(*) AS total_lte,
+        SUM(CASE WHEN NOT lte_alive THEN 1 ELSE 0 END) AS down_lte
+    FROM lte_with_upstream
+    GROUP BY sslvpn_id
+),
+utm_info AS (
+    SELECT
+        COUNT(*) AS total_utm,
+        SUM(CASE WHEN NOT COALESCE(cs.is_alive, false) THEN 1 ELSE 0 END) AS down_utm
+    FROM tb_network_info ni
+    LEFT JOIN current_status cs ON cs.equipment_id = ni.equipment_id
+    WHERE ni.equipment_id LIKE 'utm%'
+),
+total_lte AS (
+    SELECT
+        COUNT(*) AS global_lte_total,
+        SUM(CASE WHEN NOT is_alive THEN 1 ELSE 0 END) AS global_lte_down
+    FROM current_status
+    WHERE equipment_id LIKE 'lte%'
+)
+SELECT
+    ss.sslvpn_id,
+    ss.total_lte::int,
+    ss.down_lte::int,
+    COALESCE(cs.is_alive, false) AS sslvpn_alive,
+    ui.total_utm::int,
+    ui.down_utm::int,
+    tl.global_lte_total::int,
+    tl.global_lte_down::int
+FROM sslvpn_summary ss
+CROSS JOIN utm_info ui
+CROSS JOIN total_lte tl
+LEFT JOIN current_status cs ON cs.equipment_id = ss.sslvpn_id
+ORDER BY ss.sslvpn_id;
+"""
 
     # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
     if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
@@ -7396,7 +7547,7 @@ async def ask(request: AskRequest):
                     _all_nfs_rows.append((
                         rd.get("sitename", ""), rd.get("facilitytype", ""),
                         rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
-                        round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
+                        round(_cv, 2), rd.get("unit") or "", rd.get("log_time", ""),
                         round(sum(_mv) / len(_mv), 2) if _mv else None,
                         round(sum(_yv) / len(_yv), 2) if _yv else None,
                     ))
@@ -8198,7 +8349,7 @@ async def ask_stream(request: AskRequest):
             sql_combined = sql_template or ""
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS"} | _SUPPLY_INTENTS
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -8444,6 +8595,67 @@ async def ask_stream(request: AskRequest):
                     ]
                 }
             }
+
+        # NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 통신이상 원인 분석 (SSE)
+        if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
+            sql_combined = """
+WITH latest_status AS (
+    SELECT equipment_id, is_alive,
+           ROW_NUMBER() OVER (PARTITION BY equipment_id ORDER BY check_time DESC) AS rn
+    FROM tb_network_status
+),
+current_status AS (
+    SELECT equipment_id, is_alive
+    FROM latest_status WHERE rn = 1
+),
+lte_with_upstream AS (
+    SELECT
+        nl.source_equipment_id AS lte_id,
+        nl.target_equipment_id AS sslvpn_id,
+        COALESCE(cs.is_alive, false) AS lte_alive
+    FROM tb_network_link nl
+    LEFT JOIN current_status cs ON cs.equipment_id = nl.source_equipment_id
+    WHERE nl.source_equipment_id LIKE 'lte%'
+      AND nl.target_equipment_id LIKE 'sslvpn%'
+),
+sslvpn_summary AS (
+    SELECT
+        sslvpn_id,
+        COUNT(*) AS total_lte,
+        SUM(CASE WHEN NOT lte_alive THEN 1 ELSE 0 END) AS down_lte
+    FROM lte_with_upstream
+    GROUP BY sslvpn_id
+),
+utm_info AS (
+    SELECT
+        COUNT(*) AS total_utm,
+        SUM(CASE WHEN NOT COALESCE(cs.is_alive, false) THEN 1 ELSE 0 END) AS down_utm
+    FROM tb_network_info ni
+    LEFT JOIN current_status cs ON cs.equipment_id = ni.equipment_id
+    WHERE ni.equipment_id LIKE 'utm%'
+),
+total_lte AS (
+    SELECT
+        COUNT(*) AS global_lte_total,
+        SUM(CASE WHEN NOT is_alive THEN 1 ELSE 0 END) AS global_lte_down
+    FROM current_status
+    WHERE equipment_id LIKE 'lte%'
+)
+SELECT
+    ss.sslvpn_id,
+    ss.total_lte::int,
+    ss.down_lte::int,
+    COALESCE(cs.is_alive, false) AS sslvpn_alive,
+    ui.total_utm::int,
+    ui.down_utm::int,
+    tl.global_lte_total::int,
+    tl.global_lte_down::int
+FROM sslvpn_summary ss
+CROSS JOIN utm_info ui
+CROSS JOIN total_lte tl
+LEFT JOIN current_status cs ON cs.equipment_id = ss.sslvpn_id
+ORDER BY ss.sslvpn_id;
+"""
 
         # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
         if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
@@ -8788,7 +9000,7 @@ async def ask_stream(request: AskRequest):
                         _all_nfs_rows.append((
                             rd.get("sitename", ""), rd.get("facilitytype", ""),
                             rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
-                            round(_cv, 2), rd.get("unit", ""), rd.get("log_time", ""),
+                            round(_cv, 2), rd.get("unit") or "", rd.get("log_time", ""),
                             round(sum(_mv) / len(_mv), 2) if _mv else None,
                             round(sum(_yv) / len(_yv), 2) if _yv else None,
                         ))
