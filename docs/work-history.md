@@ -139,6 +139,24 @@
 - **프로토타입 HTML**: `docs/gis-flow-animation-prototype.html` — 샘플 7개 시설 네트워크, 불균형 경보 점선, 토글 컨트롤, 다크/라이트 모드
 - **핵심 발견**: `line-gradient` 레이어는 `lineMetrics: true` 필수, `line-width` data-driven 불가 (상수만 허용), `line-cap`/`line-join`은 `layout`이 아닌 MapLibre 4.x에서 별도 처리
 
+### 완료 (2026-04-07 — Node-RED 네트워크 동기화 + 버그 수정 2건)
+
+#### 구현 내역
+- **`expected_impact_assessment` "정보없음개" 수정** (commit `3b95730`)
+  - Node-RED 함수 노드 `d11b61e81d4e4df7` (수위 LL 예상피해평가 UPDATE)
+  - `supply_population` 비숫자("정보없음", NULL) → `isNaN()` 가드 + 0 대체
+  - 기존 50건 오염 데이터 DB 직접 UPDATE ("정보없음개 수용가..." → "수용가 용수공급차질")
+- **`build_level_detail_block` "2.73None" 수정** — 이미 `or ""` 패턴 적용 확인, 추가 수정 불필요
+- **네트워크 상태 동기화 Node-RED 신규 탭** (`flows_deploy.json`)
+  - "네트워크 체크" 탭 비활성화 (`disabled: true`) — 개발환경 현장 IP 접근 불가
+  - 신규 "네트워크 상태 동기화" 탭: cronplus(5분) → 원격 SELECT(최근 10분) → UPSERT 생성(500건 배치) → 로컬 INSERT ON CONFLICT
+  - 원격 DB config 신규: `remote_pg_config_001` (112.166.183.65:25479/postgres)
+  - 로컬 DB: 기존 `slm-timescaledb` (172.17.0.1:5433/slm)
+  - 수동 실행 inject 노드 + catch/에러 처리 + 상태 표시 포함
+  - **주의**: postgresql 노드 `query` 필드에 `{{{msg.payload}}}` 필수 (빈 문자열이면 쿼리 무시)
+  - 원격 DB user: `postgres` (dj_post 아님, db_sync.py 참조)
+  - 테스트: 수동 트리거 → 1,780건 UPSERT 성공 (178장비, 정상138/이상40)
+
 ### 내일 할 일 (2026-04-08)
 
 ~~1. 알람 테이블 meta 컬럼 NULL 원인 파악~~ → 완료 (04-05 비상연락처 구축 시 처리)
@@ -146,17 +164,11 @@
 ~~7. 이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료 (04-05)
 ~~8. GIS 용수 흐름 기능 통합~~ → 완료 (04-07 Phase 4 물수지 히트맵 + 팝업 배지)
 ~~9. ai_server.py 분할 최적화~~ → 완료 (04-07 3개 모듈 추출, 13,921줄 → 12,724줄)
+~~10. `expected_impact_assessment` "정보없음개" 수정~~ → 완료 (04-07 Node-RED isNaN 가드 + DB 정리)
+~~11. 네트워크 상태 동기화 Node-RED~~ → 완료 (04-07 원격→로컬 5분 증분 동기화)
+~~12. "2.73None" 표기 버그~~ → 완료 (04-07 이미 수정 확인)
 
-1. **`expected_impact_assessment` "정보없음개 수용가 용수공급차질" 수정** — 수용가 수 정보가 없을 때 "정보없음개" 접두어 제거, "수용가 용수공급차질"로 단순화
-2. **네트워크 상태 동기화 Node-RED 신규 로직** — 개발 기간 동안 원격 DB → 로컬 DB 동기화
-   - 현재 Node-RED SNMP 폴링 탭 비활성화 유지 (현장 망 접근 불가)
-   - 신규: inject(주기) → postgresql(원격 DB에서 tb_network_status SELECT) → function(가공) → postgresql(로컬 DB INSERT/UPSERT)
-   - 원격 DB: 112.166.183.65:25479, 로컬 DB: 172.17.0.1:5433 (Docker bridge)
-3. **수위 현황 응답 "2.73None" 표기 버그 수정** (`ai_server.py` `build_level_detail_block`)
-   - 원인: DB unit 컬럼 NULL → `row_dict.get("unit", "")` 키 존재 시 default 무시 → `None` 반환
-   - 수정: `unit = row_dict.get("unit") or ""` (or "" 패턴으로 None 방어)
-   - 영향: 동일 패턴 `build_today_flow_detail_block` 등 unit 포함 모든 응답 함수 동일 수정 필요
-4. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
+1. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
    - **사전 확인**: 실제 DB `equipmenttype` 값 (UTM/SSLVPN/LTE 문자열 확인)
    - **인텐트명(안)**: `NETWORK_UPSTREAM_FAULT_ANALYSIS`
    - **트리거 키워드**: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인", "집단 통신이상"

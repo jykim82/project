@@ -5,7 +5,7 @@
       "id": "8c35e4bdae0b5904",
       "type": "tab",
       "label": "네트워크 체크",
-      "disabled": false,
+      "disabled": true,
       "info": "",
       "env": []
     },
@@ -20551,6 +20551,255 @@
       "wires": [
         []
       ]
+    },
+    {
+      "id": "remote_pg_config_001",
+      "type": "postgreSQLConfig",
+      "name": "원격DB-운영",
+      "host": "112.166.183.65",
+      "hostFieldType": "str",
+      "port": "25479",
+      "portFieldType": "num",
+      "database": "postgres",
+      "databaseFieldType": "str",
+      "ssl": "false",
+      "sslFieldType": "bool",
+      "applicationName": "",
+      "applicationNameType": "str",
+      "max": 3,
+      "maxFieldType": "num",
+      "idle": 1000,
+      "idleFieldType": "num",
+      "connectionTimeout": 10000,
+      "connectionTimeoutFieldType": "num",
+      "user": "postgres",
+      "userFieldType": "str",
+      "password": "DJpost0827///",
+      "passwordFieldType": "str"
+    },
+    {
+      "id": "netsync_tab_001",
+      "type": "tab",
+      "label": "네트워크 상태 동기화",
+      "disabled": false,
+      "info": "원격 DB → 로컬 DB tb_network_status 증분 동기화 (5분 주기)",
+      "env": []
+    },
+    {
+      "id": "netsync_cron_001",
+      "type": "cronplus",
+      "z": "netsync_tab_001",
+      "name": "5분 주기",
+      "outputField": "payload",
+      "timeZone": "",
+      "storeName": "",
+      "commandResponseMsgOutput": "output1",
+      "defaultLocation": "",
+      "defaultLocationType": "default",
+      "outputs": 1,
+      "options": [
+        {
+          "name": "schedule1",
+          "topic": "topic1",
+          "payloadType": "date",
+          "payload": "iso",
+          "expressionType": "cron",
+          "expression": "0 0/5 * * * * *",
+          "location": "",
+          "offset": "0",
+          "solarType": "all",
+          "solarEvents": "sunrise,sunset"
+        }
+      ],
+      "x": 130,
+      "y": 120,
+      "wires": [
+        ["netsync_fn_query_001"]
+      ]
+    },
+    {
+      "id": "netsync_inject_001",
+      "type": "inject",
+      "z": "netsync_tab_001",
+      "name": "수동 실행",
+      "props": [
+        {
+          "p": "payload"
+        }
+      ],
+      "repeat": "",
+      "crontab": "",
+      "once": false,
+      "onceDelay": 0.1,
+      "topic": "",
+      "payload": "",
+      "payloadType": "date",
+      "x": 130,
+      "y": 60,
+      "wires": [
+        ["netsync_fn_query_001"]
+      ]
+    },
+    {
+      "id": "netsync_fn_query_001",
+      "type": "function",
+      "z": "netsync_tab_001",
+      "name": "원격 SELECT 쿼리",
+      "func": "msg.payload = \"SELECT check_time, equipment_id, protocol, ip_address, is_alive, status_code, protocol_status, rtt_ms, interface_type, error_message FROM tb_network_status WHERE check_time > NOW() - INTERVAL '10 minutes' ORDER BY check_time DESC\";\nreturn msg;",
+      "outputs": 1,
+      "timeout": "",
+      "noerr": 0,
+      "initialize": "",
+      "finalize": "",
+      "libs": [],
+      "x": 340,
+      "y": 120,
+      "wires": [
+        ["netsync_pg_remote_001"]
+      ]
+    },
+    {
+      "id": "netsync_pg_remote_001",
+      "type": "postgresql",
+      "z": "netsync_tab_001",
+      "name": "원격 DB 조회",
+      "query": "{{{msg.payload}}}",
+      "postgreSQLConfig": "remote_pg_config_001",
+      "split": false,
+      "rowsPerMsg": "",
+      "outputs": 1,
+      "x": 560,
+      "y": 120,
+      "wires": [
+        ["netsync_fn_upsert_001"]
+      ]
+    },
+    {
+      "id": "netsync_fn_upsert_001",
+      "type": "function",
+      "z": "netsync_tab_001",
+      "name": "UPSERT 쿼리 생성",
+      "func": "var rows = msg.payload;\nif (!rows || !Array.isArray(rows) || rows.length === 0) {\n    node.warn('동기화 대상 없음 (0건)');\n    return null;\n}\n\nfunction esc(v) {\n    if (v === null || v === undefined) return 'NULL';\n    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';\n    if (typeof v === 'number') return String(v);\n    if (v instanceof Date) return \"'\" + v.toISOString() + \"'\";\n    return \"'\" + String(v).replace(/'/g, \"''\") + \"'\";\n}\n\nvar BATCH = 500;\nvar values = [];\nfor (var i = 0; i < rows.length; i++) {\n    var r = rows[i];\n    values.push('(' + [\n        esc(r.check_time),\n        esc(r.equipment_id),\n        esc(r.protocol),\n        esc(r.ip_address),\n        r.is_alive === null ? 'NULL' : (r.is_alive ? 'TRUE' : 'FALSE'),\n        esc(r.status_code),\n        esc(r.protocol_status),\n        r.rtt_ms === null ? 'NULL' : r.rtt_ms,\n        esc(r.interface_type),\n        esc(r.error_message)\n    ].join(',') + ')');\n}\n\nvar msgs = [];\nfor (var s = 0; s < values.length; s += BATCH) {\n    var batch = values.slice(s, s + BATCH);\n    var sql = 'INSERT INTO tb_network_status '\n        + '(check_time, equipment_id, protocol, ip_address, is_alive, '\n        + 'status_code, protocol_status, rtt_ms, interface_type, error_message) VALUES\\n'\n        + batch.join(',\\n')\n        + ' ON CONFLICT (check_time, equipment_id) DO UPDATE SET '\n        + 'is_alive=EXCLUDED.is_alive, status_code=EXCLUDED.status_code, '\n        + 'protocol_status=EXCLUDED.protocol_status, rtt_ms=EXCLUDED.rtt_ms, '\n        + 'error_message=EXCLUDED.error_message;';\n    msgs.push({payload: sql});\n}\n\nnode.warn(rows.length + '건 수신 → ' + msgs.length + '배치 UPSERT');\nnode.status({fill:'blue', shape:'dot', text: rows.length + '건 → ' + msgs.length + '배치'});\nreturn [msgs];",
+      "outputs": 1,
+      "timeout": "",
+      "noerr": 0,
+      "initialize": "",
+      "finalize": "",
+      "libs": [],
+      "x": 780,
+      "y": 120,
+      "wires": [
+        ["netsync_pg_local_001"]
+      ]
+    },
+    {
+      "id": "netsync_pg_local_001",
+      "type": "postgresql",
+      "z": "netsync_tab_001",
+      "name": "로컬 DB 저장",
+      "query": "{{{msg.payload}}}",
+      "postgreSQLConfig": "71827310c941a9d1",
+      "split": false,
+      "rowsPerMsg": "",
+      "outputs": 1,
+      "x": 1000,
+      "y": 120,
+      "wires": [
+        ["netsync_fn_log_001"]
+      ]
+    },
+    {
+      "id": "netsync_fn_log_001",
+      "type": "function",
+      "z": "netsync_tab_001",
+      "name": "동기화 완료 로그",
+      "func": "var now = new Date().toLocaleString('ko-KR', {timeZone:'Asia/Seoul'});\nnode.status({fill:'green', shape:'dot', text: '완료 ' + now});\nreturn msg;",
+      "outputs": 1,
+      "timeout": "",
+      "noerr": 0,
+      "initialize": "",
+      "finalize": "",
+      "libs": [],
+      "x": 1210,
+      "y": 120,
+      "wires": [
+        ["netsync_debug_001"]
+      ]
+    },
+    {
+      "id": "netsync_debug_001",
+      "type": "debug",
+      "z": "netsync_tab_001",
+      "name": "동기화 결과",
+      "active": true,
+      "tosidebar": true,
+      "console": false,
+      "tostatus": false,
+      "complete": "true",
+      "targetType": "full",
+      "statusVal": "",
+      "statusType": "auto",
+      "x": 1410,
+      "y": 120,
+      "wires": []
+    },
+    {
+      "id": "netsync_catch_001",
+      "type": "catch",
+      "z": "netsync_tab_001",
+      "name": "",
+      "scope": null,
+      "uncaught": false,
+      "x": 130,
+      "y": 240,
+      "wires": [
+        ["netsync_fn_err_001"]
+      ]
+    },
+    {
+      "id": "netsync_fn_err_001",
+      "type": "function",
+      "z": "netsync_tab_001",
+      "name": "에러 처리",
+      "func": "node.error('네트워크 동기화 오류: ' + (msg.error ? msg.error.message : JSON.stringify(msg.payload)));\nnode.status({fill:'red', shape:'ring', text: '오류 ' + new Date().toLocaleTimeString('ko-KR')});\nreturn msg;",
+      "outputs": 1,
+      "timeout": "",
+      "noerr": 0,
+      "initialize": "",
+      "finalize": "",
+      "libs": [],
+      "x": 340,
+      "y": 240,
+      "wires": [
+        ["netsync_debug_err_001"]
+      ]
+    },
+    {
+      "id": "netsync_debug_err_001",
+      "type": "debug",
+      "z": "netsync_tab_001",
+      "name": "동기화 에러",
+      "active": true,
+      "tosidebar": true,
+      "console": false,
+      "tostatus": false,
+      "complete": "true",
+      "targetType": "full",
+      "statusVal": "",
+      "statusType": "auto",
+      "x": 560,
+      "y": 240,
+      "wires": []
+    },
+    {
+      "id": "netsync_comment_001",
+      "type": "comment",
+      "z": "netsync_tab_001",
+      "name": "원격 DB → 로컬 DB tb_network_status 증분 동기화",
+      "info": "5분 주기로 원격 DB에서 최근 10분간의 네트워크 상태 데이터를 조회하여\n로컬 DB에 UPSERT합니다.\n\n원격: 112.166.183.65:25479/postgres\n로컬: 172.17.0.1:5433/slm\n\nPK: (check_time, equipment_id)\n장비 수: 178대\n예상 건수: ~890건/5분 (178대 × 5회)\n\n기존 '네트워크 체크' 탭(ICMP ping)은 비활성화.\n개발 환경에서 현장 장비 접근 불가 → 원격 동기화로 대체.",
+      "x": 340,
+      "y": 20,
+      "wires": []
     }
   ]
 }
