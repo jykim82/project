@@ -157,28 +157,31 @@
   - 원격 DB user: `postgres` (dj_post 아님, db_sync.py 참조)
   - 테스트: 수동 트리거 → 1,780건 UPSERT 성공 (178장비, 정상138/이상40)
 
-### 내일 할 일 (2026-04-08)
+### 완료 (2026-04-07 — 네트워크 토폴로지 초기화면 + 전체화면 버튼)
 
-~~1. 알람 테이블 meta 컬럼 NULL 원인 파악~~ → 완료 (04-05 비상연락처 구축 시 처리)
-~~2. 용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치~~ → 완료 (04-07)
-~~7. 이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료 (04-05)
-~~8. GIS 용수 흐름 기능 통합~~ → 완료 (04-07 Phase 4 물수지 히트맵 + 팝업 배지)
-~~9. ai_server.py 분할 최적화~~ → 완료 (04-07 3개 모듈 추출, 13,921줄 → 12,724줄)
-~~10. `expected_impact_assessment` "정보없음개" 수정~~ → 완료 (04-07 Node-RED isNaN 가드 + DB 정리)
-~~11. 네트워크 상태 동기화 Node-RED~~ → 완료 (04-07 원격→로컬 5분 증분 동기화)
-~~12. "2.73None" 표기 버그~~ → 완료 (04-07 이미 수정 확인)
+#### 구현 내역
+- **네트워크 페이지 초기화면/전체화면 버튼** — 용수흐름과 동일한 UX 패턴 적용
+  - `network/page.tsx`: 카드 헤더에 "초기화면" + "전체화면/축소" 버튼 추가
+  - 전체화면: `position:fixed` 오버레이 (사이드바 제외), opacity+scale 300ms 트랜지션
+  - ESC 키로 전체화면 해제
+  - Force/계층형 양쪽 모드에서 동일 동작
+- **`HierarchicalTopologyGraph.tsx`**: `fitViewTrigger` prop 추가
+  - easeInOutCubic 380ms rAF 루프 카메라 애니메이션 (GIS flyTo 동일 방식)
+  - 트리거 시 선택 노드 해제 + 전체 뷰로 복귀
+- **`TopologyGraph.tsx`**: `fitViewTrigger` prop 추가
+  - `handleResetView()` 호출 (ECharts Force 레이아웃 재시작)
+- 전체화면 오버레이 CardHeader `relative z-10` 추가 (ECharts canvas 가림 방지)
 
-1. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
-   - **사전 확인**: 실제 DB `equipmenttype` 값 (UTM/SSLVPN/LTE 문자열 확인)
-   - **인텐트명(안)**: `NETWORK_UPSTREAM_FAULT_ANALYSIS`
-   - **트리거 키워드**: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인", "집단 통신이상"
-   - **로직**: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
-   - **판단 규칙**:
-     - 특정 SSLVPN 하위 LTE 80%+ 다운 → "해당 SSLVPN 장애 가능성"
-     - 전체 SSLVPN 80%+ 다운 → "UTM 장애 가능성"
-     - 1~2개만 다운 → "현장 개별 장애 (상위 문제 아님)"
-   - **응답 형식**: `graph_type: document` (계층 트리 텍스트)
-   - **사양 확정 필요**: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장 여부
+### 이전 할 일 (2026-04-08 계획 → 전부 완료)
+
+- ~~알람 테이블 meta 컬럼 NULL 원인 파악~~ → 완료 (04-05 비상연락처 구축 시 처리)
+- ~~용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치~~ → 완료 (04-07)
+- ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료 (04-05)
+- ~~GIS 용수 흐름 기능 통합~~ → 완료 (04-07 Phase 4 물수지 히트맵 + 팝업 배지)
+- ~~ai_server.py 분할 최적화~~ → 완료 (04-07 3개 모듈 추출, 13,921줄 → 12,724줄)
+- ~~`expected_impact_assessment` "정보없음개" 수정~~ → 완료 (04-07 Node-RED isNaN 가드 + DB 정리)
+- ~~네트워크 상태 동기화 Node-RED~~ → 완료 (04-07 원격→로컬 5분 증분 동기화)
+- ~~"2.73None" 표기 버그~~ → 완료 (04-07 이미 수정 확인)
 
 ---
 
@@ -1411,81 +1414,58 @@
 - 작업관리 mock 현장명 한글화 (B/F/G/D시설 → 남산/복운/매방리/행정)
 - 채팅 SSE 진행 표시 라벨+도트 스타일 (분류→추출→조회→렌더링)
 
-### 남은 항목
-1. ~~**TIMESERIES 태그 조회 카탈로그 우선 전환**~~ — 완료 (tb_tag_data_group 그룹 기반 전환)
-2. ~~**인과관계 엔진 Phase 2**~~ — 완료 (캔버스 인과 탭 + 구역 분리 + 교차상관 + SLM 해석)
-3. ~~**시설간 교차 검증**~~ — 완료 (ANOMALY_FACILITY_DETAIL 자동 + ANOMALY_CROSS_FACILITY 인텐트)
-4. ~~**태그 분류 오매칭 + 인과 검증 버그픽스**~~ — 완료 (복합 키워드, import 누락, 형제 그룹 매칭)
-5. ~~**ANOMALY_SCAN_ALL 고도화**~~ — 완료 (per-row grade/group, 교차검증 통합, 하류 비활성)
-6. ~~**ANOMALY_SCAN_ALL 응답 최적화**~~ — 완료 (84초 → 2.1초, 백그라운드 캐시 + IForest 사전 학습)
-7. ~~**인과검증 고도화**~~ — 완료 (group_code 정확매칭 + 다중 홉 전파 추적)
-8. ~~**설비↔태그 자동 매핑 Phase 1**~~ — 완료 (3,375건, 4종 장비유형)
-9. **미들웨어 정리** — 테스트용 우회 경로 정리, 프로덕션 인증 복원
-10. **엑셀 템플릿 보고서** — 프롬프트 기반 SLM 확장 (후순위)
-11. ~~**용수 흐름 계통도 레이아웃 개선**~~ — 완료 (서브계통 분리 + 엣지 클램핑)
-12. ~~**배수지 일평균 유입/유출량**~~ — 완료 (mv_reservoir_daily_flow + Node-RED 1시간 갱신 + 패널 확장)
-13. ~~**모니터링 그룹핑 미분류 정리**~~ — 완료 (원격 DB 17건 동기화, 23→4건 잔여는 비활성/오타)
-14. ~~**Node-RED 펌프 의사결정 트리 누락 경로**~~ — 완료 (fallback 있음 확인, UPDATE null 가드 추가)
-11. ~~**용수 흐름 계통도 블록별 그룹핑 레이아웃**~~ — 완료 (primaryParent 기반 그룹 재배치 + GROUP_GAP)
-12. ~~**v2 프로토타입 프로덕션 적용**~~ — 완료 (미니맵+검색+LOD+계통그룹+파티클+트렌드패널)
+### 남은 항목 (미완료만)
+1. **미들웨어 정리** — 테스트용 우회 경로 정리, 프로덕션 인증 복원
+2. **엑셀 템플릿 보고서** — 프롬프트 기반 SLM 확장 (후순위)
+3. **이상감지→설비 역추적 연동 (Phase 3)** — 이상 태그 → 연결 설비 역추적 → 설비 상태 종합 진단
+4. **인과관계 내재화 확장** — 가압장→소블록 cross-facility 등 신규 규칙 추가 (기존 6개 intra-rule 완료)
 
-### 향후 진행 예정
-1. **인과관계 내재화 확장** — 시설유형 쌍별 DEFAULT 규칙 지속 추가 (설계: memory/causal-internalization.md)
-   - ~~가압장 내부: 펌프 ON → 토출압력 > 0~~ — 완료 (PUMP_ON_NO_PRESSURE)
-   - ~~가압장 내부: 펌프 ON → 유출유량 > 0~~ — 완료 (PUMP_ON_NO_FLOW)
-   - ~~배수지 내부: 밸브 OPEN → 유출유량 > 0~~ — 완료 (VALVE_OPEN_NO_FLOW)
-   - ~~배수지 내부: 유입유량 → 수위 변화~~ — 완료 (INLET_FLOW_NO_LEVEL_RISE)
-   - ~~배수지 내부: 수위하강 + 유출유량 = 0 → 누출의심~~ — 완료 (LEVEL_DROP_NO_OUTFLOW)
-   - ~~감압시설 내부: 유입압력 → 유출압력~~ — 완료 (INLET_PRESSURE_NO_OUTLET)
-   - 가압장→소블록: 펌프동작+토출압력 → 유량 (압력 인과, cross-facility 확장)
-   - **새 시설유형 조합, 새 물리관계 발견 시 규칙 계속 추가**
-2. ~~**교차 검증 고도화**~~ — 완료 (물 수지 검증 ANOMALY_FLOW_BALANCE 인텐트)
-3. ~~**디자인 개선**~~ — 완료 (2026-03-22, 8단계 전부 구현)
-   - ~~(1) GIS CSS 분리: globals.css 338줄→180줄 + gis.css 167줄~~
-   - ~~(2) 디자인 토큰 정의: spacing 5종 + typography 5종 + duration/easing 5종~~
-   - ~~(3) 컬러 체계 통일: :root hex→oklch + dark primary blue→orange(hue 38) + WCAG AA~~
-   - ~~(4) 상태 색상 중앙화: status-colors.ts 신규, anomaly-utils.ts re-export~~
-   - ~~(5) 타이포그래피 적용: gis.css font-size → CSS 변수~~
-   - ~~(6) 트랜지션 토큰화: transition-all 14건 → 구체적 속성~~
-   - ~~(7) 태블릿 반응형: 대시보드 md:grid-cols-2~~
-   - ~~(8) 와이드 모니터: xl:space-y-6~~
-3-b. ~~**코드 품질 종합 개선**~~ — 완료 (2026-03-22, sc:improve --think-hard)
-   - 프론트: any 7건 제거, console→logger 4건, React.memo, 카운트다운 re-render 제거
-   - 백엔드: CORS 제한, SQL 이스케이프, bare except 17건 로깅, DB 인덱스 8건
-   - **모듈 분리**: ai_server.py 15,084→12,450줄 (51 endpoints 분리)
-     - endpoints/facility_crud.py (1,551줄, 26 endpoints)
-     - endpoints/network_crud.py (783줄, 19 endpoints)
-     - endpoints/canvas_crud.py (403줄, 6 endpoints)
-4. **설비 태그 고도화** — 3단계 순차 진행 (Phase 1+2 완료)
-   - ~~(1) 설비↔태그 자동 매핑~~ — 완료 (3,375건)
-   - ~~(2) 설비 장애 역추적~~ — 완료 (59건 장애 설비, 98/278 per-row, 4종 장애 유형)
-   - (3) 이상감지 연동: 이상 태그 → 연결 설비 역추적 → 설비 상태 종합 진단
-4. ~~**용수 계통도 설비 상태 표출**~~ — 완료 (4종 장애 뱃지 NET/COM/FLT/PWR, 24시설 감지, KPI 7종)
-7. ~~**용수 흐름 실시간 모니터링**~~ — 완료 (모니터링/용수흐름 페이지, 유량 비례 엣지 + 수치 오버레이 + 교차검증/물수지 표시)
-8. **성능 최적화** — 완료 (2026-03-22)
-   - ~~야간최소유량 사전 집계: tb_night_min_flow_daily (DB 스케줄 매일 07시), 27s→0.1s~~
-   - ~~Ollama num_ctx 131K→4K 제한: generate 추론 2-3배 개선~~
-   - ~~FACILITY_TREND 청크 쿼리 + 복원 (fn_trend_period_summary 유지)~~
-   - ~~트렌드 차트 툴팁 다크모드 실시간 반영 (const→function)~~
-9. **UX 개선** — 완료 (2026-03-22)
-   - ~~데이터 없음 동적 원인 진단: 현장/태그/기간/카탈로그 4단계 안내~~
-   - ~~FAQ 시설유형 불일치 방지: facility_map 로드 후 렌더링~~
-   - ~~야간최소유량 자동완성: 현장명+시설유형 조합 5건 추가~~
-   - ~~야간최소유량 현황 참고자료: 평균 산정 기준 설명 복원~~
-10. **시스템 설정 UI** (향후) — DB 접속정보 + AI 모델 파라미터(num_ctx/temperature) UI 조정
-11. **인과 규칙 엔진 고도화** (향후) — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
-12. **LLM 트렌드 설명** (장기) — 통계 추출(프로그램) + 자연어 해석(GPT), 업무망 전환 후
-13. **EPANET 수리 시뮬레이션** (향후, 별도 모듈) — SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식
-14. ~~**GIS 클러스터 범위 확대**~~ — 완료 (2026-04-04, `CLUSTER_MAX_ZOOM=14` + `clusterMinPoints=1` 이미 적용됨)
-14-b. **배수지 이상 스캔 — 테이블 없을 때 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
-14-c. ~~**용수 흐름 알람 클릭 → 경보분석 팝업**~~ — 완료 (기구현 확인, `GisAlarmPopup.tsx`가 이미 2-레이어 팝업: 경보 리스트 → 알람 클릭 → `AlarmAnalysisDetail` 팝업)
-15. **계정 권한 관리 구조화 + API 구축** (향후)
-    - 인증 API: AI Server에 `POST /api/auth/login`, `/refresh`, `/logout` 구현 (현재 dev 폴백 의존)
-    - 비밀번호: bcrypt 해싱 + pw_migrated 점진 마이그레이션
-    - 3단계 권한: MASTER(마스터관리자) / ADMIN(관리자) / USER(일반)
-    - 메뉴 접근 제어: tb_auth_menu 기반 권한별 메뉴 트리 → API `/auth/me` 반환
-    - 사용자 관리 UI 고도화: 권한 변경, 비밀번호 초기화, 세션 강제 종료
-    - MASTER 전용 기능: 메뉴 숨김/표시 토글, 시스템 설정 접근, 사용자 권한 변경
+### 향후 진행 예정 (미완료만)
+1. **UTM/SSLVPN 계층적 통신이상 감지** (사양 확정 후 구현)
+   - 인텐트명(안): `NETWORK_UPSTREAM_FAULT_ANALYSIS`
+   - 트리거 키워드: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인"
+   - 로직: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
+   - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
+2. **계정 권한 관리 Phase 3~4** — Phase 1(인증API), Phase 2(동적메뉴) 완료
+   - Phase 3: 메뉴 접근 제어 강화 — tb_auth_menu 기반 권한별 메뉴 트리 서버사이드 필터링
+   - Phase 4: MASTER 전용 기능 — 메뉴 숨김/표시 토글, 시스템 설정 접근, 사용자 권한 변경
+3. **GIS 속성 필터 UI** — 관경/관종 등 SHP 속성 기반 필터 (메모리 기록)
+4. **시스템 설정 UI** — DB 접속정보 + AI 모델 파라미터(num_ctx/temperature) UI 조정
+5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
+6. **LLM 트렌드 설명** (장기) — 통계 추출(프로그램) + 자연어 해석(GPT), 업무망 전환 후
+7. **EPANET 수리 시뮬레이션** (장기, 별도 모듈) — SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식
+8. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
+
+### 완료 처리 이력 (이전 남은/향후 항목 중 완료된 것)
+- ~~TIMESERIES 태그 조회 카탈로그 우선 전환~~ — 완료 (tb_tag_data_group 그룹 기반 전환)
+- ~~인과관계 엔진 Phase 2~~ — 완료 (캔버스 인과 탭 + 구역 분리 + 교차상관 + SLM 해석)
+- ~~시설간 교차 검증~~ — 완료 (ANOMALY_FACILITY_DETAIL 자동 + ANOMALY_CROSS_FACILITY 인텐트)
+- ~~태그 분류 오매칭 + 인과 검증 버그픽스~~ — 완료 (복합 키워드, import 누락, 형제 그룹 매칭)
+- ~~ANOMALY_SCAN_ALL 고도화~~ — 완료 (per-row grade/group, 교차검증 통합, 하류 비활성)
+- ~~ANOMALY_SCAN_ALL 응답 최적화~~ — 완료 (84초 → 2.1초, 백그라운드 캐시 + IForest)
+- ~~인과검증 고도화~~ — 완료 (group_code 정확매칭 + 다중 홉 전파 추적)
+- ~~설비↔태그 자동 매핑 Phase 1~~ — 완료 (3,375건, 4종 장비유형)
+- ~~용수 흐름 계통도 레이아웃 개선~~ — 완료 (서브계통 분리 + 엣지 클램핑)
+- ~~배수지 일평균 유입/유출량~~ — 완료 (mv_reservoir_daily_flow + Node-RED)
+- ~~모니터링 그룹핑 미분류 정리~~ — 완료 (원격 DB 17건 동기화)
+- ~~Node-RED 펌프 의사결정 트리 누락 경로~~ — 완료 (fallback 확인, UPDATE null 가드)
+- ~~용수 흐름 계통도 블록별 그룹핑 레이아웃~~ — 완료 (primaryParent + GROUP_GAP)
+- ~~v2 프로토타입 프로덕션 적용~~ — 완료 (미니맵+검색+LOD+계통그룹+파티클+트렌드패널)
+- ~~교차 검증 고도화~~ — 완료 (물 수지 검증 ANOMALY_FLOW_BALANCE)
+- ~~디자인 개선~~ — 완료 (2026-03-22, 8단계)
+- ~~코드 품질 종합 개선~~ — 완료 (모듈 분리 15,084→12,450줄)
+- ~~설비 장애 역추적 Phase 2~~ — 완료 (59건 장애 설비, 4종 장애 유형)
+- ~~용수 계통도 설비 상태 표출~~ — 완료 (4종 장애 뱃지, 24시설, KPI 7종)
+- ~~용수 흐름 실시간 모니터링~~ — 완료 (유량 비례 엣지 + 교차검증/물수지)
+- ~~성능 최적화~~ — 완료 (2026-03-22)
+- ~~UX 개선~~ — 완료 (2026-03-22)
+- ~~GIS 클러스터 범위 확대~~ — 완료 (2026-04-04)
+- ~~용수 흐름 알람 클릭 → 경보분석 팝업~~ — 완료
+- ~~인과관계 내재화 6종~~ — 완료 (PUMP_ON_NO_PRESSURE/FLOW, VALVE_OPEN_NO_FLOW, INLET_FLOW_NO_LEVEL_RISE, LEVEL_DROP_NO_OUTFLOW, INLET_PRESSURE_NO_OUTLET)
+- ~~알람→작업관리 억제 로직 #36~~ — 완료 (04-05, alarm-reports task_suppressed)
+- ~~계정 권한 Phase 1(인증API) + Phase 2(동적메뉴)~~ — 완료 (04-03 auth_crud.py + 04-05 use-sidebar-menus.ts)
+- ~~GIS 관망도 유량 흐름 오버레이~~ — 완료 (04-06~07, Phase 1~4)
+- ~~ai_server.py 모듈 분리 추가~~ — 완료 (04-07, 3개 모듈 추출, 12,724줄)
 
 ### 완료 (2026-04-04 — 팝업 크기 통일 + GIS 레이어 z-order 수정)
 - **팝업 크기 `max-w-2xl max-h-[75vh]` 통일** — 대시보드 내 모든 팝업창 동일 크기
