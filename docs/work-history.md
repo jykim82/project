@@ -2,6 +2,37 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-07 — ai_server.py 모듈 분리: 3개 endpoint 모듈 추출)
+
+#### 구현 내역
+- **`endpoints/monitoring_catalogs.py`** (312줄): `/monitoring/catalogs/*` 7개 엔드포인트
+  - GET sites, site-groups, reference, catalogs (목록), POST/PUT/DELETE catalogs
+- **`endpoints/flow_map_crud.py`** (319줄): `/flow-map` CRUD 7개 엔드포인트
+  - GET (전체), roots, downstream, POST, DELETE, export/csv, import/csv
+- **`endpoints/csv_import.py`** (636줄): CSV 일괄 가져오기 6개 엔드포인트 + 헬퍼 함수
+  - tags, equipments, reservoirs, boosters, pressure-reducing, blocks
+  - `_csv_cell/float/int/bool/json_array` 헬퍼 함수 이동
+- **`ai_server.py`**: 13,921줄 → 12,724줄 (-1,197줄), 기존 패턴 동일하게 초기화
+  - `from endpoints.X import router as X_router, init as init_X`
+  - `init_X(get_db_connection); app.include_router(X_router)`
+- 실시간/AI 로직 의존 엔드포인트(`/flow-map/realtime`, `/equipments/auto-map` 등)는 ai_server.py 유지
+
+### 완료 (2026-04-07 — GIS 유량 흐름 통합 고도화: 노드 물수지 히트맵 + 카드 팝업 연동)
+
+#### 구현 내역
+- **`GisFlowOverlayLayer.tsx`** Phase 4 추가 — 노드 물수지 히트맵
+  - `buildNodeImbalanceGeoJson()`: 불균형 엣지 연결 노드 worst grade 계산 (upstream+downstream 모두)
+  - `gis-node-imbalance-src` point 소스 + `gis-node-imbalance` circle 레이어
+  - 경고=빨강/주의=오렌지/관심=노랑 컬러 링 (circle-stroke), 투명 채움 → 기존 마커 보존
+  - `showImbalance` 토글과 연동 (불균형 dashed 라인과 동시 on/off)
+- **`GisFacilityCard.tsx`** — 확장 카드 유량 불균형/교차검증 배지 추가
+  - `edgeImbalance` prop: 이 시설과 연결된 불균형 엣지 계산 (upstream/downstream)
+  - `imbalanceEdges`: grade/imbalance_pct/other(시설명) 목록 → "불균형 +N%" 배지
+  - `cross_mismatch: true` → "교차이상 + mismatch 유형 한글" 배지 (MISMATCH_KO 맵)
+- **`use-gis-facilities.ts`** — `cross_mismatches` 캡처 → 노드 `cross_mismatch`/`cross_mismatch_types` 채움
+- **`gis.ts`** 타입 — `GisFacilityNode.cross_mismatch_types?: string[]` 추가
+- **`gis/page.tsx`** — `GisFacilityCards`에 `edgeImbalance` prop 전달
+
 ### 완료 (2026-04-07 — 용수 흐름 ↔ 대시보드 유량 불균형 수치 통일 + KPI 레이블 명확화)
 
 #### 원인 분석
