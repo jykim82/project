@@ -1444,10 +1444,13 @@
    - 로직: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
    - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
 2. ~~**계정 권한 관리 Phase 3~4**~~ — 완료 (04-07, 권한 매트릭스 UI + DB 시드 + API 3종)
-3. **GIS 속성 필터 UI** — 관경/관종 등 SHP 속성 기반 필터 (메모리 기록)
+3. ~~**GIS 속성 필터 UI**~~ — 이미 구현 완료 (관경 12종 + 관재질 10종 버튼 필터, GisLayerPanel PipeFilterSection)
 4. **시스템 설정 UI** — DB 접속정보 + AI 모델 파라미터(num_ctx/temperature) UI 조정
 5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
-6. **LLM 트렌드 설명** (장기) — 통계 추출(프로그램) + 자연어 해석(GPT), 업무망 전환 후
+6. **트렌드 AI 요약 설명** — 트렌드 차트 선택 시 Gemma4가 수치·패턴을 2문장으로 요약 (권고 없음, 순수 데이터 설명)
+   - gemma4:latest(e4b) 테스트 완료 — 지시 준수 양호, 응답 3~5초
+   - 활성화 조건: MASTER가 시스템 설정에서 on/off 토글로 제어 (비활성 시 UI 숨김)
+   - 구현 범위: `/trend/explain` API (ai_server.py) + BrushToolbar "AI 요약" 버튼 + 시스템 설정 토글
 7. **EPANET 수리 시뮬레이션** (장기, 별도 모듈) — SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식
 8. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
 
