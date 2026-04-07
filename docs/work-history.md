@@ -2,6 +2,21 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-07 — 기타 소규모 수정 3종)
+
+#### 구현 내역
+- **`zero_flow` 한글 레이블 적용** (commit `562da48`)
+  - `GisFacilityCard.tsx` `MISMATCH_KO` 맵에 `zero_flow: "유량값 0"` 추가
+  - `FlowMonitoringGraph.tsx` 툴팁 레이블 `"상류 유량 활성 + 하류 유량 0"` → `"유량값 0"` 통일
+- **GisTrendPopup 두번 갱신 버그 수정** (commit `a6f3054`)
+  - **원인**: 2단계 cascading useEffect — `useEffect1`이 `setTags()` 호출 → `useEffect2`([tags, activeRange])가 트렌드 조회 → 두 번의 render cycle이 사용자에게 "두번 갱신"으로 인식
+  - **수정**: 두 useEffect를 단일 async IIFE로 통합 — tag 조회 후 연속으로 trend 조회, `setTags + setTagDataMap + setLoading(false)` 동일 함수 내 호출 → React 18 automatic batching으로 1회 커밋
+  - 의존 배열: `[sitename, facilitytype]` + `[tags, activeRange]` → `[sitename, facilitytype, activeRange]` 단일화
+  - 동일 패턴이 적용되는 용수 흐름 팝업도 동일 효과 (데이터 연속 패치)
+- **package.json HTTPS 스크립트 정리 + GIS 좌표 업데이트** (commit `7e5902d`)
+  - `dev`/`dev:fast` → HTTPS 기본, HTTP는 `dev:http`/`dev:http:fast`로 명칭 통일
+  - `gis-facility-coords.json`: _comment 업데이트, PDF 지도 기반 배수지·가압장 좌표 재확정
+
 ### 완료 (2026-04-07 — ai_server.py 모듈 분리: 3개 endpoint 모듈 추출)
 
 #### 구현 내역
@@ -124,20 +139,24 @@
 - **프로토타입 HTML**: `docs/gis-flow-animation-prototype.html` — 샘플 7개 시설 네트워크, 불균형 경보 점선, 토글 컨트롤, 다크/라이트 모드
 - **핵심 발견**: `line-gradient` 레이어는 `lineMetrics: true` 필수, `line-width` data-driven 불가 (상수만 허용), `line-cap`/`line-join`은 `layout`이 아닌 MapLibre 4.x에서 별도 처리
 
-### 내일 할 일 (2026-04-07)
+### 내일 할 일 (2026-04-08)
 
-1. **알람 테이블 meta 컬럼 NULL 원인 파악** — Node-RED에서 meta가 채워지지 않는 흐름 탐색 및 수정
-2. **용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치** — 원인 파악 + 사양 확정 + 통일
-3. **`expected_impact_assessment` "정보없음개 수용가 용수공급차질" 수정** — 수용가 수 정보가 없을 때 "정보없음개" 접두어 제거, "수용가 용수공급차질"로 단순화
-4. **네트워크 상태 동기화 Node-RED 신규 로직** — 개발 기간 동안 원격 DB → 로컬 DB 동기화
+~~1. 알람 테이블 meta 컬럼 NULL 원인 파악~~ → 완료 (04-05 비상연락처 구축 시 처리)
+~~2. 용수 흐름 교차검증이상 vs 대시보드 교차검증 불일치~~ → 완료 (04-07)
+~~7. 이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료 (04-05)
+~~8. GIS 용수 흐름 기능 통합~~ → 완료 (04-07 Phase 4 물수지 히트맵 + 팝업 배지)
+~~9. ai_server.py 분할 최적화~~ → 완료 (04-07 3개 모듈 추출, 13,921줄 → 12,724줄)
+
+1. **`expected_impact_assessment` "정보없음개 수용가 용수공급차질" 수정** — 수용가 수 정보가 없을 때 "정보없음개" 접두어 제거, "수용가 용수공급차질"로 단순화
+2. **네트워크 상태 동기화 Node-RED 신규 로직** — 개발 기간 동안 원격 DB → 로컬 DB 동기화
    - 현재 Node-RED SNMP 폴링 탭 비활성화 유지 (현장 망 접근 불가)
    - 신규: inject(주기) → postgresql(원격 DB에서 tb_network_status SELECT) → function(가공) → postgresql(로컬 DB INSERT/UPSERT)
    - 원격 DB: 112.166.183.65:25479, 로컬 DB: 172.17.0.1:5433 (Docker bridge)
-5. **수위 현황 응답 "2.73None" 표기 버그 수정** (`ai_server.py` `build_level_detail_block`)
+3. **수위 현황 응답 "2.73None" 표기 버그 수정** (`ai_server.py` `build_level_detail_block`)
    - 원인: DB unit 컬럼 NULL → `row_dict.get("unit", "")` 키 존재 시 default 무시 → `None` 반환
    - 수정: `unit = row_dict.get("unit") or ""` (or "" 패턴으로 None 방어)
    - 영향: 동일 패턴 `build_today_flow_detail_block` 등 unit 포함 모든 응답 함수 동일 수정 필요
-6. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
+4. **UTM/SSLVPN 계층적 통신이상 감지 AI 채팅 신규 작성** (사양 확정 후 구현)
    - **사전 확인**: 실제 DB `equipmenttype` 값 (UTM/SSLVPN/LTE 문자열 확인)
    - **인텐트명(안)**: `NETWORK_UPSTREAM_FAULT_ANALYSIS`
    - **트리거 키워드**: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인", "집단 통신이상"
@@ -148,58 +167,6 @@
      - 1~2개만 다운 → "현장 개별 장애 (상위 문제 아님)"
    - **응답 형식**: `graph_type: document` (계층 트리 텍스트)
    - **사양 확정 필요**: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장 여부
-7. ~~이상 시설 TOP에서 network down이 합덕배수지 수위알람에 포함되는 이유~~ → 완료
-8. **GIS 용수 흐름 기능 통합** — 용수 흐름 페이지의 핵심 분석 기능을 GIS 관망도에 구현
-   - **교차검증 이상**: 유입/유출 불균형 노드를 GIS 지도 위에 경보 오버레이로 표시 (imbalance_grade 기반 파선/색상)
-   - **물수지 불균형**: 시설별 수지 비율(유입 대비 유출 차이) 히트맵/색상 레이어
-   - **흐름 방향 표시**: 관로 위 shimmer 애니메이션 방향 = 실제 유량 흐름 방향 (양/음 부호 기반)
-   - **팝업 연동**: GIS 시설 클릭 시 해당 시설의 교차검증·물수지 요약 정보 팝업에 추가
-   - **참고**: 기존 `GisFlowOverlayLayer` Phase3(imbalance)가 기반, 데이터는 `/flow/realtime` API 재사용
-   - **원칙**: additive only — 기존 GIS 레이어/아이콘/팝업 변경 없이 신규 레이어만 추가
-
-9. **ai_server.py 분할 최적화** — 13,699줄 / 591KB 단일 파일 → 모듈 분리 (분석·계획 먼저, 구현은 승인 후)
-
-   **[1단계] 분석 (먼저 수행)**
-   - 현재 파일 논리 구조 전체 분석 및 의존성 맵 작성
-   - 분리 가능한 모듈 경계 식별 (순환 import 위험 구간 사전 파악)
-   - 예상 모듈 구성안 (초안):
-     ```
-     D:\slm\
-     ├── ai_server.py          # 진입점 (app 생성, lifespan, middleware만)
-     ├── core/
-     │   ├── db.py             # DB 풀, get_db_connection, execute_sql
-     │   ├── settings.py       # _AiRuntimeSettings, 환경변수
-     │   └── startup.py        # lifespan 태스크, 캐시 빌드
-     ├── intent/
-     │   ├── classifier.py     # match_intent, normalize_question, extract_*
-     │   ├── handlers.py       # 56개 인텐트 핸들러 (/ask, /ask/stream)
-     │   └── templates.py      # render_answer_template, apply_corrections
-     ├── routers/
-     │   ├── alarm.py          # /alarm/*, /crisis/*
-     │   ├── flow_map.py       # /flow-map/*
-     │   ├── monitoring.py     # /monitoring/*, /trend/*, /gis/*
-     │   ├── tags.py           # /tags/*, /causal/*
-     │   ├── admin.py          # /admin/*
-     │   └── imports.py        # */import/csv 엔드포인트
-     ├── services/
-     │   ├── anomaly.py        # _detect_equipment_failures, iforest
-     │   ├── flow_balance.py   # _flow_balance_cache_loop, 교차검증
-     │   └── causal.py         # _build_causal_index, causal chain
-     └── demo/
-         └── middleware.py     # demo_anonymize_middleware
-     ```
-
-   **[동시 다중 요청 처리 최적화 — 분석 핵심 항목]**
-   - **현재 문제**: 단일 파일에 전역 상태(캐시, DB 풀, 잠금) 혼재 → 동시 요청 시 경합 발생 위험
-   - **DB 풀 검토**: `_PooledConnection` + `threading.Lock` 구조 → asyncio 환경에서 blocking 여부 확인
-     - `execute_sql()` 내부 sync psycopg2 → `asyncio.run_in_executor` 래핑 필요 여부
-   - **전역 캐시 안전성**: `_anomaly_cache`, `_flow_balance_cache`, `_flow_baseline_cache` 등
-     - 읽기는 다중 가능, 쓰기는 `asyncio.Lock` 또는 `threading.Lock` 사용 여부 확인
-   - **인텐트 핸들러**: `/ask/stream` SSE 동시 N개 요청 시 Ollama(Gemma4) 직렬화 여부 확인
-     - Ollama는 단일 요청 처리 → 큐잉 또는 타임아웃 처리 로직 필요 여부
-   - **개선 방향**: 모듈 분리 시 각 router를 `APIRouter`로 독립화 → FastAPI 내장 동시성 활용
-   - **[2단계] 계획 문서 작성** → `docs/ai-server-refactor-plan.md`에 모듈별 이동 대상 함수 목록, 의존성 방향, 동시성 위험 구간, 개선 방안 명시
-   - **[3단계] 승인 후 구현** — 계획 검토 후 단계별 분리 (한 번에 전체 X, 모듈 1개씩 이동 + 테스트)
 
 ---
 
