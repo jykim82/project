@@ -5835,7 +5835,7 @@ def build_avg_usage_detail_block(rows: list, columns: list) -> list:
 def build_upstream_fault_block(rows: list, columns: list) -> list:
     """
     NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 기반 통신이상 원인 분석 결과를 조립한다.
-    반환 컬럼: sslvpn_id, total_lte, down_lte, sslvpn_alive,
+    반환 컬럼: sslvpn_id, total_lte, down_lte, sslvpn_alive, down_sites,
                total_utm, down_utm, global_lte_total, global_lte_down
     """
     if not rows:
@@ -5874,6 +5874,15 @@ def build_upstream_fault_block(rows: list, columns: list) -> list:
         down_lte = int(rd.get("down_lte") or 0)
         sslvpn_alive = rd.get("sslvpn_alive")
 
+        # down_sites: PostgreSQL array_agg 결과가 list 또는 문자열로 올 수 있음
+        down_sites = rd.get("down_sites") or []
+        if isinstance(down_sites, str):
+            import ast
+            try:
+                down_sites = ast.literal_eval(down_sites)
+            except Exception:
+                down_sites = []
+
         if total_lte == 0:
             continue
 
@@ -5888,6 +5897,10 @@ def build_upstream_fault_block(rows: list, columns: list) -> list:
 
         items.append({"prefix": "•", "text": f"{sslvpn_id}: {sslvpn_status}"})
         items.append({"prefix": "-", "text": f"하위 LTE 현황: {down_lte}/{total_lte}대 다운 ({down_pct}%)"})
+
+        # 이상 현장 목록 표시 (최대 15개)
+        if down_lte > 0 and down_sites:
+            items.append({"prefix": "-", "text": f"이상 현장: {', '.join(down_sites[:15])}"})
 
         if down_pct >= 80:
             items.append({"prefix": "-", "text": f"<<error:판정: {sslvpn_id} 장애로 인한 집단 통신이상 가능성>>"})
@@ -7373,53 +7386,55 @@ async def ask(request: AskRequest):
     # NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 통신이상 원인 분석
     if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
         sql_combined = """
-WITH latest_status AS (
-    SELECT equipment_id, is_alive,
-           ROW_NUMBER() OVER (PARTITION BY equipment_id ORDER BY check_time DESC) AS rn
+WITH latest AS (
+    SELECT equipment_id, MAX(check_time) AS mt
     FROM tb_network_status
+    GROUP BY equipment_id
 ),
 current_status AS (
-    SELECT equipment_id, is_alive
-    FROM latest_status WHERE rn = 1
-),
-lte_with_upstream AS (
-    SELECT
-        nl.source_equipment_id AS lte_id,
-        nl.target_equipment_id AS sslvpn_id,
-        COALESCE(cs.is_alive, false) AS lte_alive
-    FROM tb_network_link nl
-    LEFT JOIN current_status cs ON cs.equipment_id = nl.source_equipment_id
-    WHERE nl.source_equipment_id LIKE 'lte%'
-      AND nl.target_equipment_id LIKE 'sslvpn%'
+    SELECT ns.equipment_id, ns.is_alive
+    FROM tb_network_status ns
+    JOIN latest ON latest.equipment_id = ns.equipment_id AND latest.mt = ns.check_time
 ),
 sslvpn_summary AS (
     SELECT
-        sslvpn_id,
-        COUNT(*) AS total_lte,
-        SUM(CASE WHEN NOT lte_alive THEN 1 ELSE 0 END) AS down_lte
-    FROM lte_with_upstream
-    GROUP BY sslvpn_id
+        ei_t.sitename || ' ' || ei_t.equipmenttype AS sslvpn_id,
+        COUNT(*)                                                            AS total_lte,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))         AS down_lte,
+        MAX(cs_t.is_alive)                                                 AS sslvpn_alive,
+        array_agg(ei_s.sitename ORDER BY ei_s.sitename)
+            FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))              AS down_sites
+    FROM tb_network_link nl
+    JOIN tb_equipment_info ei_s ON ei_s.equipment_id = nl.source_equipment_id
+    JOIN tb_equipment_info ei_t ON ei_t.equipment_id = nl.target_equipment_id
+    LEFT JOIN current_status cs_s ON cs_s.equipment_id = nl.source_equipment_id
+    LEFT JOIN current_status cs_t ON cs_t.equipment_id = nl.target_equipment_id
+    WHERE ei_s.equipmenttype = 'LTE 모뎀'
+      AND ei_t.equipmenttype = 'SSLVPN'
+    GROUP BY ei_t.sitename, ei_t.equipmenttype
 ),
 utm_info AS (
     SELECT
-        COUNT(*) AS total_utm,
-        SUM(CASE WHEN NOT COALESCE(cs.is_alive, false) THEN 1 ELSE 0 END) AS down_utm
-    FROM tb_network_info ni
-    LEFT JOIN current_status cs ON cs.equipment_id = ni.equipment_id
-    WHERE ni.equipment_id LIKE 'utm%'
+        COUNT(*)                                                            AS total_utm,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, true))            AS down_utm
+    FROM tb_equipment_info ei
+    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
+    WHERE ei.equipmenttype IN ('UTM', 'FA망 현대화사업소 UTM')
 ),
 total_lte AS (
     SELECT
-        COUNT(*) AS global_lte_total,
-        SUM(CASE WHEN NOT is_alive THEN 1 ELSE 0 END) AS global_lte_down
-    FROM current_status
-    WHERE equipment_id LIKE 'lte%'
+        COUNT(*)                                                            AS global_lte_total,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, false))           AS global_lte_down
+    FROM tb_equipment_info ei
+    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
+    WHERE ei.equipmenttype = 'LTE 모뎀'
 )
 SELECT
     ss.sslvpn_id,
     ss.total_lte::int,
     ss.down_lte::int,
-    COALESCE(cs.is_alive, false) AS sslvpn_alive,
+    ss.sslvpn_alive,
+    ss.down_sites,
     ui.total_utm::int,
     ui.down_utm::int,
     tl.global_lte_total::int,
@@ -7427,8 +7442,7 @@ SELECT
 FROM sslvpn_summary ss
 CROSS JOIN utm_info ui
 CROSS JOIN total_lte tl
-LEFT JOIN current_status cs ON cs.equipment_id = ss.sslvpn_id
-ORDER BY ss.sslvpn_id;
+ORDER BY ss.down_lte DESC, ss.sslvpn_id
 """
 
     # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
@@ -8834,53 +8848,55 @@ async def ask_stream(request: AskRequest):
         # NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 통신이상 원인 분석 (SSE)
         if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
             sql_combined = """
-WITH latest_status AS (
-    SELECT equipment_id, is_alive,
-           ROW_NUMBER() OVER (PARTITION BY equipment_id ORDER BY check_time DESC) AS rn
+WITH latest AS (
+    SELECT equipment_id, MAX(check_time) AS mt
     FROM tb_network_status
+    GROUP BY equipment_id
 ),
 current_status AS (
-    SELECT equipment_id, is_alive
-    FROM latest_status WHERE rn = 1
-),
-lte_with_upstream AS (
-    SELECT
-        nl.source_equipment_id AS lte_id,
-        nl.target_equipment_id AS sslvpn_id,
-        COALESCE(cs.is_alive, false) AS lte_alive
-    FROM tb_network_link nl
-    LEFT JOIN current_status cs ON cs.equipment_id = nl.source_equipment_id
-    WHERE nl.source_equipment_id LIKE 'lte%'
-      AND nl.target_equipment_id LIKE 'sslvpn%'
+    SELECT ns.equipment_id, ns.is_alive
+    FROM tb_network_status ns
+    JOIN latest ON latest.equipment_id = ns.equipment_id AND latest.mt = ns.check_time
 ),
 sslvpn_summary AS (
     SELECT
-        sslvpn_id,
-        COUNT(*) AS total_lte,
-        SUM(CASE WHEN NOT lte_alive THEN 1 ELSE 0 END) AS down_lte
-    FROM lte_with_upstream
-    GROUP BY sslvpn_id
+        ei_t.sitename || ' ' || ei_t.equipmenttype AS sslvpn_id,
+        COUNT(*)                                                            AS total_lte,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))         AS down_lte,
+        MAX(cs_t.is_alive)                                                 AS sslvpn_alive,
+        array_agg(ei_s.sitename ORDER BY ei_s.sitename)
+            FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))              AS down_sites
+    FROM tb_network_link nl
+    JOIN tb_equipment_info ei_s ON ei_s.equipment_id = nl.source_equipment_id
+    JOIN tb_equipment_info ei_t ON ei_t.equipment_id = nl.target_equipment_id
+    LEFT JOIN current_status cs_s ON cs_s.equipment_id = nl.source_equipment_id
+    LEFT JOIN current_status cs_t ON cs_t.equipment_id = nl.target_equipment_id
+    WHERE ei_s.equipmenttype = 'LTE 모뎀'
+      AND ei_t.equipmenttype = 'SSLVPN'
+    GROUP BY ei_t.sitename, ei_t.equipmenttype
 ),
 utm_info AS (
     SELECT
-        COUNT(*) AS total_utm,
-        SUM(CASE WHEN NOT COALESCE(cs.is_alive, false) THEN 1 ELSE 0 END) AS down_utm
-    FROM tb_network_info ni
-    LEFT JOIN current_status cs ON cs.equipment_id = ni.equipment_id
-    WHERE ni.equipment_id LIKE 'utm%'
+        COUNT(*)                                                            AS total_utm,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, true))            AS down_utm
+    FROM tb_equipment_info ei
+    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
+    WHERE ei.equipmenttype IN ('UTM', 'FA망 현대화사업소 UTM')
 ),
 total_lte AS (
     SELECT
-        COUNT(*) AS global_lte_total,
-        SUM(CASE WHEN NOT is_alive THEN 1 ELSE 0 END) AS global_lte_down
-    FROM current_status
-    WHERE equipment_id LIKE 'lte%'
+        COUNT(*)                                                            AS global_lte_total,
+        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, false))           AS global_lte_down
+    FROM tb_equipment_info ei
+    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
+    WHERE ei.equipmenttype = 'LTE 모뎀'
 )
 SELECT
     ss.sslvpn_id,
     ss.total_lte::int,
     ss.down_lte::int,
-    COALESCE(cs.is_alive, false) AS sslvpn_alive,
+    ss.sslvpn_alive,
+    ss.down_sites,
     ui.total_utm::int,
     ui.down_utm::int,
     tl.global_lte_total::int,
@@ -8888,8 +8904,7 @@ SELECT
 FROM sslvpn_summary ss
 CROSS JOIN utm_info ui
 CROSS JOIN total_lte tl
-LEFT JOIN current_status cs ON cs.equipment_id = ss.sslvpn_id
-ORDER BY ss.sslvpn_id;
+ORDER BY ss.down_lte DESC, ss.sslvpn_id
 """
 
         # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)

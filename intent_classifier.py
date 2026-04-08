@@ -484,6 +484,21 @@ class IntentClassifier:
         if "경보 분석 결과" in question or "알람 분석 결과" in question:
             return "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "keyword"
 
+        # 키워드 단축: 상위 네트워크 장비 장애 원인 분석
+        # "다 통신이상", "LTE 전부", "상위 장비", "SSLVPN/UTM 문제" → NETWORK_UPSTREAM_FAULT_ANALYSIS
+        # 통신/네트워크 일반 분기보다 먼저 체크해야 FACILITY_COMMUNICATION_STATUS로 빠지지 않음
+        _upstream_ctx = any(kw in question for kw in [
+            "SSLVPN", "sslvpn", "UTM", "utm", "상위 장비", "상위장비",
+            "LTE 전부", "LTE 다 ", "LTE모뎀 다", "모뎀 다 ",
+            "통신이상 원인", "통신 이상 원인",
+        ])
+        _all_fault_ctx = (
+            ("다 통신이상" in question or "전부 통신이상" in question or "다 이상" in question)
+            and any(kw in question for kw in ["통신", "LTE", "접속", "네트워크"])
+        )
+        if _upstream_ctx or _all_fault_ctx:
+            return "NETWORK_UPSTREAM_FAULT_ANALYSIS", "keyword"
+
         # 키워드 단축: 통신/네트워크 — 구성(TOPOLOGY) vs 상태(STATUS) 분기
         # 경보 순위 키워드와 결합 시 제외 (→ FACILITY_ALARM_TOP_COUNT로 분류)
         _alarm_rank_kws = {"누적", "순서", "다발", "빈번"}
