@@ -3914,6 +3914,12 @@ def build_success_response(
         response["flow_balance_summary"] = kwargs["flow_balance_summary"]
     if kwargs.get("intra_facility"):
         response["intra_facility"] = kwargs["intra_facility"]
+    # IForest ML 필드 (ANOMALY_SCAN_ALL, ANOMALY_FACILITY_DETAIL)
+    for _ml_key in ("ml_model_count", "ml_anomaly_count", "ml_agree_count",
+                    "ml_tier1_count", "ml_tier2_count", "ml_tier", "ml_anomaly_score",
+                    "ml_features_used"):
+        if kwargs.get(_ml_key) is not None:
+            response[_ml_key] = kwargs[_ml_key]
     return response
 
 
@@ -7774,6 +7780,11 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
             equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
             flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
+            ml_model_count=_c_data.get("ml_model_count"),
+            ml_anomaly_count=_c_data.get("ml_anomaly_count"),
+            ml_agree_count=_c_data.get("ml_agree_count"),
+            ml_tier1_count=_c_data.get("ml_tier1_count"),
+            ml_tier2_count=_c_data.get("ml_tier2_count"),
         )
 
     # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (fn_night_min_flow_stats 대체, 53s→~10s)
@@ -8387,6 +8398,14 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         equipment_failure_count=len(_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
         flow_balance_summary=_filter_flow_balance(processed_data.get("flow_balance_summary"), params.get("sitename")),
         intra_facility=processed_data.get("intra_facility"),
+        ml_model_count=processed_data.get("ml_model_count"),
+        ml_anomaly_count=processed_data.get("ml_anomaly_count"),
+        ml_agree_count=processed_data.get("ml_agree_count"),
+        ml_tier1_count=processed_data.get("ml_tier1_count"),
+        ml_tier2_count=processed_data.get("ml_tier2_count"),
+        ml_tier=processed_data.get("ml_tier"),
+        ml_anomaly_score=processed_data.get("ml_anomaly_score"),
+        ml_features_used=processed_data.get("ml_features_used"),
     )
 
 
@@ -12595,8 +12614,17 @@ async def get_flow_map_realtime():
 
         latest_values: dict[str, float] = {}
         if all_tagsns:
-            _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            _from = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            # DB에 최근 1시간 데이터가 없으면 최신 데이터 기준으로 쿼리 창 이동
+            cur.execute("SELECT max(logtime) FROM tb_tag_raw_data")
+            _max_row = cur.fetchone()
+            _max_logtime = _max_row[0] if _max_row and _max_row[0] else datetime.now()
+            # 최신 데이터 시점이 1시간 이내면 now() 사용, 그보다 오래됐으면 최신 시점 + 10분 버퍼
+            if (datetime.now() - _max_logtime.replace(tzinfo=None)).total_seconds() > 3600:
+                _to = (_max_logtime.replace(tzinfo=None) + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+                _from = (_max_logtime.replace(tzinfo=None) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _from = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
             chunks = _get_chunks_for_range(cur, _from, _to)
             if chunks:
                 raw = _query_chunks_raw(cur, chunks, all_tagsns, _from, _to)
@@ -13194,6 +13222,8 @@ if __name__ == "__main__":
         }
         print(f"[HTTPS] SSL enabled (certs: {_cert_dir})")
 
-    # host="::" → Linux 듀얼스택: IPv4(0.0.0.0) + IPv6(::) 동시 수신
-    # localhost 연결 시 IPv6(::1) 즉시 성공 → 2초 IPv4 fallback 지연 방지
-    uvicorn.run(app, host="::", port=8000, **_ssl_kwargs)
+    # Windows: "::" 이중 스택이 IPv4 포함 안 됨 → 0.0.0.0으로 IPv4 바인딩
+    # Linux:   0.0.0.0은 IPv4만 수신 (IPv6 필요 시 "::" 사용)
+    import platform
+    _host = "::" if platform.system() == "Linux" else "0.0.0.0"
+    uvicorn.run(app, host=_host, port=8000, **_ssl_kwargs)

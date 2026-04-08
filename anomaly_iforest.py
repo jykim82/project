@@ -73,7 +73,7 @@ _TRAIN_SQL_FACILITY = """
 SELECT
     ti.sitename,
     ti.facilitytype,
-    date_trunc('5 minutes', c.bucket) AS ts,
+    time_bucket('5 minutes', c.bucket) AS ts,
     ti.datainfo,
     (c.min_val + c.max_val) / 2.0     AS approx_avg
 FROM cagg_5min_raw_stats_ai c
