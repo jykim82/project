@@ -6,53 +6,56 @@ echo   SLM Dashboard Service Startup
 echo ============================================
 echo.
 
-:: 1. TimescaleDB - WSL Docker·Î º°µµ °ü¸®
-echo [1/4] TimescaleDB È®ÀÎ Áß...
-echo   [OK] TimescaleDB (WSL Docker, port 5433)
+:: 1. WSL2 IP ìë™ ê°ì§€ (Docker/DB ì ‘ì†ìš©)
+echo [1/4] WSL2 IP ê°ì§€ ì¤‘...
+for /f "delims=" %%i in ('wsl -d Ubuntu -- bash -c "ip route get 1.1.1.1 2>/dev/null | awk '/src/{print $7}'"') do set WSL_IP=%%i
+if "%WSL_IP%"=="" set WSL_IP=localhost
+echo   WSL2 IP: %WSL_IP%
 echo.
 
-:: 2. PostgreSQL Á»ºñ ¿¬°á Á¤¸® (AI Server hang ¹æÁö)
-echo [2/4] PostgreSQL Á»ºñ ¿¬°á Á¤¸® Áß...
-D:\slmenv\Scripts\python.exe -c "
-import psycopg2
+:: 2. PostgreSQL ì—°ê²° ì •ë¦¬
+echo [2/4] PostgreSQL ì—°ê²° ì •ë¦¬ ì¤‘...
+C:\Python313\python.exe -c "
+import psycopg2, os, sys
+host = '%WSL_IP%'
 try:
-    c=psycopg2.connect(host='localhost',port=5433,dbname='slm',user='slm_dev',password='slm_dev_1234')
+    c=psycopg2.connect(host=host,port=5433,dbname='slm',user='slm_dev',password='slm_dev_1234')
     cur=c.cursor()
     cur.execute(\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='slm' AND state IN ('idle in transaction','active') AND pid<>pg_backend_pid()\")
     n=len(cur.fetchall())
     c.commit();c.close()
-    print(f'  [OK] Á»ºñ ¿¬°á {n}°³ Á¤¸® ¿Ï·á')
+    print(f'  [OK] ìœ íœ´ ì—°ê²° {n}ê°œ ì •ë¦¬ ì™„ë£Œ (host={host})')
 except Exception as e:
-    print(f'  [WARN] DB Á¤¸® ½ÇÆĞ (¹«½Ã): {e}')
+    print(f'  [WARN] DB ì—°ê²° ì •ë¦¬ (ë¬´ì‹œ): {e}')
 "
 echo.
 
-:: 3. ±âÁ¸ ÇÁ·Î¼¼½º Á¤¸®
-echo [3/4] ±âÁ¸ ÇÁ·Î¼¼½º Á¤¸® Áß...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000 "') do taskkill /PID %%a /F >/dev/null 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 "') do taskkill /PID %%a /F >/dev/null 2>&1
-echo   [OK] Æ÷Æ® Á¤¸® ¿Ï·á
+:: 3. ê¸°ì¡´ í”„ë¡œì„¸ìŠ¤ ì¢…ë£Œ
+echo [3/4] ê¸°ì¡´ í”„ë¡œì„¸ìŠ¤ ì¢…ë£Œ ì¤‘...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000 "') do taskkill /PID %%a /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 "') do taskkill /PID %%a /F >nul 2>&1
+echo   [OK] í¬íŠ¸ ì •ë¦¬ ì™„ë£Œ
 echo.
 
-:: 4. ¼­ºñ½º ½ÃÀÛ
-echo [4/4] ¼­ºñ½º ½ÃÀÛ Áß...
-echo   AI Server (FastAPI, port 8000) ½ÃÀÛ...
-start "AI Server" cmd /k "cd /d d:\slm && venv\Scripts\python.exe ai_server.py"
+:: 4. ì„œë¹„ìŠ¤ ì‹œì‘
+echo [4/4] ì„œë¹„ìŠ¤ ì‹œì‘ ì¤‘...
+echo   AI Server (FastAPI, port 8000) ì‹œì‘...
+start "AI Server" cmd /k "set DB_HOST=%WSL_IP%&& set DB_PORT=5433&& cd /d d:\slm && C:\Python313\python.exe ai_server.py"
 
-echo   AI Server ÃÊ±âÈ­ ´ë±â (15ÃÊ)...
+echo   AI Server ì´ˆê¸°í™” ëŒ€ê¸° (15ì´ˆ)...
 timeout /t 15 /nobreak >nul
 
-echo   Next.js HTTPS (port 3000) ½ÃÀÛ...
+echo   Next.js HTTPS (port 3000) ì‹œì‘...
 start "Next.js" cmd /k "cd /d d:\web\slm-dashboard\slm-dashboard && npm run dev:https:fast"
 
 echo.
 echo ============================================
-echo   ¸ğµç ¼­ºñ½º°¡ ½ÃÀÛµÇ¾ú½À´Ï´Ù!
+echo   ëª¨ë“  ì„œë¹„ìŠ¤ê°€ ì‹œì‘ë˜ì—ˆìŠµë‹ˆë‹¤!
 echo.
-echo   - TimescaleDB:  localhost:5433 (WSL Docker)
+echo   - TimescaleDB:  %WSL_IP%:5433 (WSL Docker)
 echo   - AI Server:    http://localhost:8000
 echo   - Dashboard:    https://localhost:3000
 echo.
-echo   ÀÌ Ã¢Àº ´İ¾Æµµ µË´Ï´Ù.
+echo   ì´ ì°½ì€ ë‹«ì•„ë„ ë©ë‹ˆë‹¤.
 echo ============================================
 pause
