@@ -7401,7 +7401,7 @@ sslvpn_summary AS (
         ei_t.sitename || ' ' || ei_t.equipmenttype AS sslvpn_id,
         COUNT(*)                                                            AS total_lte,
         COUNT(*) FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))         AS down_lte,
-        MAX(cs_t.is_alive)                                                 AS sslvpn_alive,
+        bool_or(cs_t.is_alive)                                             AS sslvpn_alive,
         array_agg(ei_s.sitename ORDER BY ei_s.sitename)
             FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))              AS down_sites
     FROM tb_network_link nl
@@ -8863,7 +8863,7 @@ sslvpn_summary AS (
         ei_t.sitename || ' ' || ei_t.equipmenttype AS sslvpn_id,
         COUNT(*)                                                            AS total_lte,
         COUNT(*) FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))         AS down_lte,
-        MAX(cs_t.is_alive)                                                 AS sslvpn_alive,
+        bool_or(cs_t.is_alive)                                             AS sslvpn_alive,
         array_agg(ei_s.sitename ORDER BY ei_s.sitename)
             FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))              AS down_sites
     FROM tb_network_link nl
