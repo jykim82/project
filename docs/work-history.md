@@ -2,6 +2,39 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-08 — IForest v2 테스트 스위트 구축 + T4 API 필드 수정)
+
+#### 구현 내역
+- **test_iforest_v2.py** 전체 작성 (T1~T5, 총 46개 케이스)
+  - T1 단위: 31/31 ✅ (_datainfo_to_group, FacilityModel.predict, _build_facility_matrix, predict_for_rows)
+  - T3 예측 품질: 5/5 ✅ (정상 FP율, 누수/펌프공회전/감압실패 물리 모순 감지)
+  - T5 회귀: 8/8 ✅ (v1 하위 호환, predict_single, is_trained=False 방어)
+  - T4 API: 2/2 ✅ (ANOMALY_SCAN_ALL ml 필드, ANOMALY_FACILITY_DETAIL Tier 정보)
+  - T2 학습: SKIP — Windows에서 WSL localhost:5433 직접 접속 불가 (서버 로그로 Tier-1 41개/Tier-2 183개 확인)
+- **ai_server.py 수정** — ANOMALY_SCAN_ALL stale-while-revalidate 캐시 경로(line ~7763)에 ML 필드 누락
+  - `ml_model_count`, `ml_anomaly_count`, `ml_agree_count`, `ml_tier1_count`, `ml_tier2_count` 추가
+- **버그 수정** — FP율 100% (hour/dow 고정값으로 학습 → 경계값에서 이상 판정)
+  - 학습 시 hour∈[0,24), dow∈[0,7) 균일 분포 사용으로 수정
+- **결과**: T1(31)+T3(5)+T4(2)+T5(8) = 46/46 통과
+
+---
+
+### 완료 (2026-04-08 — ANOMALY_FACILITY_DETAIL 500 오류 수정 + IForest SQL 수정)
+
+#### 구현 내역
+- **증상**: 10개 시설 중 5개(합덕 배수지, 갈산 가압장, 부곡/석문 배수지, 합덕 정수장) HTTP 500 반환
+- **근본 원인 1**: `propagation_trace` 변수 미초기화 → Phase 2 결과를 `build_anomaly_facility_detail_block()` 인자로 전달 시 NameError
+  - 수정: `propagation_trace = None` 초기화 블록에 추가 (`ai_server.py` line 6510)
+- **근본 원인 2**: `_diagnose_equipment_for_tags()` SQL에 `e.ip_address, e.has_ip` 컬럼 참조 — `tb_equipment_info`에 존재하지 않는 컬럼
+  - 수정: SELECT에서 해당 컬럼 제거, 네트워크 상태는 `tb_network_status` JOIN으로 대체
+- **근본 원인 3**: `verify_causal_context` import가 외부 if 블록 안에서만 실행 → `_run_causal()` 클로저 내에서 미접근
+  - 수정: import를 클로저 내부로 이동
+- **숨겨진 원인**: Windows `localhost` → `::1` (IPv6)로 해석 → 구버전 서버(PID 15184)에 라우팅
+  - 수정: 구버전 서버 강제 종료, `.env.local` `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` 변경
+  - `start-services.bat` 포트 정리 후 2초 대기 추가
+- **IForest SQL**: `anomaly_iforest.py` `date_trunc('5 minutes', ...)` → `time_bucket('5 minutes', ...)` (E-010)
+- **결과**: 10/10 OK, avg 3.0s, max 3.7s (수정 전: 5/10 OK + 5/10 HTTP 500)
+
 ### 완료 (2026-04-08 — ANOMALY_SCAN_ALL 성능 개선 + 임베딩 keep-warm, commit 2ab1c90)
 
 #### 구현 내역

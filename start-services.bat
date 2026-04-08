@@ -30,10 +30,11 @@ except Exception as e:
 "
 echo.
 
-:: 3. 기존 프로세스 종료
+:: 3. 기존 프로세스 종료 (IPv4 + IPv6 모두)
 echo [3/4] 기존 프로세스 종료 중...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000 "') do taskkill /PID %%a /F >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 "') do taskkill /PID %%a /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000"') do taskkill /PID %%a /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000"') do taskkill /PID %%a /F >nul 2>&1
+timeout /t 2 /nobreak >nul
 echo   [OK] 포트 정리 완료
 echo.
 

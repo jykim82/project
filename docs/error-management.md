@@ -165,6 +165,35 @@ python D:\slm\ai_server.py
 
 ---
 
+### [E-009] Windows localhost → IPv6(::1) 해석으로 구버전 AI Server 접속
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-08 |
+| **증상** | ANOMALY_FACILITY_DETAIL 인텐트 5개 시설 HTTP 500 반환. `_ask_inner` 디버그 파일 미생성 |
+| **원인** | Windows에서 `localhost` → `::1` (IPv6) 해석 → 구버전 서버(PID 15184, `[::]:8000`)로 라우팅. 신버전 서버는 `0.0.0.0:8000`(PID 35396)에 독립 기동 중 |
+| **에러 로그** | 구버전 로그에 없음. 신버전 서버에서는 `propagation_trace`/`ip_address` 버그 수정 완료 |
+| **확인 방법** | `http://127.0.0.1:8000/health` vs `http://[::1]:8000/health` → 응답 `active_sessions` 다름 |
+| **해결** | PID 15184 강제 종료 + `.env.local` `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` 변경 |
+
+**재발 방지**:
+- `start-services.bat`: `:8000` 포트 프로세스 전체 종료 후 2초 대기 → 신규 서버 기동
+- `.env.local`: `http://localhost:8000` 대신 `http://127.0.0.1:8000` 사용
+
+---
+
+### [E-010] IForest 학습 실패: `date_trunc('5 minutes', ...)` SQL 오류
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-08 |
+| **증상** | `IForest 학습 실패: unit "5 minutes" not recognized for type timestamp with time zone` |
+| **원인** | `anomaly_iforest.py` `_TRAIN_SQL_FACILITY`에서 `date_trunc('5 minutes', c.bucket)` 사용 — PostgreSQL `date_trunc`은 `'minute'` 단위만 지원, `'5 minutes'`는 TimescaleDB `time_bucket`만 가능 |
+| **해결** | `date_trunc('5 minutes', c.bucket)` → `time_bucket('5 minutes', c.bucket)` 변경 |
+| **수정 파일** | `D:\slm\anomaly_iforest.py` line 76 |
+
+---
+
 ## 시작 전 체크리스트
 
 ```
@@ -179,9 +208,12 @@ python D:\slm\ai_server.py
 **정상 상태 확인 명령 (PowerShell):**
 ```powershell
 docker ps --filter "publish=5433"
-netstat -ano | findstr ":8000.*LISTENING"
+netstat -ano | findstr ":8000"    # PID가 1개여야 정상 (2개면 구버전 서버 잔존)
 netstat -ano | findstr ":3000.*LISTENING"
+curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 주의)
 ```
+
+> **⚠ 포트 8000에 PID가 2개 보이면**: 구버전 서버 잔존. `taskkill /PID <오래된PID> /F`로 종료 후 `start-services.bat` 재실행.
 
 ---
 
