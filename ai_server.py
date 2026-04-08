@@ -4546,12 +4546,33 @@ def _query_chunks_raw(
     return all_rows
 
 
+_recent_values_cache: dict = {}           # (key) → result
+_recent_values_cache_ts: float = 0.0      # 마지막 갱신 epoch
+_RECENT_VALUES_CACHE_TTL_SEC = 60         # 60초 TTL (요청 내 반복 호출 중복 제거)
+
+
 def _query_recent_values(tagsn_list: list[str], minutes: int = 180) -> dict[str, list[float]]:
     """교차 검증용 최근 raw 값 조회 — 공용 헬퍼.
 
     cross_facility_check_all/single에서 query_func으로 사용.
     Returns: {tagsn: [val1, val2, ...]}
+
+    TTL 캐시 적용: 60초 내 동일 (tagsn_set, minutes) 재호출 시 DB 건너뜀.
+    ANOMALY_FACILITY_DETAIL 핸들러에서 5~6회 반복 호출 비용을 제거한다.
     """
+    global _recent_values_cache, _recent_values_cache_ts
+    import time as _time
+
+    now_ts = _time.time()
+    # 캐시 TTL 만료 시 전체 초기화
+    if now_ts - _recent_values_cache_ts >= _RECENT_VALUES_CACHE_TTL_SEC:
+        _recent_values_cache = {}
+        _recent_values_cache_ts = now_ts
+
+    cache_key = (frozenset(tagsn_list), minutes)
+    if cache_key in _recent_values_cache:
+        return _recent_values_cache[cache_key]
+
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -4563,6 +4584,7 @@ def _query_recent_values(tagsn_list: list[str], minutes: int = 180) -> dict[str,
             raw = _query_chunks_raw(cur, chunks, tagsn_list, _from, _to)
             for tsn, _, val in raw:
                 result.setdefault(tsn, []).append(float(val) if val else 0.0)
+        _recent_values_cache[cache_key] = result
         return result
     finally:
         cur.close()
@@ -6439,87 +6461,123 @@ def process_sql_result(
             except Exception as e:
                 logger.warning(f"C그룹 패턴 분석 실패: {e}")
 
-        # 인과관계 검증 (group_code 매칭 가능한 이상 태그 탐색)
+        # ── 인과 분석 병렬 실행 (ThreadPoolExecutor) ──────────────────────────
+        # 순서: [Phase1 병렬] causal + cross + intra + cross_intra
+        #       → [Phase2 병렬] propagation_forward + propagation_backward
+        # Ollama SLM 해석은 속도 영향이 크므로 제거 (결과는 causal_result에 충분)
+        _a_gc = None
+        _a_dir = None
+        _a_tagsn = ""
+        _a_datainfo = ""
+        _c_tagsn_idx = None
+        _c_z_idx = None
         causal_result = None
-        if _CAUSAL_INDEX and rows:
-            try:
-                col_map_c = {c: i for i, c in enumerate(columns)}
-                _c_tagsn_idx = col_map_c.get("tagsn")
-                _c_z_idx = col_map_c.get("z_score")
-                _c_datainfo_idx = col_map_c.get("datainfo")
-                if _c_tagsn_idx is not None and _c_z_idx is not None:
-                    # |z_score| 높은 순으로 정렬 → group_code 매칭 가능한 태그 찾기
-                    _warn_th = GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]
-                    _anomaly_rows = []
-                    for _r in rows:
-                        try:
-                            _zv = float(_r[_c_z_idx]) if _r[_c_z_idx] else 0
-                        except (ValueError, TypeError):
-                            _zv = 0
-                        if abs(_zv) >= _warn_th:
-                            _anomaly_rows.append((_zv, _r))
-                    _anomaly_rows.sort(key=lambda x: abs(x[0]), reverse=True)
-
-                    _a_gc = None
-                    _a_dir = None
-                    _a_tagsn = ""
-                    _a_datainfo = ""
-                    from anomaly_detector import verify_causal_context
-                    for _zv, _anomaly_row in _anomaly_rows:
-                        _a_tagsn = str(_anomaly_row[_c_tagsn_idx] or "")
-                        _a_datainfo = str(_anomaly_row[_c_datainfo_idx] or "")
-                        _a_dir = "RISE" if _zv > 0 else "FALL"
-                        # _CAUSAL_INDEX tag_map 우선 → _FALLBACK_GC_KEYWORDS 폴백
-                        _a_gc = _resolve_group_code_for_tagsn(
-                            _site, _ft, _a_tagsn, _a_datainfo,
-                        )
-                        if _a_gc:
-                            break
-                    if _a_gc:
-                            # 구역 감지 (배수지: datainfo에서 "1지","2지" 패턴)
-                            _a_zone = None
-                            _zm = _ZONE_PATTERN.search(_a_datainfo)
-                            if _zm:
-                                _a_zone = f"{_zm.group(1)}지"
-
-                            causal_result = verify_causal_context(
-                                _query_recent_values, _site, _ft,
-                                _a_gc, _a_dir, _CAUSAL_INDEX,
-                                zone=_a_zone,
-                            )
-                            if causal_result:
-                                # SLM 자연어 해석 (비정상 패턴일 때만)
-                                if not causal_result.get("chain_matched"):
-                                    try:
-                                        from anomaly_detector import generate_causal_explanation
-                                        _slm_text = generate_causal_explanation(
-                                            lambda p: ollama_client.generate(p),
-                                            causal_result, _site, _ft,
-                                        )
-                                        if _slm_text:
-                                            causal_result["_slm_explanation"] = _slm_text
-                                    except Exception as _slm_err:
-                                        logger.debug("인과 SLM 해석 실패 (무시): %s", _slm_err)
-                                data["causal_context"] = causal_result
-            except Exception as e:
-                logger.warning(f"인과관계 검증 실패 (무시): {e}")
-
-        # 시설간 교차 검증 (상류/하류 가동률·방향 비교)
         cross_facility_result = None
-        if _CAUSAL_INDEX:
+        intra_facility_result = None
+        cross_intra_result: list[dict] = []
+
+        # 인과관계 그룹코드 탐색 (선행 — DB 불필요, 빠름)
+        if _CAUSAL_INDEX and rows:
+            col_map_c = {c: i for i, c in enumerate(columns)}
+            _c_tagsn_idx = col_map_c.get("tagsn")
+            _c_z_idx = col_map_c.get("z_score")
+            _c_datainfo_idx = col_map_c.get("datainfo")
+            if _c_tagsn_idx is not None and _c_z_idx is not None:
+                _warn_th = GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]
+                _anomaly_rows = []
+                for _r in rows:
+                    try:
+                        _zv = float(_r[_c_z_idx]) if _r[_c_z_idx] else 0
+                    except (ValueError, TypeError):
+                        _zv = 0
+                    if abs(_zv) >= _warn_th:
+                        _anomaly_rows.append((_zv, _r))
+                _anomaly_rows.sort(key=lambda x: abs(x[0]), reverse=True)
+                from anomaly_detector import verify_causal_context
+                for _zv, _anomaly_row in _anomaly_rows:
+                    _a_tagsn = str(_anomaly_row[_c_tagsn_idx] or "")
+                    _a_datainfo = str(_anomaly_row[_c_datainfo_idx] or "")
+                    _a_dir = "RISE" if _zv > 0 else "FALL"
+                    _a_gc = _resolve_group_code_for_tagsn(_site, _ft, _a_tagsn, _a_datainfo)
+                    if _a_gc:
+                        break
+
+        # Phase 1: 독립 분석 병렬 실행
+        import concurrent.futures as _cf
+        _t_phase1 = time.time()
+        _a_zone = None
+        if _a_datainfo:
+            _zm = _ZONE_PATTERN.search(_a_datainfo)
+            if _zm:
+                _a_zone = f"{_zm.group(1)}지"
+        _a_zone_intra = _a_zone
+
+        def _run_causal():
+            if not (_CAUSAL_INDEX and _a_gc):
+                return None
+            try:
+                return verify_causal_context(
+                    _query_recent_values, _site, _ft,
+                    _a_gc, _a_dir, _CAUSAL_INDEX, zone=_a_zone,
+                )
+            except Exception as _e:
+                logger.warning("인과관계 검증 실패 (무시): %s", _e)
+                return None
+
+        def _run_cross():
+            if not _CAUSAL_INDEX:
+                return None
             try:
                 from anomaly_detector import cross_facility_check_single
-
-                cross_facility_result = cross_facility_check_single(
+                return cross_facility_check_single(
                     _query_recent_values, _site, _ft, _CAUSAL_INDEX,
                 )
-                if cross_facility_result and cross_facility_result.get("has_mismatch"):
-                    data["cross_facility"] = cross_facility_result
-            except Exception as e:
-                logger.warning(f"교차 검증 실패 (무시): {e}")
+            except Exception as _e:
+                logger.warning("교차 검증 실패 (무시): %s", _e)
+                return None
 
-        # 다중 홉 전파 추적 (인과 or 교차 검증 결과가 있을 때만)
-        propagation_trace = None
+        def _run_intra():
+            if not _CAUSAL_INDEX:
+                return None
+            try:
+                return verify_intra_facility(
+                    _query_recent_values, _site, _ft, _CAUSAL_INDEX, zone=_a_zone_intra,
+                )
+            except Exception as _e:
+                logger.warning("시설 내부 인과 검증 실패 (무시): %s", _e)
+                return None
+
+        def _run_cross_intra():
+            try:
+                return verify_cross_facility_intra_rules(
+                    _query_recent_values, _site, _ft, _CAUSAL_INDEX,
+                )
+            except Exception as _e:
+                logger.warning("시설간 교차 인과 검증 실패 (무시): %s", _e)
+                return []
+
+        with _cf.ThreadPoolExecutor(max_workers=4) as _pool:
+            _f_causal = _pool.submit(_run_causal)
+            _f_cross = _pool.submit(_run_cross)
+            _f_intra = _pool.submit(_run_intra)
+            _f_cross_intra = _pool.submit(_run_cross_intra)
+            causal_result = _f_causal.result()
+            cross_facility_result = _f_cross.result()
+            intra_facility_result = _f_intra.result()
+            cross_intra_result = _f_cross_intra.result() or []
+
+        logger.info("⏱ Phase1 병렬 분석 %dms", int((time.time() - _t_phase1) * 1000))
+
+        if causal_result:
+            data["causal_context"] = causal_result
+        if cross_facility_result and cross_facility_result.get("has_mismatch"):
+            data["cross_facility"] = cross_facility_result
+        if intra_facility_result:
+            data["intra_facility"] = intra_facility_result
+        if cross_intra_result:
+            data["cross_intra_facility"] = cross_intra_result
+
+        # Phase 2: 전파 추적 병렬 실행 (causal/cross 결과 의존)
         if _CAUSAL_INDEX and (causal_result or cross_facility_result):
             try:
                 from anomaly_detector import (
@@ -6527,46 +6585,17 @@ def process_sql_result(
                     trace_upstream_root_cause,
                 )
                 _target_key = (_site, _ft)
-                _fwd = trace_propagation_forward(
-                    _query_recent_values, _target_key, _CAUSAL_INDEX,
-                )
-                _bwd = trace_upstream_root_cause(
-                    _query_recent_values, _target_key, _CAUSAL_INDEX,
-                )
+                _t_phase2 = time.time()
+                with _cf.ThreadPoolExecutor(max_workers=2) as _pool2:
+                    _f_fwd = _pool2.submit(trace_propagation_forward, _query_recent_values, _target_key, _CAUSAL_INDEX)
+                    _f_bwd = _pool2.submit(trace_upstream_root_cause, _query_recent_values, _target_key, _CAUSAL_INDEX)
+                    _fwd = _f_fwd.result()
+                    _bwd = _f_bwd.result()
+                logger.info("⏱ Phase2 전파추적 %dms", int((time.time() - _t_phase2) * 1000))
                 if _fwd.get("hops") or _bwd.get("root_cause") or _bwd.get("hops"):
-                    propagation_trace = {"forward": _fwd, "backward": _bwd}
-                    data["propagation_trace"] = propagation_trace
+                    data["propagation_trace"] = {"forward": _fwd, "backward": _bwd}
             except Exception as e:
-                logger.warning(f"전파 추적 실패 (무시): {e}")
-
-        # 시설 내부 인과 검증 (펌프/밸브/수위 물리법칙)
-        intra_facility_result = None
-        if _CAUSAL_INDEX:
-            try:
-                _a_zone_intra = None
-                if _a_datainfo:
-                    _zm2 = _ZONE_PATTERN.search(_a_datainfo)
-                    if _zm2:
-                        _a_zone_intra = f"{_zm2.group(1)}지"
-                intra_facility_result = verify_intra_facility(
-                    _query_recent_values, _site, _ft, _CAUSAL_INDEX,
-                    zone=_a_zone_intra,
-                )
-                if intra_facility_result:
-                    data["intra_facility"] = intra_facility_result
-            except Exception as e:
-                logger.warning("시설 내부 인과 검증 실패 (무시): %s", e)
-
-        # 시설간 교차 인과 검증 (Cross-Facility Intra Rules)
-        cross_intra_result: list[dict] = []
-        try:
-            cross_intra_result = verify_cross_facility_intra_rules(
-                _query_recent_values, _site, _ft, _CAUSAL_INDEX,
-            )
-            if cross_intra_result:
-                data["cross_intra_facility"] = cross_intra_result
-        except Exception as e:
-            logger.warning("시설간 교차 인과 검증 실패 (무시): %s", e)
+                logger.warning("전파 추적 실패 (무시): %s", e)
 
         # 설비 건강 진단 (Phase 3: 이상 태그 → 연결 설비 역추적)
         equip_diagnosis = None
