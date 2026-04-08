@@ -2,6 +2,22 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-08 — AI 요약 응답속도 개선, commit 3fa7860)
+
+#### 구현 내역
+- **증상**: 트렌드 AI 요약 ~19초, 실패 잦음
+- **근본 원인 1 (가장 큰)**: WSL에서 `localhost` 연결 시 IPv6(`::1`) 먼저 시도 → 2초 타임아웃 → IPv4 폴백
+  - 모든 FastAPI 호출에 2.2초 오버헤드 존재 (AI 채팅 포함)
+  - 수정: `uvicorn.run(host="::")` 듀얼스택 바인딩
+  - 효과: localhost 응답 2.2s → 0.28s
+- **근본 원인 2**: Ollama 5분 비활성 후 모델 언로드 → 재로드 9.5초
+  - 수정: `_ollama_keepwarm_loop()` — 4분 주기 1-token 더미 요청으로 VRAM 유지
+- **근본 원인 3**: `ollama_client.generate()` 동기 호출 → 이벤트 루프 블로킹
+  - 수정: `asyncio.to_thread()` 래핑
+- **추가**: `ollama_client.generate()` num_ctx/num_predict/timeout/backoff_seconds override 지원
+  - explain: `num_predict=150`, `timeout=30s`, `backoff_seconds=10` (분류기 60s 독립)
+- **결과**: 19s → 6s (3배 개선)
+
 ### 완료 (2026-04-08 — 인텐트 분류 버그 수정: "트렌드" 쿼리 FACILITY_TREND 강제 매핑)
 
 #### 구현 내역
