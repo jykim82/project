@@ -2,6 +2,22 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-08 — 인텐트 분류 버그 수정: "트렌드" 쿼리 FACILITY_TREND 강제 매핑)
+
+#### 구현 내역
+- **증상**: "한달간 신평배수지 수위 트렌드 보여줘" → FACILITY_TAG_DATA_TABLE(표) 반환
+- **근본 원인 1**: `intent_classifier.py` `_classify_intent()` 391-404라인
+  - "N일" 기간 패턴 + "수위/압력/유량" → 카테고리 무관하게 `FACILITY_TAG_DATA_TABLE` 반환
+  - `normalize_question()`이 "한달간" → "30일간" 변환 후 `\d+\s*일` 패턴 매칭
+  - 수정: `_TAG_DATA_EXCLUDE`에 `"트렌드", "트랜드", "추이", "그래프"` 추가
+- **근본 원인 2**: `ai_server.py` `match_intent()` (최종 폴백 함수)
+  - example3.json 질문을 `normalize_for_matching()`만 적용하고 `normalize_question()` 미적용
+  - "30일간"(normalize_question 결과) vs "한달간"(원본 예시) 불일치 → 점수 오매칭
+  - 수정: example 질문에도 `normalize_question()` 적용 후 비교
+  - 추가: "트렌드" 포함 시 `FACILITY_TREND` 즉시 반환하는 우선 규칙
+- **적용 파일**: `D:\slm\intent_classifier.py`, `D:\slm\ai_server.py`
+- **테스트**: "한달간/30일간/7일간 ... 트렌드" → FACILITY_TREND, graph_type=plot ✓
+
 ### 완료 (2026-04-08 — ECharts smoothMonotone 적용)
 
 #### 구현 내역
