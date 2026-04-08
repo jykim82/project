@@ -397,7 +397,8 @@ class IntentClassifier:
             or re.search(r"\d+\s*시간", question)
             or re.search(r"\d+\s*일", question)
         )
-        _TAG_DATA_EXCLUDE = ["적산", "순시", "표로"]
+        # "트렌드/트랜드/추이/그래프" 포함 시 기간+데이터 규칙 제외 → FACILITY_TREND로 분류
+        _TAG_DATA_EXCLUDE = ["적산", "순시", "표로", "트렌드", "트랜드", "추이", "그래프"]
         if _has_period and not any(ek in question for ek in _TAG_DATA_EXCLUDE):
             for dkw in ["수위", "압력", "유량", "밸브"]:
                 if dkw in question:

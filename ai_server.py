@@ -81,6 +81,7 @@ from anomaly_detector import (
     classify_alert_grade,
     verify_intra_facility,
     build_intra_facility_block,
+    verify_cross_facility_intra_rules,
 )
 from anomaly_iforest import IForestManager
 from site_profiler import SiteProfiler
@@ -1474,6 +1475,146 @@ def _apply_worst_failure(
         tag_map[tagsn] = failure_type
 
 
+_FAILURE_LABEL = {
+    "network_down": "네트워크 단절",
+    "comm_error": "통신이상",
+    "equip_fault": "설비고장",
+    "power_fault": "전원이상",
+}
+
+
+def _diagnose_equipment_for_tags(
+    anomaly_tagsns: list[str], sitename: str, facilitytype: str,
+) -> list[dict] | None:
+    """이상 태그 → tb_equipment_tag_map 역추적 → 연결 설비 건강 진단.
+
+    Phase 3: 이상감지 결과의 태그에서 연결된 설비를 역추적하고,
+    각 설비의 건강 상태(네트워크/DI/장애 신호)를 종합 진단합니다.
+
+    Returns:
+        설비별 진단 결과 리스트, 없으면 None
+    """
+    if not anomaly_tagsns:
+        return None
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1) 이상 태그 → 연결 설비 조회
+        cur.execute("""
+            SELECT DISTINCT m.equipment_id, m.tagsn,
+                   e.equipmenttype, e.sitename, e.facilitytype,
+                   e.ip_address, e.has_ip
+            FROM tb_equipment_tag_map m
+            JOIN tb_equipment_info e ON e.equipment_id = m.equipment_id
+            WHERE m.tagsn = ANY(%s)
+        """, (anomaly_tagsns,))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        # 설비별 그룹핑
+        equip_map: dict[str, dict] = {}
+        for eid, tagsn, etype, sn, ft, ip, has_ip in rows:
+            if eid not in equip_map:
+                equip_map[eid] = {
+                    "equipment_id": eid,
+                    "equipmenttype": etype,
+                    "sitename": sn,
+                    "facilitytype": ft,
+                    "ip_address": ip,
+                    "has_ip": has_ip,
+                    "linked_anomaly_tags": [],
+                    "total_tag_count": 0,
+                    "failures": [],
+                    "health_score": 100,
+                }
+            equip_map[eid]["linked_anomaly_tags"].append(tagsn)
+
+        # 2) 각 설비의 전체 태그 수 조회
+        eids = list(equip_map.keys())
+        cur.execute("""
+            SELECT equipment_id, COUNT(*) FROM tb_equipment_tag_map
+            WHERE equipment_id = ANY(%s) GROUP BY equipment_id
+        """, (eids,))
+        for eid, cnt in cur.fetchall():
+            if eid in equip_map:
+                equip_map[eid]["total_tag_count"] = cnt
+
+        # 3) 네트워크 상태 확인 (IP 장비만)
+        ip_eids = [eid for eid, eq in equip_map.items() if eq.get("has_ip")]
+        if ip_eids:
+            cur.execute("""
+                SELECT DISTINCT ON (equipment_id) equipment_id, is_alive, check_time
+                FROM tb_network_status
+                WHERE equipment_id = ANY(%s)
+                ORDER BY equipment_id, check_time DESC
+            """, (ip_eids,))
+            for eid, alive, check_time in cur.fetchall():
+                if eid in equip_map and not alive:
+                    equip_map[eid]["failures"].append("network_down")
+                    equip_map[eid]["health_score"] -= 30
+
+        # 4) DI 장애 태그 확인
+        cur.execute("""
+            SELECT DISTINCT e.equipment_id,
+                   CASE WHEN ti.datadesc ILIKE '%%통신이상%%' THEN 'comm_error'
+                        WHEN ti.datadesc ILIKE '%%설비고장%%' OR ti.datadesc ILIKE '%%펌프고장%%' THEN 'equip_fault'
+                        WHEN ti.datadesc ILIKE '%%전원%%' OR ti.datadesc ILIKE '%%UPS%%' OR ti.datadesc ILIKE '%%정전%%' THEN 'power_fault'
+                   END AS ftype
+            FROM tb_equipment_tag_map m
+            JOIN tb_tag_info ti ON ti.tagsn = m.tagsn AND ti.tagtype = 'Digital Input'
+            JOIN tb_equipment_info e ON e.equipment_id = m.equipment_id
+            WHERE m.equipment_id = ANY(%s)
+              AND (ti.datadesc ILIKE '%%통신이상%%' OR ti.datadesc ILIKE '%%설비고장%%'
+                   OR ti.datadesc ILIKE '%%펌프고장%%' OR ti.datadesc ILIKE '%%전원%%'
+                   OR ti.datadesc ILIKE '%%UPS%%' OR ti.datadesc ILIKE '%%정전%%')
+        """, (eids,))
+
+        # DI 태그별 최신값 확인 (val=1이면 장애 활성)
+        di_tags: dict[str, list[tuple[str, str]]] = {}  # eid → [(tagsn, ftype)]
+        for eid, ftype in cur.fetchall():
+            if ftype:
+                di_tags.setdefault(eid, []).append((eid, ftype))
+
+        for eid, ftypes in di_tags.items():
+            if eid in equip_map:
+                for _, ftype in ftypes:
+                    if ftype not in equip_map[eid]["failures"]:
+                        equip_map[eid]["failures"].append(ftype)
+                        penalty = {
+                            "equip_fault": 40, "power_fault": 30,
+                            "network_down": 25, "comm_error": 15,
+                        }.get(ftype, 10)
+                        equip_map[eid]["health_score"] -= penalty
+
+        # 5) 건강 점수 정리 (0~100 클램프)
+        results = []
+        for eq in equip_map.values():
+            eq["health_score"] = max(0, min(100, eq["health_score"]))
+            eq["anomaly_tag_count"] = len(eq["linked_anomaly_tags"])
+            eq["failure_labels"] = [_FAILURE_LABEL.get(f, f) for f in eq["failures"]]
+            # 건강 등급
+            s = eq["health_score"]
+            eq["health_grade"] = "정상" if s >= 80 else "주의" if s >= 50 else "위험"
+            results.append(eq)
+
+        # severity 높은 순 정렬
+        results.sort(key=lambda x: x["health_score"])
+        return results if results else None
+
+    except Exception as e:
+        logger.warning(f"설비 건강 진단 실패: {e}")
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _compute_anomaly_scan_all() -> Optional[dict]:
     """ANOMALY_SCAN_ALL 전체 파이프라인을 동기 실행하여 캐시용 결과 반환.
 
@@ -2582,8 +2723,22 @@ def match_intent(user_question: str) -> Optional[dict]:
     2. 매칭 점수 계산 (패턴 길이 + 키워드 보너스)
     3. sitename 유무와 SQL 템플릿의 {sitename} 유무 정합성 보너스/패널티
     4. 가장 높은 점수의 INTENT 선택
+    우선 규칙: "트렌드" 포함 → FACILITY_TREND 강제 반환 (기간 표현 정규화 후 판단)
     """
-    normalized_user = normalize_for_matching(user_question)
+    # normalize_question 적용 (기간 표현 통일: "한달간"→"30일간", "트랜드"→"트렌드")
+    normalized_question = normalize_question(user_question)
+
+    # 우선 규칙: "트렌드"가 포함된 질문은 항상 FACILITY_TREND로 분류
+    if "트렌드" in normalized_question:
+        trend_intent = next(
+            (d for d in INTENT_DEFINITIONS if d.get("intent") == "FACILITY_TREND"),
+            None,
+        )
+        if trend_intent is not None:
+            logger.debug(f"[match_intent] '트렌드' 키워드 감지 → FACILITY_TREND 강제 반환")
+            return trend_intent
+
+    normalized_user = normalize_for_matching(normalized_question)
     facility_type = extract_facility_type_from_question(user_question)
     has_sitename = extract_sitename(user_question) is not None
 
@@ -2598,7 +2753,8 @@ def match_intent(user_question: str) -> Optional[dict]:
             continue
 
         for q in intent_def.get("questions", []):
-            normalized_q = normalize_for_matching(q)
+            # example3.json의 질문도 normalize_question 적용 후 비교 (기간 표현 통일)
+            normalized_q = normalize_for_matching(normalize_question(q))
             score = calculate_match_score(normalized_user, normalized_q, intent_name, user_question, q)
 
             if score <= 0:
@@ -6344,6 +6500,39 @@ def process_sql_result(
             except Exception as e:
                 logger.warning("시설 내부 인과 검증 실패 (무시): %s", e)
 
+        # 시설간 교차 인과 검증 (Cross-Facility Intra Rules)
+        cross_intra_result: list[dict] = []
+        try:
+            cross_intra_result = verify_cross_facility_intra_rules(
+                _query_recent_values, _site, _ft, _CAUSAL_INDEX,
+            )
+            if cross_intra_result:
+                data["cross_intra_facility"] = cross_intra_result
+        except Exception as e:
+            logger.warning("시설간 교차 인과 검증 실패 (무시): %s", e)
+
+        # 설비 건강 진단 (Phase 3: 이상 태그 → 연결 설비 역추적)
+        equip_diagnosis = None
+        try:
+            _anomaly_tagsns = []
+            if _c_tagsn_idx is not None and _c_z_idx is not None:
+                _w_th = GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]
+                for _r in rows:
+                    try:
+                        _zv2 = float(_r[_c_z_idx]) if _r[_c_z_idx] else 0
+                    except (ValueError, TypeError):
+                        _zv2 = 0
+                    if abs(_zv2) >= _w_th:
+                        _anomaly_tagsns.append(str(_r[_c_tagsn_idx] or ""))
+            if _anomaly_tagsns:
+                equip_diagnosis = _diagnose_equipment_for_tags(
+                    _anomaly_tagsns, _site, _ft,
+                )
+                if equip_diagnosis:
+                    data["equipment_diagnosis"] = equip_diagnosis
+        except Exception as e:
+            logger.warning(f"설비 건강 진단 실패 (무시): {e}")
+
         data["anomaly_facility_detail_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["anomaly_facility_detail_block"] =             build_anomaly_facility_detail_block(
                 rows, columns,
@@ -6355,6 +6544,7 @@ def process_sql_result(
                 cross_facility_result=cross_facility_result,
                 propagation_trace=propagation_trace,
                 intra_facility_result=intra_facility_result,
+                cross_intra_result=cross_intra_result,
             )
 
     # -------------------------------------------------
@@ -10122,9 +10312,13 @@ async def get_site_settings():
         for comm_cd, use_yn in rows:
             if comm_cd == "LANDING_ENABLED":
                 settings["landing_enabled"] = use_yn == "Y"
+            elif comm_cd == "TREND_EXPLAIN_ENABLED":
+                settings["trend_explain_enabled"] = use_yn == "Y"
 
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
+        if "trend_explain_enabled" not in settings:
+            settings["trend_explain_enabled"] = False
 
         # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
         settings["db"] = {
@@ -10174,15 +10368,38 @@ async def update_site_settings(request: Request):
         conn = get_db_connection()
         cur = conn.cursor()
 
+        # SITE_SETTING 그룹 코드 보장 (FK 충족)
+        cur.execute(
+            """
+            INSERT INTO tb_grp_code (region, grp_cd, grp_nm, use_yn)
+            VALUES ('R01', 'SITE_SETTING', '사이트 설정', 'Y')
+            ON CONFLICT (region, grp_cd) DO NOTHING
+            """
+        )
+
         # 랜딩 페이지 설정
         if "landing_enabled" in body:
             use_yn = "Y" if body["landing_enabled"] else "N"
             cur.execute(
                 """
-                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn, create_dt)
-                VALUES ('R01', 'SITE_SETTING', 'LANDING_ENABLED', '랜딩 페이지 활성화', %s, NOW())
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'LANDING_ENABLED', '랜딩 페이지 활성화', %s)
                 ON CONFLICT (region, grp_cd, comm_cd)
-                DO UPDATE SET use_yn = %s, update_dt = NOW()
+                DO UPDATE SET use_yn = %s
+                """,
+                (use_yn, use_yn),
+            )
+            conn.commit()
+
+        # 트렌드 AI 요약 설정
+        if "trend_explain_enabled" in body:
+            use_yn = "Y" if body["trend_explain_enabled"] else "N"
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'TREND_EXPLAIN_ENABLED', '트렌드 AI 요약', %s)
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET use_yn = %s
                 """,
                 (use_yn, use_yn),
             )
@@ -10222,6 +10439,96 @@ async def update_site_settings(request: Request):
 
 
 # (기존 대시보드 API는 아래 /monitoring/dashboard로 이전됨)
+
+
+# =============================================================================
+# 트렌드 AI 요약 API
+# =============================================================================
+
+@app.post("/trend/explain")
+async def explain_trend(request: Request):
+    """트렌드 선택 구간 AI 요약 (gemma4, 2문장, 권고 없음).
+
+    요청 바디:
+      tag_name   : 태그 표시명
+      unit       : 단위 (예: "m³/h")
+      from_ts    : 시작 ISO timestamp
+      to_ts      : 종료 ISO timestamp
+      min        : 최솟값
+      max        : 최댓값
+      avg        : 평균값
+      count      : 데이터 포인트 수
+      anomaly_count : 이상 구간 수 (0이면 없음)
+
+    응답:
+      summary    : AI 요약 텍스트 (2문장)
+    """
+    conn = None
+    try:
+        # 토글 활성 여부 확인
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT use_yn FROM tb_comm_code "
+            "WHERE region = 'R01' AND grp_cd = 'SITE_SETTING' AND comm_cd = 'TREND_EXPLAIN_ENABLED'"
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        conn = None
+
+        if not row or row[0] != "Y":
+            return {"error": "트렌드 AI 요약이 비활성화되어 있습니다."}, 403
+
+        body = await request.json()
+        tag_name = body.get("tag_name", "태그")
+        unit = body.get("unit", "")
+        from_ts = body.get("from_ts", "")
+        to_ts = body.get("to_ts", "")
+        min_val = float(body.get("min", 0))
+        max_val = float(body.get("max", 0))
+        avg_val = float(body.get("avg", 0))
+        count = int(body.get("count", 0))
+        anomaly_count = int(body.get("anomaly_count", 0))
+
+        # 시간 포맷 단축
+        def fmt_ts(ts: str) -> str:
+            try:
+                from datetime import datetime
+                d = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return d.strftime("%m-%d %H:%M")
+            except Exception:
+                return ts
+
+        unit_str = f" ({unit})" if unit else ""
+        anomaly_note = f", 이상 구간 {anomaly_count}건 포함" if anomaly_count > 0 else ""
+
+        prompt = (
+            f"다음 센서 데이터 구간을 분석하여 수치와 패턴을 2문장으로 요약하라. "
+            f"권고 사항이나 조치 지시는 절대 포함하지 않는다.\n\n"
+            f"태그: {tag_name}{unit_str}\n"
+            f"기간: {fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n"
+            f"통계: 최소 {min_val:.3g}, 평균 {avg_val:.3g}, 최대 {max_val:.3g}, "
+            f"데이터 {count}건{anomaly_note}\n\n"
+            f"요약:"
+        )
+
+        if not ollama_client:
+            return {"error": "AI 서비스를 사용할 수 없습니다."}
+
+        summary = ollama_client.generate(prompt)
+        # 앞뒤 공백/개행 정리
+        summary = summary.strip()
+
+        logger.info(f"트렌드 AI 요약 완료: {tag_name} ({fmt_ts(from_ts)}~{fmt_ts(to_ts)})")
+        return {"summary": summary}
+
+    except Exception as e:
+        logger.error(f"트렌드 AI 요약 실패: {e}")
+        return {"error": f"AI 요약 중 오류가 발생했습니다: {str(e)}"}
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.get("/monitoring/alarm-notifications")
@@ -12474,7 +12781,7 @@ async def get_flow_map_realtime():
                     cross_mismatches_map[nid] = error_checks
 
         # 6-b) 상류-하류 유량 불일치 인라인 감지
-        #   (1) zero_flow: 상류 유량 > 1 m³/h + 하류 유량 ≈ 0
+        #   (1) zero_flow: 상류 유량 > 1 m³/h + 하류 유량 ≈ 0  → UI: "유량값 0"
         #   (2) flow_disparity: 상류 대비 하류 총합 비율 < 20% (대량 유실 의심)
         _UPSTREAM_FLOW_THRESHOLD = 1.0  # m³/h
         # 상류별 하류 유량 합산용
