@@ -125,6 +125,7 @@ _profiling_task: Optional[asyncio.Task] = None
 _snmp_polling_task: Optional[asyncio.Task] = None
 _iforest_task: Optional[asyncio.Task] = None
 _anomaly_scan_task: Optional[asyncio.Task] = None
+_ollama_keepwarm_task: Optional[asyncio.Task] = None
 snmp_poller_instance: Optional[SnmpPoller] = None
 
 # ── ANOMALY_SCAN_ALL 백그라운드 캐시 ──────────────────────────
@@ -1729,6 +1730,31 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
     }
 
 
+async def _ollama_keepwarm_loop():
+    """백그라운드: 4분 주기로 Ollama에 1-token 더미 요청을 보내 모델을 VRAM에 유지.
+
+    Ollama 기본 만료 시간은 5분이므로 4분마다 ping하면 리로드 오버헤드(~9.5s)를 방지할 수 있다.
+    Ollama가 unavailable이면 백오프 없이 조용히 스킵한다.
+    """
+    await asyncio.sleep(30)  # 서버 완전 시작 대기
+    while True:
+        try:
+            if ollama_client and ollama_client.health_check():
+                await asyncio.to_thread(
+                    ollama_client.generate,
+                    ".",            # 최소 프롬프트
+                    None,           # model (default)
+                    None,           # num_ctx (ai_settings 따름 → 리로드 없음)
+                    1,              # num_predict: 1토큰만 생성
+                    5.0,            # timeout: 5초 (응답이 없으면 포기)
+                    0,              # backoff_seconds: 실패해도 백오프 없음
+                )
+                logger.debug("Ollama keep-warm 완료")
+        except Exception:
+            pass  # keep-warm 실패는 무시
+        await asyncio.sleep(240)  # 4분 대기
+
+
 async def _session_cleanup_loop():
     """백그라운드: 60초마다 만료 세션 정리 + CSV 파일 정리"""
     while True:
@@ -1740,7 +1766,7 @@ async def _session_cleanup_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
-    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, _sync_task, site_profiler, _sync_worker
+    global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, _sync_task, site_profiler, _sync_worker, _ollama_keepwarm_task
 
     # DB 커넥션 풀 초기화 (get_db_connection보다 먼저)
     _init_db_pool()
@@ -1913,6 +1939,10 @@ async def lifespan(app: FastAPI):
     _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
     _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
+
+    # Ollama 모델 Keep-Warm (4분 주기 더미 요청으로 VRAM 유지)
+    # Ollama 기본 만료=5분, 4분마다 ping하여 리로드 오버헤드(~9.5s) 방지
+    _ollama_keepwarm_task = asyncio.create_task(_ollama_keepwarm_loop())
 
     # [임시] 로컬 DB 사용 시 원격→로컬 실시간 동기화 (개발 완료 후 제거 예정)
     _sync_task = None
@@ -10516,11 +10546,26 @@ async def explain_trend(request: Request):
         if not ollama_client:
             return {"error": "AI 서비스를 사용할 수 없습니다."}
 
-        summary = ollama_client.generate(prompt)
+        # asyncio.to_thread: 이벤트 루프 블로킹 방지
+        # num_ctx: ai_settings와 동일하게 유지 (변경 시 Ollama 모델 리로드 발생)
+        # num_predict=150: 2문장 요약이면 충분
+        # timeout=30s: 모델 리로드 케이스(~9.5s) + 생성(~5s) 커버
+        # backoff_seconds=10: 분류기 60s 백오프와 독립
+        _t0 = time.perf_counter()
+        summary = await asyncio.to_thread(
+            ollama_client.generate,
+            prompt,
+            None,     # model
+            None,     # num_ctx (ai_settings 따름)
+            150,      # num_predict
+            30.0,     # timeout
+            10,       # backoff_seconds
+        )
+        _elapsed = time.perf_counter() - _t0
         # 앞뒤 공백/개행 정리
         summary = summary.strip()
 
-        logger.info(f"트렌드 AI 요약 완료: {tag_name} ({fmt_ts(from_ts)}~{fmt_ts(to_ts)})")
+        logger.info(f"트렌드 AI 요약 완료: {tag_name} ({fmt_ts(from_ts)}~{fmt_ts(to_ts)}) ⏱ {_elapsed*1000:.0f}ms")
         return {"summary": summary}
 
     except Exception as e:
@@ -13028,4 +13073,6 @@ if __name__ == "__main__":
         }
         print(f"[HTTPS] SSL enabled (certs: {_cert_dir})")
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, **_ssl_kwargs)
+    # host="::" → Linux 듀얼스택: IPv4(0.0.0.0) + IPv6(::) 동시 수신
+    # localhost 연결 시 IPv6(::1) 즉시 성공 → 2초 IPv4 fallback 지연 방지
+    uvicorn.run(app, host="::", port=8000, **_ssl_kwargs)
