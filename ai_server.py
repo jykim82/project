@@ -52,7 +52,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from slm_config import ENABLE_KEYWORD_FALLBACK, get_model, set_model
+from slm_config import ENABLE_KEYWORD_FALLBACK, get_model, set_model, OLLAMA_BASE_URL
 from ollama_client import OllamaClient, OllamaConnectionError
 from intent_index import IntentIndex
 from intent_classifier import IntentClassifier
@@ -993,11 +993,11 @@ async def _anomaly_scan_cache_loop():
     사용자 요청 시 캐시 반환 (<1s).
     """
     global _ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME
-    # 프로파일링 완료 대기 (최대 120초, 5초 간격 체크)
-    for _ in range(24):
+    # 프로파일링 완료 대기 (최대 30초, 3초 간격 체크) — 초기 캐시 빌드 빠르게 시작
+    for _ in range(10):
         if site_profiler and site_profiler.profiles:
             break
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
     if not (site_profiler and site_profiler.profiles):
         logger.warning("ANOMALY_SCAN_ALL: 프로파일 미완성 상태로 캐시 빌드 시작")
     while True:
@@ -1731,25 +1731,39 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
 
 
 async def _ollama_keepwarm_loop():
-    """백그라운드: 4분 주기로 Ollama에 1-token 더미 요청을 보내 모델을 VRAM에 유지.
+    """백그라운드: 4분 주기로 Ollama generate + embed 더미 요청으로 모델을 VRAM에 유지.
 
-    Ollama 기본 만료 시간은 5분이므로 4분마다 ping하면 리로드 오버헤드(~9.5s)를 방지할 수 있다.
-    Ollama가 unavailable이면 백오프 없이 조용히 스킵한다.
+    Ollama 기본 만료 시간은 5분이므로 4분마다 ping하면 리로드 오버헤드(~9.5s)를 방지한다.
+    임베딩 모델도 같이 keep-warm하여 첫 임베딩 3초 지연을 방지한다.
     """
     await asyncio.sleep(30)  # 서버 완전 시작 대기
     while True:
         try:
             if ollama_client and ollama_client.health_check():
+                # generate 모델 keep-warm (1-token)
                 await asyncio.to_thread(
                     ollama_client.generate,
                     ".",            # 최소 프롬프트
                     None,           # model (default)
                     None,           # num_ctx (ai_settings 따름 → 리로드 없음)
                     1,              # num_predict: 1토큰만 생성
-                    5.0,            # timeout: 5초 (응답이 없으면 포기)
+                    5.0,            # timeout: 5초
                     0,              # backoff_seconds: 실패해도 백오프 없음
                 )
-                logger.debug("Ollama keep-warm 완료")
+                # 임베딩 모델 keep-warm (첫 임베딩 3초 지연 방지)
+                try:
+                    import httpx as _httpx
+                    from intent_embeddings import EMBED_MODEL as _EMBED_MODEL
+                    await asyncio.to_thread(
+                        lambda: _httpx.post(
+                            f"{OLLAMA_BASE_URL.rstrip('/')}/api/embed",
+                            json={"model": _EMBED_MODEL, "input": "."},
+                            timeout=5.0,
+                        )
+                    )
+                except Exception:
+                    pass  # 임베딩 keep-warm 실패는 무시
+                logger.debug("Ollama keep-warm 완료 (generate + embed)")
         except Exception:
             pass  # keep-warm 실패는 무시
         await asyncio.sleep(240)  # 4분 대기
@@ -7612,71 +7626,76 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             except ValueError:
                 pass
 
-    # ── ANOMALY_SCAN_ALL 캐시 히트: 전체 파이프라인 건너뜀 ──
-    if intent == "ANOMALY_SCAN_ALL" and _ANOMALY_SCAN_CACHE and _ANOMALY_SCAN_CACHE_TIME:
-        cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
-        if cache_age < _ANOMALY_SCAN_CACHE_TTL:
-            logger.info(f"ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전) sitename={params.get('sitename')!r} facilitytype={params.get('facilitytype')!r}")
-            _c = _ANOMALY_SCAN_CACHE
-            _c_rows = _c["rows"]
-            _c_cols = _c["columns"]
-            _c_data = dict(_c["processed_data"])  # 복사 (필터 시 수정)
-            _c_tmpl = _c["answer_template"]
-
-            # facilitytype / group_code 필터 적용
-            _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
-            _scope = build_anomaly_scope_label(params)
-            if _scope != "전체":
-                _c_data["total_tag_count"] = len(_c_rows)
-                # 필터된 결과로 카운트 재계산
-                from anomaly_detector import count_anomaly_levels
-                _fc = count_anomaly_levels(_c_rows, _c_cols)
-                _c_data["error_count"] = _fc["이상"]
-                _c_data["warn_count"] = _fc["주의"]
-                _c_data["ok_count"] = _fc["정상"]
-                # verdict 기반 교차이상 카운트 재계산
-                _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
-                if _vd_idx is not None:
-                    _c_data["cross_anomaly_count"] = sum(
-                        1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
-                    )
-
-            params["total_count"] = str(len(_c_rows))
-            rendered = render_answer_template(_c_tmpl, _c_data)
-            rendered = apply_corrections_to_answer(rendered, params)
-
-            # 테이블 데이터 구성 (summary 타입)
-            csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
-            _total = len(_c_rows)
-            if _total > MAX_TABLE_ROWS:
-                _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
-                _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
-                _trunc = True
-            else:
-                _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
-                _trunc = False
-
-            return build_success_response(
-                intent=intent,
-                answer=rendered,
-                graph_type=graph_type,
-                data=_resp_data,
-                table_columns=table_columns,
-                table_type=table_type,
-                session_id=sid,
-                csv_url=f"/csv/{csv_fn}",
-                total_rows=_total,
-                data_truncated=_trunc,
-                intent_candidates=intent_candidates,
-                site_group_distribution=_c_data.get("site_group_distribution"),
-                cross_anomaly_count=_c_data.get("cross_anomaly_count"),
-                cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
-                cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
-                data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
-                equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
-                equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
-                flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
+    # ── ANOMALY_SCAN_ALL: stale-while-revalidate 캐시 반환 ──
+    if intent == "ANOMALY_SCAN_ALL":
+        # 캐시 없음(서버 최초 시작 후 약 2분 이내) → 즉시 안내 메시지 반환
+        if not _ANOMALY_SCAN_CACHE:
+            return build_error_response(
+                "전체 센서 점검 데이터를 준비 중입니다 (서버 시작 후 약 1~2분 소요). 잠시 후 다시 질문해 주세요.", sid
             )
+        # 캐시 있으면 신선/만료 무관 즉시 반환 (백그라운드 루프가 5분마다 자동 갱신)
+        cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds() if _ANOMALY_SCAN_CACHE_TIME else 0
+        logger.info(f"ANOMALY_SCAN_ALL 캐시 반환 ({cache_age:.0f}초 전) sitename={params.get('sitename')!r} facilitytype={params.get('facilitytype')!r}")
+        _c = _ANOMALY_SCAN_CACHE
+        _c_rows = _c["rows"]
+        _c_cols = _c["columns"]
+        _c_data = dict(_c["processed_data"])  # 복사 (필터 시 수정)
+        _c_tmpl = _c["answer_template"]
+
+        # facilitytype / group_code 필터 적용
+        _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
+        _scope = build_anomaly_scope_label(params)
+        if _scope != "전체":
+            _c_data["total_tag_count"] = len(_c_rows)
+            # 필터된 결과로 카운트 재계산
+            from anomaly_detector import count_anomaly_levels
+            _fc = count_anomaly_levels(_c_rows, _c_cols)
+            _c_data["error_count"] = _fc["이상"]
+            _c_data["warn_count"] = _fc["주의"]
+            _c_data["ok_count"] = _fc["정상"]
+            # verdict 기반 교차이상 카운트 재계산
+            _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
+            if _vd_idx is not None:
+                _c_data["cross_anomaly_count"] = sum(
+                    1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                )
+
+        params["total_count"] = str(len(_c_rows))
+        rendered = render_answer_template(_c_tmpl, _c_data)
+        rendered = apply_corrections_to_answer(rendered, params)
+
+        # 테이블 데이터 구성 (summary 타입)
+        csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
+        _total = len(_c_rows)
+        if _total > MAX_TABLE_ROWS:
+            _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
+            _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
+            _trunc = True
+        else:
+            _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
+            _trunc = False
+
+        return build_success_response(
+            intent=intent,
+            answer=rendered,
+            graph_type=graph_type,
+            data=_resp_data,
+            table_columns=table_columns,
+            table_type=table_type,
+            session_id=sid,
+            csv_url=f"/csv/{csv_fn}",
+            total_rows=_total,
+            data_truncated=_trunc,
+            intent_candidates=intent_candidates,
+            site_group_distribution=_c_data.get("site_group_distribution"),
+            cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+            cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
+            cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
+            data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
+            equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
+            equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+            flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
+        )
 
     # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (fn_night_min_flow_stats 대체, 53s→~10s)
     if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
@@ -9068,71 +9087,76 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
                 except ValueError:
                     pass
 
-        # ── ANOMALY_SCAN_ALL 캐시 히트: 전체 파이프라인 건너뜀 ──
-        if intent == "ANOMALY_SCAN_ALL" and _ANOMALY_SCAN_CACHE and _ANOMALY_SCAN_CACHE_TIME:
-            cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
-            if cache_age < _ANOMALY_SCAN_CACHE_TTL:
-                logger.info(f"[SSE] ANOMALY_SCAN_ALL 캐시 히트 ({cache_age:.0f}초 전)")
-                yield _sse_event("progress", {"step": "cache_hit", "message": "캐시된 이상감지 결과를 반환합니다..."})
-                _c = _ANOMALY_SCAN_CACHE
-                _c_rows = _c["rows"]
-                _c_cols = _c["columns"]
-                _c_data = dict(_c["processed_data"])
-                _c_tmpl = _c["answer_template"]
-
-                # facilitytype / group_code 필터 적용
-                _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
-                _scope = build_anomaly_scope_label(params)
-                if _scope != "전체":
-                    _c_data["total_tag_count"] = len(_c_rows)
-                    from anomaly_detector import count_anomaly_levels
-                    _fc = count_anomaly_levels(_c_rows, _c_cols)
-                    _c_data["error_count"] = _fc["이상"]
-                    _c_data["warn_count"] = _fc["주의"]
-                    _c_data["ok_count"] = _fc["정상"]
-                    # verdict 기반 교차이상 카운트 재계산
-                    _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
-                    if _vd_idx is not None:
-                        _c_data["cross_anomaly_count"] = sum(
-                            1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
-                        )
-
-                params["total_count"] = str(len(_c_rows))
-                rendered = render_answer_template(_c_tmpl, _c_data)
-                rendered = apply_corrections_to_answer(rendered, params)
-
-                csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
-                _total = len(_c_rows)
-                if _total > MAX_TABLE_ROWS:
-                    _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
-                    _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
-                    _trunc = True
-                else:
-                    _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
-                    _trunc = False
-
-                yield _sse_event("result", build_success_response(
-                    intent=intent,
-                    answer=rendered,
-                    graph_type=graph_type,
-                    data=_resp_data,
-                    table_columns=table_columns,
-                    table_type=table_type,
-                    session_id=sid,
-                    csv_url=f"/csv/{csv_fn}",
-                    total_rows=_total,
-                    data_truncated=_trunc,
-                    intent_candidates=intent_candidates,
-                    site_group_distribution=_c_data.get("site_group_distribution"),
-                    cross_anomaly_count=_c_data.get("cross_anomaly_count"),
-                    cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
-                    cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
-                    data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
-                    equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
-                    equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
-                    flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
+        # ── ANOMALY_SCAN_ALL: stale-while-revalidate 캐시 반환 ──
+        if intent == "ANOMALY_SCAN_ALL":
+            if not _ANOMALY_SCAN_CACHE:
+                yield _sse_event("result", build_error_response(
+                    "전체 센서 점검 데이터를 준비 중입니다 (서버 시작 후 약 1~2분 소요). 잠시 후 다시 질문해 주세요.", sid
                 ))
                 return
+            # 캐시 있으면 항상 반환 (신선/만료 무관)
+            cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds() if _ANOMALY_SCAN_CACHE_TIME else 0
+            logger.info(f"[SSE] ANOMALY_SCAN_ALL 캐시 반환 ({cache_age:.0f}초 전)")
+            yield _sse_event("progress", {"step": "cache_hit", "message": "이상감지 결과를 반환합니다..."})
+            _c = _ANOMALY_SCAN_CACHE
+            _c_rows = _c["rows"]
+            _c_cols = _c["columns"]
+            _c_data = dict(_c["processed_data"])
+            _c_tmpl = _c["answer_template"]
+
+            # facilitytype / group_code 필터 적용
+            _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
+            _scope = build_anomaly_scope_label(params)
+            if _scope != "전체":
+                _c_data["total_tag_count"] = len(_c_rows)
+                from anomaly_detector import count_anomaly_levels
+                _fc = count_anomaly_levels(_c_rows, _c_cols)
+                _c_data["error_count"] = _fc["이상"]
+                _c_data["warn_count"] = _fc["주의"]
+                _c_data["ok_count"] = _fc["정상"]
+                # verdict 기반 교차이상 카운트 재계산
+                _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
+                if _vd_idx is not None:
+                    _c_data["cross_anomaly_count"] = sum(
+                        1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                    )
+
+            params["total_count"] = str(len(_c_rows))
+            rendered = render_answer_template(_c_tmpl, _c_data)
+            rendered = apply_corrections_to_answer(rendered, params)
+
+            csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
+            _total = len(_c_rows)
+            if _total > MAX_TABLE_ROWS:
+                _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
+                _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
+                _trunc = True
+            else:
+                _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
+                _trunc = False
+
+            yield _sse_event("result", build_success_response(
+                intent=intent,
+                answer=rendered,
+                graph_type=graph_type,
+                data=_resp_data,
+                table_columns=table_columns,
+                table_type=table_type,
+                session_id=sid,
+                csv_url=f"/csv/{csv_fn}",
+                total_rows=_total,
+                data_truncated=_trunc,
+                intent_candidates=intent_candidates,
+                site_group_distribution=_c_data.get("site_group_distribution"),
+                cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+                cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
+                cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
+                data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
+                equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
+                equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
+                flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
+            ))
+            return
 
         # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (53s→~10s)
         if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
