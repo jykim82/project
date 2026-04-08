@@ -958,3 +958,105 @@ Recharts `type="monotone"`, Nivo `curve="monotoneX"` 와 동일한 알고리즘.
 | 3 | 감압시설 | buildPressureChartOption | ✅ 1·2차측 모두 smooth, 오버슈팅 없음 |
 | 4 | 배수지 모니터링 (7일) | MonitoringTrendBlock (장기 범위) | ✅ 큰 진폭에서도 monotone 보간 정상 |
 | 5 | GIS 관망도 트렌드 팝업 | GisTrendPopup (TrendChart 재사용) | ✅ 다중 시리즈 smooth, 아날로그/디지털 패널 정상 |
+
+---
+
+## [완료] 39. Isolation Forest v2 — 시설 단위 다변량 이상 감지 (2026-04-08)
+
+### 39.1 배경 및 문제점
+
+기존(v1) IF는 **태그별 독립 단변량 모델**로, 자기 자신의 값이 시간대별 분포에서 벗어났는지만 판단했다.  
+수처리 시스템은 센서 간 물리적 인과 관계가 강하기 때문에, 단변량 모델로는 아래와 같은 복합 이상을 탐지할 수 없었다.
+
+| 시나리오 | 이상 패턴 | v1 탐지 |
+|---------|----------|---------|
+| 누수 의심 | 수위 하락 + 유출유량 0 + 유입유량 정상 | ❌ |
+| 펌프 공회전 | 주파수 높음 + 전류 낮음 + 토출압력 미달 | ❌ |
+| 하류 차단 | 유량 정상 + 압력 급등 | ❌ |
+| 밸브 이상 | 수위 정상 + 유출유량 급감 | ❌ |
+| 감압 실패 | 유입압력 정상 + 유출압력 이상 | ❌ |
+
+### 39.2 v2 아키텍처 — Tier 구조
+
+```
+Tier-1 (시설 다변량)  ← 우선 적용
+  (sitename, facilitytype) 단위 1개 모델
+  상관 센서를 하나의 feature vector로 학습
+
+Tier-2 (태그 단변량)  ← Tier-1 미포함 태그 fallback
+  기존 per-tag 방식 유지
+```
+
+### 39.3 Tier-1 feature vector 정의
+
+| 시설 유형 | 필수 feature | 선택 feature | 시간 feature |
+|----------|------------|-------------|-------------|
+| 가압장   | 토출압력(`PRESSURE_DISCHARGE`), 유출유량(`FLOW_OUTLET`) | 유입압력(`PRESSURE_INLET`) | hour, dow |
+| 배수지   | 수위(`WATER_LEVEL`), 유출유량(`FLOW_OUTLET`) | 유입유량(`FLOW_INLET`) | hour, dow |
+| 감압시설 | 유입압력(`PRESSURE_INLET`), 유출압력(`PRESSURE_OUTLET`) | — | hour, dow |
+| 소블록/소소블록 | 유량순시(`FLOW_INSTANT`), 압력(`PRESSURE`) | — | hour, dow |
+| 저수지   | 수위(`WATER_LEVEL`), 유출유량(`FLOW_OUTLET`) | 유입유량(`FLOW_INLET`) | hour, dow |
+
+- **필수 feature** 중 하나라도 누락(≤0.001) → 예측 불가 (None 반환)
+- **선택 feature** 는 30일 학습 데이터에 실제 존재할 때만 포함 (시설마다 다를 수 있음)
+- **동일 group_code 태그 복수** (펌프 병렬 운전 등) → 최댓값 사용
+
+### 39.4 datainfo → group_code 매핑 (`DATAINFO_TO_GROUP`)
+
+긴 키워드 우선 매칭 순서:
+
+| datainfo 키워드 | group_code |
+|---------------|-----------|
+| 유출유량 | FLOW_OUTLET |
+| 유입유량 | FLOW_INLET |
+| 유량순시 | FLOW_INSTANT |
+| 토출압력 | PRESSURE_DISCHARGE |
+| 유출압력 | PRESSURE_OUTLET |
+| 유입압력 | PRESSURE_INLET |
+| 수위 | WATER_LEVEL |
+| 압력 | PRESSURE |
+| 유량 | FLOW |
+
+### 39.5 학습 설정
+
+| 파라미터 | 값 | 설명 |
+|---------|-----|------|
+| 학습 기간 | 30일 cagg | `cagg_5min_raw_stats_ai` |
+| 최소 타임스탬프 (Tier-1) | 80개 | 공동 관측 기준 |
+| 최소 샘플 (Tier-2) | 100개 | 기존과 동일 |
+| contamination 기본 | 5% | 그룹별 A:3% / B:5% / C:8% / D:5% |
+| 재학습 주기 | 24시간 | 서버 시작 10초 후 첫 실행 |
+
+비가동 데이터 제외: `abs(val) < 0.001` (펌프 정지 구간)
+
+### 39.6 예측 인터페이스
+
+| 메서드 | 용도 |
+|--------|------|
+| `predict_for_rows(rows, columns)` | ANOMALY_SCAN_ALL — 전체 태그 일괄 판정 |
+| `predict_facility(sitename, ft, sensor_vals)` | ANOMALY_FACILITY_DETAIL — 단일 시설 직접 예측 |
+| `predict_single(tagsn, val, hour, dow)` | Tier-2 하위 호환 |
+
+`predict_for_rows` 반환값 추가 필드:
+
+| 필드 | 설명 |
+|------|------|
+| `facility_results` | `{sitename/facilitytype: {is_anomaly, anomaly_score, features_used, tier}}` |
+| `tier1_count` | Tier-1 판정 시설 수 |
+| `tier2_count` | Tier-2 판정 태그 수 |
+
+`ANOMALY_FACILITY_DETAIL` 응답 추가 필드:
+
+| 필드 | 설명 |
+|------|------|
+| `ml_tier` | 1 = 다변량, 2 = 단변량 fallback |
+| `ml_anomaly_score` | IF anomaly score (낮을수록 이상) |
+| `ml_features_used` | 예측에 사용된 group_code 목록 |
+
+### 39.7 구현 파일
+
+| 파일 | 변경 내용 |
+|------|---------|
+| `D:\slm\anomaly_iforest.py` | v2 전면 재설계 (FacilityModel 클래스, Tier-1/2 분리) |
+| `D:\slm\ai_server.py` | ANOMALY_SCAN_ALL / ANOMALY_FACILITY_DETAIL 연동 업데이트 |
+
