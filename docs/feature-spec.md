@@ -117,6 +117,8 @@
 - 듀얼 패널: 아날로그 상단 + 디지털 하단
 - 태그별 고유 색상, 범례 토글
 - 알람 한계선 (HH/LL) 표시
+- **곡선 보간**: 아날로그 시리즈 `smooth: 0.3` + `smoothMonotone: 'x'` (monotone 보간, 오버슈팅 없음)
+- **디지털 시리즈**: `step: 'end'` (계단형, smooth 미적용)
 
 ### 3.4 통계 카드
 - 태그별: 최소 / 최대 / 평균 / 최근값
@@ -137,6 +139,7 @@
 - 카탈로그별 MonitoringTrendBlock:
   - 통계 카드: Min / Max / Avg / Last (태그별)
   - 라인/영역 차트 + 알람 한계선 (HH/LL markLine)
+  - **곡선 보간**: plot-chart.ts `buildAnalogSeries()` — `smooth: 0.3` + `smoothMonotone: 'x'`
 - 데이터 부족 경고 배너
 
 ### 4.3 시설유형별 설정
@@ -161,6 +164,7 @@
 - 시리즈: 1차측(빨강 실선) + 2차측(파랑 실선 + 그라데이션 영역)
 - Y축: 0~5 kgf/cm²
 - 24시간 기본, 시설별 탭 전환
+- **곡선 보간**: `smooth: true` + `smoothMonotone: 'x'` (양쪽 시리즈 공통)
 
 ### 5.3 데이터 갱신
 - 30초 간격 자동 갱신
@@ -277,6 +281,7 @@
 - 태그: Analog 최대 8개 + Digital 최대 4개 자동 조회
 - API: `/tags` (태그 목록) + `/trend/data` (시계열 500포인트)
 - 듀얼 패널: 아날로그 상단 + 디지털 하단
+- **곡선 보간**: TrendChart 재사용이므로 3.3 동일 (`smoothMonotone: 'x'`) 자동 적용
 
 ### 7.6 시설정보 팝업
 - **시설 사진**: site_photo_url 표시 + 업로드 버튼 (JPG/PNG/WebP, 10MB 제한)
