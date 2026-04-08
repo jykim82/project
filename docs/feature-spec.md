@@ -1,7 +1,7 @@
 # SLM Dashboard 기능 사양서
 
 > 완성된 기능 + 구현 예정 사양을 통합 관리하는 문서입니다.
-> 최종 갱신: 2026-04-07
+> 최종 갱신: 2026-04-08
 
 ---
 
@@ -907,3 +907,54 @@
 - 시스템 설정 접근 (DB 접속정보, AI 모델 파라미터)
 - 전체 사용자 권한 변경
 - 감사 로그 조회
+
+---
+
+## 38. ECharts 차트 공통 사양
+
+### 38.1 라인 시리즈 곡선 보간 표준
+
+모든 아날로그 라인 시리즈에 **monotone 보간**을 적용한다. (commit `3217876`, 2026-04-08)
+
+| 속성 | 값 | 설명 |
+|------|-----|------|
+| `smooth` | `true` 또는 `0.3` | 부드러운 곡선 활성화 |
+| `smoothMonotone` | `'x'` | 단조(monotone) 보간 — 오버슈팅 방지 |
+
+**오버슈팅(overshooting)이란?**  
+단순 cubic spline은 데이터가 급격히 변하는 구간에서 실제 값 범위를 초과하는 곡선이 그려진다.  
+`smoothMonotone: 'x'`는 인접 포인트 사이에서 단조 보간을 보장해 수위·압력·유량 등 물리적 경계가 있는 데이터에서 과대/과소 표현을 막는다.  
+Recharts `type="monotone"`, Nivo `curve="monotoneX"` 와 동일한 알고리즘.
+
+### 38.2 적용 범위
+
+| 파일 | 함수/컴포넌트 | 대상 시리즈 | smooth 값 |
+|------|-------------|------------|-----------|
+| `plot-chart.ts` | `buildAnalogSeries()` | 트렌드/모니터링 아날로그 | `0.3` |
+| `plot-chart.ts` | dual panel analog | 혼합 패널 아날로그 | `0.3` |
+| `reservoir-chart.ts` | `buildReservoirChartOption()` | 배수지 수위 | `true` |
+| `pressure-chart.ts` | `buildPressureChartOption()` | 감압 1차측·2차측 압력 | `true` |
+| `booster-chart.ts` | `buildBoosterChartOption()` | 가압장 토출압력·유량 | `true` |
+| `StddevAnalysisView.tsx` | 인라인 series | 표준편차 분석 라인 | `true` |
+| `StddevMultiAnalysisView.tsx` | 인라인 series | 복수 표준편차 라인 | `true` |
+| `LeakCusumView.tsx` | 인라인 series | 야간최소유량·CUSUM | `true` |
+
+### 38.3 제외 대상 (smooth 미적용)
+
+| 조건 | 이유 |
+|------|------|
+| `step: 'end'` 디지털 시리즈 | 계단형(ON/OFF)이므로 보간 불필요/불가 |
+| `markLine` 기준선·임계값 | 수평 직선이므로 보간 불필요 |
+| bar / pie 차트 | 라인 아님 |
+
+### 38.4 검증 결과 (Playwright, 2026-04-08)
+
+5개 화면에서 Recharts `type="monotone"` 대비 동등 수준 확인:
+
+| # | 화면 | 컴포넌트 | 결과 |
+|---|------|---------|------|
+| 1 | 트렌드 분석 | TrendChart (아날로그 2태그) | ✅ smooth 곡선, 디지털 계단형 구분 정상 |
+| 2 | 배수지 모니터링 (24h) | MonitoringTrendBlock | ✅ 수위 smooth, HH/LL 직선 유지 |
+| 3 | 감압시설 | buildPressureChartOption | ✅ 1·2차측 모두 smooth, 오버슈팅 없음 |
+| 4 | 배수지 모니터링 (7일) | MonitoringTrendBlock (장기 범위) | ✅ 큰 진폭에서도 monotone 보간 정상 |
+| 5 | GIS 관망도 트렌드 팝업 | GisTrendPopup (TrendChart 재사용) | ✅ 다중 시리즈 smooth, 아날로그/디지털 패널 정상 |
