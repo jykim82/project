@@ -978,9 +978,13 @@ async def _iforest_training_loop():
     while True:
         try:
             _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
-            logger.info("IForest 백그라운드 학습 시작...")
+            logger.info("IForest v2 백그라운드 학습 시작...")
             await asyncio.to_thread(iforest_manager.train_all, get_db_connection, site_profiles=_profiles)
-            logger.info(f"IForest 백그라운드 학습 완료: {iforest_manager.model_count}개 모델")
+            status = iforest_manager.get_status()
+            logger.info(
+                "IForest v2 학습 완료: Tier-1 %d개 시설, Tier-2 %d개 태그",
+                len(status["tier1_facilities"]), status["tier2_tag_count"],
+            )
         except Exception as e:
             logger.error(f"IForest 백그라운드 학습 실패: {e}")
         await asyncio.sleep(RETRAIN_INTERVAL_HOURS * 3600)
@@ -1505,8 +1509,7 @@ def _diagnose_equipment_for_tags(
         # 1) 이상 태그 → 연결 설비 조회
         cur.execute("""
             SELECT DISTINCT m.equipment_id, m.tagsn,
-                   e.equipmenttype, e.sitename, e.facilitytype,
-                   e.ip_address, e.has_ip
+                   e.equipmenttype, e.sitename, e.facilitytype
             FROM tb_equipment_tag_map m
             JOIN tb_equipment_info e ON e.equipment_id = m.equipment_id
             WHERE m.tagsn = ANY(%s)
@@ -1517,15 +1520,13 @@ def _diagnose_equipment_for_tags(
 
         # 설비별 그룹핑
         equip_map: dict[str, dict] = {}
-        for eid, tagsn, etype, sn, ft, ip, has_ip in rows:
+        for eid, tagsn, etype, sn, ft in rows:
             if eid not in equip_map:
                 equip_map[eid] = {
                     "equipment_id": eid,
                     "equipmenttype": etype,
                     "sitename": sn,
                     "facilitytype": ft,
-                    "ip_address": ip,
-                    "has_ip": has_ip,
                     "linked_anomaly_tags": [],
                     "total_tag_count": 0,
                     "failures": [],
@@ -1543,19 +1544,17 @@ def _diagnose_equipment_for_tags(
             if eid in equip_map:
                 equip_map[eid]["total_tag_count"] = cnt
 
-        # 3) 네트워크 상태 확인 (IP 장비만)
-        ip_eids = [eid for eid, eq in equip_map.items() if eq.get("has_ip")]
-        if ip_eids:
-            cur.execute("""
-                SELECT DISTINCT ON (equipment_id) equipment_id, is_alive, check_time
-                FROM tb_network_status
-                WHERE equipment_id = ANY(%s)
-                ORDER BY equipment_id, check_time DESC
-            """, (ip_eids,))
-            for eid, alive, check_time in cur.fetchall():
-                if eid in equip_map and not alive:
-                    equip_map[eid]["failures"].append("network_down")
-                    equip_map[eid]["health_score"] -= 30
+        # 3) 네트워크 상태 확인 (tb_network_status에 있는 장비만)
+        cur.execute("""
+            SELECT DISTINCT ON (equipment_id) equipment_id, is_alive, check_time
+            FROM tb_network_status
+            WHERE equipment_id = ANY(%s)
+            ORDER BY equipment_id, check_time DESC
+        """, (eids,))
+        for eid, alive, check_time in cur.fetchall():
+            if eid in equip_map and not alive:
+                equip_map[eid]["failures"].append("network_down")
+                equip_map[eid]["health_score"] -= 30
 
         # 4) DI 장애 태그 확인
         cur.execute("""
@@ -6346,16 +6345,20 @@ def process_sql_result(
         data["ok_count"] = counts["정상"]
         data["comm_error_sites"] = count_comm_error_sites(rows, columns)
 
-        # Isolation Forest ML 보강 (백그라운드 학습 — ensure_trained 불필요)
+        # Isolation Forest ML 보강 (Tier-1 시설 다변량 + Tier-2 태그 단변량)
         data["ml_model_count"] = 0
         data["ml_anomaly_count"] = 0
         data["ml_agree_count"] = 0
+        data["ml_tier1_count"] = 0
+        data["ml_tier2_count"] = 0
         try:
             if_result = iforest_manager.predict_for_rows(rows, columns)
             if if_result:
-                data["ml_model_count"] = iforest_manager.model_count
+                data["ml_model_count"]  = iforest_manager.model_count
                 data["ml_anomaly_count"] = if_result.get("if_anomaly_count", 0)
-                data["ml_agree_count"] = if_result.get("z_and_if_agree", 0)
+                data["ml_agree_count"]   = if_result.get("z_and_if_agree", 0)
+                data["ml_tier1_count"]   = if_result.get("tier1_count", 0)
+                data["ml_tier2_count"]   = if_result.get("tier2_count", 0)
         except Exception as e:
             logger.warning(f"IForest enrichment 실패: {e}")
 
@@ -6423,12 +6426,35 @@ def process_sql_result(
                 _group = _profile.get("site_group", "B")
                 data["site_group"] = _group
 
-        # Isolation Forest ML 보강
+        # Isolation Forest ML 보강 (Tier-1 시설 다변량 우선)
         data["ml_anomaly_count"] = 0
+        data["ml_tier"] = 0
         try:
-            if_result = iforest_manager.predict_for_rows(rows, columns)
-            if if_result:
-                data["ml_anomaly_count"] = if_result.get("if_anomaly_count", 0)
+            # Tier-1: 시설 단위 다변량 예측 시도
+            col_map_tmp = {c: i for i, c in enumerate(columns)}
+            di_idx_tmp  = col_map_tmp.get("datainfo")
+            if _site and _ft and di_idx_tmp is not None:
+                sensor_vals: dict[str, float] = {}
+                from anomaly_iforest import _datainfo_to_group
+                for row in rows:
+                    di  = row[di_idx_tmp] or ""
+                    val = float(row[col_map_tmp["current_val"]] or 0)
+                    gc  = _datainfo_to_group(di)
+                    if gc:
+                        sensor_vals[gc] = max(sensor_vals.get(gc, 0.0), val)
+                fm_result = iforest_manager.predict_facility(_site, _ft, sensor_vals)
+                if fm_result is not None:
+                    data["ml_anomaly_count"] = 1 if fm_result["is_anomaly"] else 0
+                    data["ml_tier"] = 1
+                    data["ml_anomaly_score"] = round(fm_result["anomaly_score"], 4)
+                    data["ml_features_used"] = fm_result.get("features_used", [])
+
+            # Tier-1 모델 없으면 Tier-2 fallback
+            if data["ml_tier"] == 0:
+                if_result = iforest_manager.predict_for_rows(rows, columns)
+                if if_result:
+                    data["ml_anomaly_count"] = if_result.get("if_anomaly_count", 0)
+                    data["ml_tier"] = 2
         except Exception as e:
             logger.warning(f"IForest enrichment 실패: {e}")
 
@@ -6481,6 +6507,7 @@ def process_sql_result(
         cross_facility_result = None
         intra_facility_result = None
         cross_intra_result: list[dict] = []
+        propagation_trace = None
 
         # 인과관계 그룹코드 탐색 (선행 — DB 불필요, 빠름)
         if _CAUSAL_INDEX and rows:
@@ -6499,7 +6526,6 @@ def process_sql_result(
                     if abs(_zv) >= _warn_th:
                         _anomaly_rows.append((_zv, _r))
                 _anomaly_rows.sort(key=lambda x: abs(x[0]), reverse=True)
-                from anomaly_detector import verify_causal_context
                 for _zv, _anomaly_row in _anomaly_rows:
                     _a_tagsn = str(_anomaly_row[_c_tagsn_idx] or "")
                     _a_datainfo = str(_anomaly_row[_c_datainfo_idx] or "")
@@ -6522,6 +6548,7 @@ def process_sql_result(
             if not (_CAUSAL_INDEX and _a_gc):
                 return None
             try:
+                from anomaly_detector import verify_causal_context
                 return verify_causal_context(
                     _query_recent_values, _site, _ft,
                     _a_gc, _a_dir, _CAUSAL_INDEX, zone=_a_zone,
@@ -6599,7 +6626,8 @@ def process_sql_result(
                     _bwd = _f_bwd.result()
                 logger.info("⏱ Phase2 전파추적 %dms", int((time.time() - _t_phase2) * 1000))
                 if _fwd.get("hops") or _bwd.get("root_cause") or _bwd.get("hops"):
-                    data["propagation_trace"] = {"forward": _fwd, "backward": _bwd}
+                    propagation_trace = {"forward": _fwd, "backward": _bwd}
+                    data["propagation_trace"] = propagation_trace
             except Exception as e:
                 logger.warning("전파 추적 실패 (무시): %s", e)
 
@@ -6891,7 +6919,23 @@ async def ask(request: AskRequest):
     6. 질의 검증 → NEED_CORRECTION이면 정정 응답
     7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
     """
+    try:
+        return await _ask_inner(request)
+    except Exception as _top_e:
+        import traceback as _tb
+        logger.error("ask() 최상위 예외:\n%s", _tb.format_exc())
+        raise
+
+
+async def _ask_inner(request: AskRequest):
     _t_start = time.perf_counter()
+    # DEBUG: write to dedicated file to diagnose 500 errors
+    try:
+        with open(r"D:\web\ask_debug.txt", "a", encoding="utf-8") as _dbg:
+            _dbg.write(f"[{time.strftime('%H:%M:%S')}] _ask_inner called: {request.user_question[:50]}\n")
+    except Exception:
+        pass
+    logger.info(f"[DEBUG] _ask_inner 진입: q={request.user_question[:30]!r}")
     raw_question = request.user_question
     # DEMO_MODE: 사용자 입력의 익명 코드를 원본 현장명으로 복원
     if DEMO_MODE and _DEMO_REVERSE_MAP:
@@ -8114,8 +8158,10 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
     params["total_count"] = str(len(rows))
 
     # 데이터 후처리
+    logger.info(f"[DEBUG] process_sql_result 시작: intent={intent} rows={len(rows)}")
     try:
         processed_data = process_sql_result(rows, columns, intent_def, params)
+        logger.info(f"[DEBUG] process_sql_result 완료: keys={list(processed_data.keys())[:5]}")
     except JsonbSchemaViolation as e:
         logger.error(f"JSONB 스키마 위반: {e.message}, path: {e.path}")
         return build_error_response(
@@ -8312,6 +8358,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         f"rows={len(rows)}"
     )
 
+    logger.info(f"[DEBUG] build_success_response 시작: intent={intent}")
     return build_success_response(
         intent=intent,
         answer=rendered_answer,
