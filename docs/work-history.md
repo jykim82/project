@@ -2,6 +2,38 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-08 — ANOMALY_SCAN_ALL 성능 개선 + 임베딩 keep-warm, commit 2ab1c90)
+
+#### 구현 내역
+- **증상**: "전체 센서 점검해줘" (ANOMALY_SCAN_ALL) → 캐시 미스 시 102초 대기
+- **근본 원인**: cagg_5min_raw_stats_ai 34M행 통계 집계 (stats_global 단독 4.4s), TTL 만료 시 유저가 SQL 직접 실행
+- **수정 1 — stale-while-revalidate**: 캐시 있으면 TTL 무관 즉시 반환, 캐시 없으면 "준비 중" 안내
+- **수정 2 — 초기 딜레이 단축**: 프로파일링 대기 최대 120s → 30s
+- **수정 3 — 임베딩 keep-warm**: snowflake-arctic-embed2 /api/embed 더미 요청 4분 주기 추가 (첫 임베딩 3s 지연 방지)
+- **결과**: 102초 → 0.4초 (캐시 히트 기준)
+
+### 완료 (2026-04-08 — AI 채팅 트렌드 PlotChart AI 요약, commit a644cf9)
+
+#### 구현 내역
+- **목표**: 트렌드 페이지 BrushToolbar AI 요약 기능을 AI 채팅 트렌드 차트에도 적용
+- **수정 파일**: `src/components/chat/PlotChart.tsx`
+  - 마운트 시 `trend_explain_enabled` 시스템설정 확인
+  - 첫 번째 아날로그 시리즈 min/max/avg 계산 → `/api/proxy/trend/explain` 자동 호출
+  - 차트 하단 파란 박스로 요약 표시 (Loader2 → Sparkles 아이콘)
+  - `plot.period.from/to` 변경 시 재요약 (네비게이션 이동 제외)
+
+### 완료 (2026-04-08 — NETWORK_UPSTREAM_FAULT_ANALYSIS 구현, commit 0cc6bd4+8f39555)
+
+#### 구현 내역
+- **목표**: "현장 LTE모뎀이 다 접속 안 되면 상위 UTM/SSLVPN 문제" 도메인 지식 기반 인텐트
+- **인텐트 분류** (`intent_classifier.py`): "SSLVPN/UTM/상위 장비/다 통신이상/LTE 전부" → keyword 즉시 확정
+- **SQL** (`ai_server.py`): MAX(check_time) CTE + equipmenttype 필터 + bool_or(is_alive)
+  - sslvpn_summary CTE: LTE 모뎀 → SSLVPN 연결 집계, down_sites array_agg
+  - utm_info CTE: UTM 전체 상태 집계
+  - 결과: UTM/SSLVPN 정상 여부 + 이상 현장명 목록 출력
+- **임베딩**: example3.json 15개 한국어 질문 정상화, 723벡터로 재구축
+- **버그 수정**: MAX(boolean) → bool_or() (commit 8f39555)
+
 ### 완료 (2026-04-08 — AI 요약 응답속도 개선, commit 3fa7860)
 
 #### 구현 내역
