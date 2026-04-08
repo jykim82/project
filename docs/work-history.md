@@ -2,6 +2,44 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-08 — ECharts smoothMonotone 적용)
+
+#### 구현 내역
+- **목표**: ECharts 트렌드 라인을 Recharts처럼 부드러운 곡선으로 표시
+- **방법**: `smooth: true/0.3` 기존 설정 유지 + `smoothMonotone: 'x'` 추가
+  - `smoothMonotone: 'x'` = monotone 보간 (Recharts `type="monotone"` 동일 알고리즘)
+  - 오버슈팅(실제 데이터 범위 초과) 방지 — 수위/압력/유량 물리량에 필수
+- **적용 파일** (commit `3217876`):
+  - `plot-chart.ts`: `buildAnalogSeries()` + dual panel analog 시리즈 (디지털 step 시리즈는 제외)
+  - `reservoir-chart.ts`: 배수지 수위 시리즈
+  - `pressure-chart.ts`: 감압시설 1차측/2차측 압력 시리즈
+  - `booster-chart.ts`: 가압장 토출압력/유량 시리즈
+  - `StddevAnalysisView.tsx`, `StddevMultiAnalysisView.tsx`: 표준편차 분석 라인
+  - `LeakCusumView.tsx`: 야간최소유량 + CUSUM 라인
+- **제외**: 디지털 시리즈(`step: 'end'`), 기준선/임계값(수평 직선), bar/pie 차트
+
+### 완료 (2026-04-08 — 트렌드 AI 요약 설명)
+
+#### 구현 내역
+- **`POST /trend/explain`** (ai_server.py) 신규 엔드포인트
+  - gemma4:latest로 선택 구간 수치·패턴 2문장 요약 (권고 없음)
+  - 요청: tag_name, unit, from_ts, to_ts, min/max/avg/count, anomaly_count
+  - TREND_EXPLAIN_ENABLED 설정 DB 조회 → 비활성 시 거부
+- **`GET/PUT /admin/site-settings`** — `trend_explain_enabled` 필드 추가
+  - `tb_grp_code` SITE_SETTING 그룹 UPSERT 보장 (FK 충족)
+  - `tb_comm_code` TREND_EXPLAIN_ENABLED UPSERT (create_dt/update_dt 제거)
+- **`site-settings/page.tsx`** — AI 카드에 "트렌드 AI 요약" 토글 추가
+  - Ollama 미연결 시 토글 비활성화
+- **`BrushToolbar.tsx`** — "AI 요약" 버튼 + 로딩 스피너 + 결과 텍스트 표시
+  - `ExplainState` 타입: idle / loading / done / error
+  - 카드 너비 w-64 → w-72 확장 (요약 텍스트 공간 확보)
+- **`TrendChart.tsx`** — explain 로직 통합
+  - 마운트 시 `/api/proxy/admin/site-settings` 1회 조회 → `trendExplainEnabled` 상태
+  - 브러시 새 구간 선택 시 이전 요약 초기화
+  - `handleExplain()`: `/api/proxy/trend/explain` POST → `explainState/Summary` 관리
+  - BrushToolbar에 새 props 전달
+- **Playwright 테스트**: 영역 선택 → AI 요약 버튼 → "AI 분석 중..." → 2문장 요약 표시 확인
+
 ### 완료 (2026-04-07 — 기타 소규모 수정 3종)
 
 #### 구현 내역
@@ -1459,10 +1497,7 @@
 3. ~~**GIS 속성 필터 UI**~~ — 이미 구현 완료 (관경 12종 + 관재질 10종 버튼 필터, GisLayerPanel PipeFilterSection)
 4. ~~**시스템 설정 UI**~~ — 이미 구현 완료 (/admin/site-settings, DB 접속정보+AI 파라미터 슬라이더+랜딩토글)
 5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
-6. **트렌드 AI 요약 설명** — 트렌드 차트 선택 시 Gemma4가 수치·패턴을 2문장으로 요약 (권고 없음, 순수 데이터 설명)
-   - gemma4:latest(e4b) 테스트 완료 — 지시 준수 양호, 응답 3~5초
-   - 활성화 조건: MASTER가 시스템 설정에서 on/off 토글로 제어 (비활성 시 UI 숨김)
-   - 구현 범위: `/trend/explain` API (ai_server.py) + BrushToolbar "AI 요약" 버튼 + 시스템 설정 토글
+~~6. **트렌드 AI 요약 설명**~~ — 완료 (04-08, /trend/explain + BrushToolbar AI요약 버튼 + 시스템 설정 토글)
 7. **EPANET 수리 시뮬레이션** (장기, 별도 모듈) — SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식
 8. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
 
