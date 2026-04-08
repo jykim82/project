@@ -1782,8 +1782,11 @@ async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
     global intent_classifier, param_extractor_instance, query_validator, _cleanup_task, _profiling_task, _sync_task, site_profiler, _sync_worker, _ollama_keepwarm_task
 
-    # DB 커넥션 풀 초기화 (get_db_connection보다 먼저)
-    _init_db_pool()
+    # DB 커넥션 풀 초기화 (실패해도 직접 연결 폴백으로 계속 기동)
+    try:
+        _init_db_pool()
+    except Exception as _pool_err:
+        logger.warning(f"DB 풀 초기화 실패 (무시, 직접 연결 폴백): {_pool_err}")
 
     # site_profiler 초기화 (get_db_connection 정의 후)
     site_profiler = SiteProfiler(get_db_connection)
@@ -2210,19 +2213,22 @@ _db_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 
 
 def _init_db_pool() -> None:
-    """커넥션 풀 초기화 — get_db_connection() 첫 호출 전에 실행되어야 한다."""
+    """커넥션 풀 초기화 — 실패해도 서버는 계속 기동 (직접 연결 폴백)."""
     global _db_pool
-    _db_pool = psycopg2.pool.ThreadedConnectionPool(
-        minconn=DB_POOL_MIN,
-        maxconn=DB_POOL_MAX,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        options="-c client_encoding=utf8",
-    )
-    logger.info(f"DB 커넥션 풀 초기화 완료 (min={DB_POOL_MIN}, max={DB_POOL_MAX})")
+    try:
+        _db_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=DB_POOL_MIN,
+            maxconn=DB_POOL_MAX,
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            options="-c client_encoding=utf8",
+        )
+        logger.info(f"DB 커넥션 풀 초기화 완료 (min={DB_POOL_MIN}, max={DB_POOL_MAX})")
+    except Exception as e:
+        logger.warning(f"DB 풀 초기화 실패 — 직접 연결 폴백 모드로 기동: {e}")
 
 
 # =============================================================================
