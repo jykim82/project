@@ -3914,6 +3914,8 @@ def build_success_response(
         response["flow_balance_summary"] = kwargs["flow_balance_summary"]
     if kwargs.get("intra_facility"):
         response["intra_facility"] = kwargs["intra_facility"]
+    if kwargs.get("equipment_diagnosis"):
+        response["equipment_diagnosis"] = kwargs["equipment_diagnosis"]
     # IForest ML 필드 (ANOMALY_SCAN_ALL, ANOMALY_FACILITY_DETAIL)
     for _ml_key in ("ml_model_count", "ml_anomaly_count", "ml_agree_count",
                     "ml_tier1_count", "ml_tier2_count", "ml_tier", "ml_anomaly_score",
@@ -8398,6 +8400,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         equipment_failure_count=len(_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
         flow_balance_summary=_filter_flow_balance(processed_data.get("flow_balance_summary"), params.get("sitename")),
         intra_facility=processed_data.get("intra_facility"),
+        equipment_diagnosis=processed_data.get("equipment_diagnosis"),
         ml_model_count=processed_data.get("ml_model_count"),
         ml_anomaly_count=processed_data.get("ml_anomaly_count"),
         ml_agree_count=processed_data.get("ml_agree_count"),
@@ -9866,6 +9869,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             equipment_failure_count=len(_filter_by_sitename(processed_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
             flow_balance_summary=_filter_flow_balance(processed_data.get("flow_balance_summary"), params.get("sitename")),
             intra_facility=processed_data.get("intra_facility"),
+            equipment_diagnosis=processed_data.get("equipment_diagnosis"),
         )
 
         yield _sse_event("result", final_response)
