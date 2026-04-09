@@ -1640,6 +1640,29 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
     # 1단계: SQL 실행 (365일 stats + 3h latest + comm_error)
     # 플레이스홀더 치환 (캐시는 전체 조회이므로 필터 없음)
     cache_params = {"anomaly_facility_filter": "", "anomaly_scope": "", "alarm_filter_clause": ""}
+
+    # 데이터 신선도 확인: latest CTE가 now()-3h 기준이므로 DB 데이터가 오래됐으면 max(bucket) 기준으로 조정
+    try:
+        _max_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
+        if _max_rows and _max_rows[0][0]:
+            _max_bucket = _max_rows[0][0]
+            _max_bucket_naive = _max_bucket.replace(tzinfo=None) if getattr(_max_bucket, "tzinfo", None) else _max_bucket
+            _data_age_sec = (datetime.now() - _max_bucket_naive).total_seconds()
+            if _data_age_sec > 3600:
+                # 데이터가 1시간 이상 오래됨 → latest CTE를 max(bucket) 기준으로 조정
+                _ref_from = (_max_bucket_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+                _ref_to = (_max_bucket_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                sql_combined = sql_combined.replace(
+                    "WHERE bucket >= now() - interval '3 hours'",
+                    f"WHERE bucket >= '{_ref_from}'::timestamp AND bucket <= '{_ref_to}'::timestamp"
+                ).replace(
+                    "WHERE bucket >= now() - interval '1 hour'",
+                    f"WHERE bucket >= '{(_max_bucket_naive - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')}'::timestamp AND bucket <= '{_ref_to}'::timestamp"
+                )
+                logger.info(f"SCAN_ALL: 데이터 {_data_age_sec/3600:.1f}h 오래됨 → latest/recent_holding CTE 기준 max_bucket({_max_bucket_naive}) 조정")
+    except Exception as e:
+        logger.warning(f"SCAN_ALL: max(bucket) 확인 실패: {e}")
+
     try:
         rows, columns = execute_sql(sql_combined, cache_params)
     except Exception as e:
