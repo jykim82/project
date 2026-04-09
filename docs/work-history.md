@@ -2,6 +2,41 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-09 — Phase3 설비 역추적 버그 수정 + 미들웨어 인증 정리, commit c7e69a3/9465bc3/7112262)
+
+#### 구현 내역
+- **미들웨어 인증 범위 개선** (`middleware.ts`)
+  - `api/gis` 전체 우회 → `tiles/layer/pipelines`(읽기전용)만 우회
+  - `/api/gis/coordinates` 쓰기 작업 인증 대상 포함
+- **GIS coordinates 인증 추가** (`gis/coordinates/route.ts`)
+  - PUT/POST/DELETE에 `requireSession()` 추가 → 미인증 401 반환
+- **Phase 3 equipment_diagnosis 응답 누락 수정** (`ai_server.py`)
+  - `build_success_response()`: `equipment_diagnosis` kwarg 처리 추가
+  - `/ask` 핸들러: `equipment_diagnosis=processed_data.get(...)` 추가
+  - `/ask/stream` SSE 핸들러: 동일하게 추가
+  - `AiServerResponse` 타입: `equipment_diagnosis?: EquipmentDiagnosis[]` 추가
+- **테스트 3회** — 죽동 배수지 ✅ (PLC 55점·통신이상·주의), 합덕/갈산 정상 동작 확인
+
+---
+
+### 완료 (2026-04-09 — GIS 기본값 최소화 + ANOMALY_SCAN_ALL IForest ML 배지, commit 27f881c)
+
+#### 구현 내역
+- **GIS 관망도 기본값 최소화** (`gis/page.tsx`)
+  - 시설목록 패널: `showFacilityList true → false` (기본 접힘)
+  - 유량흐름 패널: `showFlowPanel true → false` (기본 접힘)
+  - Phase1(유량두께/글로우/불균형): `showBase/showGlow/showImbalance true → false`
+  - Phase2(셔머 애니메이션): `showShimmer true → false`
+  - **이유**: GIS 초기 진입 화면 과부하 → 최소 표시, 사용자가 필요 시 활성화
+- **ANOMALY_SCAN_ALL IForest ML 배지** (`AnomalyScanView.tsx`)
+  - `AnomalyData` 타입에 `mlModelCount/mlAnomalyCount/mlAgreeCount/mlTier1Count/mlTier2Count` 추가
+  - `AiServerResponse` 타입에 `ml_*` 서버 필드 추가
+  - `chat-response-mapper.ts`: ML 필드 매핑 추가 (서버 응답 → 프론트엔드 타입)
+  - `AnomalyScanView.tsx`: KPI 카드 위에 IForest ML 탐지 배지 섹션 추가
+    - 모델 수 / Tier-1(시설 다변량) / Tier-2(태그 단변량) / ML이상 수 / Z+ML 동시이상 수
+
+---
+
 ### 완료 (2026-04-08 — IForest v2 테스트 스위트 구축 + T4 API 필드 수정)
 
 #### 구현 내역
