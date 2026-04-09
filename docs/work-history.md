@@ -2,6 +2,21 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-10 — ANOMALY_SCAN_ALL 캐시 0행 수정 + DB IPv6 연결 수정)
+
+#### 구현 내역
+- **ANOMALY_SCAN_ALL latest CTE 시간창 동적 조정** (`D:\slm\ai_server.py`, `_compute_anomaly_scan_all()`)
+  - 문제: SQL의 `latest` CTE가 `now() - 3h` 고정 → DB 데이터가 3시간 이상 오래되면 0행 반환 → 종합 현황판 데이터 없음
+  - 해결: SQL 실행 전 `max(bucket)` 확인, 1시간 이상 오래됐으면 `latest`/`recent_holding` CTE를 max_bucket 기준으로 패치
+  - 결과: 7.8h 오래된 데이터에서 293행 정상 캐시 생성 (캐시 완료 98.9점)
+- **DB 연결 IPv6 문제 수정** (`D:\slm\.env`)
+  - 문제: `DB_HOST=localhost` → C:\Python313 psycopg2가 `::1`(IPv6)로 해석 → Docker DB(IPv4) 연결 실패 + `fe_sendauth: no password supplied`
+  - 해결: `DB_HOST=127.0.0.1` 명시 (IPv4 강제)
+  - `start-services.bat`은 WSL_IP로 오버라이드하므로 영향 없음
+- **에러 기록**: `error-management.md` E-011, E-012 추가
+
+---
+
 ### 완료 (2026-04-09 — Phase3 설비 역추적 버그 수정 + 미들웨어 인증 정리, commit c7e69a3/9465bc3/7112262)
 
 #### 구현 내역

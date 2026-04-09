@@ -194,6 +194,32 @@ python D:\slm\ai_server.py
 
 ---
 
+### [E-011] ANOMALY_SCAN_ALL 캐시 미생성 — latest CTE 시간창 미스
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-10 |
+| **증상** | 서버 재기동 후 종합 현황판 데이터 없음, `_ANOMALY_SCAN_CACHE` 비어 있음, 로그에 "⏱ SQL ...ms 0행" |
+| **원인** | ANOMALY_SCAN_ALL SQL의 `latest` CTE가 `bucket >= now() - interval '3 hours'` 고정 사용 — DB 데이터가 3시간 이상 오래되면(시뮬레이션 데이터, 새벽 등) CTE 결과 0행 → 전체 JOIN 0행 반환 |
+| **해결** | `_compute_anomaly_scan_all()`에서 SQL 실행 전 `max(bucket)` 확인, 1시간 이상 오래됐으면 `latest`/`recent_holding` CTE의 시간창을 max_bucket 기준으로 동적 조정 |
+| **수정 파일** | `D:\slm\ai_server.py` `_compute_anomaly_scan_all()` (sql_combined 생성 직후) |
+| **재발 방지** | 실시간 데이터 중단 상황(시스템 점검, DB 복구 후 등)에서도 최근 유효 데이터로 캐시 생성 |
+
+---
+
+### [E-012] AI Server DB 연결 실패 — C:\Python313 psycopg2의 localhost→::1 해석
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-10 |
+| **증상** | `start-services.bat` 없이 직접 `C:\Python313\python.exe ai_server.py` 실행 시 `fe_sendauth: no password supplied` 오류 |
+| **원인** | 1) venv Python의 `python-dotenv` 미설치 → .env 로드 실패 → DB_PASSWORD="" → 인증 실패 / 2) C:\Python313 psycopg2는 `localhost`를 `::1`(IPv6)로 해석 — Docker DB는 IPv4만 리슨 |
+| **해결** | `D:\slm\.env`의 `DB_HOST=localhost` → `DB_HOST=127.0.0.1` 변경 (IPv4 명시) |
+| **수정 파일** | `D:\slm\.env` |
+| **재발 방지** | .env는 항상 `DB_HOST=127.0.0.1` 유지. start-services.bat은 WSL_IP로 오버라이드하므로 영향 없음 |
+
+---
+
 ## 시작 전 체크리스트
 
 ```
