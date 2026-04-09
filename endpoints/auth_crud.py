@@ -736,3 +736,109 @@ async def get_access_logs(
         raise HTTPException(status_code=500, detail="접속 이력 조회 오류")
     finally:
         conn.close()
+
+
+# ─── 메뉴 권한 관리 (MASTER 전용) ───
+
+
+@router.get("/menu-permissions")
+async def get_menu_permissions(current_user: dict = Depends(_get_current_user)):
+    """전체 메뉴 목록 + 권한별(MASTER/ADMIN/USER) 허용 여부 매트릭스."""
+    _require_auth_level("MASTER", current_user)
+    region = current_user.get("region", "R01")
+    conn = _db()
+    try:
+        with conn.cursor() as cur:
+            # 전체 메뉴
+            cur.execute(
+                "SELECT menu_idn, menu_nm, pmenu_idn, app_path, menu_idx, use_yn "
+                "FROM tb_menu WHERE region=%s ORDER BY menu_idx",
+                (region,),
+            )
+            menus = [
+                {"menu_idn": r[0], "menu_nm": r[1], "pmenu_idn": r[2],
+                 "app_path": r[3], "menu_idx": r[4], "use_yn": r[5]}
+                for r in cur.fetchall()
+            ]
+
+            # 권한별 허용 메뉴
+            cur.execute(
+                "SELECT auth_idn, menu_idn, use_yn FROM tb_auth_menu WHERE region=%s",
+                (region,),
+            )
+            perms: dict[str, dict[str, str]] = {}
+            for auth, mid, uyn in cur.fetchall():
+                perms.setdefault(auth, {})[mid] = uyn or "Y"
+
+        return {"menus": menus, "permissions": perms}
+    except Exception as e:
+        logger.error(f"[auth] menu-permissions 오류: {e}")
+        raise HTTPException(status_code=500, detail="메뉴 권한 조회 오류")
+    finally:
+        conn.close()
+
+
+@router.put("/menu-permissions")
+async def update_menu_permissions(request: Request, current_user: dict = Depends(_get_current_user)):
+    """권한별 메뉴 허용/차단 업데이트. body: {auth_idn, menu_idn, use_yn}"""
+    _require_auth_level("MASTER", current_user)
+    region = current_user.get("region", "R01")
+    body = await request.json()
+    auth_idn = body.get("auth_idn")
+    menu_idn = body.get("menu_idn")
+    use_yn = body.get("use_yn", "Y")
+
+    if not auth_idn or not menu_idn:
+        raise HTTPException(status_code=400, detail="auth_idn, menu_idn 필수")
+    if use_yn not in ("Y", "N"):
+        raise HTTPException(status_code=400, detail="use_yn: Y 또는 N")
+
+    conn = _db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tb_auth_menu (region, auth_idn, menu_idn, use_yn)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (region, auth_idn, menu_idn)
+                DO UPDATE SET use_yn = EXCLUDED.use_yn
+                """,
+                (region, auth_idn, menu_idn, use_yn),
+            )
+        conn.commit()
+        return {"ok": True, "auth_idn": auth_idn, "menu_idn": menu_idn, "use_yn": use_yn}
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[auth] menu-permissions 업데이트 오류: {e}")
+        raise HTTPException(status_code=500, detail="메뉴 권한 업데이트 오류")
+    finally:
+        conn.close()
+
+
+@router.put("/menu-visibility")
+async def update_menu_visibility(request: Request, current_user: dict = Depends(_get_current_user)):
+    """메뉴 전체 표시/숨김 토글 (tb_menu.use_yn). body: {menu_idn, use_yn}"""
+    _require_auth_level("MASTER", current_user)
+    region = current_user.get("region", "R01")
+    body = await request.json()
+    menu_idn = body.get("menu_idn")
+    use_yn = body.get("use_yn", "Y")
+
+    if not menu_idn:
+        raise HTTPException(status_code=400, detail="menu_idn 필수")
+
+    conn = _db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tb_menu SET use_yn=%s, updated_at=NOW() WHERE region=%s AND menu_idn=%s",
+                (use_yn, region, menu_idn),
+            )
+        conn.commit()
+        return {"ok": True, "menu_idn": menu_idn, "use_yn": use_yn}
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"[auth] menu-visibility 오류: {e}")
+        raise HTTPException(status_code=500, detail="메뉴 표시 업데이트 오류")
+    finally:
+        conn.close()

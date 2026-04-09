@@ -515,6 +515,7 @@ def build_anomaly_facility_detail_block(
     cross_facility_result: Optional[dict] = None,
     propagation_trace: Optional[dict] = None,
     intra_facility_result: Optional[list] = None,
+    cross_intra_result: Optional[list] = None,
 ) -> list:
     """
     ANOMALY_FACILITY_DETAIL: SQL 결과를 복합 진단 결과 리스트로 조립한다.
@@ -616,6 +617,18 @@ def build_anomaly_facility_detail_block(
         )
         if intra_items:
             items.extend(intra_items)
+
+    # 시설간 교차 인과 규칙 검증 결과
+    if cross_intra_result:
+        mismatches = [r for r in cross_intra_result if r["is_mismatch"]]
+        normals = [r for r in cross_intra_result if not r["is_mismatch"]]
+        if mismatches or normals:
+            items.append({"prefix": "", "text": "─── 시설간 교차 인과 검증 ───"})
+        for r in mismatches:
+            items.append({"prefix": "error", "text": r["detail"]})
+        if normals:
+            normal_labels = [r["rule_label"] for r in normals]
+            items.append({"prefix": "ok", "text": f"시설간 연동 정상: {', '.join(normal_labels)}"})
 
     if not items:
         items.append({"prefix": "✓", "text": "<<ok:분석 대상 센서가 없습니다.>>"})
@@ -1606,6 +1619,94 @@ _INTRA_RULES: list[dict] = [
         "mismatch_pattern": "INLET_PRESSURE_NO_OUTLET",
         "label": "유입압력활성+유출압력없음",
     },
+    # === 소블록 내부 ===
+    {
+        "facilitytype": "소블록",
+        "condition_gc": "FLOW_INLET",
+        "condition_check": "nonzero",
+        "effect_gc": "FLOW_OUTLET",
+        "effect_check": "nonzero",
+        "effect_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "INLET_FLOW_NO_OUTLET",
+        "label": "유입유량활성+유출유량없음",
+    },
+    # === 소소블록 내부 ===
+    {
+        "facilitytype": "소소블록",
+        "condition_gc": "FLOW_INLET",
+        "condition_check": "nonzero",
+        "effect_gc": "FLOW_OUTLET",
+        "effect_check": "nonzero",
+        "effect_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "INLET_FLOW_NO_OUTLET",
+        "label": "유입유량활성+유출유량없음",
+    },
+]
+
+
+# =============================================================================
+# 시설간 교차 인과 규칙 (Cross-Facility Intra Rules)
+# =============================================================================
+# 상류 시설의 출력 → 하류 시설의 입력이 물리적으로 연동되어야 하는 규칙
+# causal_index의 upstream/downstream 링크를 활용
+# =============================================================================
+
+_CROSS_RULES: list[dict] = [
+    # 가압장(상류) 유출 → 소블록(하류) 유입
+    {
+        "upstream_facilitytype": "가압장",
+        "downstream_facilitytype": "소블록",
+        "upstream_output_gc": "FLOW_OUTLET",
+        "upstream_output_gc_fallback": ["FLOW_INSTANT"],
+        "downstream_input_gc": "FLOW_INLET",
+        "downstream_input_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "UPSTREAM_FLOW_NO_DOWNSTREAM_INLET",
+        "label": "가압장 유출↑+소블록 유입없음",
+    },
+    # 배수지(상류) 유출 → 가압장(하류) 유입
+    {
+        "upstream_facilitytype": "배수지",
+        "downstream_facilitytype": "가압장",
+        "upstream_output_gc": "FLOW_OUTLET",
+        "upstream_output_gc_fallback": [],
+        "downstream_input_gc": "FLOW_INLET",
+        "downstream_input_gc_fallback": [],
+        "mismatch_pattern": "UPSTREAM_FLOW_NO_DOWNSTREAM_INLET",
+        "label": "배수지 유출↑+가압장 유입없음",
+    },
+    # 배수지(상류) 유출 → 소블록(하류) 유입
+    {
+        "upstream_facilitytype": "배수지",
+        "downstream_facilitytype": "소블록",
+        "upstream_output_gc": "FLOW_OUTLET",
+        "upstream_output_gc_fallback": [],
+        "downstream_input_gc": "FLOW_INLET",
+        "downstream_input_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "UPSTREAM_FLOW_NO_DOWNSTREAM_INLET",
+        "label": "배수지 유출↑+소블록 유입없음",
+    },
+    # 감압시설(상류) 유출압력 → 소블록(하류) 유입
+    {
+        "upstream_facilitytype": "감압시설",
+        "downstream_facilitytype": "소블록",
+        "upstream_output_gc": "PRESSURE_OUTLET",
+        "upstream_output_gc_fallback": [],
+        "downstream_input_gc": "FLOW_INLET",
+        "downstream_input_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "UPSTREAM_PRESSURE_NO_DOWNSTREAM_INLET",
+        "label": "감압시설 유출압력↑+소블록 유입없음",
+    },
+    # 소블록(상류) 유출 → 소소블록(하류) 유입
+    {
+        "upstream_facilitytype": "소블록",
+        "downstream_facilitytype": "소소블록",
+        "upstream_output_gc": "FLOW_OUTLET",
+        "upstream_output_gc_fallback": ["FLOW_INSTANT"],
+        "downstream_input_gc": "FLOW_INLET",
+        "downstream_input_gc_fallback": ["FLOW_INSTANT"],
+        "mismatch_pattern": "UPSTREAM_FLOW_NO_DOWNSTREAM_INLET",
+        "label": "소블록 유출↑+소소블록 유입없음",
+    },
 ]
 
 
@@ -1898,6 +1999,148 @@ def build_intra_facility_block(
         normal_labels = [r["rule_label"] for r in normals]
         items.append({"prefix": "ok", "text": f"설비 내부 정상: {', '.join(normal_labels)}"})
     return items
+
+
+def verify_cross_facility_intra_rules(
+    query_func,
+    sitename: str,
+    facilitytype: str,
+    causal_index: dict,
+    lookback_minutes: int = 30,
+) -> list[dict]:
+    """시설간 교차 인과 규칙 검증.
+
+    조회 시설(sitename, facilitytype)을 기준으로 causal_index의
+    upstream/downstream 링크를 통해 _CROSS_RULES를 적용한다.
+
+    - 조회 시설이 하류(downstream_facilitytype)인 경우: upstream 링크로 상류 확인
+    - 조회 시설이 상류(upstream_facilitytype)인 경우: downstream 링크로 하류 확인
+    """
+    info = causal_index.get((sitename, facilitytype))
+    if not info:
+        return []
+
+    results: list[dict] = []
+
+    for rule in _CROSS_RULES:
+        up_ft = rule["upstream_facilitytype"]
+        dn_ft = rule["downstream_facilitytype"]
+
+        # Case 1: 현재 시설이 하류 → 상류 시설 태그 조회
+        if facilitytype == dn_ft:
+            upstream_pairs = [
+                nb for nb in info.get("upstream", [])
+                if len(nb) >= 2 and nb[1] == up_ft
+            ]
+            for up_key in upstream_pairs:
+                up_info = causal_index.get(up_key)
+                if not up_info:
+                    continue
+                _run_cross_rule(
+                    query_func, rule, up_info, info,
+                    up_key[0], facilitytype, sitename,
+                    lookback_minutes, results,
+                )
+
+        # Case 2: 현재 시설이 상류 → 하류 시설 태그 조회
+        elif facilitytype == up_ft:
+            downstream_pairs = [
+                nb for nb in info.get("downstream", [])
+                if len(nb) >= 2 and nb[1] == dn_ft
+            ]
+            for dn_key in downstream_pairs:
+                dn_info = causal_index.get(dn_key)
+                if not dn_info:
+                    continue
+                _run_cross_rule(
+                    query_func, rule, info, dn_info,
+                    sitename, dn_key[0], facilitytype,
+                    lookback_minutes, results,
+                )
+
+    return results
+
+
+def _resolve_gc_tags(tag_map: dict, primary: str, fallbacks: list[str]) -> list[str]:
+    """group_code 우선순위로 tagsn 목록 반환 (fallback 포함)."""
+    tags = tag_map.get(primary, [])
+    if tags:
+        return tags
+    for fb in fallbacks:
+        tags = tag_map.get(fb, [])
+        if tags:
+            return tags
+    return []
+
+
+def _run_cross_rule(
+    query_func,
+    rule: dict,
+    up_info: dict,
+    dn_info: dict,
+    up_sitename: str,
+    dn_sitename: str,
+    focal_facilitytype: str,
+    lookback_minutes: int,
+    results: list[dict],
+) -> None:
+    """단일 cross-rule 검증 후 results에 추가."""
+    up_tagsns = _resolve_gc_tags(
+        up_info["tag_map"], rule["upstream_output_gc"],
+        rule.get("upstream_output_gc_fallback", []),
+    )
+    dn_tagsns = _resolve_gc_tags(
+        dn_info["tag_map"], rule["downstream_input_gc"],
+        rule.get("downstream_input_gc_fallback", []),
+    )
+    if not up_tagsns or not dn_tagsns:
+        return
+
+    try:
+        up_data = query_func(up_tagsns, lookback_minutes)
+        dn_data = query_func(dn_tagsns, lookback_minutes)
+    except Exception:
+        return
+
+    up_values = [v for vals in up_data.values() for v in vals]
+    dn_values = [v for vals in dn_data.values() for v in vals]
+    if not up_values or not dn_values:
+        return
+
+    up_active = _calc_active_rate(up_values)
+    dn_active = _calc_active_rate(dn_values)
+
+    # 상류 85%+ 활성인데 하류 15% 미만 → 단절 이상
+    is_mismatch = up_active >= _CROSS_ACTIVE_HIGH and dn_active < _CROSS_ACTIVE_LOW
+
+    up_mean = sum(up_values) / len(up_values) if up_values else 0
+    dn_mean = sum(dn_values) / len(dn_values) if dn_values else 0
+
+    if is_mismatch:
+        detail = (
+            f"<<error:시설간단절>> {up_sitename}({rule['upstream_facilitytype']}) "
+            f"→ {dn_sitename}({rule['downstream_facilitytype']}): {rule['label']}\n"
+            f"  상류 {rule['upstream_output_gc']} 평균={up_mean:.2f} (활성 {up_active*100:.0f}%), "
+            f"하류 {rule['downstream_input_gc']} 평균={dn_mean:.2f} (활성 {dn_active*100:.0f}%)"
+        )
+    else:
+        detail = (
+            f"<<ok:시설간연동정상>> {up_sitename}({rule['upstream_facilitytype']}) "
+            f"→ {dn_sitename}({rule['downstream_facilitytype']}): {rule['label']} 정상"
+        )
+
+    results.append({
+        "rule_label": rule["label"],
+        "pattern": rule["mismatch_pattern"] if is_mismatch else "CROSS_NORMAL",
+        "upstream_sitename": up_sitename,
+        "upstream_facilitytype": rule["upstream_facilitytype"],
+        "downstream_sitename": dn_sitename,
+        "downstream_facilitytype": rule["downstream_facilitytype"],
+        "upstream_active": up_active,
+        "downstream_active": dn_active,
+        "is_mismatch": is_mismatch,
+        "detail": detail,
+    })
 
 
 
