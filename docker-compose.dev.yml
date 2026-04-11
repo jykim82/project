@@ -90,6 +90,7 @@ services:
       - frontend-next-cache:/app/.next             # .next 캐시 보호
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      INTERNAL_API_URL: http://backend:8000
       NEXT_PUBLIC_DEMO_MODE: "false"
       NEXTAUTH_URL: https://localhost:3000
       NEXTAUTH_SECRET: dev-secret-change-in-prod
