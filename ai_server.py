@@ -1227,6 +1227,65 @@ async def _session_cleanup_loop():
         cleanup_old_csv_files()
 
 
+async def _alarm_release_loop():
+    """백그라운드: 2분마다 진행중 알람의 태그 최신값 확인 → val=0이면 자동 해제.
+
+    Node-RED는 새 알람 발생/해제만 처리하므로, 과거 진행중 알람이
+    태그값 복구 후에도 해제되지 않는 문제를 보완한다.
+    """
+    await asyncio.sleep(30)  # 서버 시작 후 30초 대기
+    while True:
+        try:
+            released = await asyncio.to_thread(_release_stale_alarms)
+            if released > 0:
+                logger.info(f"오래된 알람 자동 해제: {released}건")
+        except Exception as e:
+            logger.warning(f"알람 자동 해제 실패: {e}")
+        await asyncio.sleep(120)  # 2분 주기
+
+
+def _release_stale_alarms() -> int:
+    """진행중 알람 중 태그값이 0(정상)으로 돌아온 건을 해제한다."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # DI 태그 최신값이 0인 진행중 알람을 '알람해제'로 업데이트
+        cur.execute("""
+            WITH stale AS (
+                SELECT a.tagsn, a.alarm_start_time
+                FROM tb_equipment_alarm_report a
+                JOIN tb_tag_info ti ON a.tagsn = ti.tagsn
+                WHERE a.alarm_status = '진행중'
+                  AND ti.tagtype = 'Digital Input'
+                  AND EXISTS (
+                      SELECT 1 FROM (
+                          SELECT DISTINCT ON (tagsn) tagsn, val
+                          FROM tb_tag_raw_data
+                          WHERE tagsn = a.tagsn
+                          ORDER BY tagsn, logtime DESC
+                      ) latest WHERE latest.val = 0
+                  )
+            )
+            UPDATE tb_equipment_alarm_report a
+            SET alarm_status = '알람해제',
+                alarm_end_time = now(),
+                info_updated = TO_CHAR(now(), 'YYYY-MM-DD HH24:MI:SS')
+            FROM stale s
+            WHERE a.tagsn = s.tagsn
+              AND a.alarm_start_time = s.alarm_start_time
+              AND a.alarm_status = '진행중'
+        """)
+        released = cur.rowcount
+        conn.commit()
+        cur.close()
+        return released
+    except Exception as e:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행되는 lifespan 이벤트"""
@@ -1375,6 +1434,9 @@ async def lifespan(app: FastAPI):
 
     # 세션 정리 백그라운드 태스크
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
+
+    # 알람 자동 해제 백그라운드 태스크
+    _alarm_release_task = asyncio.create_task(_alarm_release_loop())
 
     # 현장 프로파일링 백그라운드 태스크 (기존 DB 프로파일 로드 후 시작)
     try:
