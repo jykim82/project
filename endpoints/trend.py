@@ -135,7 +135,7 @@ async def explain_trend(request: Request):
             prompt,
             None,     # model
             None,     # num_ctx (ai_settings 따름)
-            150,      # num_predict
+            None,     # num_predict (gemma4:26b 호환성 — None=모델 기본값)
             30.0,     # timeout
             10,       # backoff_seconds
         )
