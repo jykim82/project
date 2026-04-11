@@ -26,18 +26,27 @@ _execute_sql = None           # execute_sql 함수 참조
 _process_sql_result = None    # process_sql_result 함수 참조
 _intent_definitions = None    # INTENT_DEFINITIONS 리스트 참조
 _causal_index = None          # _CAUSAL_INDEX 참조
+_query_recent_values = None   # 교차검증용 최근값 조회 함수
+_site_profiler = None         # SiteProfiler 인스턴스
+_get_flow_balance_cache = None  # callable → _FLOW_BALANCE_CACHE
 
 
 def init(get_db_connection_fn, execute_sql_fn, process_sql_result_fn,
-         intent_definitions, causal_index):
+         intent_definitions, causal_index,
+         query_recent_values_fn=None, site_profiler_ref=None,
+         get_flow_balance_cache_fn=None):
     """ai_server.py에서 의존성을 주입받는다."""
     global _get_db_connection, _execute_sql, _process_sql_result
     global _intent_definitions, _causal_index
+    global _query_recent_values, _site_profiler, _get_flow_balance_cache
     _get_db_connection = get_db_connection_fn
     _execute_sql = execute_sql_fn
     _process_sql_result = process_sql_result_fn
     _intent_definitions = intent_definitions
     _causal_index = causal_index
+    _query_recent_values = query_recent_values_fn
+    _site_profiler = site_profiler_ref
+    _get_flow_balance_cache = get_flow_balance_cache_fn
 
 
 def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
@@ -588,7 +597,7 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
             logger.warning(f"SCAN_ALL 캐시 교차검증 실패: {e}")
 
     # 4단계: 교차검증 결과를 per-row cross_status/verdict로 병합
-    _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
+    _profiles = _site_profiler.profiles if _site_profiler and _site_profiler.profiles else None
     _cross_list = processed_data.get("cross_facility_mismatches")
     enrich_rows_with_cross_verdict(rows, columns, _cross_list, site_profiles=_profiles)
 
@@ -625,15 +634,16 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
 
     # 7단계: 물 수지 요약 (캐시 참조)
     try:
-        if _FLOW_BALANCE_CACHE:
-            imbalance_edges = [e for e in _FLOW_BALANCE_CACHE if e["grade"] != "정상" and e["status"] == "ok"]
+        _fb_cache = _get_flow_balance_cache() if _get_flow_balance_cache else None
+        if _fb_cache:
+            imbalance_edges = [e for e in _fb_cache if e["grade"] != "정상" and e["status"] == "ok"]
             processed_data["flow_balance_summary"] = {
-                "total_edges": len(_FLOW_BALANCE_CACHE),
+                "total_edges": len(_fb_cache),
                 "imbalance_count": len(imbalance_edges),
                 "worst_edges": sorted(imbalance_edges, key=lambda e: -abs(e["imbalance_pct"]))[:5],
             }
             if imbalance_edges:
-                logger.info(f"SCAN_ALL 물 수지: {len(imbalance_edges)}/{len(_FLOW_BALANCE_CACHE)} 불균형")
+                logger.info(f"SCAN_ALL 물 수지: {len(imbalance_edges)}/{len(_fb_cache)} 불균형")
     except Exception as e:
         logger.warning(f"SCAN_ALL 물 수지 요약 실패: {e}")
 

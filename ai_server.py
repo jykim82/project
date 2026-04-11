@@ -2581,6 +2581,9 @@ def execute_sql(sql_template: str, params: dict) -> tuple:
 anomaly_scan.init(
     get_db_connection, execute_sql, process_sql_result,
     INTENT_DEFINITIONS, _CAUSAL_INDEX,
+    query_recent_values_fn=_query_recent_values,
+    site_profiler_ref=site_profiler,
+    get_flow_balance_cache_fn=_get_balance_cache,
 )
 
 
