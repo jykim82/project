@@ -377,6 +377,11 @@ class IntentClassifier:
         Stage 2: 카테고리 내 구체적 INTENT 분류
         반환: (intent_name or None, method)
         """
+        # 키워드 단축: 수위 + 이유/원인/왜 → RESERVOIR_LEVEL_CAUSE_ANALYSIS
+        _cause_kws = ("이유", "원인", "왜")
+        if "수위" in question and any(kw in question for kw in _cause_kws):
+            return "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "keyword"
+
         # 키워드 단축: 이상/알람/고장 발생 지점 → ALARM_ABNORMAL_LOCATIONS
         # 반드시 다른 알람/이상 인텐트보다 먼저 체크 (통신상태, 이상감지 등과 경합 방지)
         if "지점" in question:

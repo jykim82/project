@@ -1718,6 +1718,64 @@
     "graph_type": "none"
   },
   {
+    "intent": "RESERVOIR_LEVEL_CAUSE_ANALYSIS",
+    "questions": [
+      "배수지 수위가 하락하는 이유는?",
+      "배수지 수위가 상승하는 이유는?",
+      "신평 배수지 수위 하락 원인",
+      "금광 배수지 수위 상승 원인",
+      "배수지 수위가 떨어지는 이유",
+      "배수지 수위가 올라가는 이유",
+      "수위 하락 원인 분석해줘",
+      "수위 상승 원인 분석해줘",
+      "배수지 수위가 왜 낮아?",
+      "배수지 수위가 왜 높아?",
+      "수위 변동 원인",
+      "수위가 계속 내려가는데 왜 그래?",
+      "수위 하락 이유",
+      "수위 상승 이유",
+      "수위 원인 분석",
+      "수위가 왜 떨어져",
+      "수위가 왜 올라가",
+      "수위 떨어지는 원인",
+      "수위 올라가는 원인",
+      "배수지 수위 왜 하락",
+      "배수지 수위 왜 상승"
+    ],
+    "sql": "",
+    "answer_template": {
+      "summary": "{sitename} 배수지 수위 {direction_label} 원인 분석 결과입니다. {severity_marker}",
+      "detail": [
+        {
+          "prefix": "•",
+          "text": "수위 방향: {direction_label} (최근 120분 추세 기반)"
+        },
+        {
+          "prefix": "",
+          "text": "{cause_detail_block}"
+        }
+      ],
+      "recommend_questions": {
+        "title": "관련 추천 질문",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "{sitename} 배수지 수위 현황 알려줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "{sitename} 배수지 수위 추이 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "{sitename} 배수지 수위계 헌팅여부를 알려줘"
+          }
+        ]
+      }
+    },
+    "graph_type": "none"
+  },
+  {
     "intent": "FACILITY_PRESSURE_STATUS",
     "questions": [
       "압력 현황은?",
