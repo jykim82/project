@@ -1191,8 +1191,15 @@ def _level_cause_inner(cur, sitename: str) -> tuple[list, list]:
         return [], _LEVEL_CAUSE_COLUMNS
 
     level_tagsn = level_tag_row[0]
-    _to = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _from = (datetime.now() - timedelta(minutes=120)).strftime("%Y-%m-%d %H:%M:%S")
+
+    # DB 최신 데이터 시간 기준 윈도우 (데이터 지연 대응)
+    cur.execute("SELECT max(logtime) FROM tb_tag_raw_data WHERE tagsn = %s", (level_tagsn,))
+    _max_row = cur.fetchone()
+    _ref_time = _max_row[0].replace(tzinfo=None) if _max_row and _max_row[0] and getattr(_max_row[0], 'tzinfo', None) else datetime.now()
+    if not _max_row or not _max_row[0]:
+        _ref_time = datetime.now()
+    _to = (_ref_time + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    _from = (_ref_time - timedelta(minutes=120)).strftime("%Y-%m-%d %H:%M:%S")
     chunks = _get_chunks_for_range(cur, _from, _to)
     vals = []
     if chunks:
@@ -1214,14 +1221,14 @@ def _level_cause_inner(cur, sitename: str) -> tuple[list, list]:
     upstream_sitename, upstream_facilitytype = _get_upstream_booster(cur, sitename)
 
     # ── 4. 펌프 상태 ──
-    pump_status, pump_detail, all_pumps_running = _check_pump_status(cur, upstream_sitename)
+    pump_status, pump_detail, all_pumps_running = _check_pump_status(cur, upstream_sitename, _ref_time)
 
     # ── 5. 유입/유출유량 비교 ──
-    inflow_avg, outflow_avg, outflow_exceeds = _check_flow_balance(cur, sitename)
+    inflow_avg, outflow_avg, outflow_exceeds = _check_flow_balance(cur, sitename, _ref_time)
 
     # ── 6. 밸브 상태 ──
-    inlet_closed = _check_valve_closed(cur, sitename, "유입")
-    outlet_closed = _check_valve_closed(cur, sitename, "유출")
+    inlet_closed = _check_valve_closed(cur, sitename, "유입", _ref_time)
+    outlet_closed = _check_valve_closed(cur, sitename, "유출", _ref_time)
 
     # ── 7. 상류 설정수위 ──
     upstream_level_set = 0.0
@@ -1316,8 +1323,9 @@ def _get_upstream_booster(cur, sitename: str) -> tuple[str, str]:
     return (row[0], row[1]) if row else ("", "")
 
 
-def _check_pump_status(cur, upstream_sitename: str) -> tuple[str, str, bool]:
+def _check_pump_status(cur, upstream_sitename: str, ref_time=None) -> tuple[str, str, bool]:
     """상류 가압장 펌프 가동 상태 확인 (120분간)."""
+    from datetime import datetime, timedelta
     if not upstream_sitename:
         return "-", "상류 시설 정보 없음", False
 
@@ -1332,14 +1340,16 @@ def _check_pump_status(cur, upstream_sitename: str) -> tuple[str, str, bool]:
     if not pump_tags:
         return "-", "가압펌프 태그 없음", False
 
+    _rt = ref_time or datetime.now()
+    _pump_from = (_rt - timedelta(minutes=120)).strftime("%Y-%m-%d %H:%M:%S")
     cur.execute("""
         SELECT tagsn,
                COUNT(*) FILTER (WHERE val = 1) AS on_cnt,
                COUNT(*) AS total_cnt
         FROM tb_tag_raw_data
-        WHERE tagsn = ANY(%s) AND logtime >= now() - interval '120 minutes'
+        WHERE tagsn = ANY(%s) AND logtime >= %s::timestamp
         GROUP BY tagsn
-    """, (pump_tags,))
+    """, (pump_tags, _pump_from))
     total_pumps = len(pump_tags)
     running = sum(1 for _, on, tot in cur.fetchall() if tot > 0 and on / tot > 0.5)
 
@@ -1350,8 +1360,11 @@ def _check_pump_status(cur, upstream_sitename: str) -> tuple[str, str, bool]:
     return "운전", f"가압펌프 {running}/{total_pumps}대 운전 중", False
 
 
-def _check_flow_balance(cur, sitename: str) -> tuple[float, float, bool]:
+def _check_flow_balance(cur, sitename: str, ref_time=None) -> tuple[float, float, bool]:
     """유입/유출 유량 비교 (최근 30분 평균)."""
+    from datetime import datetime, timedelta
+    _rt = ref_time or datetime.now()
+    _flow_from = (_rt - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
     avgs = {}
     for key, pattern in [("inflow", "%유입%순시%"), ("outflow", "%유출%순시%")]:
         cur.execute("""
@@ -1360,16 +1373,19 @@ def _check_flow_balance(cur, sitename: str) -> tuple[float, float, bool]:
             JOIN tb_tag_info ti ON ti.tagsn = r.tagsn
             WHERE ti.sitename = %s AND ti.facilitytype = '배수지'
               AND ti.datainfo ILIKE %s AND ti.tagtype = 'Analog Input'
-              AND r.logtime >= now() - interval '30 minutes'
-        """, (sitename, pattern))
+              AND r.logtime >= %s::timestamp
+        """, (sitename, pattern, _flow_from))
         row = cur.fetchone()
         avgs[key] = round(float(row[0]), 2) if row and row[0] else 0.0
     exceeds = avgs["inflow"] > 0 and avgs["outflow"] > avgs["inflow"] * 1.1
     return avgs["inflow"], avgs["outflow"], exceeds
 
 
-def _check_valve_closed(cur, sitename: str, direction: str) -> bool:
+def _check_valve_closed(cur, sitename: str, direction: str, ref_time=None) -> bool:
     """밸브 차단 여부 확인 (FULL OPEN 태그 val=0이면 차단)."""
+    from datetime import datetime, timedelta
+    _rt = ref_time or datetime.now()
+    _valve_from = (_rt - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     cur.execute("""
         SELECT ti.tagsn FROM tb_tag_info ti
         WHERE ti.sitename = %s AND ti.facilitytype = '배수지'
@@ -1383,9 +1399,9 @@ def _check_valve_closed(cur, sitename: str, direction: str) -> bool:
     cur.execute("""
         SELECT DISTINCT ON (tagsn) tagsn, val
         FROM tb_tag_raw_data
-        WHERE tagsn = ANY(%s) AND logtime >= now() - interval '10 minutes'
+        WHERE tagsn = ANY(%s) AND logtime >= %s::timestamp
         ORDER BY tagsn, logtime DESC
-    """, (valve_tags,))
+    """, (valve_tags, _valve_from))
     results = cur.fetchall()
     return bool(results) and all(r[1] == 0 for r in results)
 
