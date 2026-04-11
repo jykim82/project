@@ -1,0 +1,104 @@
+services:
+  # ============================================================
+  # TimescaleDB (PostgreSQL 16 + TimescaleDB 2.25.1)
+  # ============================================================
+  timescaledb:
+    image: timescale/timescaledb:2.25.1-pg16
+    container_name: slm-timescaledb
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: slm
+      POSTGRES_USER: slm_dev
+      POSTGRES_PASSWORD: slm_dev_1234
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    volumes:
+      - /Users/jykim/data/docker/timescaledb:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c shared_preload_libraries=timescaledb
+        -c timezone=Asia/Seoul
+        -c log_timezone=Asia/Seoul
+        -c max_connections=100
+        -c work_mem=16MB
+        -c maintenance_work_mem=256MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slm_dev -d slm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================================
+  # Node-RED (알람 조건 로직)
+  # ============================================================
+  node-red:
+    image: nodered/node-red
+    container_name: slm-node-red
+    ports:
+      - "1880:1880"
+    volumes:
+      - /Users/jykim/data/docker/node-red:/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================
+  # Backend (FastAPI + Python AI 서버)
+  # ============================================================
+  backend:
+    build:
+      context: ../slm
+      dockerfile: Dockerfile
+    container_name: slm-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../slm:/app
+      - backend-venv:/app/venv          # venv 제외 (컨테이너 자체 pip)
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_NAME: slm
+      DB_USER: slm_dev
+      DB_PASSWORD: slm_dev_1234
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: gemma4
+      FILES_BASE: /data/files
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================
+  # Frontend (Next.js 대시보드)
+  # ============================================================
+  frontend:
+    build:
+      context: slm-dashboard/slm-dashboard
+      dockerfile: Dockerfile
+    container_name: slm-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./slm-dashboard/slm-dashboard:/app
+      - ./certs:/certs:ro                          # HTTPS 인증서 마운트
+      - frontend-node-modules:/app/node_modules   # node_modules 보호
+      - frontend-next-cache:/app/.next             # .next 캐시 보호
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXTAUTH_URL: https://localhost:3000
+      NEXTAUTH_SECRET: dev-secret-change-in-prod
+      DATABASE_URL: postgresql://slm_dev:slm_dev_1234@timescaledb:5432/slm
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-venv:
+  frontend-node-modules:
+  frontend-next-cache:

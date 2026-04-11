@@ -2,6 +2,92 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-11 — ai_server.py 모듈 분리 리팩토링 Phase 1+2+3)
+
+#### 개요
+- **목표**: ai_server.py 단일 파일(13,256줄)을 기능별 모듈로 분리하여 유지보수 가능한 구조로 전환
+- **결과**: 13,256줄 → **5,650줄** (57.4% 감소), 신규 모듈 9개 생성
+- **검증**: 구문 검증 11/11 PASS, API 테스트 10/10 PASS (DB 연결 포함)
+
+#### Phase 1 — 독립 CRUD 모듈 분리 (13,256 → 11,562줄)
+- `endpoints/trend.py` (313줄) — `/trend/data`, `/trend/explain`, `/trend/facility-sparkline`
+- `endpoints/causal.py` (462줄) — `/causal/rules`, `/causal/verify`, `/causal/chain/*`, `/causal/estimate-lag`
+- `endpoints/alarm_crisis.py` (860줄) — `/monitoring/alarm-notifications`, `/alarm/*`, `/crisis/*` (12개 엔드포인트)
+- `endpoints/tags.py` (194줄) — `/tags`, `/tags/filters`, `/tags/groups`
+- `shared/timeseries.py` (103줄) — TimescaleDB 청크 쿼리 공용 헬퍼 (trend, causal, flow_realtime 공유)
+
+#### Phase 2 — 대시보드 + 실시간 분리 (11,562 → 10,555줄)
+- `endpoints/dashboard.py` (353줄) — `/dashboard/overview`, `/monitoring/dashboard`
+- `endpoints/flow_realtime.py` (855줄) — `/flow-map/realtime`, `/gis/facility-info`, `/flow-map/node-alarms`, `/equipments/auto-map`
+
+#### Phase 3 — 응답 빌더 + 이상감지 + 관리자 분리 (10,555 → 5,650줄)
+- `response_builder.py` (3,908줄) — JSONB 파서, 템플릿 렌더러, 응답 빌더, 블록 빌더, SQL 실행기, process_sql_result
+- `anomaly_scan.py` (646줄) — `_compute_anomaly_scan_all` + 데이터 품질/설비 장애 감지 헬퍼
+- `endpoints/admin.py` (645줄) — `/health`, `/models/*`, `/admin/facility-files/*`, `/admin/site-settings`
+
+#### 아키텍처 문서
+- `slm/docs/ai_server_architecture.md` — 전체 폴더 구조, 모듈 의존관계, 엔드포인트 매핑, 개발 가이드
+
+#### ai_server.py 코어 (5,650줄)에 남은 기능
+- AI 채팅 `/ask`, `/ask/stream` 핸들러 (인텐트 매칭 + SSE 스트리밍)
+- 인과 체인 템플릿/인덱스 (글로벌 상수)
+- 백그라운드 캐시 루프 (anomaly_scan, flow_balance, iforest)
+- lifespan/미들웨어/데모 모드
+- DB 커넥션 풀 + execute_sql
+- `/csv/{filename}`, `/autocomplete/candidates`
+
+---
+
+### 확인 완료 (2026-04-10 — 미들웨어 인증 정리 점검)
+
+#### 점검 결과
+- **미들웨어**: 기본 전체 인증 적용, 읽기전용 GIS(tiles/layer/pipelines)만 예외 — 정상
+- **API 프록시**: PUBLIC_PATHS 화이트리스트(login/refresh/health/models)만 우회 — 정상
+- **GIS coordinates 쓰기**: PUT/POST/DELETE에 `requireSession()` 적용 완료 (4/9 커밋)
+- **테스트 우회/bypass 패턴**: 발견 안 됨
+
+#### 프로덕션 배포 전 남은 항목
+- → 로드맵 단기 D항목으로 통합
+
+---
+
+### 로드맵 요약 (2026-04-10 기준)
+
+#### 단기 (Phase 0 — Gemma4:4B, 즉시 적용)
+
+**A. AI 인텐트 품질 개선**
+- [ ] 오타/구어체 처리 — example3.json 동의어 501→600개+ 확장, 약칭 정규화 전처리
+- [ ] 오분류 피드백 수집 — "원하는 답이 아닌가요?" 클릭 → DB 저장 (수동 검토 게이트)
+- [ ] 날짜 표현 파싱 — "그저께", "이번 달 초" → 절대 날짜 변환 전처리
+- [ ] 시설명 약칭 매핑 테이블 — DB 기반 약칭→facility_id 사전
+- [ ] 프롬프트 구조 최적화 — Gemma4:4B 8K 컨텍스트 내 few-shot 설계
+
+**B. 이상감지 Phase 3 (설비 역추적)**
+- [ ] 이상 태그 → 연결 설비 → 종합 진단 연동
+- [ ] ai_server.py 이상감지 pass 스텁 → tb_tag_group_map 실구현
+
+**C. 할루시네이션 방어 레이어**
+- [ ] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
+- [ ] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약
+- [ ] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
+- [ ] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>` 전 인텐트 표준화
+
+**D. 프로덕션 인증 정리**
+- [ ] `.env.local` NEXTAUTH_SECRET → 프로덕션용 시크릿 교체
+- [ ] `.env.local` DB 크레덴셜 → 환경별 분리 (Docker Secrets 등)
+- [ ] setup/tags TODO 스텁 2개 (태그 생성 API, 벌크 업로드) 구현
+
+#### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
+- [ ] 인텐트 68개 → 200개 확장 (Slot-Filling 구조 유지, 2단계 분류)
+- [ ] 보고서 초안 자동 생성 → Word/PDF 다운로드
+- [ ] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후)
+
+#### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
+- [ ] EPANET 수리 시뮬레이션 모듈
+- [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
+
+---
+
 ### 완료 (2026-04-10 — ANOMALY_SCAN_ALL 캐시 0행 수정 + DB IPv6 연결 수정)
 
 #### 구현 내역
@@ -1628,25 +1714,19 @@
 - 작업관리 mock 현장명 한글화 (B/F/G/D시설 → 남산/복운/매방리/행정)
 - 채팅 SSE 진행 표시 라벨+도트 스타일 (분류→추출→조회→렌더링)
 
-### 남은 항목 (미완료만)
-1. ~~**미들웨어 정리**~~ — 이미 완료 (withAuth + PUBLIC_PATHS 4개 + dev 계정 삭제 확인)
-2. **엑셀 템플릿 보고서** — 프롬프트 기반 SLM 확장 (후순위)
-3. ~~**이상감지→설비 역추적 Phase 3**~~ — 완료 (이상태그→tb_equipment_tag_map 역추적→건강점수+장애유형 진단)
-4. **인과관계 내재화 확장** — 가압장→소블록 cross-facility 등 신규 규칙 추가 (기존 6개 intra-rule 완료)
+### 즉시 진행 가능
+1. **인과관계 내재화 확장** — 가압장→소블록 cross-facility 신규 규칙 추가 (기존 6개 intra-rule 완료)
+2. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
 
-### 향후 진행 예정 (미완료만)
-1. **UTM/SSLVPN 계층적 통신이상 감지** (사양 확정 후 구현)
+### 보류/후순위
+3. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
+4. **엑셀 템플릿 보고서** — 프롬프트 기반 SLM 확장 (후순위)
+5. **EPANET 수리 시뮬레이션** — 장기 과제 (SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식)
+6. **UTM/SSLVPN 계층적 통신이상 감지** (사양 확정 후 구현)
    - 인텐트명(안): `NETWORK_UPSTREAM_FAULT_ANALYSIS`
    - 트리거 키워드: "상위 장비", "왜 다 통신이상", "UTM 이상", "SSLVPN 문제", "통신이상 원인"
    - 로직: `tb_network_link` 재귀 CTE로 UTM→SSLVPN→LTE 계층 트리 + `tb_network_status` 최신값 조인
    - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
-2. ~~**계정 권한 관리 Phase 3~4**~~ — 완료 (04-07, 권한 매트릭스 UI + DB 시드 + API 3종)
-3. ~~**GIS 속성 필터 UI**~~ — 이미 구현 완료 (관경 12종 + 관재질 10종 버튼 필터, GisLayerPanel PipeFilterSection)
-4. ~~**시스템 설정 UI**~~ — 이미 구현 완료 (/admin/site-settings, DB 접속정보+AI 파라미터 슬라이더+랜딩토글)
-5. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
-~~6. **트렌드 AI 요약 설명**~~ — 완료 (04-08, /trend/explain + BrushToolbar AI요약 버튼 + 시스템 설정 토글)
-7. **EPANET 수리 시뮬레이션** (장기, 별도 모듈) — SHP→inp변환 + wntr시뮬 + GIS히트맵, On/Off 토글 방식
-8. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
 
 ### 완료 처리 이력 (이전 남은/향후 항목 중 완료된 것)
 - ~~TIMESERIES 태그 조회 카탈로그 우선 전환~~ — 완료 (tb_tag_data_group 그룹 기반 전환)
