@@ -59,6 +59,7 @@ services:
       - ../slm:/app
       - backend-venv:/app/venv          # venv 제외 (컨테이너 자체 pip)
     environment:
+      TZ: Asia/Seoul
       DB_HOST: timescaledb
       DB_PORT: "5432"
       DB_NAME: slm
@@ -89,6 +90,7 @@ services:
       - frontend-node-modules:/app/node_modules   # node_modules 보호
       - frontend-next-cache:/app/.next             # .next 캐시 보호
     environment:
+      TZ: Asia/Seoul
       NEXT_PUBLIC_API_URL: http://localhost:8000
       INTERNAL_API_URL: http://backend:8000
       NEXT_PUBLIC_DEMO_MODE: "false"
