@@ -2,6 +2,38 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-11 — Docker 환경 이전 + 수위 원인 분석 + 알람 자동 해제 + 트렌드 수정)
+
+#### Docker 개발 환경 이전
+- **docker-compose.dev.yml**: TimescaleDB + Node-RED + Backend(FastAPI) + Frontend(Next.js) 통합
+- **Backend Dockerfile**: Python 3.12-slim, 볼륨 마운트(hot-reload), uvicorn --reload
+- **Frontend Dockerfile**: Node 22, HTTPS (mkcert 인증서), Turbopack
+- **INTERNAL_API_URL**: 서버사이드 프록시 502 수정 (Docker 내부: `backend:8000`)
+- **OLLAMA_MODEL**: `gemma4` → `gemma4:26b` (실제 모델명)
+- `docker compose -f docker-compose.dev.yml up -d` 로 전체 스택 실행
+
+#### RESERVOIR_LEVEL_CAUSE_ANALYSIS 인텐트 추가
+- "배수지 수위 하락/상승 이유" 질문 → Node-RED 수위 조건 로직 기반 원인 분석
+- 조건 체크: 상류 펌프 상태, 밸브 상태, 유입/유출 균형, 공급가능시간
+- sql_executor.py: `_execute_level_cause_analysis` (10개 헬퍼 함수)
+- block_builder.py: `build_level_cause_block` (시맨틱 마커 포맷)
+- intent_classifier.py: "수위" + "이유/원인/왜" 우선 키워드 매칭
+
+#### 오래된 알람 자동 해제
+- **문제**: Node-RED가 과거 '진행중' 알람을 소급 해제하지 않음 (죽동 배수지 132건 미해제)
+- **해결**: `_alarm_release_loop` 백그라운드 (2분 주기) — DI 태그 최신값=0이면 자동 해제
+- **결과**: 전체 194건 → 52건 (142건 해제), 죽동 132건 → 4건 (LL 실제 활성만 유지)
+
+#### 트렌드 AI 요약 빈 응답 수정
+- **원인**: gemma4:26b 모델이 `options.num_predict` 지정 시 빈 응답 반환
+- **해결**: `num_predict=150` → `None` (모델 기본값 사용)
+
+#### response_builder 추가 분할 + facility_crud 분할
+- response_builder.py (3,908줄) → response_builder(2,170) + sql_executor(1,138) + block_builder(707)
+- facility_crud.py (1,551줄) → facility_crud(329) + facility_types_crud(1,252)
+
+---
+
 ### 완료 (2026-04-11 — ai_server.py 모듈 분리 리팩토링 Phase 1+2+3)
 
 #### 개요
