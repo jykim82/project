@@ -23,12 +23,14 @@ logger = logging.getLogger("slm")
 router = APIRouter()
 
 _ollama_client = None
+_get_db_connection = None
 
 
-def init(ollama_client=None):
-    """ai_server.py에서 Ollama 클라이언트를 주입받는다."""
-    global _ollama_client
+def init(ollama_client=None, get_db_connection_fn=None):
+    """ai_server.py에서 Ollama 클라이언트 + DB 커넥션 팩토리를 주입받는다."""
+    global _ollama_client, _get_db_connection
     _ollama_client = ollama_client
+    _get_db_connection = get_db_connection_fn
 
 
 # =============================================================================
@@ -105,6 +107,72 @@ def _validate_numbers_in_text(
     return (len(violations) == 0, violations)
 
 
+def _fetch_anomaly_context(diag: EquipmentDiagnosisInput) -> dict:
+    """
+    DB에서 비교 컨텍스트를 조회해 LLM이 해석할 수 있는 수치를 반환한다.
+
+    반환 키 (실패한 경우 누락될 수 있음):
+      linked_alarms_7d   : 연결 이상 태그의 지난 7일 알람 발생 건수 (이 설비)
+      site_alarms_7d     : 같은 시설 전체의 지난 7일 알람 건수
+      site_tag_count     : 같은 시설의 총 태그 수
+      linked_per_day     : 일 평균 이 설비 알람 건수 (소수 첫째 자리)
+      site_per_day       : 일 평균 같은 시설 알람 건수 (소수 첫째 자리)
+
+    모든 값은 정수/소수 — LLM 검증용 allowed_numbers에 함께 전달된다.
+    """
+    if _get_db_connection is None:
+        return {}
+
+    ctx: dict = {}
+    conn = None
+    try:
+        conn = _get_db_connection()
+        with conn.cursor() as cur:
+            # 1. 같은 시설(sitename + facilitytype)의 지난 7일 총 알람 건수
+            cur.execute(
+                "SELECT COUNT(*) FROM tb_equipment_alarm_report "
+                "WHERE sitename = %s AND facilitytype = %s "
+                "  AND alarm_start_time >= NOW() - INTERVAL '7 days'",
+                (diag.sitename, diag.facilitytype),
+            )
+            row = cur.fetchone()
+            ctx["site_alarms_7d"] = int(row[0]) if row else 0
+
+            # 2. 연결 이상 태그의 지난 7일 알람 건수 (이 설비 전용)
+            if diag.linked_anomaly_tags:
+                cur.execute(
+                    "SELECT COUNT(*) FROM tb_equipment_alarm_report "
+                    "WHERE tagsn = ANY(%s) "
+                    "  AND alarm_start_time >= NOW() - INTERVAL '7 days'",
+                    (diag.linked_anomaly_tags,),
+                )
+                row = cur.fetchone()
+                ctx["linked_alarms_7d"] = int(row[0]) if row else 0
+            else:
+                ctx["linked_alarms_7d"] = 0
+
+            # 3. 같은 시설의 총 태그 수 (참고)
+            cur.execute(
+                "SELECT COUNT(DISTINCT tagsn) FROM tb_tag_info "
+                "WHERE sitename = %s AND facilitytype = %s",
+                (diag.sitename, diag.facilitytype),
+            )
+            row = cur.fetchone()
+            ctx["site_tag_count"] = int(row[0]) if row else 0
+
+        # 일평균 (한 자리 소수) — LLM이 직관적으로 쓸 수 있도록
+        ctx["linked_per_day"] = round(ctx.get("linked_alarms_7d", 0) / 7, 1)
+        ctx["site_per_day"] = round(ctx.get("site_alarms_7d", 0) / 7, 1)
+
+    except Exception as e:
+        logger.warning(f"anomaly 컨텍스트 조회 실패: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    return ctx
+
+
 def _fallback_narrative(diag: EquipmentDiagnosisInput) -> str:
     """LLM 검증 실패/불가 시 결정적 템플릿 요약 (할루시네이션 0)."""
     first = (
@@ -146,13 +214,23 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
       violations      : (선택) 검증 실패 시 허용되지 않은 숫자 목록
     """
     try:
-        # 허용 수치 — LLM이 사용 가능한 모든 DB 값
+        # C안: DB 컨텍스트 조회 — 버튼 클릭 시점에만 실행
+        context = _fetch_anomaly_context(diag)
+
+        # 허용 수치 — LLM이 사용 가능한 모든 DB 값 + 컨텍스트 값
         allowed_numbers = [
             float(diag.health_score),
             float(diag.anomaly_tag_count),
             float(diag.total_tag_count),
             0.0,  # "0건" 같은 부정 표현 허용
+            7.0,  # 프롬프트의 "지난 7일" 상수 (LLM이 자주 인용)
         ]
+        for key in (
+            "linked_alarms_7d", "site_alarms_7d", "site_tag_count",
+            "linked_per_day", "site_per_day",
+        ):
+            if key in context:
+                allowed_numbers.append(float(context[key]))
 
         failure_block = (
             "없음 (정상)"
@@ -169,15 +247,42 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
             )
             linked_preview = f"\n- 이상 태그 예시: {', '.join(preview)}{more}"
 
+        # C안: 비교 컨텍스트 섹션 — 컨텍스트가 있을 때만 추가
+        context_block = ""
+        if context:
+            lines = []
+            if "linked_alarms_7d" in context:
+                lines.append(
+                    f"- 이 설비 연결 태그의 지난 7일 알람 발생: "
+                    f"{context['linked_alarms_7d']}건 (일평균 {context['linked_per_day']}건)"
+                )
+            if "site_alarms_7d" in context:
+                lines.append(
+                    f"- 같은 시설 전체의 지난 7일 알람 발생: "
+                    f"{context['site_alarms_7d']}건 (일평균 {context['site_per_day']}건)"
+                )
+            if "site_tag_count" in context:
+                lines.append(
+                    f"- 같은 시설의 총 태그 수: {context['site_tag_count']}개"
+                )
+            if lines:
+                context_block = (
+                    "\n\n## 비교 컨텍스트 (지난 7일, 이 값들도 서술에 사용 가능)\n"
+                    + "\n".join(lines)
+                )
+
         # 엄격 프롬프트 — 제공된 정보만 사용 강제
         prompt = (
-            "다음 설비 진단 결과를 읽고 이상 원인을 2~3문장으로 서술하라.\n\n"
+            "다음 설비 진단 결과와 비교 컨텍스트를 읽고 이상 원인을 "
+            "2~3문장으로 분석·서술하라.\n\n"
             "## 절대 규칙\n"
-            "1. 아래 '진단 데이터' 섹션에 제공된 값(건강 점수·태그 수·장애 라벨)만 사용하라.\n"
+            "1. 아래 섹션들에 제공된 값(건강 점수·태그 수·장애 라벨·컨텍스트 수치)만 사용하라.\n"
             "2. 제공되지 않은 숫자(백분율·시간·임계값 등)는 절대 생성하지 마라.\n"
             "3. 장애 라벨 목록에 없는 새로운 원인을 추측하거나 추가하지 마라.\n"
-            "4. 조치 지시·권고·복구 방법은 포함하지 마라 (상태 서술에 집중).\n"
-            "5. 외부 지식·일반적인 센서 기준·유지보수 주기는 언급하지 마라.\n\n"
+            "4. 조치 지시·권고·복구 방법은 포함하지 마라 (상태·비교 서술에 집중).\n"
+            "5. 외부 지식·일반적인 센서 기준·유지보수 주기는 언급하지 마라.\n"
+            "6. 비교 컨텍스트가 있으면 이 설비가 같은 시설 평균 대비 어떤 수준인지 "
+            "간단히 비교 서술하라 (예: '시설 평균보다 높습니다', '낮은 편입니다').\n\n"
             "## 진단 데이터 (이 값들만 사용)\n"
             f"- 시설: {diag.sitename} {diag.facilitytype}\n"
             f"- 설비 종류: {diag.equipmenttype}\n"
@@ -186,8 +291,9 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
             f"- 건강 등급: {diag.health_grade}\n"
             f"- 감지된 장애: {failure_block}\n"
             f"- 연결 태그: 총 {diag.total_tag_count}개 중 {diag.anomaly_tag_count}개 이상"
-            f"{linked_preview}\n\n"
-            "원인 서술 (2~3문장, 위 정보만 사용, 존댓말 '~습니다' 종결):"
+            f"{linked_preview}"
+            f"{context_block}\n\n"
+            "원인 분석·서술 (2~3문장, 위 정보만 사용, 존댓말 '~습니다' 종결):"
         )
 
         if not _ollama_client:

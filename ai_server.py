@@ -2580,7 +2580,7 @@ init_facility_alias(get_db_connection, _reload_facility_aliases)
 app.include_router(facility_alias_router)
 
 # 이상감지 원인 LLM 서술 엔드포인트 모듈 초기화
-init_anomaly_explain(ollama_client)
+init_anomaly_explain(ollama_client, get_db_connection)
 app.include_router(anomaly_explain_router)
 
 
