@@ -1024,6 +1024,7 @@ ORDER BY a.ask_seq ASC;
 | GET | `/chat/feedback` | query: `region, reviewed?, limit?` | `FeedbackRow[]` | 관리자 검토 목록 |
 | PATCH | `/chat/feedback/{id}/review` | `{reviewed_by}` | `FeedbackRow` | 검토 완료 마킹 |
 | POST | `/trend/explain` | `{tag_name, unit, from_ts, to_ts, min, max, avg, count, anomaly_count}` | `{summary, source:"llm"\|"fallback", llm_rejected?, violations?}` | AI 트렌드 요약 (할루시네이션 검증 + 템플릿 폴백) |
+| POST | `/anomaly/explain` | `EquipmentDiagnosis` (+ `user_question?`) | `{summary, source:"llm"\|"fallback", llm_rejected?, violations?}` | 이상감지 설비 진단 → AI 원인 서술 (할루시네이션 검증 + 식별자 strip + 템플릿 폴백) |
 
 ### 파일
 

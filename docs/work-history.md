@@ -180,11 +180,22 @@
     - 스모크 테스트: 정상 201 / 중복 409 / 삭제 정리 확인
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
-- [ ] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후)
+- [x] 이상감지 원인 LLM 서술 생성 (Phase 3 설비 진단 기반)
+  - Python: `endpoints/anomaly_explain.py` — `POST /anomaly/explain`
+    - 엄격 프롬프트 (5개 절대 규칙: 제공 수치·장애 라벨 외 생성 금지, 권고 금지 등)
+    - `_validate_numbers_in_text` — 허용 수치(health_score, anomaly_tag_count, total_tag_count, 0) + `strip_strings`로 식별자 내 숫자 오탐 방지
+    - `_fallback_narrative` — 검증 실패/Ollama 불가/예외 상황에서 결정적 템플릿 요약 (할루시네이션 0)
+    - 응답: `{summary, source:"llm"|"fallback", llm_rejected?, violations?}`
+    - `ai_server.py` 라우터 등록
+  - Next.js: `src/lib/api/anomaly-api.ts` `explainAnomalyCause()` + `AnomalyDetailView.tsx`
+    - 설비별 "AI 원인 분석" 버튼 (정상 등급 + 이상 태그 0건인 설비는 비활성)
+    - per-equipment 상태 관리 (idle/loading/done/error)
+    - 결과 카드: LLM 경로는 보라색, 폴백 경로는 노란색 (시각 구분)
+  - 검증: 정상/주의 2종 E2E 통과, 단위 검증 3종 (할루시네이션 감지 + 식별자 strip)
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
-- [ ] EPANET 수리 시뮬레이션 모듈
 - [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
+- ⏸ **EPANET 수리 시뮬레이션 모듈** — **장기 보류** (네트워크 모델링 설계 선행 필요, 별도 요청 시 재개)
 - ⏸ **인텐트 68개 → 200개 확장** (Slot-Filling 구조 유지, 2단계 분류) — **장기 보류** (현재 74개, 사용자 지시로 보류. 별도 요청 시 재개)
 - ⏸ **Gemma4:26b few-shot 프롬프트 최적화** — **장기 보류** (A-1 피드백 데이터 축적 후 혼동 쌍 기반으로 설계 예정)
 - ⏸ **보고서 초안 자동 생성 → Word/PDF 다운로드** — **장기 보류** (설계·템플릿·주기 논의 선행 필요, 별도 요청 시 재개)
