@@ -105,6 +105,7 @@ from endpoints.flow_realtime import router as flow_realtime_router, init as init
 from endpoints.admin import router as admin_router, init as init_admin
 from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
+from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -2577,6 +2578,10 @@ def _reload_facility_aliases():
 # 시설명 약칭 매핑 CRUD 엔드포인트 모듈 초기화
 init_facility_alias(get_db_connection, _reload_facility_aliases)
 app.include_router(facility_alias_router)
+
+# 이상감지 원인 LLM 서술 엔드포인트 모듈 초기화
+init_anomaly_explain(ollama_client)
+app.include_router(anomaly_explain_router)
 
 
 def _split_sql_statements(sql: str) -> list:
