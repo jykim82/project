@@ -229,8 +229,8 @@ async def explain_trend(request: Request):
             None,     # model
             None,     # num_ctx (ai_settings 따름)
             None,     # num_predict (gemma4:26b 호환성 — None=모델 기본값)
-            30.0,     # timeout
-            10,       # backoff_seconds
+            90.0,     # timeout — Gemma4:26b tail latency 커버 (p99 ~50s)
+            3,        # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
         )
         _elapsed = time.perf_counter() - _t0
         summary = (summary or "").strip()
