@@ -121,9 +121,95 @@ def _is_context_enabled(grp_cd: str, comm_cd: str) -> bool:
         return True
 
 
+# P2.9 — 태그 baseline in-memory 캐시 (lazy TTL)
+# tagsn → (ctx_dict, unix_ts)
+_BASELINE_CACHE: dict[str, tuple[dict, float]] = {}
+_BASELINE_TTL_SEC = 30 * 60  # 30분
+
+
+def _baseline_cache_get(tagsn: str) -> Optional[dict]:
+    entry = _BASELINE_CACHE.get(tagsn)
+    if not entry:
+        return None
+    ctx, ts = entry
+    if time.time() - ts > _BASELINE_TTL_SEC:
+        # 만료
+        return None
+    return ctx
+
+
+def _baseline_cache_put(tagsn: str, ctx: dict) -> None:
+    _BASELINE_CACHE[tagsn] = (ctx, time.time())
+
+
+def _fetch_tag_meta(tagsn: str) -> dict:
+    """tagsn → sitename, facilitytype, datainfo 메타 조회 (P2.1 임계값 조회 선행)."""
+    if not tagsn or _get_db_connection is None:
+        return {}
+    conn = None
+    try:
+        conn = _get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sitename, facilitytype, datainfo FROM tb_tag_info WHERE tagsn = %s",
+                (tagsn,),
+            )
+            row = cur.fetchone()
+            if row:
+                return {
+                    "sitename": row[0] or "",
+                    "facilitytype": row[1] or "",
+                    "datainfo": row[2] or "",
+                }
+    except Exception as e:
+        logger.debug(f"태그 메타 조회 실패: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return {}
+
+
+def _fetch_water_level_thresholds(sitename: str, facilitytype: str) -> dict:
+    """배수지의 HH/HL 수위 임계값을 조회한다 (수위 태그 요청 시만 의미 있음).
+
+    반환 키 (실패/미설정 시 빈 dict):
+      hh_threshold  : 고수위 경보
+      ll_threshold  : 저수위 경보
+    """
+    if _get_db_connection is None:
+        return {}
+    if facilitytype != "배수지":
+        return {}
+
+    conn = None
+    ctx: dict = {}
+    try:
+        conn = _get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT alarm_high_water_level, alarm_low_water_level "
+                "FROM tb_service_reservoir_status WHERE sitename = %s",
+                (sitename,),
+            )
+            row = cur.fetchone()
+            if row:
+                if row[0] is not None:
+                    ctx["hh_threshold"] = float(row[0])
+                if row[1] is not None:
+                    ctx["ll_threshold"] = float(row[1])
+    except Exception as e:
+        logger.warning(f"임계값 조회 실패 ({sitename}/{facilitytype}): {e}")
+    finally:
+        if conn:
+            conn.close()
+    return ctx
+
+
 def _fetch_trend_context(tagsn: Optional[str]) -> dict:
     """
     태그의 지난 30일 baseline 통계를 조회한다 (cagg_5min_raw_stats_ai 연속 집계 사용).
+
+    P2.9: in-memory 캐시 적용 (TTL 30분). 캐시 히트 시 DB 조회 스킵.
 
     반환 키 (실패 시 빈 dict):
       baseline_min_30d   : 지난 30일 최솟값
@@ -133,6 +219,11 @@ def _fetch_trend_context(tagsn: Optional[str]) -> dict:
     """
     if not tagsn or _get_db_connection is None:
         return {}
+
+    # 캐시 히트
+    cached = _baseline_cache_get(tagsn)
+    if cached is not None:
+        return cached
 
     ctx: dict = {}
     conn = None
@@ -162,7 +253,10 @@ def _fetch_trend_context(tagsn: Optional[str]) -> dict:
             conn.close()
 
     # None 값 제거
-    return {k: v for k, v in ctx.items() if v is not None}
+    ctx = {k: v for k, v in ctx.items() if v is not None}
+    # 캐시에 저장 (빈 dict도 저장 — 자주 조회되는 태그의 반복 실패 방지)
+    _baseline_cache_put(tagsn, ctx)
+    return ctx
 
 
 def _fallback_summary(
@@ -240,6 +334,9 @@ async def explain_trend(request: Request):
         body = await request.json()
         tag_name = body.get("tag_name", "태그")
         tagsn = body.get("tagsn") or None  # C안: 선택 제공, baseline 조회에 사용
+        # body에 명시 or tagsn으로 자동 조회 (P2.1 임계값 조회용)
+        sitename = body.get("sitename") or ""
+        facilitytype = body.get("facilitytype") or ""
         unit = body.get("unit", "")
         from_ts = body.get("from_ts", "")
         to_ts = body.get("to_ts", "")
@@ -258,14 +355,32 @@ async def explain_trend(request: Request):
 
         unit_str = f" ({unit})" if unit else ""
 
-        # C안: 30일 baseline 컨텍스트 조회 (tagsn이 있을 때만)
+        # C안: 30일 baseline + HH/HL 임계값 컨텍스트 조회
         _context_mode = "on" if _is_context_enabled("SITE_SETTING", "TREND_EXPLAIN_CONTEXT") else "off"
         _ctx_t0 = time.perf_counter()
         context = _fetch_trend_context(tagsn) if _context_mode == "on" else {}
+
+        # P2.1: sitename/facilitytype 자동 보강 + HH/HL 임계값 병합
+        if _context_mode == "on" and tagsn:
+            meta = {}
+            if not sitename or not facilitytype:
+                meta = _fetch_tag_meta(tagsn)
+                sitename = sitename or meta.get("sitename", "")
+                facilitytype = facilitytype or meta.get("facilitytype", "")
+            is_level_tag = (
+                "수위" in (tag_name or "")
+                or "수위" in meta.get("datainfo", "")
+            )
+            if sitename and is_level_tag:
+                th = _fetch_water_level_thresholds(sitename, facilitytype or "배수지")
+                if th:
+                    context.update(th)
         _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
         _context_used: list[str] = []
-        if context:
+        if "baseline_avg_30d" in context:
             _context_used.append("baseline_30d")
+        if "hh_threshold" in context or "ll_threshold" in context:
+            _context_used.append("thresholds")
 
         # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
         # (anomaly_count=0도 포함, 프롬프트 상수 30(일)도 허용)
@@ -276,29 +391,51 @@ async def explain_trend(request: Request):
         for key in ("baseline_min_30d", "baseline_avg_30d", "baseline_max_30d"):
             if key in context:
                 allowed_numbers.append(float(context[key]))
+        # P2.1 임계값도 허용 수치에 포함
+        for key in ("hh_threshold", "ll_threshold"):
+            if key in context:
+                allowed_numbers.append(float(context[key]))
 
-        # C안: 비교 컨텍스트 섹션 (baseline이 있을 때만 추가)
-        context_block = ""
-        if context:
-            context_block = (
-                "\n\n## 30일 Baseline (이 값들도 비교·서술에 사용 가능)\n"
-                f"- 지난 30일 최소: {context['baseline_min_30d']:.3g}\n"
-                f"- 지난 30일 평균: {context['baseline_avg_30d']:.3g}\n"
+        # C안: 비교 컨텍스트 섹션 (baseline 또는 임계값이 있을 때 추가)
+        context_lines = []
+        if "baseline_avg_30d" in context:
+            context_lines.append(
+                f"- 지난 30일 최소: {context['baseline_min_30d']:.3g}"
+            )
+            context_lines.append(
+                f"- 지난 30일 평균: {context['baseline_avg_30d']:.3g}"
+            )
+            context_lines.append(
                 f"- 지난 30일 최대: {context['baseline_max_30d']:.3g}"
             )
+        if "hh_threshold" in context:
+            context_lines.append(
+                f"- HH 임계값(고수위): {context['hh_threshold']:.3g}"
+            )
+        if "ll_threshold" in context:
+            context_lines.append(
+                f"- LL 임계값(저수위): {context['ll_threshold']:.3g}"
+            )
+        context_block = (
+            "\n\n## Baseline·임계값 (이 값들도 비교·서술에 사용 가능)\n"
+            + "\n".join(context_lines)
+        ) if context_lines else ""
 
         # 엄격 프롬프트 — "제공된 수치 외 숫자 생성 금지" 명시
         prompt = (
-            "다음 센서 데이터 구간을 분석하여 수치와 패턴을 2문장으로 요약하라.\n\n"
+            "다음 센서 데이터 구간을 분석하여 수치와 패턴을 2~3문장으로 요약하라.\n\n"
             "## 절대 규칙\n"
-            "1. 아래 '통계'와 '30일 Baseline' 섹션에 제공된 수치만 사용하라.\n"
-            "2. 통계·baseline에 없는 숫자는 절대 언급하지 마라 "
+            "1. 아래 섹션에 제공된 수치(통계·baseline·임계값)만 사용하라.\n"
+            "2. 제공되지 않은 숫자는 절대 언급하지 마라 "
             "(시간·구체 수치·표준편차 등 계산하지 마라).\n"
             "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라.\n"
             "4. 외부 지식이나 일반적 센서 기준은 추가하지 마라.\n"
             "5. 단순 서술 + 존댓말: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었습니다' 형태.\n"
             "6. Baseline이 있으면 이번 구간 평균이 지난 30일 평균 대비 어떤 수준인지 "
-            "간단히 비교 서술하라 (예: '30일 평균 대비 높은 편입니다').\n\n"
+            "간단히 비교 서술하라 (예: '30일 평균 대비 높은 편입니다').\n"
+            "7. HH/LL 임계값이 있으면 이번 구간 최대값이 HH 대비 어느 수준인지, "
+            "최소값이 LL 대비 어느 수준인지 비교 서술하라 "
+            "(예: '최대 3.5m는 HH 임계값 4.0m 대비 주의 범위에 진입').\n\n"
             f"## 태그\n{tag_name}{unit_str}\n\n"
             f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
             "## 통계 (이 값들만 사용)\n"
