@@ -2,6 +2,29 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-12 — NEXTAUTH_URL 서버 IP 자동 감지 + 개발 환경 개선)
+
+#### NEXTAUTH_URL IP 자동 감지 (다른 PC 접속 로그인 오류 해결)
+- **증상**: 같은 망의 다른 PC에서 `https://192.168.219.105:3000` 접속 시 `/api/auth/error`로 포워딩, jykim 계정 로그인 실패
+- **원인**: `.env.local`의 `NEXTAUTH_URL=https://localhost:3000` 하드코딩 → NextAuth가 콜백을 localhost로 리다이렉트하여 세션 검증 실패
+- **해결**: `package.json`에 `_ip` 헬퍼 스크립트 추가 — `os.networkInterfaces()`로 외부 IPv4 주소 자동 감지
+  - `dev`, `dev:fast`, `dev:http`, `dev:http:fast`, `start` 모든 스크립트에 `NEXTAUTH_URL=https://$(npm run -s _ip):3000` 주입
+  - `.env.local`에서 `NEXTAUTH_URL` 라인 제거 (스크립트 주입값 우선)
+- **효과**: 어떤 서버(Mac/Linux/Windows)에 배포해도 **현재 서버의 IP가 자동으로 NEXTAUTH_URL에 적용**됨 — 하드코딩 불필요
+- **파일**: `slm-dashboard/package.json`, `slm-dashboard/.env.local`
+
+#### 개발 환경 개선
+- **Ollama 모델 교체**: `gemma4:latest` → `gemma4:26b` (A4B IT, MoE 4B 활성, 17GB)
+  - 한국어 품질 향상, MoE 구조로 속도는 4B급 유지
+  - Mac mini M4 Pro 48GB 환경에서 검증 완료
+- **Node-RED**: Docker `slm-node-red` 컨테이너 확인 (포트 1880), 글로벌 npm 버전 제거
+- **Claude Code Discord 채널 연동**: 작업 완료 알림 + 핸드폰에서 지침 전송 병렬 제어
+  - `claude-plugins-official` 마켓플레이스 등록, `discord@claude-plugins-official` 플러그인 설치
+  - Bun 런타임 설치 (`brew install oven-sh/bun/bun`)
+- **Claude Code 권한 설정**: `bypassPermissions` 모드 + allow 목록(Bash, Grep, Glob, Read, WebFetch, WebSearch, Agent)
+
+---
+
 ### 완료 (2026-04-11 — Docker 환경 이전 + 수위 원인 분석 + 알람 자동 해제 + 트렌드 수정)
 
 #### Docker 개발 환경 이전
@@ -157,7 +180,6 @@
     - 스모크 테스트: 정상 201 / 중복 409 / 삭제 정리 확인
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
-- [ ] 보고서 초안 자동 생성 → Word/PDF 다운로드 **미구현**
 - [ ] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후)
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
@@ -165,6 +187,7 @@
 - [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
 - ⏸ **인텐트 68개 → 200개 확장** (Slot-Filling 구조 유지, 2단계 분류) — **장기 보류** (현재 74개, 사용자 지시로 보류. 별도 요청 시 재개)
 - ⏸ **Gemma4:26b few-shot 프롬프트 최적화** — **장기 보류** (A-1 피드백 데이터 축적 후 혼동 쌍 기반으로 설계 예정)
+- ⏸ **보고서 초안 자동 생성 → Word/PDF 다운로드** — **장기 보류** (설계·템플릿·주기 논의 선행 필요, 별도 요청 시 재개)
 
 ---
 
