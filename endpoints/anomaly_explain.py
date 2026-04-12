@@ -19,6 +19,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from llm_narrative_log import log_narrative
+from shared.llm_narrative import (
+    extract_numbers as _shared_extract_numbers,
+    strip_identifier_strings as _shared_strip_identifier_strings,
+    validate_numbers_in_text as _shared_validate_numbers_in_text,
+    is_context_enabled as _shared_is_context_enabled,
+)
 
 logger = logging.getLogger("slm")
 
@@ -57,35 +63,13 @@ class EquipmentDiagnosisInput(BaseModel):
 # 할루시네이션 방어 유틸
 # =============================================================================
 
-_NUM_RE = re.compile(r"(?<![0-9A-Za-z])(-?\d+(?:,\d{3})*(?:\.\d+)?)")
-
-# 문장 형식상 쓰이는 정수는 무시 (2문장, 1회 등)
-_NUM_IGNORE = {"1", "2"}
-
-
+# shared.llm_narrative로 이관 — 하위 호환 래퍼
 def _strip_identifier_strings(text: str, strings: list[str]) -> str:
-    """식별자 문자열(설비ID, 태그명 등)을 공백으로 치환해
-    내부 숫자·하이픈이 검증에 오탐되지 않게 한다.
-    """
-    result = text
-    # 긴 문자열부터 치환 (부분 겹침 방지)
-    for s in sorted(set(strings), key=len, reverse=True):
-        if s and s in result:
-            result = result.replace(s, " ")
-    return result
+    return _shared_strip_identifier_strings(text, strings)
 
 
 def _extract_numbers(text: str) -> list[float]:
-    out = []
-    for m in _NUM_RE.finditer(text):
-        tok = m.group(1).replace(",", "")
-        if tok in _NUM_IGNORE:
-            continue
-        try:
-            out.append(float(tok))
-        except ValueError:
-            continue
-    return out
+    return _shared_extract_numbers(text)
 
 
 def _validate_numbers_in_text(
@@ -94,42 +78,11 @@ def _validate_numbers_in_text(
     strip_strings: Optional[list[str]] = None,
     tolerance: float = 0.02,
 ) -> tuple[bool, list[float]]:
-    """텍스트 내 모든 숫자가 허용 수치와 tolerance 내 일치하는지 검증.
-
-    strip_strings: 검증 전 제거할 식별자 문자열 (설비ID·태그명·시설명 등).
-    내부 숫자/하이픈이 섞여 있어도 false positive를 피한다.
-    """
-    cleaned = _strip_identifier_strings(text, strip_strings or [])
-    nums = _extract_numbers(cleaned)
-    violations: list[float] = []
-    for n in nums:
-        ok = any(abs(n - a) <= max(abs(a) * tolerance, 0.01) for a in allowed)
-        if not ok:
-            violations.append(n)
-    return (len(violations) == 0, violations)
+    return _shared_validate_numbers_in_text(text, allowed, strip_strings, tolerance)
 
 
 def _is_context_enabled(grp_cd: str, comm_cd: str) -> bool:
-    """tb_comm_code 기반 컨텍스트 주입 토글. 에러/미설정 시 기본 True."""
-    if _get_db_connection is None:
-        return True
-    try:
-        conn = _get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT use_yn FROM tb_comm_code "
-                    "WHERE region = 'R01' AND grp_cd = %s AND comm_cd = %s",
-                    (grp_cd, comm_cd),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        if not row:
-            return True
-        return (row[0] or "Y") == "Y"
-    except Exception:
-        return True
+    return _shared_is_context_enabled(_get_db_connection, grp_cd, comm_cd)
 
 
 def _fetch_anomaly_context(diag: EquipmentDiagnosisInput) -> dict:

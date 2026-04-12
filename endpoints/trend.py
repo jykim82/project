@@ -22,6 +22,12 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate
+from shared.llm_narrative import (
+    extract_numbers as _extract_numbers,
+    strip_identifier_strings as _strip_identifier_strings,
+    validate_numbers_in_text as _validate_numbers_in_text,
+    is_context_enabled as _shared_is_context_enabled,
+)
 from llm_narrative_log import log_narrative
 
 logger = logging.getLogger("slm")
@@ -49,27 +55,8 @@ def init(get_db_connection_fn, ollama_client=None):
 
 # =============================================================================
 # AI 요약 할루시네이션 방어 (C. 값 주입 강화)
+# shared/llm_narrative.py 공통 유틸 사용 — 다른 엔드포인트도 이 이름 그대로 import
 # =============================================================================
-
-# 요약에서 추출되는 숫자 패턴 (소수·천단위 구분자 포함, 정수 단독은 제외)
-_SUMMARY_NUM_RE = re.compile(r"(?<![0-9A-Za-z])(-?\d+(?:,\d{3})*(?:\.\d+)?)")
-
-# 허용 수치 검증에서 무시할 토큰 (문장 수, 퍼센트 맥락, 이상 건수 등 순수 정수)
-_NUM_IGNORE_WORDS = {"1", "2"}  # "2문장", "1회" 같은 불가피한 정수
-
-
-def _extract_numbers(text: str) -> list[float]:
-    """요약 텍스트에서 숫자를 추출 (콤마 제거, 부호 유지)"""
-    out = []
-    for m in _SUMMARY_NUM_RE.finditer(text):
-        tok = m.group(1).replace(",", "")
-        if tok in _NUM_IGNORE_WORDS:
-            continue
-        try:
-            out.append(float(tok))
-        except ValueError:
-            continue
-    return out
 
 
 def _validate_summary_numbers(
@@ -77,48 +64,13 @@ def _validate_summary_numbers(
     allowed: list[float],
     tolerance: float = 0.02,
 ) -> tuple[bool, list[float]]:
-    """요약문의 모든 숫자가 허용 수치 중 하나와 tolerance 내 일치하는지 검증.
-
-    Args:
-        summary: LLM 생성 요약문
-        allowed: 허용 수치 (min/avg/max/count/anomaly_count 등)
-        tolerance: 상대 오차 (기본 2%, 최소 절대 오차 0.01)
-
-    Returns:
-        (유효 여부, 위반 숫자 목록)
-    """
-    nums = _extract_numbers(summary)
-    violations: list[float] = []
-    for n in nums:
-        ok = any(
-            abs(n - a) <= max(abs(a) * tolerance, 0.01) for a in allowed
-        )
-        if not ok:
-            violations.append(n)
-    return (len(violations) == 0, violations)
+    """shared.llm_narrative로 이관 — 하위 호환 래퍼 (strip_strings 없음)."""
+    return _validate_numbers_in_text(summary, allowed, None, tolerance)
 
 
 def _is_context_enabled(grp_cd: str, comm_cd: str) -> bool:
-    """tb_comm_code 기반 컨텍스트 주입 토글. 에러/미설정 시 기본 True."""
-    if _get_db_connection is None:
-        return True
-    try:
-        conn = _get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT use_yn FROM tb_comm_code "
-                    "WHERE region = 'R01' AND grp_cd = %s AND comm_cd = %s",
-                    (grp_cd, comm_cd),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        if not row:
-            return True
-        return (row[0] or "Y") == "Y"
-    except Exception:
-        return True
+    """shared.llm_narrative로 이관 — 하위 호환 래퍼."""
+    return _shared_is_context_enabled(_get_db_connection, grp_cd, comm_cd)
 
 
 # P2.9 — 태그 baseline in-memory 캐시 (lazy TTL)

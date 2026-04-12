@@ -120,6 +120,10 @@ from endpoints.equipment_mtbf_explain import (
     router as equipment_mtbf_explain_router,
     init as init_equipment_mtbf_explain,
 )
+from endpoints.chat_faq_examples import (
+    router as chat_faq_examples_router,
+    init as init_chat_faq_examples,
+)
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -2669,6 +2673,10 @@ app.include_router(scan_all_explain_router)
 # 설비 MTBF AI 해석 엔드포인트 (P2.7)
 init_equipment_mtbf_explain(get_db_connection, ollama_client)
 app.include_router(equipment_mtbf_explain_router)
+
+# 채팅 FAQ 예시 구문 동적 생성 (실제 답변 있는 지점으로 치환)
+init_chat_faq_examples(get_db_connection, _get_scan_cache)
+app.include_router(chat_faq_examples_router)
 
 
 def _split_sql_statements(sql: str) -> list:
