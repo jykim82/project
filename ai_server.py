@@ -106,6 +106,7 @@ from endpoints.admin import router as admin_router, init as init_admin
 from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
+from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -2587,6 +2588,10 @@ app.include_router(facility_alias_router)
 # 이상감지 원인 LLM 서술 엔드포인트 모듈 초기화
 init_anomaly_explain(ollama_client, get_db_connection)
 app.include_router(anomaly_explain_router)
+
+# 설비 신뢰성 리포트 (MTBF/MTTR/Availability) 엔드포인트
+init_equipment_mtbf(get_db_connection)
+app.include_router(equipment_mtbf_router)
 
 
 def _split_sql_statements(sql: str) -> list:
