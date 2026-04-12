@@ -83,35 +83,66 @@
 
 ---
 
-### 로드맵 요약 (2026-04-10 기준)
+### 로드맵 요약 (2026-04-12 재검증 기준)
 
-#### 단기 (Phase 0 — Gemma4:4B, 즉시 적용)
+> 2026-04-12 실제 코드베이스 대조 검증 완료. 완료 항목은 `[x]` + 근거 파일/라인 추가.
+> 검증 범위: `/Users/jykim/web` (Next.js) + `/Users/jykim/slm` (Python AI 서버)
+
+#### 단기 (Phase 0 — Gemma4:26b, 즉시 적용)
 
 **A. AI 인텐트 품질 개선**
-- [ ] 오타/구어체 처리 — example3.json 동의어 501→600개+ 확장, 약칭 정규화 전처리
-- [ ] 오분류 피드백 수집 — "원하는 답이 아닌가요?" 클릭 → DB 저장 (수동 검토 게이트)
-- [ ] 날짜 표현 파싱 — "그저께", "이번 달 초" → 절대 날짜 변환 전처리
-- [ ] 시설명 약칭 매핑 테이블 — DB 기반 약칭→facility_id 사전
-- [ ] 프롬프트 구조 최적화 — Gemma4:4B 8K 컨텍스트 내 few-shot 설계
+- [x] 오타/구어체 처리 — example3.json 501→744 질문 확장 (74 인텐트)
+  - 근거: `/Users/jykim/slm/example3.json` 744 questions / 74 intents (목표 600+ 초과)
+  - 약칭 정규화: `korean_fuzzy.py`(한글 자모분해 퍼지) + `param_extractor.py` 3단계 fuzzy fallback (sitename L331-346, facilitytype L529-545, datainfo L579-596)
+- [x] 오분류 피드백 수집 — "원하는 답이 아닌가요?" 클릭 → DB 저장 (수동 검토 게이트)
+  - 근거: `db/init/03_tables_chat.sql` `tb_ai_chat_feedback` 테이블 (self-contained: 질문/답변/인텐트 복사본)
+  - Python: `endpoints/chat_feedback.py` (`/chat/feedback` POST/GET/PATCH) + `ai_server.py:106,2524-2525` 라우터 등록
+  - Next.js: `src/lib/api/chat-api.ts` `submitChatFeedback()` + `src/components/chat/BotMessage.tsx` 피드백 버튼 UI + `chat/page.tsx:handleSubmitFeedback`
+  - Store: `chat-store.ts:markFeedbackSubmitted` 플래그 localStorage 저장 (중복 제출 방지)
+  - 검토 UI: `src/app/(dashboard)/admin/chat-feedback/page.tsx` — 인텐트별 집계 + 미검토/검토완료/전체 탭 필터 + 행 펼침(질문/응답/의견) + 검토 완료 버튼
+  - 메뉴: `sidebar-menus.ts` M100-7 "채팅 피드백" 추가
+- [x] 날짜 표현 파싱 확장 — 상대 시점 프로그래밍 추출 (SLM fallback 회피)
+  - 근거: `param_extractor.py:_extract_date_programmatic` 확장 — 어제/그저께/엊그제, 지난주/저번주, 이번달/이번 달 초/이번 달 말, 지난달/저번달/전달, 작년/지난해, 올해/금년 (17개 패턴)
+  - `_DATE_KW` 키워드 리스트에 그저께/엊그제 추가 (L197)
+  - `slm_date` 로그 플래그 정확화: `_slm_date_called` 실제 호출 여부 추적 (L204, L308)
+  - 검증: 프로그래밍 추출 성공 시 Phase2 < 5ms (SLM 호출 없음), 17개 패턴 모두 정상 변환
+- [x] 시설명 약칭 매핑 테이블 — DB 기반 약칭→sitename 사전
+  - DB: `tb_facility_alias` (alias, sitename, priority, note, use_yn) + unique index on (region, alias)
+  - Python: `ai_server.py:load_facility_aliases_from_db()` + `_reload_facility_aliases()` (CRUD 후 런타임 즉시 반영)
+  - `ParamExtractor.__init__`에 `facility_alias_map` 추가, `_extract_sitename`에서 fuzzy 단계 전 exact lookup (긴 alias 우선)
+  - CRUD API: `endpoints/facility_alias.py` (`/admin/facility-alias` GET/POST/PATCH/DELETE)
+  - Next.js: `src/app/(dashboard)/admin/facility-alias/page.tsx` — 검색/추가/수정/삭제 UI, `facility-alias-api.ts` 클라이언트, M100-8 메뉴 추가
+  - 검증: "합일" → "합덕일반" alias 등록 → `/ask`에서 "합일 수위" 질의 시 자동 치환 + `corrections` 표출 확인
+- [ ] 프롬프트 구조 최적화 — Gemma4:26b 128K 컨텍스트 내 few-shot 설계 **미검증** (Ollama generate 경로는 있으나 few-shot 템플릿 식별 불가)
 
 **B. 이상감지 Phase 3 (설비 역추적)**
-- [ ] 이상 태그 → 연결 설비 → 종합 진단 연동
-- [ ] ai_server.py 이상감지 pass 스텁 → tb_tag_group_map 실구현
+- [x] 이상 태그 → 연결 설비 → 종합 진단 연동
+  - 근거: `EquipmentDiagnosis` 타입(`src/lib/types/chat.ts`) + `chat-response-mapper.ts` equipment_diagnosis 필드 매핑 + `src/components/chat/anomaly/AnomalyDetailView.tsx:247-255` 설비 건강 진단 렌더링
+  - Python 측: `build_success_response()` equipment_diagnosis kwarg, /ask /ask/stream 핸들러 전달 (commit c7e69a3, 2026-04-09)
+- [x] ai_server.py 이상감지 pass 스텁 → tb_tag_group_map 실구현
+  - 근거: `anomaly_scan.py:243-250` DI 장애 태그 조회 (COMM_ERROR/EQUIP_FAULT/POWER_FAULT) `tb_tag_group_map` JOIN
+  - `sql_executor.py:517-544` group_code 기반 tb_tag_group_map JOIN 분기
+  - `ai_server.py` 11건의 tb_tag_group_map 참조 (L402-1375)
 
 **C. 할루시네이션 방어 레이어**
-- [ ] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
-- [ ] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약
-- [ ] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
-- [ ] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>` 전 인텐트 표준화
+- [x] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
+  - 근거: `query_validator.py` `unknown_sitename` / `missing_*` 검증 (L24-49, CORRECTION_TEMPLATES) + `param_extractor.py` fuzzy fallback 3종 (sitename/facilitytype/datainfo) + `korean_fuzzy.find_best_match`
+- [ ] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 **부분** (응답 템플릿은 `{placeholder}` 치환으로 DB 값 직접 주입 — `ai_server.py` L3019-3129. AI 요약 LLM 경로의 값 주입 강제 조건은 미확인)
+- [x] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
+  - 근거: 모든 SQL은 `intent_def.get("sql", "")`에서만 로드 (`ai_server.py` L2912, L4434, L2337), LLM SQL 생성 경로 없음. `execute_sql(sql_template, params)` 만 사용 (L2549)
+- [x] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>`
+  - 근거: `block_builder.py:15-20 wrap_status_marker` + L36-57 `_alarm_category_marker`/`_alarm_msg_marker` + `response_builder.py:1282 _STATUS_MARKER_MAP` (`ai_server.py` 11건 사용)
 
 **D. 프로덕션 인증 정리**
-- [ ] `.env.local` NEXTAUTH_SECRET → 프로덕션용 시크릿 교체
-- [ ] `.env.local` DB 크레덴셜 → 환경별 분리 (Docker Secrets 등)
-- [ ] setup/tags TODO 스텁 2개 (태그 생성 API, 벌크 업로드) 구현
+- [ ] `.env.local` NEXTAUTH_SECRET → 프로덕션용 시크릿 교체 **미완료** (현재: `NEXTAUTH_SECRET=dev-secret-change-in-prod`)
+- [ ] `.env.local` DB 크레덴셜 → 환경별 분리 (Docker Secrets 등) **미완료** (현재: `DATABASE_URL=postgresql://slm_dev:slm_dev_1234@localhost:5433/slm` 평문)
+- [~] setup/tags TODO 스텁 2개
+  - [x] 벌크 업로드 — `src/lib/api/tag-api.ts:80 uploadTagsCsv` + `src/app/(dashboard)/setup/tags/page.tsx:335 onUpload` 연결
+  - [ ] 태그 생성 API — `page.tsx:119 // TODO: API call to create tag` 여전히 스텁
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
-- [ ] 인텐트 68개 → 200개 확장 (Slot-Filling 구조 유지, 2단계 분류)
-- [ ] 보고서 초안 자동 생성 → Word/PDF 다운로드
+- [ ] 인텐트 68개 → 200개 확장 (Slot-Filling 구조 유지, 2단계 분류) **진행 중** (현재 74개, 목표 200개 미달)
+- [ ] 보고서 초안 자동 생성 → Word/PDF 다운로드 **미구현**
 - [ ] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후)
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
@@ -1905,10 +1936,10 @@
 
 ## 향후 계획 — SLM 고도화 (Zero-Hallucination 아키텍처)
 
-> **배경**: Gemma4:4B (현재) → A30 24GB + Gemma4 12B (납품 표준) → Mac Mini Pro + Gemma4 27B (고품질)
+> **배경**: Gemma4:26b (현재, Mac 17GB) → A30 24GB + Gemma4 12B (납품 표준) → L40S + Gemma4 27B (고품질)
 > **핵심 원칙**: LLM은 라우터·분류기만 담당, 사실(수치/이름/ID)은 100% DB에서만 생성
 
-### Phase 0 — 현재 (Gemma4:4B, 지금 당장 적용 가능)
+### Phase 0 — 현재 (Gemma4:26b, 지금 당장 적용 가능)
 
 **목표**: 기존 68 인텐트 구조 유지, 분류 정확도 + 답변 품질 + 할루시네이션 방어 기반 구축
 
@@ -1940,8 +1971,8 @@
   - 임계값은 tb_tag_info 기반 (HH/HL/LL 설정값 활용)
   - 프론트엔드 BotMessage.tsx 마커 렌더링 고도화
 
-- [ ] **프롬프트 구조 최적화** — Gemma4:4B 컨텍스트 한계(8K) 내 few-shot 설계
-  - 인텐트별 1~2개 few-shot 예시 추가 (전체 예시 나열 금지 → 컨텍스트 초과)
+- [ ] **프롬프트 구조 최적화** — Gemma4:26b 컨텍스트 128K 활용 few-shot 설계
+  - 인텐트별 3~5개 few-shot 예시 (26b 컨텍스트 여유 충분 → 풍부한 예시로 분류 안정화)
   - JSON Schema 출력 지정으로 슬롯필링 구조화 응답 안정화
 
 #### C. 할루시네이션 방어 레이어
