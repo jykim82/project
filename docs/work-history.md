@@ -106,6 +106,25 @@
 
 ---
 
+### 기술 부채 청소 (2026-04-12)
+
+- [x] **SCAN_ALL/FACILITY_DETAIL stale 시간창 로직 통합** — `anomaly_scan.adjust_sql_time_window_to_max_bucket()` 헬퍼로 추출
+  - 이전: `anomaly_scan._compute_anomaly_scan_all` + `ai_server /ask` + `ai_server /ask/stream` 3곳에 중복 (각 20~30줄)
+  - 이후: 헬퍼 1곳 + 호출부 3곳 각 4~5줄
+  - 365일 baseline CTE는 건드리지 않음, 테이블 별칭(`c.bucket`) 지원
+  - 검증: 유닛 테스트(3 hours/1 hour 치환 + 365 days 유지) + E2E 우강 가압장 회귀 없음
+
+- [x] **chat-response-mapper.ts 잔존 TS 에러 2건 정리**
+  - `AiServerResponse`에 `cusum_chart_data?: CusumChartData` 추가 (runtime 접근 중이었음)
+  - `AiServerResponse.table_type`에 `"supply_chart"` 추가 (line 200 비교 기준 없었음)
+  - `buildTableData` 파라미터 narrow 처리 — runtime 동작 변화 없음
+
+- [x] **신규 엔드포인트 통합 스모크 테스트 추가** — `test_new_endpoints.py`
+  - 대상 5종: `POST /tags`, `/chat/feedback` CRUD, `/admin/facility-alias` CRUD, `/trend/explain`, `/anomaly/explain`
+  - 24개 assertion 통과 (정상/중복/에러 경로 포함)
+  - 표준 라이브러리만 사용 (urllib, psycopg2)
+  - 실행: `docker exec slm-backend python3 /app/test_new_endpoints.py`
+
 ### 로드맵 요약 (2026-04-12 재검증 기준)
 
 > 2026-04-12 실제 코드베이스 대조 검증 완료. 완료 항목은 `[x]` + 근거 파일/라인 추가.
