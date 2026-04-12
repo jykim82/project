@@ -103,6 +103,8 @@ from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
 from endpoints.admin import router as admin_router, init as init_admin
+from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
+from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -1322,6 +1324,7 @@ async def lifespan(app: FastAPI):
         known_sitenames=KNOWN_SITENAMES,
         known_block_levels=KNOWN_BLOCK_LEVELS,
         ollama=ollama_client,
+        facility_alias_map=FACILITY_ALIAS_MAP,
     )
     query_validator = QueryValidator(intent_index, KNOWN_SITENAMES, SITENAME_FACILITY_MAP)
 
@@ -1939,10 +1942,45 @@ def load_sitename_facility_map() -> dict:
     return mapping
 
 
+def load_facility_aliases_from_db() -> dict:
+    """
+    tb_facility_alias에서 약칭 → 정식 sitename 매핑을 로드한다.
+    반환: {"합일": "합덕일반", "죽배": "죽동", ...}
+
+    중복 alias는 priority DESC로 정렬하여 우선순위 높은 것이 덮어쓴다.
+    """
+    aliases: dict = {}
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT alias, sitename FROM tb_facility_alias "
+                "WHERE use_yn = 'Y' "
+                "ORDER BY priority ASC"
+            )
+            for alias, sitename in cur.fetchall():
+                if alias and sitename:
+                    aliases[alias] = sitename
+    except psycopg2.Error as e:
+        logger.warning(f"facility alias 로드 실패: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    if aliases:
+        logger.info(f"DB에서 {len(aliases)}개의 facility alias 로드 완료")
+    return aliases
+
+
 # 서버 시작 시 DB에서 로드
 KNOWN_SITENAMES = load_sitenames_from_db()
 KNOWN_BLOCK_LEVELS = load_block_levels_from_db()
 SITENAME_FACILITY_MAP = load_sitename_facility_map()
+FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
 
 
 # =============================================================================
@@ -2518,6 +2556,27 @@ init_admin(
     DEMO_MODE, _demo_restore_text,
 )
 app.include_router(admin_router)
+
+# 채팅 봇 오분류 피드백 엔드포인트 모듈 초기화
+init_chat_feedback(get_db_connection)
+app.include_router(chat_feedback_router)
+
+
+def _reload_facility_aliases():
+    """facility_alias CRUD 후 런타임 param_extractor에 즉시 반영"""
+    global FACILITY_ALIAS_MAP
+    FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
+    if param_extractor_instance is not None:
+        param_extractor_instance._alias_map = FACILITY_ALIAS_MAP
+        param_extractor_instance._aliases_sorted = sorted(
+            FACILITY_ALIAS_MAP.keys(), key=len, reverse=True,
+        )
+        logger.info(f"ParamExtractor alias 리로드: {len(FACILITY_ALIAS_MAP)}건")
+
+
+# 시설명 약칭 매핑 CRUD 엔드포인트 모듈 초기화
+init_facility_alias(get_db_connection, _reload_facility_aliases)
+app.include_router(facility_alias_router)
 
 
 def _split_sql_statements(sql: str) -> list:

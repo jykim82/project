@@ -127,11 +127,17 @@ class ParamExtractor:
         known_sitenames: list,
         known_block_levels: list,
         ollama: Optional[OllamaClient] = None,
+        facility_alias_map: Optional[dict] = None,
     ):
         self._sitenames = known_sitenames
         self._block_levels = known_block_levels
         self._ollama = ollama
         self._corrections: list[dict] = []  # 오타 보정 이력
+        # tb_facility_alias: {"합일": "합덕일반", ...} — 긴 키부터 매칭
+        self._alias_map: dict = facility_alias_map or {}
+        self._aliases_sorted: list = sorted(
+            self._alias_map.keys(), key=len, reverse=True,
+        )
 
     def extract_all(self, question: str, intent_name: Optional[str] = None) -> dict:
         """
@@ -193,13 +199,16 @@ class ParamExtractor:
             "시간 전", "분간",
             # 상대 시점 표현 (오매칭 없음)
             "최근", "지난", "이번", "한달", "작년", "올해", "오늘", "어제",
+            "그저께", "엊그제",
             "저번달", "전달", "다음달",
             # 범위 마커
             "부터", "까지", "동안",
         )
         _has_date_hint = any(kw in question for kw in _DATE_KW)
+        _slm_date_called = False
         if (from_ts is None or to_ts is None) and intent_name in DATE_REQUIRED_INTENTS:
             if self._ollama and _has_date_hint:
+                _slm_date_called = True
                 slm_from, slm_to = self._extract_date_slm(question)
                 if from_ts is None and slm_from:
                     from_ts = slm_from
@@ -296,12 +305,11 @@ class ParamExtractor:
                 result["_facility_pairs"] = facility_pairs
 
         _t_end = time.perf_counter()
-        _slm_used = intent_name in DATE_REQUIRED_INTENTS and _has_date_hint
         logger.info(
             f"⏱ 추출 Phase1={(_t_p1-_t0)*1000:.0f}ms "
             f"Phase2(날짜)={(_t_end-_t_p1)*1000:.0f}ms "
             f"합계={(_t_end-_t0)*1000:.0f}ms "
-            f"slm_date={'Y' if _slm_used else 'N'}"
+            f"slm_date={'Y' if _slm_date_called else 'N'}"
         )
 
         return result
@@ -327,6 +335,21 @@ class ParamExtractor:
                     return site
         if "전체" in question:
             return "%%"
+
+        # tb_facility_alias exact lookup (긴 alias부터 매칭, fuzzy 단계 전)
+        for alias in self._aliases_sorted:
+            if alias in question or alias in q_nospace:
+                mapped = self._alias_map.get(alias)
+                if mapped:
+                    self._corrections.append({
+                        "field": "sitename",
+                        "original": alias,
+                        "corrected": mapped,
+                        "score": 1.0,
+                        "source": "alias_table",
+                    })
+                    logger.info(f"sitename alias 매핑: '{alias}' → '{mapped}'")
+                    return mapped
 
         # fuzzy fallback: 질문에서 2~4글자 한글 토큰을 추출하여 현장명 후보와 비교
         tokens = re.findall(r"[가-힣]{2,4}", question)
@@ -741,6 +764,51 @@ class ParamExtractor:
             monday = today - timedelta(days=today.weekday())
             return monday.strftime("%Y-%m-%d"), today_str
 
+        # "지난주" / "저번주" — 지난주 월요일 ~ 일요일
+        if any(kw in question for kw in ("지난주", "지난 주", "저번주", "저번 주")):
+            this_monday = today - timedelta(days=today.weekday())
+            last_monday = this_monday - timedelta(days=7)
+            last_sunday = this_monday - timedelta(days=1)
+            return last_monday.strftime("%Y-%m-%d"), last_sunday.strftime("%Y-%m-%d")
+
+        # "이번 달 초" — 1일 ~ 10일 (구체 세분 키워드가 "이번달"보다 먼저 매칭)
+        if any(kw in question for kw in ("이번 달 초", "이번달 초", "이달 초")):
+            from_date = today.replace(day=1)
+            to_date = today.replace(day=min(10, today.day))
+            return from_date.strftime("%Y-%m-%d"), to_date.strftime("%Y-%m-%d")
+
+        # "이번 달 말" — 이번 달의 마지막 10일 구간
+        if any(kw in question for kw in ("이번 달 말", "이번달 말", "이달 말")):
+            if today.month == 12:
+                next_first = today.replace(year=today.year + 1, month=1, day=1)
+            else:
+                next_first = today.replace(month=today.month + 1, day=1)
+            last_day = next_first - timedelta(days=1)
+            from_day = max(1, last_day.day - 9)
+            from_date = today.replace(day=from_day)
+            return from_date.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
+
+        # "이번 달" / "이번달" — 이번 달 1일부터 오늘까지
+        if any(kw in question for kw in ("이번 달", "이번달", "이달")):
+            from_date = today.replace(day=1)
+            return from_date.strftime("%Y-%m-%d"), today_str
+
+        # "지난달" / "저번달" / "전달" — 지난 달 전체 기간
+        if any(kw in question for kw in ("지난달", "지난 달", "저번달", "저번 달", "전달")):
+            this_first = today.replace(day=1)
+            last_end = this_first - timedelta(days=1)
+            last_first = last_end.replace(day=1)
+            return last_first.strftime("%Y-%m-%d"), last_end.strftime("%Y-%m-%d")
+
+        # "작년" — 작년 전체 1월 1일 ~ 12월 31일
+        if "작년" in question or "지난해" in question:
+            last_year = today.year - 1
+            return f"{last_year}-01-01", f"{last_year}-12-31"
+
+        # "올해" / "금년" — 이번 연도 1월 1일 ~ 오늘
+        if "올해" in question or "금년" in question:
+            return f"{today.year}-01-01", today_str
+
         # "YYYY년 M월 D일 ~ YYYY년 M월 D일" (부터/까지, ~, -, 에서)
         match = re.search(
             r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일\s*(?:부터|에서)?\s*"
@@ -790,6 +858,18 @@ class ParamExtractor:
             if 1 <= month <= 12:
                 self._month_only = month  # ai_server에서 확인용
                 return None, None
+
+        # "그저께" / "엊그제" — 2일 전 단일 날짜
+        if "그저께" in question or "엊그제" in question:
+            target = today - timedelta(days=2)
+            target_str = target.strftime("%Y-%m-%d")
+            return target_str, target_str
+
+        # "어제" — 1일 전 단일 날짜
+        if "어제" in question:
+            target = today - timedelta(days=1)
+            target_str = target.strftime("%Y-%m-%d")
+            return target_str, target_str
 
         # "오늘", "금일", "현재"
         if "오늘" in question or "금일" in question or "현재" in question:
