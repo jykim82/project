@@ -187,7 +187,7 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
             f"- 감지된 장애: {failure_block}\n"
             f"- 연결 태그: 총 {diag.total_tag_count}개 중 {diag.anomaly_tag_count}개 이상"
             f"{linked_preview}\n\n"
-            "원인 서술 (2~3문장, 위 정보만 사용):"
+            "원인 서술 (2~3문장, 위 정보만 사용, 존댓말 '~습니다' 종결):"
         )
 
         if not _ollama_client:

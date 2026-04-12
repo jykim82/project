@@ -201,7 +201,7 @@ async def explain_trend(request: Request):
             "2. 통계에 없는 숫자는 절대 언급하지 마라 (시간·구체 수치·표준편차 등 계산하지 마라).\n"
             "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라.\n"
             "4. 외부 지식이나 일반적 센서 기준은 추가하지 마라.\n"
-            "5. 단순 서술: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었다' 형태.\n\n"
+            "5. 단순 서술 + 존댓말: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었습니다' 형태.\n\n"
             f"## 태그\n{tag_name}{unit_str}\n\n"
             f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
             "## 통계 (이 값들만 사용)\n"
@@ -210,7 +210,7 @@ async def explain_trend(request: Request):
             f"- 최대: {max_val:.3g}\n"
             f"- 데이터 건수: {count}\n"
             f"- 이상 구간: {anomaly_count}건\n\n"
-            "요약 (2문장, 위 수치만 사용):"
+            "요약 (2문장, 위 수치만 사용, 존댓말 '~습니다' 종결):"
         )
 
         if not _ollama_client:
