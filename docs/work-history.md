@@ -153,11 +153,22 @@
 - [x] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 + 출력 검증
   - 응답 템플릿: `{placeholder}` 치환으로 DB 값 직접 주입 (`ai_server.py:3019-3129`)
   - AI 요약 LLM 경로 (`endpoints/trend.py:/trend/explain`) 강화:
-    - 엄격 프롬프트 (5개 절대 규칙: 제공 수치 외 숫자 금지, 외부 지식 금지, 권고 금지 등)
+    - 엄격 프롬프트 (6개 절대 규칙: 제공 수치 외 숫자 금지, 외부 지식 금지, 권고 금지, baseline 비교 유도 등)
     - `_extract_numbers` + `_validate_summary_numbers` — 출력에서 숫자 추출 후 허용값과 대조 (2% tolerance)
     - `_fallback_summary` — 검증 실패 또는 LLM 불가 시 결정적 템플릿 요약 (할루시네이션 0)
     - 응답에 `source: "llm" | "fallback"` + 실패 시 `llm_rejected`/`violations` 포함
-  - 검증: 일반/제로/이상구간 3종 E2E, 단위 테스트 5종 (할루시네이션 감지 + tolerance + ignore_words)
+  - **C안 컨텍스트 확장** (`_fetch_trend_context`) — 버튼 클릭 시 tagsn 기반 30일 baseline 조회
+    - `cagg_5min_raw_stats_ai` 연속 집계 활용 (32ms 수준 쿼리)
+    - 반환: `baseline_min_30d`, `baseline_avg_30d` (가중 평균), `baseline_max_30d`
+    - 프롬프트 "30일 Baseline" 섹션 + "구간 평균이 30일 평균 대비 어떤 수준인지 비교 서술" 규칙
+    - `allowed_numbers`에 baseline 3개 값 + 상수 `30`(일) 자동 허용
+    - 프런트: `PlotChart.tsx`가 `plot.tag_ids[pickedIdx]`로 tagsn 추출 후 payload에 포함
+    - tagsn 누락 시 backward compatible (컨텍스트 없이 기본 요약)
+  - 검증: 4종 E2E
+    1. 1.02 vs baseline 0.77 → "높은 편입니다"
+    2. 0.30 vs baseline 0.77 → "낮은 편입니다"
+    3. 0.78 vs baseline 0.77 → "높은 편입니다" (미세 차이)
+    4. tagsn 누락 → 기본 요약 (backward compat)
 - [x] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
   - 근거: 모든 SQL은 `intent_def.get("sql", "")`에서만 로드 (`ai_server.py` L2912, L4434, L2337), LLM SQL 생성 경로 없음. `execute_sql(sql_template, params)` 만 사용 (L2549)
 - [x] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>`
