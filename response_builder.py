@@ -1799,11 +1799,16 @@ def process_sql_result(
         cross_intra_result: list[dict] = []
         propagation_trace = None
 
+        # tagsn/z_score 컬럼 인덱스는 인과 인덱스와 독립적으로 설정
+        # (설비 건강 진단 등 후속 로직이 causal_index 유무와 무관하게 사용)
+        if rows:
+            _col_map_global = {c: i for i, c in enumerate(columns)}
+            _c_tagsn_idx = _col_map_global.get("tagsn")
+            _c_z_idx = _col_map_global.get("z_score")
+
         # 인과관계 그룹코드 탐색 (선행 — DB 불필요, 빠름)
         if _causal_index and rows:
             col_map_c = {c: i for i, c in enumerate(columns)}
-            _c_tagsn_idx = col_map_c.get("tagsn")
-            _c_z_idx = col_map_c.get("z_score")
             _c_datainfo_idx = col_map_c.get("datainfo")
             if _c_tagsn_idx is not None and _c_z_idx is not None:
                 _warn_th = GROUP_THRESHOLDS.get(_group, GROUP_THRESHOLDS["B"])["warn"]
@@ -1940,6 +1945,7 @@ def process_sql_result(
                 ) if _diagnose_equipment_for_tags_fn else None
                 if equip_diagnosis:
                     data["equipment_diagnosis"] = equip_diagnosis
+                    logger.info(f"설비 건강 진단 완료: {len(equip_diagnosis)}개 설비 ({_site} {_ft})")
         except Exception as e:
             logger.warning(f"설비 건강 진단 실패 (무시): {e}")
 

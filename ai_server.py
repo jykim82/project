@@ -2536,6 +2536,7 @@ response_builder.init(
     group_children=_GROUP_CHILDREN,
     group_code_to_id=_GROUP_CODE_TO_ID,
     resolve_group_codes_fn=_resolve_group_codes,
+    diagnose_equipment_for_tags_fn=_diagnose_equipment_for_tags,
 )
 
 # 이상감지 스캔 모듈 초기화 — execute_sql 정의 후 호출 (아래 참조)
