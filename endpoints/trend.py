@@ -11,6 +11,7 @@ ai_server.py에서 분리된 모듈 — init()으로 의존성을 주입받아 �
 import asyncio
 import logging
 import os
+import re
 import time
 from collections import OrderedDict
 from datetime import datetime as dt_parse
@@ -43,6 +44,79 @@ def init(get_db_connection_fn, ollama_client=None):
     global _get_db_connection, _ollama_client
     _get_db_connection = get_db_connection_fn
     _ollama_client = ollama_client
+
+
+# =============================================================================
+# AI 요약 할루시네이션 방어 (C. 값 주입 강화)
+# =============================================================================
+
+# 요약에서 추출되는 숫자 패턴 (소수·천단위 구분자 포함, 정수 단독은 제외)
+_SUMMARY_NUM_RE = re.compile(r"(?<![0-9A-Za-z])(-?\d+(?:,\d{3})*(?:\.\d+)?)")
+
+# 허용 수치 검증에서 무시할 토큰 (문장 수, 퍼센트 맥락, 이상 건수 등 순수 정수)
+_NUM_IGNORE_WORDS = {"1", "2"}  # "2문장", "1회" 같은 불가피한 정수
+
+
+def _extract_numbers(text: str) -> list[float]:
+    """요약 텍스트에서 숫자를 추출 (콤마 제거, 부호 유지)"""
+    out = []
+    for m in _SUMMARY_NUM_RE.finditer(text):
+        tok = m.group(1).replace(",", "")
+        if tok in _NUM_IGNORE_WORDS:
+            continue
+        try:
+            out.append(float(tok))
+        except ValueError:
+            continue
+    return out
+
+
+def _validate_summary_numbers(
+    summary: str,
+    allowed: list[float],
+    tolerance: float = 0.02,
+) -> tuple[bool, list[float]]:
+    """요약문의 모든 숫자가 허용 수치 중 하나와 tolerance 내 일치하는지 검증.
+
+    Args:
+        summary: LLM 생성 요약문
+        allowed: 허용 수치 (min/avg/max/count/anomaly_count 등)
+        tolerance: 상대 오차 (기본 2%, 최소 절대 오차 0.01)
+
+    Returns:
+        (유효 여부, 위반 숫자 목록)
+    """
+    nums = _extract_numbers(summary)
+    violations: list[float] = []
+    for n in nums:
+        ok = any(
+            abs(n - a) <= max(abs(a) * tolerance, 0.01) for a in allowed
+        )
+        if not ok:
+            violations.append(n)
+    return (len(violations) == 0, violations)
+
+
+def _fallback_summary(
+    tag_name: str,
+    unit: str,
+    min_val: float,
+    avg_val: float,
+    max_val: float,
+    count: int,
+    anomaly_count: int,
+) -> str:
+    """LLM 검증 실패 또는 비활성 시 결정적 템플릿 요약 (할루시네이션 0)"""
+    unit_str = f" {unit}" if unit else ""
+    first = (
+        f"{tag_name}은(는) 선택 구간에서 최소 {min_val:.3g}{unit_str}, "
+        f"평균 {avg_val:.3g}{unit_str}, 최대 {max_val:.3g}{unit_str} 범위로 기록되었습니다."
+    )
+    if anomaly_count > 0:
+        second = f"데이터 {count}건 중 이상 구간이 {anomaly_count}건 포함되어 있습니다."
+    else:
+        second = f"총 {count}건의 데이터가 수집되었으며 이상 구간은 감지되지 않았습니다."
+    return f"{first} {second}"
 
 
 # =============================================================================
@@ -114,20 +188,39 @@ async def explain_trend(request: Request):
                 return ts
 
         unit_str = f" ({unit})" if unit else ""
-        anomaly_note = f", 이상 구간 {anomaly_count}건 포함" if anomaly_count > 0 else ""
 
+        # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
+        # (anomaly_count=0도 포함 — 프롬프트가 "이상 구간 0건"을 언급할 수 있음)
+        allowed_numbers = [min_val, avg_val, max_val, float(count), float(anomaly_count)]
+
+        # 엄격 프롬프트 — "제공된 수치 외 숫자 생성 금지" 명시
         prompt = (
-            f"다음 센서 데이터 구간을 분석하여 수치와 패턴을 2문장으로 요약하라. "
-            f"권고 사항이나 조치 지시는 절대 포함하지 않는다.\n\n"
-            f"태그: {tag_name}{unit_str}\n"
-            f"기간: {fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n"
-            f"통계: 최소 {min_val:.3g}, 평균 {avg_val:.3g}, 최대 {max_val:.3g}, "
-            f"데이터 {count}건{anomaly_note}\n\n"
-            f"요약:"
+            "다음 센서 데이터 구간을 분석하여 수치와 패턴을 2문장으로 요약하라.\n\n"
+            "## 절대 규칙\n"
+            "1. 아래 '통계' 섹션에 제공된 수치(최소/평균/최대/데이터 건수/이상 구간)만 사용하라.\n"
+            "2. 통계에 없는 숫자는 절대 언급하지 마라 (시간·구체 수치·표준편차 등 계산하지 마라).\n"
+            "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라.\n"
+            "4. 외부 지식이나 일반적 센서 기준은 추가하지 마라.\n"
+            "5. 단순 서술: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었다' 형태.\n\n"
+            f"## 태그\n{tag_name}{unit_str}\n\n"
+            f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
+            "## 통계 (이 값들만 사용)\n"
+            f"- 최소: {min_val:.3g}\n"
+            f"- 평균: {avg_val:.3g}\n"
+            f"- 최대: {max_val:.3g}\n"
+            f"- 데이터 건수: {count}\n"
+            f"- 이상 구간: {anomaly_count}건\n\n"
+            "요약 (2문장, 위 수치만 사용):"
         )
 
         if not _ollama_client:
-            return {"error": "AI 서비스를 사용할 수 없습니다."}
+            # 결정적 폴백 — LLM 불가 시에도 안전한 템플릿 요약 반환
+            return {
+                "summary": _fallback_summary(
+                    tag_name, unit, min_val, avg_val, max_val, count, anomaly_count,
+                ),
+                "source": "fallback",
+            }
 
         _t0 = time.perf_counter()
         summary = await asyncio.to_thread(
@@ -140,10 +233,29 @@ async def explain_trend(request: Request):
             10,       # backoff_seconds
         )
         _elapsed = time.perf_counter() - _t0
-        summary = summary.strip()
+        summary = (summary or "").strip()
 
-        logger.info(f"트렌드 AI 요약 완료: {tag_name} ({fmt_ts(from_ts)}~{fmt_ts(to_ts)}) ⏱ {_elapsed*1000:.0f}ms")
-        return {"summary": summary}
+        # 할루시네이션 검증 — LLM이 제공되지 않은 숫자를 생성했는지 확인
+        ok, violations = _validate_summary_numbers(summary, allowed_numbers)
+        if not ok or not summary:
+            logger.warning(
+                f"트렌드 AI 요약 할루시네이션 감지 → 템플릿 폴백: "
+                f"위반 숫자={violations}, 허용={allowed_numbers}"
+            )
+            return {
+                "summary": _fallback_summary(
+                    tag_name, unit, min_val, avg_val, max_val, count, anomaly_count,
+                ),
+                "source": "fallback",
+                "llm_rejected": True,
+                "violations": violations,
+            }
+
+        logger.info(
+            f"트렌드 AI 요약 완료: {tag_name} "
+            f"({fmt_ts(from_ts)}~{fmt_ts(to_ts)}) ⏱ {_elapsed*1000:.0f}ms"
+        )
+        return {"summary": summary, "source": "llm"}
 
     except Exception as e:
         logger.error(f"트렌드 AI 요약 실패: {e}")
