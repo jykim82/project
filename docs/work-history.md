@@ -136,9 +136,10 @@
 **D. 프로덕션 인증 정리**
 - [ ] `.env.local` NEXTAUTH_SECRET → 프로덕션용 시크릿 교체 **미완료** (현재: `NEXTAUTH_SECRET=dev-secret-change-in-prod`)
 - [ ] `.env.local` DB 크레덴셜 → 환경별 분리 (Docker Secrets 등) **미완료** (현재: `DATABASE_URL=postgresql://slm_dev:slm_dev_1234@localhost:5433/slm` 평문)
-- [~] setup/tags TODO 스텁 2개
+- [x] setup/tags TODO 스텁 2개
   - [x] 벌크 업로드 — `src/lib/api/tag-api.ts:80 uploadTagsCsv` + `src/app/(dashboard)/setup/tags/page.tsx:335 onUpload` 연결
-  - [ ] 태그 생성 API — `page.tsx:119 // TODO: API call to create tag` 여전히 스텁
+  - [x] 태그 생성 API — `POST /tags` (`endpoints/tags.py:200-262`) + `tag-api.ts:createTag` + `setup/tags/page.tsx:handleAdd` 실제 호출
+    - 스모크 테스트: 정상 201 / 중복 409 / 삭제 정리 확인
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
 - [ ] 인텐트 68개 → 200개 확장 (Slot-Filling 구조 유지, 2단계 분류) **진행 중** (현재 74개, 목표 200개 미달)

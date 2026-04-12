@@ -1058,6 +1058,7 @@ ORDER BY a.ask_seq ASC;
 | GET/POST/PUT/DELETE | `/api/admin/prompts/{id}/columns` | 프롬프트 컬럼 CRUD | tb_prompt_column |
 | GET/POST/PUT/DELETE | `/api/admin/faq` | FAQ CRUD | tb_ai_chat_faq |
 | GET/POST/PATCH/DELETE | `/admin/facility-alias` | 시설명 약칭 매핑 CRUD (런타임 리로드) | tb_facility_alias |
+| POST | `/tags` | 태그 마스터 신규 등록 (tagsn UNIQUE) | tb_tag_info |
 
 ---
 
