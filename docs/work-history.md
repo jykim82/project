@@ -182,16 +182,25 @@
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
 - [x] 이상감지 원인 LLM 서술 생성 (Phase 3 설비 진단 기반)
   - Python: `endpoints/anomaly_explain.py` — `POST /anomaly/explain`
-    - 엄격 프롬프트 (5개 절대 규칙: 제공 수치·장애 라벨 외 생성 금지, 권고 금지 등)
-    - `_validate_numbers_in_text` — 허용 수치(health_score, anomaly_tag_count, total_tag_count, 0) + `strip_strings`로 식별자 내 숫자 오탐 방지
-    - `_fallback_narrative` — 검증 실패/Ollama 불가/예외 상황에서 결정적 템플릿 요약 (할루시네이션 0)
+    - 엄격 프롬프트 (6개 절대 규칙: 제공 수치·라벨 외 생성 금지, 권고 금지, 비교 서술 유도 등)
+    - `_validate_numbers_in_text` — 허용 수치 + `strip_strings`로 식별자 내 숫자 오탐 방지
+    - `_fallback_narrative` — 검증 실패/Ollama 불가/예외 시 결정적 템플릿 요약 (할루시네이션 0)
     - 응답: `{summary, source:"llm"|"fallback", llm_rejected?, violations?}`
     - `ai_server.py` 라우터 등록
+  - **C안 컨텍스트 확장** — 버튼 클릭 시점에만 DB 컨텍스트 조회 → LLM 해석 가치 확보
+    - `_fetch_anomaly_context()`: 3개 쿼리로 비교용 수치 조회
+      1. 연결 이상 태그의 지난 7일 알람 건수 (`tb_equipment_alarm_report` WHERE tagsn IN linked_anomaly_tags)
+      2. 같은 시설 전체의 지난 7일 알람 건수 (sitename + facilitytype)
+      3. 같은 시설의 총 태그 수 (`tb_tag_info`)
+    - 프롬프트 "비교 컨텍스트" 섹션 + "이 설비가 시설 평균 대비 어떤 수준인지 비교 서술" 규칙 추가
+    - `allowed_numbers` 확장 (컨텍스트 값 + 프롬프트 상수 `7` 자동 허용)
+    - 결과 예: "이 설비의 지난 7일 알람 0건으로, 같은 시설 전체 30건(일평균 4.3건)보다 낮은 편입니다"
+  - Ollama 튜닝: timeout 45s → 90s, backoff 10s → 3s (`trend.py` 동시 적용)
   - Next.js: `src/lib/api/anomaly-api.ts` `explainAnomalyCause()` + `AnomalyDetailView.tsx`
     - 설비별 "AI 원인 분석" 버튼 (정상 등급 + 이상 태그 0건인 설비는 비활성)
     - per-equipment 상태 관리 (idle/loading/done/error)
     - 결과 카드: LLM 경로는 보라색, 폴백 경로는 노란색 (시각 구분)
-  - 검증: 정상/주의 2종 E2E 통과, 단위 검증 3종 (할루시네이션 감지 + 식별자 strip)
+  - 검증: 10회 재테스트 10/10 LLM 경로 통과 + C안 컨텍스트 적용 후 3종 서로 다른 비교 서술 확인 (0건/동일/낮은편)
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
 - [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
