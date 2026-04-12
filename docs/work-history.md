@@ -106,6 +106,33 @@
 
 ---
 
+### 신기능 3종 (2026-04-12)
+
+- [x] **설비 신뢰성 리포트 (MTBF)**
+  - Python: `endpoints/equipment_mtbf.py` — `GET /admin/equipment-mtbf`
+  - 계산: MTBF = (가동시간 - 다운타임) / 고장 횟수, MTTR, Availability
+  - `tb_equipment_alarm_report` + `tb_equipment_tag_map` JOIN
+  - 단일 알람 duration 24h 캡, 가동률 음수/100% 초과 방지
+  - Next.js: `/admin/equipment-mtbf` — 기간 필터, 정렬 가능 컬럼, 가동률 색상 구분, CSV 다운로드
+  - 메뉴: M100-9 "설비 신뢰성"
+
+- [x] **알람 발생 캘린더·히트맵**
+  - Python: `endpoints/alarm_calendar.py` — `GET /alarm/calendar`
+  - 집계: `by_day_hour`, `by_weekday_hour` (월=0~일=6), `by_category`
+  - Next.js: `/monitoring/alarm-calendar` — ECharts 요일×시간 heatmap + 일별 추이 line chart
+  - 메뉴: M003-6 "알람 캘린더"
+
+- [x] **누수 CUSUM 알림 (야간최소유량)**
+  - DB: `tb_leak_cusum_alert` (alert_id, region, sitename, facilitytype, tagsn, label, leak_status, cusum_value, threshold_h, baseline_mean, acknowledged 등)
+  - Python: `endpoints/leak_cusum_alert.py` + `ai_server.py` `_leak_cusum_scan_loop()` 백그라운드 루프 (6시간 주기)
+    - 기존 `compute_cusum_for_tags` 엔진 재사용
+    - 24시간 이내 동일 tagsn 중복 방지
+    - `POST /leak-cusum/scan` 수동 트리거, `GET /leak-cusum/alerts`, `PATCH /leak-cusum/alerts/{id}/ack`
+  - Next.js: `src/lib/api/leak-cusum-alert-api.ts` + `/monitoring/leak-alerts` 페이지
+    - 미확인 수 경고 배너, 시설별 집계, 미확인/확인완료/전체 탭, 행 펼침(CUSUM 값·임계값·baseline), 확인 버튼
+  - 메뉴: M003-7 "누수 의심 알림"
+  - 검증: 수동 스캔 36태그 분석 → 테스트 레코드로 list/ack E2E 검증
+
 ### 기술 부채 청소 (2026-04-12)
 
 - [x] **SCAN_ALL/FACILITY_DETAIL stale 시간창 로직 통합** — `anomaly_scan.adjust_sql_time_window_to_max_bucket()` 헬퍼로 추출
