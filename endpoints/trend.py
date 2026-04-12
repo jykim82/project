@@ -22,6 +22,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate
+from llm_narrative_log import log_narrative
 
 logger = logging.getLogger("slm")
 
@@ -95,6 +96,29 @@ def _validate_summary_numbers(
         if not ok:
             violations.append(n)
     return (len(violations) == 0, violations)
+
+
+def _is_context_enabled(grp_cd: str, comm_cd: str) -> bool:
+    """tb_comm_code 기반 컨텍스트 주입 토글. 에러/미설정 시 기본 True."""
+    if _get_db_connection is None:
+        return True
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT use_yn FROM tb_comm_code "
+                    "WHERE region = 'R01' AND grp_cd = %s AND comm_cd = %s",
+                    (grp_cd, comm_cd),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return True
+        return (row[0] or "Y") == "Y"
+    except Exception:
+        return True
 
 
 def _fetch_trend_context(tagsn: Optional[str]) -> dict:
@@ -235,7 +259,13 @@ async def explain_trend(request: Request):
         unit_str = f" ({unit})" if unit else ""
 
         # C안: 30일 baseline 컨텍스트 조회 (tagsn이 있을 때만)
-        context = _fetch_trend_context(tagsn)
+        _context_mode = "on" if _is_context_enabled("SITE_SETTING", "TREND_EXPLAIN_CONTEXT") else "off"
+        _ctx_t0 = time.perf_counter()
+        context = _fetch_trend_context(tagsn) if _context_mode == "on" else {}
+        _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
+        _context_used: list[str] = []
+        if context:
+            _context_used.append("baseline_30d")
 
         # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
         # (anomaly_count=0도 포함, 프롬프트 상수 30(일)도 허용)
@@ -288,6 +318,11 @@ async def explain_trend(request: Request):
                     tag_name, unit, min_val, avg_val, max_val, count, anomaly_count,
                 ),
                 "source": "fallback",
+                "context_used": _context_used,
+                "context_fetch_ms": _context_fetch_ms,
+                "context_mode": _context_mode,
+                "llm_generate_ms": 0,
+                "allowed_numbers_count": len(allowed_numbers),
             }
 
         _t0 = time.perf_counter()
@@ -301,6 +336,7 @@ async def explain_trend(request: Request):
             3,        # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
         )
         _elapsed = time.perf_counter() - _t0
+        _llm_ms = int(_elapsed * 1000)
         summary = (summary or "").strip()
 
         # 할루시네이션 검증 — LLM이 제공되지 않은 숫자를 생성했는지 확인
@@ -310,6 +346,18 @@ async def explain_trend(request: Request):
                 f"트렌드 AI 요약 할루시네이션 감지 → 템플릿 폴백: "
                 f"위반 숫자={violations}, 허용={allowed_numbers}"
             )
+            log_narrative(
+                endpoint="trend/explain",
+                params={"tagsn": tagsn, "tag_name": tag_name, "count": count},
+                source="fallback",
+                context_mode=_context_mode,
+                context_used=_context_used,
+                context_fetch_ms=_context_fetch_ms,
+                llm_generate_ms=_llm_ms,
+                llm_rejected=True,
+                violations=violations,
+                allowed_count=len(allowed_numbers),
+            )
             return {
                 "summary": _fallback_summary(
                     tag_name, unit, min_val, avg_val, max_val, count, anomaly_count,
@@ -317,13 +365,39 @@ async def explain_trend(request: Request):
                 "source": "fallback",
                 "llm_rejected": True,
                 "violations": violations,
+                "context_used": _context_used,
+                "context_fetch_ms": _context_fetch_ms,
+                "context_mode": _context_mode,
+                "llm_generate_ms": _llm_ms,
+                "allowed_numbers_count": len(allowed_numbers),
             }
 
         logger.info(
             f"트렌드 AI 요약 완료: {tag_name} "
-            f"({fmt_ts(from_ts)}~{fmt_ts(to_ts)}) ⏱ {_elapsed*1000:.0f}ms"
+            f"({fmt_ts(from_ts)}~{fmt_ts(to_ts)}) "
+            f"⏱ context={_context_fetch_ms}ms, llm={_llm_ms}ms, "
+            f"ctx={_context_used}"
         )
-        return {"summary": summary, "source": "llm"}
+        log_narrative(
+            endpoint="trend/explain",
+            params={"tagsn": tagsn, "tag_name": tag_name, "count": count},
+            source="llm",
+            context_mode=_context_mode,
+            context_used=_context_used,
+            context_fetch_ms=_context_fetch_ms,
+            llm_generate_ms=_llm_ms,
+            llm_rejected=False,
+            allowed_count=len(allowed_numbers),
+        )
+        return {
+            "summary": summary,
+            "source": "llm",
+            "context_used": _context_used,
+            "context_fetch_ms": _context_fetch_ms,
+            "context_mode": _context_mode,
+            "llm_generate_ms": _llm_ms,
+            "allowed_numbers_count": len(allowed_numbers),
+        }
 
     except Exception as e:
         logger.error(f"트렌드 AI 요약 실패: {e}")

@@ -113,6 +113,7 @@ from endpoints.leak_cusum_alert import (
     init as init_leak_cusum_alert,
     run_leak_cusum_scan,
 )
+from endpoints.llm_narrative_stats import router as llm_narrative_stats_router
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -2647,6 +2648,9 @@ app.include_router(alarm_calendar_router)
 # 누수 CUSUM 알림 엔드포인트 (백그라운드 태스크는 lifespan에서 등록)
 init_leak_cusum_alert(get_db_connection)
 app.include_router(leak_cusum_alert_router)
+
+# LLM 자연어 서술 호출 통계 (운영자 관찰용)
+app.include_router(llm_narrative_stats_router)
 
 
 def _split_sql_statements(sql: str) -> list:

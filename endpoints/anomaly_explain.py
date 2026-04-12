@@ -18,6 +18,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from llm_narrative_log import log_narrative
+
 logger = logging.getLogger("slm")
 
 router = APIRouter()
@@ -105,6 +107,29 @@ def _validate_numbers_in_text(
         if not ok:
             violations.append(n)
     return (len(violations) == 0, violations)
+
+
+def _is_context_enabled(grp_cd: str, comm_cd: str) -> bool:
+    """tb_comm_code 기반 컨텍스트 주입 토글. 에러/미설정 시 기본 True."""
+    if _get_db_connection is None:
+        return True
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT use_yn FROM tb_comm_code "
+                    "WHERE region = 'R01' AND grp_cd = %s AND comm_cd = %s",
+                    (grp_cd, comm_cd),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return True
+        return (row[0] or "Y") == "Y"
+    except Exception:
+        return True
 
 
 def _fetch_anomaly_context(diag: EquipmentDiagnosisInput) -> dict:
@@ -215,7 +240,17 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
     """
     try:
         # C안: DB 컨텍스트 조회 — 버튼 클릭 시점에만 실행
-        context = _fetch_anomaly_context(diag)
+        _context_mode = "on" if _is_context_enabled("SITE_SETTING", "ANOMALY_EXPLAIN_CONTEXT") else "off"
+        _ctx_t0 = time.perf_counter()
+        context = _fetch_anomaly_context(diag) if _context_mode == "on" else {}
+        _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
+        _context_used: list[str] = []
+        if "linked_alarms_7d" in context:
+            _context_used.append("linked_alarms_7d")
+        if "site_alarms_7d" in context:
+            _context_used.append("site_alarms_7d")
+        if "site_tag_count" in context:
+            _context_used.append("site_tag_count")
 
         # 허용 수치 — LLM이 사용 가능한 모든 DB 값 + 컨텍스트 값
         allowed_numbers = [
@@ -298,7 +333,15 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
 
         if not _ollama_client:
             logger.info("Ollama 클라이언트 없음 — 템플릿 폴백 반환")
-            return {"summary": _fallback_narrative(diag), "source": "fallback"}
+            return {
+                "summary": _fallback_narrative(diag),
+                "source": "fallback",
+                "context_used": _context_used,
+                "context_fetch_ms": _context_fetch_ms,
+                "context_mode": _context_mode,
+                "llm_generate_ms": 0,
+                "allowed_numbers_count": len(allowed_numbers),
+            }
 
         _t0 = time.perf_counter()
         text = await asyncio.to_thread(
@@ -311,6 +354,7 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
             3,      # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
         )
         _elapsed = time.perf_counter() - _t0
+        _llm_ms = int(_elapsed * 1000)
         text = (text or "").strip()
 
         # 할루시네이션 검증 — 식별자(설비ID·태그명·시설명) 내부 숫자 오탐 방지
@@ -329,18 +373,64 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
                 f"이상감지 LLM 서술 할루시네이션 감지 → 폴백: "
                 f"위반={violations}, 허용={allowed_numbers}"
             )
+            log_narrative(
+                endpoint="anomaly/explain",
+                params={
+                    "equipment_id": diag.equipment_id,
+                    "sitename": diag.sitename,
+                    "health_grade": diag.health_grade,
+                },
+                source="fallback",
+                context_mode=_context_mode,
+                context_used=_context_used,
+                context_fetch_ms=_context_fetch_ms,
+                llm_generate_ms=_llm_ms,
+                llm_rejected=True,
+                violations=violations,
+                allowed_count=len(allowed_numbers),
+            )
             return {
                 "summary": _fallback_narrative(diag),
                 "source": "fallback",
                 "llm_rejected": True,
                 "violations": violations,
+                "context_used": _context_used,
+                "context_fetch_ms": _context_fetch_ms,
+                "context_mode": _context_mode,
+                "llm_generate_ms": _llm_ms,
+                "allowed_numbers_count": len(allowed_numbers),
             }
 
         logger.info(
             f"이상감지 원인 서술 완료: {diag.equipment_id} "
-            f"({diag.health_grade}) ⏱ {_elapsed*1000:.0f}ms"
+            f"({diag.health_grade}) "
+            f"⏱ context={_context_fetch_ms}ms, llm={_llm_ms}ms, "
+            f"ctx={_context_used}"
         )
-        return {"summary": text, "source": "llm"}
+        log_narrative(
+            endpoint="anomaly/explain",
+            params={
+                "equipment_id": diag.equipment_id,
+                "sitename": diag.sitename,
+                "health_grade": diag.health_grade,
+            },
+            source="llm",
+            context_mode=_context_mode,
+            context_used=_context_used,
+            context_fetch_ms=_context_fetch_ms,
+            llm_generate_ms=_llm_ms,
+            llm_rejected=False,
+            allowed_count=len(allowed_numbers),
+        )
+        return {
+            "summary": text,
+            "source": "llm",
+            "context_used": _context_used,
+            "context_fetch_ms": _context_fetch_ms,
+            "context_mode": _context_mode,
+            "llm_generate_ms": _llm_ms,
+            "allowed_numbers_count": len(allowed_numbers),
+        }
 
     except Exception as e:
         logger.error(f"이상감지 원인 서술 실패: {e}")
