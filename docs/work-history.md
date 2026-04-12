@@ -2,26 +2,141 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
-### 완료 (2026-04-12 — NEXTAUTH_URL 서버 IP 자동 감지 + 개발 환경 개선)
+### 완료 (2026-04-13 — P2.4 태그 현재값 AI 해석 UI + P2.8 NETWORK_UPSTREAM 원인 추정)
 
-#### NEXTAUTH_URL IP 자동 감지 (다른 PC 접속 로그인 오류 해결)
-- **증상**: 같은 망의 다른 PC에서 `https://192.168.219.105:3000` 접속 시 `/api/auth/error`로 포워딩, jykim 계정 로그인 실패
-- **원인**: `.env.local`의 `NEXTAUTH_URL=https://localhost:3000` 하드코딩 → NextAuth가 콜백을 localhost로 리다이렉트하여 세션 검증 실패
-- **해결**: `package.json`에 `_ip` 헬퍼 스크립트 추가 — `os.networkInterfaces()`로 외부 IPv4 주소 자동 감지
-  - `dev`, `dev:fast`, `dev:http`, `dev:http:fast`, `start` 모든 스크립트에 `NEXTAUTH_URL=https://$(npm run -s _ip):3000` 주입
-  - `.env.local`에서 `NEXTAUTH_URL` 라인 제거 (스크립트 주입값 우선)
-- **효과**: 어떤 서버(Mac/Linux/Windows)에 배포해도 **현재 서버의 IP가 자동으로 NEXTAUTH_URL에 적용**됨 — 하드코딩 불필요
-- **파일**: `slm-dashboard/package.json`, `slm-dashboard/.env.local`
+#### P2.4 — `/tag/latest/explain` UI 삽입
+- `src/components/trend/TagStatsCards.tsx` — Analog 태그 카드 헤더에 Sparkles 버튼 + Popover 추가. 팝오버 열릴 때 `explainTagLatest` 호출, loading/done/error 상태 전환. source 배지(LLM/템플릿) + `context_used` 태그 표시
+- `src/lib/api/tag-latest-explain-api.ts` — 신규 API 래퍼. apiClient 대신 직접 fetch로 장시간 호출 시 전역 signOut 회피 [E-013]
+- 검증: Playwright로 `/monitoring/reservoir` 접속 → 가곡(배) 수위 카드의 AI 해석 클릭 → Popover에 `context_used = [baseline_30d, peers]` + LLM 뱃지와 함께 2문장 응답 렌더 확인
 
-#### 개발 환경 개선
-- **Ollama 모델 교체**: `gemma4:latest` → `gemma4:26b` (A4B IT, MoE 4B 활성, 17GB)
-  - 한국어 품질 향상, MoE 구조로 속도는 4B급 유지
-  - Mac mini M4 Pro 48GB 환경에서 검증 완료
-- **Node-RED**: Docker `slm-node-red` 컨테이너 확인 (포트 1880), 글로벌 npm 버전 제거
-- **Claude Code Discord 채널 연동**: 작업 완료 알림 + 핸드폰에서 지침 전송 병렬 제어
-  - `claude-plugins-official` 마켓플레이스 등록, `discord@claude-plugins-official` 플러그인 설치
-  - Bun 런타임 설치 (`brew install oven-sh/bun/bun`)
-- **Claude Code 권한 설정**: `bypassPermissions` 모드 + allow 목록(Bash, Grep, Glob, Read, WebFetch, WebSearch, Agent)
+#### P2.8 — NETWORK_UPSTREAM_FAULT_ANALYSIS LLM 원인 추정
+- `endpoints/network_upstream_explain.py` 신규:
+  - `_UPSTREAM_SQL`: `ai_server.py`의 NETWORK_UPSTREAM_FAULT_ANALYSIS 쿼리와 동일 (SSLVPN 그룹별 하위 LTE 통계 + UTM 상태 + 전체 LTE 통계)
+  - `_fetch_upstream_state()`: 1회 쿼리 → `(sslvpn_rows, global_stats)` 파싱, down_pct 계산
+  - `_build_context_block()`: UTM/전체 LTE/SSLVPN 그룹별 다운율 구조화
+  - 프롬프트 규칙: UTM 전체 장애 → 전 구간 장애 / SSLVPN 하위 80%↑ → 집단 이상 / 전체 LTE <10% → 개별 현장 이상
+  - 할루시네이션 가드: 수치 whitelist + 식별자(sslvpn_id, down_sites) strip 후 재검증. 프롬프트 상수 `10.0/80.0/100.0`도 whitelist에 포함 (규칙 문구 인용 시 오탐 방지)
+  - 결정적 템플릿 폴백 `_fallback_summary()` — LLM 실패·거부 시 사용
+- `ai_server.py`: import + `init_network_upstream_explain(get_db_connection, ollama_client)` + router 등록
+- 프런트 통합:
+  - `BotMessage.tsx` — `intent` prop 추가 + `NetworkUpstreamExplainSection` 컴포넌트. intent가 `NETWORK_UPSTREAM_FAULT_ANALYSIS`일 때 visual 아래에 "AI 원인 추정" 버튼 + 결과 박스 렌더
+  - `ChatMessageArea.tsx` — `intent={msg.bot.intent}` 전달
+  - `src/lib/api/network-upstream-explain-api.ts` — `explainUpstreamFault()` 래퍼 (직접 fetch)
+- 검증: `POST /network/upstream-fault/explain` 실호출
+  - 응답 예: "전체 LTE 모뎀 다운율이 6.1%로 10% 미만이기에 상위 장비는 정상이고 개별 현장 이상입니다. 당진시청 SSLVPN 하위 LTE 중 남산10, 행정2-2 현장이 다운되었습니다."
+  - `context_used=["network_status_latest","network_link"]`, `sslvpn_count=1`, `global_lte_down_pct=6.1`
+  - 초기 첫 응답에서 `10.0`이 whitelist에 없어 거부 → 프롬프트 규칙 상수 추가로 해결
+- 사양 반영: `docs/slm-api-contract-final.md` AI 서술 섹션에 `/network/upstream-fault/explain` 추가
+
+---
+
+### 완료 (2026-04-13 — P2.3 피어 태그 비교 컨텍스트 확장)
+
+#### 목적
+같은 시설 유형의 다른 현장 동종 태그를 "피어"로 비교 서술해, 운영자가
+"이 배수지가 다른 배수지 대비 어느 수준인지"를 AI 응답 한 문장으로 파악할 수
+있게 한다. 단일 태그·트렌드 구간 모두 확장 대상.
+
+#### 구현
+- `endpoints/trend.py`:
+  - 카테고리 키워드 추출기 `_extract_peer_category(datainfo)` — 순시유량/토출압력/수위/유량/압력 등 긴 키워드 우선 매칭
+  - 실측 필터 `_is_peer_candidate_datainfo(datainfo)` — 설정/알람/HH/LL/H/L/상태/고수위/저수위 계열 datainfo 배제
+  - `_fetch_peer_context(tagsn, limit=5)` — 동종 카테고리·타현장 태그 최대 5개 baseline 조회 (DISTINCT ON sitename로 1 현장 1 태그), 30일 avg의 평균 = `peer_avg_of_avgs`
+- `/trend/explain` 엔드포인트 (`trend.py`):
+  - 컨텍스트 조회에 peer 블록 추가, `context_used += ["peers"]`
+  - 허용 수치 화이트리스트에 각 피어의 avg/min/max + `peer_avg_of_avgs` + `peer_count` 포함
+  - 프롬프트 확장: 피어 비교 섹션 + 규칙 8 ("피어 비교 시 1문장 추가 서술, 제공된 시설명·수치만 사용")
+  - 문장 수 `2~3` → `3~4`로 확대
+  - 식별자 strip 목록에 피어 `sitename`/`datainfo` 추가 → 수치 검증 오탐 방지
+- `/tag/latest/explain` 엔드포인트 (`tag_latest_explain.py`):
+  - 동일 피어 컨텍스트 재사용 (`_fetch_peer_context` import)
+  - 문장 수 `1~2` → `2~3`로 확대 (피어 블록 있을 때만)
+  - strip 후 재검증 로직 신규 추가 (기존엔 없던 2차 검증)
+
+#### 검증
+- 가곡 배수지 수위 태그(`44270_24904_LEI_N001`, 현재 1.04m) 실호출:
+  - `/tag/latest/explain` → "현재값은 1.04로 지난 30일 평균인 0.781보다 높습니다. 현재값은 피어 평균인 1.15보다 낮습니다." (3문장, `context_used=["baseline_30d","peers"]`, allowed=21)
+  - `/trend/explain` → "값이 0.93~1.05m 범위에서 평균 0.98m로 유지되었습니다. 이는 지난 30일 평균인 0.781m 대비 높은 편입니다. 이번 구간 평균은 피어 평균인 1.15m 대비 낮은 편입니다." (3문장, allowed=24)
+- 초기 필터 버그: `"수위1 H"` 변수 태그가 `" H "` 필터를 우회해 피어 평균이 0.025m로 잘못 집계 → exclude 키워드에 `" H"`/`" L"` (leading space만) 및 `H2/L2/H3/L3` 추가해 해결
+- 사양 반영: `docs/slm-api-contract-final.md` AI 서술 섹션에 P2.3 블록 추가 (공통 컨텍스트 명세)
+
+---
+
+### 완료 (2026-04-12 — API 사양 동기화 + LLM 서술 관찰 UI)
+
+#### 2단계: API contract 동기화
+- `docs/slm-api-contract-final.md` 8절 "전체 API 엔드포인트"에 누락된 7개 신규 엔드포인트 반영:
+  - `GET /admin/equipment-mtbf`, `GET /admin/llm-narrative/stats`
+  - `GET /alarm/calendar`
+  - `GET /leak-cusum/alerts`, `PATCH /leak-cusum/alerts/{id}/ack`, `POST /leak-cusum/scan`
+  - `GET /chat/faq/examples`
+  - AI 서술 섹션 신설: `/anomaly/scan-all/explain`, `/equipment-mtbf/explain`, `/tag/latest/explain` (공통 응답 스키마 + 수치 화이트리스트 정책 명시)
+- 기존 `/chat/feedback`, `/admin/facility-alias`, `/anomaly/explain`, `/trend/explain`, `POST /tags`는 이미 문서화돼 있어 손대지 않음
+
+#### 3단계: LLM 서술 관찰 UI (M100-10)
+- 신규 페이지: `src/app/(dashboard)/admin/llm-narrative/page.tsx`
+  - 요약 카드 4종: 총 호출 수, **LLM 통과율** (≥95% emerald / ≥80% amber / <80% red), **할루시네이션 거부율** (≤5% emerald / ≤15% amber / >15% red), 컨텍스트 모드
+  - 엔드포인트별 상세 테이블: 호출 수 / LLM / 폴백 / 통과율 / 평균 LLM 시간 / 평균 컨텍스트 조회 시간
+  - 기간 선택 (1/7/14/30/90일) + 수동 새로고침
+- API 래퍼: `src/lib/api/llm-narrative-api.ts` — `fetchLlmNarrativeStats(days)` → `GET /admin/llm-narrative/stats?days=N`
+- 메뉴 등록: `sidebar-menus.ts` M100-10 "LLM 서술 관찰" → `/admin/llm-narrative`
+- 검증: Playwright 브라우저로 실제 로그인 후 페이지 렌더 확인 — 31건 호출 / 96.8% 통과율 / 3.2% 거부율 / 5개 엔드포인트 표시 정상
+
+---
+
+### 완료 (2026-04-12 — 배수지 모니터링 빈 차트 + 테스트 환경 tag 수집 데몬 추가 [E-014])
+
+#### 증상
+- `/monitoring/reservoir` 등 배수지/가압장/블록 모니터링 페이지에서 최근 24시간 차트가 전부 비어 있음
+- `/trend/data` 요청은 200 OK지만 `total_points=0`
+- 전체 2700개 태그의 최신 logtime이 `2026-04-11 11:42`에 고정 (약 35시간 전)
+
+#### 원인 (3단 복합)
+1. **Node-RED DB 접속 정보 오류** — `flows.json`의 로컬 postgres config가 `host=172.17.0.1:5433` (Docker bridge gateway + 외부 포트)로 설정되어 같은 compose 네트워크에서 접근 불가
+2. **테스트 환경에 데이터 수집 파이프라인이 없음** — Node-RED flows 324개 postgres 노드 중 `tb_tag_raw_data`에 INSERT하는 노드는 0개. 프로젝트 전체에서 `INSERT INTO tb_tag_raw_data`는 스키마 dump 파일에만 존재
+3. DB dump 로드 이후 증분 수집이 없어 데이터가 정체됨
+
+#### 수정
+1. **`slm-node-red:/data/flows.json`** — `postgreSQLConfig[71827310c941a9d1]`: `host=slm-timescaledb`, `port=5432` 로 변경 후 Node-RED 재시작 → 알람/조건 판정 로직 복구
+2. **테스트 전용 데이터 수집 데몬 추가 (⚠ 납품 시 제거):**
+   - `/Users/jykim/slm/dev_tools/tag_ingest.py` — 원격 운영 DB(`112.166.183.65:25479`) → 로컬 `tb_tag_raw_data` 주기 복제 Python 데몬. backfill 48h + poll 30s, `ON CONFLICT DO NOTHING`, 원격 tz-naive KST → 로컬 timestamptz 변환, SIGTERM graceful shutdown
+   - `/Users/jykim/slm/dev_tools/Dockerfile.tag_ingest` — python:3.12-slim + psycopg2-binary
+   - `docker-compose.dev.yml`에 `dev-tag-ingest` 서비스 블록 추가 (환경변수로 모든 파라미터 오버라이드 가능)
+   - 사양: `docs/dev-tag-ingest-spec.md`
+   - 에러 이력: `docs/error-management.md` [E-014]
+
+#### 검증
+- `docker compose up -d --build dev-tag-ingest` 후 로그에서 "복제 시작 watermark=..." 확인
+- 로컬 max(logtime)이 1분당 2~3시간씩 전진 (backfill 완료까지 ~15분)
+- 이후 POLL_INTERVAL_S 주기로 원격과 격차 유지
+
+#### ⚠ 납품 시 제거 체크리스트
+- `/Users/jykim/slm/dev_tools/` 디렉토리 전체 삭제
+- `docker-compose.dev.yml`의 `dev-tag-ingest` 서비스 블록 삭제
+- 원격 DB 자격 정보(`112.166.183.65:25479`, `DJpost0827///`) 흔적 grep 후 완전 제거
+- `docs/dev-tag-ingest-spec.md` 삭제 또는 archive
+- 운영 환경은 실 PLC/Node-RED 수집 파이프라인을 사용하므로 이 데몬 불필요
+
+---
+
+### 완료 (2026-04-12 — AI 요약 클릭 시 로그인 화면 튕김 버그 수정 [E-013])
+
+#### 루트 원인
+- `src/lib/api-client.ts` `handleError`가 401 응답을 받으면 무조건 `signOut({callbackUrl:"/login"})` 호출
+- AI 현황 요약(`/anomaly/scan-all/explain`)과 AI 원인 분석(`/anomaly/explain`)은 LLM 호출로 40~60초 걸리는 긴 요청
+- 이 사이 JWT 만료 구간에 걸리면 백엔드 401 → 전역 핸들러가 즉시 로그아웃 → 사용자가 "버튼 클릭 → 첫 화면 튕김"으로 체감
+- 다른 짧은 호출들은 토큰 갱신 버퍼(5분) 안에 끝나서 같은 문제가 드러나지 않았음
+
+#### 수정
+- **`src/lib/api-client.ts:72-85`** — 401 응답 시 `signOut` 호출 제거, `ApiError`만 throw. 전역 signOut 책임을 NextAuth JWT refresh 실패 → `SessionGuard`로 단일화 (역할 분리)
+- **`src/lib/api/anomaly-api.ts`** — `explainAnomalyCause`/`explainScanAll` 두 함수를 `apiClient` 대신 직접 `fetch` 호출로 전환 (이중 방어). apiClient import 제거
+- 검증: Playwright 헤드리스 5회 반복 테스트 전부 PASS — URL `/chat` 유지, AI 요약 결과 정상 렌더
+- 상세: `docs/error-management.md` [E-013]
+
+#### 교훈 (재발 방지)
+- 새 API 래퍼 추가 시 401→전역 로그아웃 유혹을 피한다. 실패는 컴포넌트 로컬 에러 상태로만 표현
+- 장시간 LLM 호출 엔드포인트는 개별 에러 핸들링 경로를 가져야 함
+- 전역 세션 관리 책임은 `SessionGuard` 한 곳에만 둔다
 
 ---
 
@@ -106,52 +221,6 @@
 
 ---
 
-### 신기능 3종 (2026-04-12)
-
-- [x] **설비 신뢰성 리포트 (MTBF)**
-  - Python: `endpoints/equipment_mtbf.py` — `GET /admin/equipment-mtbf`
-  - 계산: MTBF = (가동시간 - 다운타임) / 고장 횟수, MTTR, Availability
-  - `tb_equipment_alarm_report` + `tb_equipment_tag_map` JOIN
-  - 단일 알람 duration 24h 캡, 가동률 음수/100% 초과 방지
-  - Next.js: `/admin/equipment-mtbf` — 기간 필터, 정렬 가능 컬럼, 가동률 색상 구분, CSV 다운로드
-  - 메뉴: M100-9 "설비 신뢰성"
-
-- [x] **알람 발생 캘린더·히트맵**
-  - Python: `endpoints/alarm_calendar.py` — `GET /alarm/calendar`
-  - 집계: `by_day_hour`, `by_weekday_hour` (월=0~일=6), `by_category`
-  - Next.js: `/monitoring/alarm-calendar` — ECharts 요일×시간 heatmap + 일별 추이 line chart
-  - 메뉴: M003-6 "알람 캘린더"
-
-- [x] **누수 CUSUM 알림 (야간최소유량)**
-  - DB: `tb_leak_cusum_alert` (alert_id, region, sitename, facilitytype, tagsn, label, leak_status, cusum_value, threshold_h, baseline_mean, acknowledged 등)
-  - Python: `endpoints/leak_cusum_alert.py` + `ai_server.py` `_leak_cusum_scan_loop()` 백그라운드 루프 (6시간 주기)
-    - 기존 `compute_cusum_for_tags` 엔진 재사용
-    - 24시간 이내 동일 tagsn 중복 방지
-    - `POST /leak-cusum/scan` 수동 트리거, `GET /leak-cusum/alerts`, `PATCH /leak-cusum/alerts/{id}/ack`
-  - Next.js: `src/lib/api/leak-cusum-alert-api.ts` + `/monitoring/leak-alerts` 페이지
-    - 미확인 수 경고 배너, 시설별 집계, 미확인/확인완료/전체 탭, 행 펼침(CUSUM 값·임계값·baseline), 확인 버튼
-  - 메뉴: M003-7 "누수 의심 알림"
-  - 검증: 수동 스캔 36태그 분석 → 테스트 레코드로 list/ack E2E 검증
-
-### 기술 부채 청소 (2026-04-12)
-
-- [x] **SCAN_ALL/FACILITY_DETAIL stale 시간창 로직 통합** — `anomaly_scan.adjust_sql_time_window_to_max_bucket()` 헬퍼로 추출
-  - 이전: `anomaly_scan._compute_anomaly_scan_all` + `ai_server /ask` + `ai_server /ask/stream` 3곳에 중복 (각 20~30줄)
-  - 이후: 헬퍼 1곳 + 호출부 3곳 각 4~5줄
-  - 365일 baseline CTE는 건드리지 않음, 테이블 별칭(`c.bucket`) 지원
-  - 검증: 유닛 테스트(3 hours/1 hour 치환 + 365 days 유지) + E2E 우강 가압장 회귀 없음
-
-- [x] **chat-response-mapper.ts 잔존 TS 에러 2건 정리**
-  - `AiServerResponse`에 `cusum_chart_data?: CusumChartData` 추가 (runtime 접근 중이었음)
-  - `AiServerResponse.table_type`에 `"supply_chart"` 추가 (line 200 비교 기준 없었음)
-  - `buildTableData` 파라미터 narrow 처리 — runtime 동작 변화 없음
-
-- [x] **신규 엔드포인트 통합 스모크 테스트 추가** — `test_new_endpoints.py`
-  - 대상 5종: `POST /tags`, `/chat/feedback` CRUD, `/admin/facility-alias` CRUD, `/trend/explain`, `/anomaly/explain`
-  - 24개 assertion 통과 (정상/중복/에러 경로 포함)
-  - 표준 라이브러리만 사용 (urllib, psycopg2)
-  - 실행: `docker exec slm-backend python3 /app/test_new_endpoints.py`
-
 ### 로드맵 요약 (2026-04-12 재검증 기준)
 
 > 2026-04-12 실제 코드베이스 대조 검증 완료. 완료 항목은 `[x]` + 근거 파일/라인 추가.
@@ -196,37 +265,14 @@
 **C. 할루시네이션 방어 레이어**
 - [x] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
   - 근거: `query_validator.py` `unknown_sitename` / `missing_*` 검증 (L24-49, CORRECTION_TEMPLATES) + `param_extractor.py` fuzzy fallback 3종 (sitename/facilitytype/datainfo) + `korean_fuzzy.find_best_match`
-- [x] ANOMALY_FACILITY_DETAIL stale 데이터 대응 — max(bucket) 기준 시간창 동적 조정
-  - `ai_server.py` `/ask`·`/ask/stream` 양쪽 경로에 `cagg_5min_raw_stats_ai.max(bucket)` 조회 후 1시간 이상 오래됐으면 SQL 내 `bucket >= now() - interval '3 hours'` 및 `'1 hour'`을 max_bucket 기준 명시 범위로 regex 치환
-  - 테이블 별칭(`c.bucket`)도 지원 — `(\w+\.)?bucket` 패턴
-  - 365일 baseline CTE는 유지
-  - 검증: 우강 가압장 이상진단 → SQL 0행 → 4행 정상 반환 (이상 1건, 정상 3건)
-- [x] ANOMALY_FACILITY_DETAIL 설비 건강 진단 복구
-  - 원인 1: `response_builder.init()`에 `diagnose_equipment_for_tags_fn` 인자 누락 → 함수 주입 안 됨
-  - 원인 2: `_c_tagsn_idx`/`_c_z_idx`가 `_causal_index and rows` 조건 안에서만 설정되어 causal 미실행 시 `None`
-  - 수정: `ai_server.py` `response_builder.init()` 호출에 `diagnose_equipment_for_tags_fn=_diagnose_equipment_for_tags` 추가
-  - 수정: `response_builder.py`에서 `_c_tagsn_idx`/`_c_z_idx`를 causal 블록 외부에서 초기화 (columns에서 independent하게 추출)
-  - 검증: 우강 → 2개 설비 진단 반환 (PLC plc_76 주의 55점 "네트워크 단절+통신이상", 가압펌프 booster_pump_51 정상 85점)
-  - E2E LLM 원인 서술: "우강 가압장 plc_76 설비는 건강 점수 55점의 주의 등급으로 네트워크 단절 및 통신이상이 감지되었습니다..."
 - [x] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 + 출력 검증
   - 응답 템플릿: `{placeholder}` 치환으로 DB 값 직접 주입 (`ai_server.py:3019-3129`)
   - AI 요약 LLM 경로 (`endpoints/trend.py:/trend/explain`) 강화:
-    - 엄격 프롬프트 (6개 절대 규칙: 제공 수치 외 숫자 금지, 외부 지식 금지, 권고 금지, baseline 비교 유도 등)
+    - 엄격 프롬프트 (5개 절대 규칙: 제공 수치 외 숫자 금지, 외부 지식 금지, 권고 금지 등)
     - `_extract_numbers` + `_validate_summary_numbers` — 출력에서 숫자 추출 후 허용값과 대조 (2% tolerance)
     - `_fallback_summary` — 검증 실패 또는 LLM 불가 시 결정적 템플릿 요약 (할루시네이션 0)
     - 응답에 `source: "llm" | "fallback"` + 실패 시 `llm_rejected`/`violations` 포함
-  - **C안 컨텍스트 확장** (`_fetch_trend_context`) — 버튼 클릭 시 tagsn 기반 30일 baseline 조회
-    - `cagg_5min_raw_stats_ai` 연속 집계 활용 (32ms 수준 쿼리)
-    - 반환: `baseline_min_30d`, `baseline_avg_30d` (가중 평균), `baseline_max_30d`
-    - 프롬프트 "30일 Baseline" 섹션 + "구간 평균이 30일 평균 대비 어떤 수준인지 비교 서술" 규칙
-    - `allowed_numbers`에 baseline 3개 값 + 상수 `30`(일) 자동 허용
-    - 프런트: `PlotChart.tsx`가 `plot.tag_ids[pickedIdx]`로 tagsn 추출 후 payload에 포함
-    - tagsn 누락 시 backward compatible (컨텍스트 없이 기본 요약)
-  - 검증: 4종 E2E
-    1. 1.02 vs baseline 0.77 → "높은 편입니다"
-    2. 0.30 vs baseline 0.77 → "낮은 편입니다"
-    3. 0.78 vs baseline 0.77 → "높은 편입니다" (미세 차이)
-    4. tagsn 누락 → 기본 요약 (backward compat)
+  - 검증: 일반/제로/이상구간 3종 E2E, 단위 테스트 5종 (할루시네이션 감지 + tolerance + ignore_words)
 - [x] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
   - 근거: 모든 SQL은 `intent_def.get("sql", "")`에서만 로드 (`ai_server.py` L2912, L4434, L2337), LLM SQL 생성 경로 없음. `execute_sql(sql_template, params)` 만 사용 (L2549)
 - [x] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>`
@@ -249,31 +295,11 @@
     - 스모크 테스트: 정상 201 / 중복 409 / 삭제 정리 확인
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
-- [x] 이상감지 원인 LLM 서술 생성 (Phase 3 설비 진단 기반)
-  - Python: `endpoints/anomaly_explain.py` — `POST /anomaly/explain`
-    - 엄격 프롬프트 (6개 절대 규칙: 제공 수치·라벨 외 생성 금지, 권고 금지, 비교 서술 유도 등)
-    - `_validate_numbers_in_text` — 허용 수치 + `strip_strings`로 식별자 내 숫자 오탐 방지
-    - `_fallback_narrative` — 검증 실패/Ollama 불가/예외 시 결정적 템플릿 요약 (할루시네이션 0)
-    - 응답: `{summary, source:"llm"|"fallback", llm_rejected?, violations?}`
-    - `ai_server.py` 라우터 등록
-  - **C안 컨텍스트 확장** — 버튼 클릭 시점에만 DB 컨텍스트 조회 → LLM 해석 가치 확보
-    - `_fetch_anomaly_context()`: 3개 쿼리로 비교용 수치 조회
-      1. 연결 이상 태그의 지난 7일 알람 건수 (`tb_equipment_alarm_report` WHERE tagsn IN linked_anomaly_tags)
-      2. 같은 시설 전체의 지난 7일 알람 건수 (sitename + facilitytype)
-      3. 같은 시설의 총 태그 수 (`tb_tag_info`)
-    - 프롬프트 "비교 컨텍스트" 섹션 + "이 설비가 시설 평균 대비 어떤 수준인지 비교 서술" 규칙 추가
-    - `allowed_numbers` 확장 (컨텍스트 값 + 프롬프트 상수 `7` 자동 허용)
-    - 결과 예: "이 설비의 지난 7일 알람 0건으로, 같은 시설 전체 30건(일평균 4.3건)보다 낮은 편입니다"
-  - Ollama 튜닝: timeout 45s → 90s, backoff 10s → 3s (`trend.py` 동시 적용)
-  - Next.js: `src/lib/api/anomaly-api.ts` `explainAnomalyCause()` + `AnomalyDetailView.tsx`
-    - 설비별 "AI 원인 분석" 버튼 (정상 등급 + 이상 태그 0건인 설비는 비활성)
-    - per-equipment 상태 관리 (idle/loading/done/error)
-    - 결과 카드: LLM 경로는 보라색, 폴백 경로는 노란색 (시각 구분)
-  - 검증: 10회 재테스트 10/10 LLM 경로 통과 + C안 컨텍스트 적용 후 3종 서로 다른 비교 서술 확인 (0건/동일/낮은편)
+- [x] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후) — `fbed558` (2026-04-12): `POST /anomaly/explain` + 3단 방어(프롬프트/수치 whitelist/fallback) + UX 설명 완료
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
+- [ ] EPANET 수리 시뮬레이션 모듈
 - [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
-- ⏸ **EPANET 수리 시뮬레이션 모듈** — **장기 보류** (네트워크 모델링 설계 선행 필요, 별도 요청 시 재개)
 - ⏸ **인텐트 68개 → 200개 확장** (Slot-Filling 구조 유지, 2단계 분류) — **장기 보류** (현재 74개, 사용자 지시로 보류. 별도 요청 시 재개)
 - ⏸ **Gemma4:26b few-shot 프롬프트 최적화** — **장기 보류** (A-1 피드백 데이터 축적 후 혼동 쌍 기반으로 설계 예정)
 - ⏸ **보고서 초안 자동 생성 → Word/PDF 다운로드** — **장기 보류** (설계·템플릿·주기 논의 선행 필요, 별도 요청 시 재개)
@@ -2148,10 +2174,11 @@
   - 납품처별 양식 차이 대응: 섹션 템플릿 분리 (헤더/본문/서명란 독립 관리)
   - Word/PDF 다운로드 연동
 
-- [ ] **이상감지 원인 설명 생성** — ※ 4계층 탐지 완성 후 진행
-  - 선행 조건: ai_server.py 이상감지 pass 스텁 → tb_tag_group_map 기반 실구현 완료
-  - 탐지 결과(수치) → "값 주입 프롬프트" 방식으로 LLM 서술화
-  - 운전원 권고 문구는 고정 템플릿 (LLM 생성 금지)
+- [x] **이상감지 원인 설명 생성** — 완료 (`fbed558`, 2026-04-12)
+  - 선행 조건 충족: anomaly_scan.py + tb_tag_group_map JOIN 기반 실구현 완료
+  - 탐지 결과(수치) → "값 주입 프롬프트" + 수치 whitelist 검증 + 결정적 fallback 3단 방어
+  - 운전원 권고 문구는 고정 템플릿 유지 (LLM 생성 금지)
+  - 엔드포인트: `POST /anomaly/explain`
 
 ---
 
