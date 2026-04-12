@@ -155,7 +155,13 @@
   - 테이블 별칭(`c.bucket`)도 지원 — `(\w+\.)?bucket` 패턴
   - 365일 baseline CTE는 유지
   - 검증: 우강 가압장 이상진단 → SQL 0행 → 4행 정상 반환 (이상 1건, 정상 3건)
-  - 참고: `equipment_diagnosis` 배열은 `tb_tag_info.equipment_id`가 대부분 NULL이라 현재 빈 리스트 반환 (별개 데이터 이슈, 추후 equipment_id 매핑 보강 필요)
+- [x] ANOMALY_FACILITY_DETAIL 설비 건강 진단 복구
+  - 원인 1: `response_builder.init()`에 `diagnose_equipment_for_tags_fn` 인자 누락 → 함수 주입 안 됨
+  - 원인 2: `_c_tagsn_idx`/`_c_z_idx`가 `_causal_index and rows` 조건 안에서만 설정되어 causal 미실행 시 `None`
+  - 수정: `ai_server.py` `response_builder.init()` 호출에 `diagnose_equipment_for_tags_fn=_diagnose_equipment_for_tags` 추가
+  - 수정: `response_builder.py`에서 `_c_tagsn_idx`/`_c_z_idx`를 causal 블록 외부에서 초기화 (columns에서 independent하게 추출)
+  - 검증: 우강 → 2개 설비 진단 반환 (PLC plc_76 주의 55점 "네트워크 단절+통신이상", 가압펌프 booster_pump_51 정상 85점)
+  - E2E LLM 원인 서술: "우강 가압장 plc_76 설비는 건강 점수 55점의 주의 등급으로 네트워크 단절 및 통신이상이 감지되었습니다..."
 - [x] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 + 출력 검증
   - 응답 템플릿: `{placeholder}` 치환으로 DB 값 직접 주입 (`ai_server.py:3019-3129`)
   - AI 요약 LLM 경로 (`endpoints/trend.py:/trend/explain`) 강화:
