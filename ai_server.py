@@ -3016,6 +3016,40 @@ async def _ask_inner(request: AskRequest):
     else:
         sql_combined = sql_template or ""
 
+    # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — max(bucket) 기준 시간창 조정
+    # (SCAN_ALL 캐시와 동일 패턴. DB 데이터가 1시간 이상 오래되면 0행 반환 방지)
+    # 주의: `bucket >= now() - interval '1/3 hours'`만 교체. '365 days' 같은 baseline은 유지
+    if intent == "ANOMALY_FACILITY_DETAIL" and sql_combined:
+        try:
+            _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
+            if _mb_rows and _mb_rows[0][0]:
+                _mb = _mb_rows[0][0]
+                _mb_naive = _mb.replace(tzinfo=None) if getattr(_mb, "tzinfo", None) else _mb
+                _age_sec = (datetime.now() - _mb_naive).total_seconds()
+                if _age_sec > 3600:
+                    _rt = (_mb_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                    _rf_3h = (_mb_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+                    _rf_1h = (_mb_naive - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                    # 테이블 별칭(c.bucket 등)을 허용하는 regex — hours/hour 양쪽 단위 대응
+                    # 365일·30일 같은 baseline CTE는 건드리지 않음
+                    import re as _re
+                    sql_combined = _re.sub(
+                        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'3\s*hours?'",
+                        lambda m: f"{m.group(1)} >= '{_rf_3h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
+                        sql_combined,
+                    )
+                    sql_combined = _re.sub(
+                        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'1\s*hours?'",
+                        lambda m: f"{m.group(1)} >= '{_rf_1h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
+                        sql_combined,
+                    )
+                    logger.info(
+                        f"FACILITY_DETAIL: 데이터 {_age_sec/3600:.1f}h 오래됨 → "
+                        f"max_bucket({_mb_naive}) 기준 조정"
+                    )
+        except Exception as _e:
+            logger.warning(f"FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
+
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
     _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
@@ -4535,6 +4569,37 @@ async def ask_stream(request: AskRequest):
             sql_combined = "\n".join(sql_template)
         else:
             sql_combined = sql_template or ""
+
+        # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — max(bucket) 기준 시간창 조정
+        # (SCAN_ALL 캐시·/ask 경로와 동일 패턴)
+        if intent == "ANOMALY_FACILITY_DETAIL" and sql_combined:
+            try:
+                _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
+                if _mb_rows and _mb_rows[0][0]:
+                    _mb = _mb_rows[0][0]
+                    _mb_naive = _mb.replace(tzinfo=None) if getattr(_mb, "tzinfo", None) else _mb
+                    _age_sec = (datetime.now() - _mb_naive).total_seconds()
+                    if _age_sec > 3600:
+                        _rt = (_mb_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                        _rf_3h = (_mb_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+                        _rf_1h = (_mb_naive - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                        import re as _re
+                        sql_combined = _re.sub(
+                            r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'3\s*hours?'",
+                            lambda m: f"{m.group(1)} >= '{_rf_3h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
+                            sql_combined,
+                        )
+                        sql_combined = _re.sub(
+                            r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'1\s*hours?'",
+                            lambda m: f"{m.group(1)} >= '{_rf_1h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
+                            sql_combined,
+                        )
+                        logger.info(
+                            f"[SSE] FACILITY_DETAIL: 데이터 {_age_sec/3600:.1f}h 오래됨 → "
+                            f"max_bucket({_mb_naive}) 기준 조정"
+                        )
+            except Exception as _e:
+                logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
         _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
