@@ -97,6 +97,50 @@ def _validate_summary_numbers(
     return (len(violations) == 0, violations)
 
 
+def _fetch_trend_context(tagsn: Optional[str]) -> dict:
+    """
+    태그의 지난 30일 baseline 통계를 조회한다 (cagg_5min_raw_stats_ai 연속 집계 사용).
+
+    반환 키 (실패 시 빈 dict):
+      baseline_min_30d   : 지난 30일 최솟값
+      baseline_avg_30d   : 지난 30일 평균 (중앙값 근사 — (min+max)/2 가중평균)
+      baseline_max_30d   : 지난 30일 최댓값
+      baseline_sample_cnt: 샘플 수
+    """
+    if not tagsn or _get_db_connection is None:
+        return {}
+
+    ctx: dict = {}
+    conn = None
+    try:
+        conn = _get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT "
+                "  MIN(min_val) AS min_30d, "
+                "  SUM((min_val + max_val) / 2.0 * sample_cnt) / NULLIF(SUM(sample_cnt), 0) AS avg_30d, "
+                "  MAX(max_val) AS max_30d, "
+                "  SUM(sample_cnt) AS cnt "
+                "FROM cagg_5min_raw_stats_ai "
+                "WHERE tagsn = %s AND bucket >= NOW() - INTERVAL '30 days'",
+                (tagsn,),
+            )
+            row = cur.fetchone()
+            if row and row[3] and row[3] > 0:
+                ctx["baseline_min_30d"] = float(row[0]) if row[0] is not None else None
+                ctx["baseline_avg_30d"] = float(row[1]) if row[1] is not None else None
+                ctx["baseline_max_30d"] = float(row[2]) if row[2] is not None else None
+                ctx["baseline_sample_cnt"] = int(row[3])
+    except Exception as e:
+        logger.warning(f"trend 컨텍스트 조회 실패: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    # None 값 제거
+    return {k: v for k, v in ctx.items() if v is not None}
+
+
 def _fallback_summary(
     tag_name: str,
     unit: str,
@@ -171,6 +215,7 @@ async def explain_trend(request: Request):
 
         body = await request.json()
         tag_name = body.get("tag_name", "태그")
+        tagsn = body.get("tagsn") or None  # C안: 선택 제공, baseline 조회에 사용
         unit = body.get("unit", "")
         from_ts = body.get("from_ts", "")
         to_ts = body.get("to_ts", "")
@@ -189,19 +234,41 @@ async def explain_trend(request: Request):
 
         unit_str = f" ({unit})" if unit else ""
 
+        # C안: 30일 baseline 컨텍스트 조회 (tagsn이 있을 때만)
+        context = _fetch_trend_context(tagsn)
+
         # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
-        # (anomaly_count=0도 포함 — 프롬프트가 "이상 구간 0건"을 언급할 수 있음)
-        allowed_numbers = [min_val, avg_val, max_val, float(count), float(anomaly_count)]
+        # (anomaly_count=0도 포함, 프롬프트 상수 30(일)도 허용)
+        allowed_numbers = [
+            min_val, avg_val, max_val, float(count), float(anomaly_count),
+            30.0,  # 프롬프트의 "지난 30일" 상수
+        ]
+        for key in ("baseline_min_30d", "baseline_avg_30d", "baseline_max_30d"):
+            if key in context:
+                allowed_numbers.append(float(context[key]))
+
+        # C안: 비교 컨텍스트 섹션 (baseline이 있을 때만 추가)
+        context_block = ""
+        if context:
+            context_block = (
+                "\n\n## 30일 Baseline (이 값들도 비교·서술에 사용 가능)\n"
+                f"- 지난 30일 최소: {context['baseline_min_30d']:.3g}\n"
+                f"- 지난 30일 평균: {context['baseline_avg_30d']:.3g}\n"
+                f"- 지난 30일 최대: {context['baseline_max_30d']:.3g}"
+            )
 
         # 엄격 프롬프트 — "제공된 수치 외 숫자 생성 금지" 명시
         prompt = (
             "다음 센서 데이터 구간을 분석하여 수치와 패턴을 2문장으로 요약하라.\n\n"
             "## 절대 규칙\n"
-            "1. 아래 '통계' 섹션에 제공된 수치(최소/평균/최대/데이터 건수/이상 구간)만 사용하라.\n"
-            "2. 통계에 없는 숫자는 절대 언급하지 마라 (시간·구체 수치·표준편차 등 계산하지 마라).\n"
+            "1. 아래 '통계'와 '30일 Baseline' 섹션에 제공된 수치만 사용하라.\n"
+            "2. 통계·baseline에 없는 숫자는 절대 언급하지 마라 "
+            "(시간·구체 수치·표준편차 등 계산하지 마라).\n"
             "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라.\n"
             "4. 외부 지식이나 일반적 센서 기준은 추가하지 마라.\n"
-            "5. 단순 서술 + 존댓말: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었습니다' 형태.\n\n"
+            "5. 단순 서술 + 존댓말: '값이 {min}~{max} 범위에서 평균 {avg}로 유지되었습니다' 형태.\n"
+            "6. Baseline이 있으면 이번 구간 평균이 지난 30일 평균 대비 어떤 수준인지 "
+            "간단히 비교 서술하라 (예: '30일 평균 대비 높은 편입니다').\n\n"
             f"## 태그\n{tag_name}{unit_str}\n\n"
             f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
             "## 통계 (이 값들만 사용)\n"
@@ -209,7 +276,8 @@ async def explain_trend(request: Request):
             f"- 평균: {avg_val:.3g}\n"
             f"- 최대: {max_val:.3g}\n"
             f"- 데이터 건수: {count}\n"
-            f"- 이상 구간: {anomaly_count}건\n\n"
+            f"- 이상 구간: {anomaly_count}건"
+            f"{context_block}\n\n"
             "요약 (2문장, 위 수치만 사용, 존댓말 '~습니다' 종결):"
         )
 
