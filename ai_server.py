@@ -108,6 +108,11 @@ from endpoints.facility_alias import router as facility_alias_router, init as in
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
 from endpoints.alarm_calendar import router as alarm_calendar_router, init as init_alarm_calendar
+from endpoints.leak_cusum_alert import (
+    router as leak_cusum_alert_router,
+    init as init_leak_cusum_alert,
+    run_leak_cusum_scan,
+)
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -1076,6 +1081,44 @@ def _filter_flow_balance_edges(edges: list, sitename: str | None) -> list:
     return filtered  # 매칭 없으면 빈 리스트
 
 
+async def _leak_cusum_scan_loop():
+    """백그라운드: 서버 시작 10분 후 첫 실행, 이후 6시간마다 CUSUM 누수 스캔.
+
+    야간최소유량 데이터를 사용해 소블록 단위로 CUSUM 분석 후
+    leak_status="누수의심" 태그를 `tb_leak_cusum_alert`에 저장.
+    중복 방지: 24시간 이내 동일 tagsn 알림은 skip.
+    """
+    # 초기 지연: 다른 캐시·임베딩 빌드 이후 실행
+    await asyncio.sleep(600)
+
+    def _night_query(sitename: str, facilitytype: str, days: int):
+        from sql_executor import _execute_night_min_flow_query
+        to_ts = datetime.now().strftime("%Y-%m-%d")
+        from_ts = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        return _execute_night_min_flow_query(sitename, facilitytype, from_ts, to_ts)
+
+    while True:
+        try:
+            stats = await asyncio.to_thread(
+                run_leak_cusum_scan,
+                _night_query,
+                "R01",   # region
+                "",      # sitename_like (전체)
+                "소블록",  # facilitytype
+                90,      # days
+                24,      # dedupe_hours
+            )
+            if stats.get("inserted", 0) > 0:
+                logger.info(
+                    f"[누수CUSUM] 스캔 완료: 분석 {stats['scanned_tags']}개, "
+                    f"탐지 {stats['detected']}건, 신규 저장 {stats['inserted']}건"
+                )
+        except Exception as e:
+            logger.error(f"[누수CUSUM] 스캔 루프 오류: {e}")
+        # 6시간 주기
+        await asyncio.sleep(6 * 3600)
+
+
 async def _flow_balance_cache_loop():
     """백그라운드: 서버 시작 30초 후 첫 실행, 이후 30분마다 물 수지 캐시 갱신."""
     global _FLOW_BALANCE_CACHE, _FLOW_BALANCE_CACHE_TIME
@@ -1478,6 +1521,9 @@ async def lifespan(app: FastAPI):
     _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
     _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
+
+    # 누수 CUSUM 알림 스캔 (서버 시작 10분 후 첫 실행, 이후 6시간 주기)
+    _leak_cusum_task = asyncio.create_task(_leak_cusum_scan_loop())
 
     # Ollama 모델 Keep-Warm (4분 주기 더미 요청으로 VRAM 유지)
     # Ollama 기본 만료=5분, 4분마다 ping하여 리로드 오버헤드(~9.5s) 방지
@@ -2597,6 +2643,10 @@ app.include_router(equipment_mtbf_router)
 # 알람 캘린더 히트맵 엔드포인트
 init_alarm_calendar(get_db_connection)
 app.include_router(alarm_calendar_router)
+
+# 누수 CUSUM 알림 엔드포인트 (백그라운드 태스크는 lifespan에서 등록)
+init_leak_cusum_alert(get_db_connection)
+app.include_router(leak_cusum_alert_router)
 
 
 def _split_sql_statements(sql: str) -> list:
