@@ -20,6 +20,70 @@ from typing import Any, Optional
 
 logger = logging.getLogger("slm")
 
+
+# =============================================================================
+# 공통 유틸: stale 데이터 대응 시간창 조정
+# =============================================================================
+
+def adjust_sql_time_window_to_max_bucket(
+    sql: str,
+    max_bucket: Any,
+    label: str = "",
+    threshold_sec: int = 3600,
+) -> str:
+    """SQL 내 `bucket >= now() - interval '3 hours'` / `'1 hour'` 패턴을
+    max_bucket 기준 명시 범위로 치환한다 (stale 데이터 대응).
+
+    DB 데이터가 `threshold_sec`초 이상 오래된 경우에만 치환.
+    365일 등 다른 window (baseline)는 건드리지 않음.
+    테이블 별칭(`c.bucket`)도 `(\\w+\\.)?bucket` 패턴으로 지원.
+
+    Args:
+        sql         : 원본 SQL 템플릿
+        max_bucket  : cagg_5min_raw_stats_ai.max(bucket) 값 (datetime)
+        label       : 로그 태그 (예: "SCAN_ALL", "FACILITY_DETAIL")
+        threshold_sec: 이 값보다 오래되면 치환 (기본 3600s = 1시간)
+
+    Returns:
+        치환된 SQL (변경 없으면 원본 반환)
+    """
+    if max_bucket is None:
+        return sql
+    mb_naive = (
+        max_bucket.replace(tzinfo=None)
+        if getattr(max_bucket, "tzinfo", None) else max_bucket
+    )
+    try:
+        age_sec = (datetime.now() - mb_naive).total_seconds()
+    except Exception:
+        return sql
+    if age_sec <= threshold_sec:
+        return sql
+
+    rt = (mb_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    rf_3h = (mb_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+    rf_1h = (mb_naive - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+    patched = re.sub(
+        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'3\s*hours?'",
+        lambda m: f"{m.group(1)} >= '{rf_3h}'::timestamp AND {m.group(1)} <= '{rt}'::timestamp",
+        sql,
+    )
+    patched = re.sub(
+        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'1\s*hours?'",
+        lambda m: f"{m.group(1)} >= '{rf_1h}'::timestamp AND {m.group(1)} <= '{rt}'::timestamp",
+        patched,
+    )
+
+    if patched != sql:
+        prefix = f"{label}: " if label else ""
+        logger.info(
+            f"{prefix}데이터 {age_sec/3600:.1f}h 오래됨 → "
+            f"max_bucket({mb_naive}) 기준 시간창 조정"
+        )
+    return patched
+
+
 # ai_server.py에서 주입
 _get_db_connection = None
 _execute_sql = None           # execute_sql 함수 참조
@@ -543,25 +607,13 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
     # 플레이스홀더 치환 (캐시는 전체 조회이므로 필터 없음)
     cache_params = {"anomaly_facility_filter": "", "anomaly_scope": "", "alarm_filter_clause": ""}
 
-    # 데이터 신선도 확인: latest CTE가 now()-3h 기준이므로 DB 데이터가 오래됐으면 max(bucket) 기준으로 조정
+    # 데이터 신선도 확인: SCAN_ALL·FACILITY_DETAIL 공통 헬퍼 사용
     try:
         _max_rows, _ = _execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
         if _max_rows and _max_rows[0][0]:
-            _max_bucket = _max_rows[0][0]
-            _max_bucket_naive = _max_bucket.replace(tzinfo=None) if getattr(_max_bucket, "tzinfo", None) else _max_bucket
-            _data_age_sec = (datetime.now() - _max_bucket_naive).total_seconds()
-            if _data_age_sec > 3600:
-                # 데이터가 1시간 이상 오래됨 → latest CTE를 max(bucket) 기준으로 조정
-                _ref_from = (_max_bucket_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-                _ref_to = (_max_bucket_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-                sql_combined = sql_combined.replace(
-                    "WHERE bucket >= now() - interval '3 hours'",
-                    f"WHERE bucket >= '{_ref_from}'::timestamp AND bucket <= '{_ref_to}'::timestamp"
-                ).replace(
-                    "WHERE bucket >= now() - interval '1 hour'",
-                    f"WHERE bucket >= '{(_max_bucket_naive - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')}'::timestamp AND bucket <= '{_ref_to}'::timestamp"
-                )
-                logger.info(f"SCAN_ALL: 데이터 {_data_age_sec/3600:.1f}h 오래됨 → latest/recent_holding CTE 기준 max_bucket({_max_bucket_naive}) 조정")
+            sql_combined = adjust_sql_time_window_to_max_bucket(
+                sql_combined, _max_rows[0][0], label="SCAN_ALL",
+            )
     except Exception as e:
         logger.warning(f"SCAN_ALL: max(bucket) 확인 실패: {e}")
 

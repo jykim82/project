@@ -109,7 +109,11 @@ from endpoints.anomaly_explain import router as anomaly_explain_router, init as 
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
-from anomaly_scan import _compute_anomaly_scan_all, _diagnose_equipment_for_tags
+from anomaly_scan import (
+    _compute_anomaly_scan_all,
+    _diagnose_equipment_for_tags,
+    adjust_sql_time_window_to_max_bucket,
+)
 from response_builder import (
     JsonbSchemaViolation, process_sql_result,
     render_answer_template, apply_corrections_to_answer,
@@ -3017,37 +3021,14 @@ async def _ask_inner(request: AskRequest):
     else:
         sql_combined = sql_template or ""
 
-    # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — max(bucket) 기준 시간창 조정
-    # (SCAN_ALL 캐시와 동일 패턴. DB 데이터가 1시간 이상 오래되면 0행 반환 방지)
-    # 주의: `bucket >= now() - interval '1/3 hours'`만 교체. '365 days' 같은 baseline은 유지
+    # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — 공통 헬퍼 사용
     if intent == "ANOMALY_FACILITY_DETAIL" and sql_combined:
         try:
             _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
             if _mb_rows and _mb_rows[0][0]:
-                _mb = _mb_rows[0][0]
-                _mb_naive = _mb.replace(tzinfo=None) if getattr(_mb, "tzinfo", None) else _mb
-                _age_sec = (datetime.now() - _mb_naive).total_seconds()
-                if _age_sec > 3600:
-                    _rt = (_mb_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-                    _rf_3h = (_mb_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-                    _rf_1h = (_mb_naive - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-                    # 테이블 별칭(c.bucket 등)을 허용하는 regex — hours/hour 양쪽 단위 대응
-                    # 365일·30일 같은 baseline CTE는 건드리지 않음
-                    import re as _re
-                    sql_combined = _re.sub(
-                        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'3\s*hours?'",
-                        lambda m: f"{m.group(1)} >= '{_rf_3h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
-                        sql_combined,
-                    )
-                    sql_combined = _re.sub(
-                        r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'1\s*hours?'",
-                        lambda m: f"{m.group(1)} >= '{_rf_1h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
-                        sql_combined,
-                    )
-                    logger.info(
-                        f"FACILITY_DETAIL: 데이터 {_age_sec/3600:.1f}h 오래됨 → "
-                        f"max_bucket({_mb_naive}) 기준 조정"
-                    )
+                sql_combined = adjust_sql_time_window_to_max_bucket(
+                    sql_combined, _mb_rows[0][0], label="FACILITY_DETAIL",
+                )
         except Exception as _e:
             logger.warning(f"FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
@@ -4571,34 +4552,14 @@ async def ask_stream(request: AskRequest):
         else:
             sql_combined = sql_template or ""
 
-        # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — max(bucket) 기준 시간창 조정
-        # (SCAN_ALL 캐시·/ask 경로와 동일 패턴)
+        # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — 공통 헬퍼 사용
         if intent == "ANOMALY_FACILITY_DETAIL" and sql_combined:
             try:
                 _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
                 if _mb_rows and _mb_rows[0][0]:
-                    _mb = _mb_rows[0][0]
-                    _mb_naive = _mb.replace(tzinfo=None) if getattr(_mb, "tzinfo", None) else _mb
-                    _age_sec = (datetime.now() - _mb_naive).total_seconds()
-                    if _age_sec > 3600:
-                        _rt = (_mb_naive + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-                        _rf_3h = (_mb_naive - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
-                        _rf_1h = (_mb_naive - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-                        import re as _re
-                        sql_combined = _re.sub(
-                            r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'3\s*hours?'",
-                            lambda m: f"{m.group(1)} >= '{_rf_3h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
-                            sql_combined,
-                        )
-                        sql_combined = _re.sub(
-                            r"((?:\w+\.)?bucket)\s*>=\s*now\(\)\s*-\s*interval\s*'1\s*hours?'",
-                            lambda m: f"{m.group(1)} >= '{_rf_1h}'::timestamp AND {m.group(1)} <= '{_rt}'::timestamp",
-                            sql_combined,
-                        )
-                        logger.info(
-                            f"[SSE] FACILITY_DETAIL: 데이터 {_age_sec/3600:.1f}h 오래됨 → "
-                            f"max_bucket({_mb_naive}) 기준 조정"
-                        )
+                    sql_combined = adjust_sql_time_window_to_max_bucket(
+                        sql_combined, _mb_rows[0][0], label="[SSE] FACILITY_DETAIL",
+                    )
             except Exception as _e:
                 logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
