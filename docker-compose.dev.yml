@@ -8,9 +8,9 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_DB: slm
-      POSTGRES_USER: slm_dev
-      POSTGRES_PASSWORD: slm_dev_1234
+      POSTGRES_DB: ${DB_NAME:-slm}
+      POSTGRES_USER: ${DB_USER:-slm_dev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
       TZ: Asia/Seoul
       PGTZ: Asia/Seoul
     volumes:
@@ -62,11 +62,11 @@ services:
       TZ: Asia/Seoul
       DB_HOST: timescaledb
       DB_PORT: "5432"
-      DB_NAME: slm
-      DB_USER: slm_dev
-      DB_PASSWORD: slm_dev_1234
-      OLLAMA_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: gemma4:26b
+      DB_NAME: ${DB_NAME:-slm}
+      DB_USER: ${DB_USER:-slm_dev}
+      DB_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
       FILES_BASE: /data/files
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -91,12 +91,13 @@ services:
       - frontend-next-cache:/app/.next             # .next 캐시 보호
     environment:
       TZ: Asia/Seoul
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      INTERNAL_API_URL: http://backend:8000
-      NEXT_PUBLIC_DEMO_MODE: "false"
-      NEXTAUTH_URL: https://localhost:3000
-      NEXTAUTH_SECRET: dev-secret-change-in-prod
-      DATABASE_URL: postgresql://slm_dev:slm_dev_1234@timescaledb:5432/slm
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:8000}
+      NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://localhost:3000}
+      # 반드시 .env 또는 deploy secret으로 오버라이드 — 여기 default는 dev 편의용 약한 값
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-secret-change-in-prod}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://slm_dev:slm_dev_1234@timescaledb:5432/slm}
     depends_on:
       - backend
     restart: unless-stopped

@@ -113,7 +113,7 @@
   - CRUD API: `endpoints/facility_alias.py` (`/admin/facility-alias` GET/POST/PATCH/DELETE)
   - Next.js: `src/app/(dashboard)/admin/facility-alias/page.tsx` — 검색/추가/수정/삭제 UI, `facility-alias-api.ts` 클라이언트, M100-8 메뉴 추가
   - 검증: "합일" → "합덕일반" alias 등록 → `/ask`에서 "합일 수위" 질의 시 자동 치환 + `corrections` 표출 확인
-- [ ] 프롬프트 구조 최적화 — Gemma4:26b 128K 컨텍스트 내 few-shot 설계 **미검증** (Ollama generate 경로는 있으나 few-shot 템플릿 식별 불가)
+- ⏸ 프롬프트 구조 최적화 — Gemma4:26b few-shot 설계 **장기 보류** (→ 아래 "장기(Phase 2)" 참조)
 
 **B. 이상감지 Phase 3 (설비 역추적)**
 - [x] 이상 태그 → 연결 설비 → 종합 진단 연동
@@ -141,21 +141,30 @@
   - 근거: `block_builder.py:15-20 wrap_status_marker` + L36-57 `_alarm_category_marker`/`_alarm_msg_marker` + `response_builder.py:1282 _STATUS_MARKER_MAP` (`ai_server.py` 11건 사용)
 
 **D. 프로덕션 인증 정리**
-- [ ] `.env.local` NEXTAUTH_SECRET → 프로덕션용 시크릿 교체 **미완료** (현재: `NEXTAUTH_SECRET=dev-secret-change-in-prod`)
-- [ ] `.env.local` DB 크레덴셜 → 환경별 분리 (Docker Secrets 등) **미완료** (현재: `DATABASE_URL=postgresql://slm_dev:slm_dev_1234@localhost:5433/slm` 평문)
+- [x] NEXTAUTH_SECRET → 강한 무작위 값 교체 (dev 포함)
+  - `.env.local`, root `.env` (gitignore) 에 `openssl rand -base64 32` 생성 값 주입
+  - `docker-compose.dev.yml` 기본값 `dev-secret-change-in-prod` 유지(폴백용) + `${NEXTAUTH_SECRET:-...}` 보간
+  - Frontend 컨테이너 재기동으로 실제 활성화 확인 (`printenv NEXTAUTH_SECRET` = 강한 값)
+- [x] DB 크레덴셜 → 환경별 분리 구조
+  - `docker-compose.dev.yml` 전체를 `${VAR:-default}` 패턴으로 변경 (timescaledb/backend/frontend 3곳)
+  - `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DATABASE_URL`, `NEXTAUTH_SECRET` 등 주요 변수 오버라이드 가능
+  - dev 기본값 유지 → 기존 개발 흐름 무변화, prod는 `.env` 또는 시크릿 매니저로 주입
+  - `.env.example` 템플릿 3종 (루트 / slm-dashboard / slm) + `docs/deploy-secrets.md` 배포 가이드 (Docker Secrets / k8s / 외부 매니저 패턴 설명)
+  - 루트 `.gitignore` 신규: `.env*` 차단 + `.env.example` 허용
 - [x] setup/tags TODO 스텁 2개
   - [x] 벌크 업로드 — `src/lib/api/tag-api.ts:80 uploadTagsCsv` + `src/app/(dashboard)/setup/tags/page.tsx:335 onUpload` 연결
   - [x] 태그 생성 API — `POST /tags` (`endpoints/tags.py:200-262`) + `tag-api.ts:createTag` + `setup/tags/page.tsx:handleAdd` 실제 호출
     - 스모크 테스트: 정상 201 / 중복 409 / 삭제 정리 확인
 
 #### 중기 (Phase 1 — 납품 서버, A30 24GB + Gemma4 12B)
-- [ ] 인텐트 68개 → 200개 확장 (Slot-Filling 구조 유지, 2단계 분류) **진행 중** (현재 74개, 목표 200개 미달)
 - [ ] 보고서 초안 자동 생성 → Word/PDF 다운로드 **미구현**
 - [ ] 이상감지 원인 LLM 서술 생성 (4계층 탐지 완성 후)
 
 #### 장기 (Phase 2 — Mac Mini Pro 또는 L40S + Gemma4 27B)
 - [ ] EPANET 수리 시뮬레이션 모듈
 - [ ] 멀티모달 현장 사진 분석 ("참고 의견" 전용)
+- ⏸ **인텐트 68개 → 200개 확장** (Slot-Filling 구조 유지, 2단계 분류) — **장기 보류** (현재 74개, 사용자 지시로 보류. 별도 요청 시 재개)
+- ⏸ **Gemma4:26b few-shot 프롬프트 최적화** — **장기 보류** (A-1 피드백 데이터 축적 후 혼동 쌍 기반으로 설계 예정)
 
 ---
 
