@@ -10,9 +10,11 @@ ai_server.py에서 분리된 모듈 — init()으로 DB 커넥션 함수를 주�
 
 import logging
 import os
+from typing import Optional
 
 import psycopg2
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("slm")
 
@@ -189,6 +191,77 @@ async def get_tag_groups():
     except Exception as e:
         logger.error(f"태그 그룹 조회 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# POST /tags — 태그 마스터 생성
+# =============================================================================
+
+class TagCreate(BaseModel):
+    tagsn: str = Field(..., min_length=1, max_length=100)
+    tagtype: Optional[str] = Field(None, max_length=50)
+    sitename: Optional[str] = Field(None, max_length=100)
+    facilitytype: Optional[str] = Field(None, max_length=50)
+    equipmenttype: Optional[str] = Field(None, max_length=50)
+    datainfo: Optional[str] = Field(None, max_length=200)
+    datadesc: Optional[str] = Field(None, max_length=500)
+    unit: Optional[str] = Field(None, max_length=30)
+    alarm_tag_yn: Optional[int] = Field(0, ge=0, le=1)
+
+
+@router.post("/tags", status_code=status.HTTP_201_CREATED)
+async def create_tag(body: TagCreate):
+    """태그 마스터에 신규 태그 등록 (tagsn UNIQUE 충돌 시 409)"""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM tb_tag_info WHERE tagsn = %s", (body.tagsn,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="이미 등록된 태그SN입니다")
+
+            cur.execute(
+                "INSERT INTO tb_tag_info "
+                "(tagsn, tagtype, sitename, facilitytype, equipmenttype, "
+                " datainfo, datadesc, unit, alarm_tag_yn) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING tagsn, tagtype, sitename, facilitytype, equipmenttype, "
+                "          datainfo, datadesc, unit, alarm_tag_yn",
+                (
+                    body.tagsn, body.tagtype, body.sitename, body.facilitytype,
+                    body.equipmenttype, body.datainfo, body.datadesc, body.unit,
+                    body.alarm_tag_yn,
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return {
+            "status": "OK",
+            "data": {
+                "tagsn": row[0],
+                "tagtype": row[1],
+                "sitename": row[2],
+                "facilitytype": row[3],
+                "equipmenttype": row[4],
+                "datainfo": row[5],
+                "datadesc": row[6],
+                "unit": row[7],
+                "alarm_tag_yn": row[8],
+            },
+        }
+    except HTTPException:
+        raise
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"태그 생성 실패: {e}")
+        raise HTTPException(status_code=500, detail="태그 생성에 실패했습니다")
     finally:
         if conn:
             conn.close()
