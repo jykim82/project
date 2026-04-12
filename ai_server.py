@@ -107,6 +107,7 @@ from endpoints.chat_feedback import router as chat_feedback_router, init as init
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
+from endpoints.alarm_calendar import router as alarm_calendar_router, init as init_alarm_calendar
 from shared.timeseries import get_chunks_for_range, query_chunks_agg, reaggregate, query_chunks_raw
 import response_builder
 import anomaly_scan
@@ -2592,6 +2593,10 @@ app.include_router(anomaly_explain_router)
 # 설비 신뢰성 리포트 (MTBF/MTTR/Availability) 엔드포인트
 init_equipment_mtbf(get_db_connection)
 app.include_router(equipment_mtbf_router)
+
+# 알람 캘린더 히트맵 엔드포인트
+init_alarm_calendar(get_db_connection)
+app.include_router(alarm_calendar_router)
 
 
 def _split_sql_statements(sql: str) -> list:
