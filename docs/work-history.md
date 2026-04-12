@@ -2,6 +2,45 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — P2.6 종합 이상 요약 + P2.7 MTBF 서술 + FAQ 동적화)
+
+C안 중기 확장 Phase 2의 남은 3종(P2.6/P2.7/FAQ) 백엔드·프런트 연동 상태 재확인 및 문서 반영.
+실상은 이미 엔드포인트·프런트 컴포넌트 모두 구현돼 동작 중이었으나 work-history에 독립 항목으로 기록되지 않아 남은 할 일로 오인되던 상태. `py_compile` 정적 검증 통과, UI 버튼·결과 카드 렌더 코드 확인 완료.
+
+#### P2.6 — `/anomaly/scan-all/explain`
+- 백엔드 `endpoints/scan_all_explain.py` (282 lines):
+  - `_ANOMALY_SCAN_CACHE`에서 verdict(`이상`/`주의`) Top-N 선별 (z_score 절댓값 내림차순), 캐시 미스 시 `_compute_anomaly_scan_all()` 동기 계산 폴백
+  - 할루시네이션 가드: `z_score`/`deviation_pct`/`current_val`/`mean_30d` + 총계 + 프롬프트 상수(0, 30)를 `allowed_numbers`에 포함, 시설명·datainfo strip 후 재검증
+  - 결정적 폴백 `_build_fallback()` (LLM 실패·거부 시)
+  - `ai_server.py:2674-2675` 라우터 등록
+- 프런트: `AnomalyScanView.tsx:55-72,209-` — "AI 현황 요약" 버튼 + 상태/결과 카드, `explainScanAll(3)` 호출
+- API 래퍼: `src/lib/api/anomaly-api.ts:67` `explainScanAll()` — 직접 fetch (장시간 LLM 호출, [E-013] 패턴)
+
+#### P2.7 — `/equipment-mtbf/explain`
+- 백엔드 `endpoints/equipment_mtbf_explain.py` (288 lines):
+  - `_fetch_mtbf_top(days, sitename, facilitytype, top_n)` — `tb_equipment_alarm_report` + `tb_equipment_tag_map` + `tb_equipment_info` JOIN, `availability_pct ASC, fault_count DESC`로 최악 설비 Top-N
+  - 프롬프트: 절대 규칙 7개(수치 외 숫자 금지/권고 금지/설비 유형 분포 서술 등) + 분포 Counter + Top 목록
+  - 할루시네이션 가드: `fault_count/downtime_h/mttr_h/mtbf_h/avail_pct` + `days/top_n/0/100` 상수 + 유형별 카운트 → `allowed_numbers`, 식별자(sitename·facilitytype·equipmenttype·equipment_id) strip 후 검증
+  - 폴백 `_fallback_summary()` (가장 심각 설비 + 유형 분포 서술)
+  - `ai_server.py:2678-2679` 라우터 등록
+- 프런트: `/admin/equipment-mtbf/page.tsx:110-130, 194-236` — 헤더 "AI 해석" 버튼 + 결과 카드(LLM 보라색 / 폴백 앰버)
+- API 래퍼: `src/lib/api/equipment-mtbf-api.ts:69` `explainEquipmentMtbf()`
+
+#### FAQ 예시 동적화 — `/chat/faq/examples`
+- 백엔드 `endpoints/chat_faq_examples.py` (247 lines):
+  - 카테고리 6종(basic/trend/anomaly/analysis/facility/alarm)별 템플릿 20여개
+  - `_fetch_active_sitenames(facilitytype, datainfo_filter, days=7)` — `cagg_5min_raw_stats_ai` EXISTS로 최근 7일 실데이터 있는 시설만 선별
+  - `_anomaly_sitenames()` — `_ANOMALY_SCAN_CACHE`에서 현재 이상/주의 시설 우선 추출 → 이상감지 카테고리에 우선 치환
+  - `ai_server.py:2686-2687` 라우터 등록
+- 프런트: `src/hooks/use-chat-faq.ts:156-188` — 1차 서버 `fetchFaqExamples("R01", 2)`, 실패 시 2차 폴백(기존 `FAQ_POOL` + autocomplete 기반 로컬 치환)
+- API 래퍼: `src/lib/api/chat-api.ts:183` `fetchFaqExamples()`
+
+#### 공통 패턴 확인
+- 3건 모두 P2.3/P2.4 확립 패턴(컨텍스트 조회 → allowed_numbers → 엄격 프롬프트 → 수치 검증 → fallback) 준수
+- `log_narrative()`로 LLM 통과/거부 로그 → `/admin/llm-narrative` 관찰 UI에서 집계
+
+---
+
 ### 완료 (2026-04-13 — P2.4 태그 현재값 AI 해석 UI + P2.8 NETWORK_UPSTREAM 원인 추정)
 
 #### P2.4 — `/tag/latest/explain` UI 삽입
