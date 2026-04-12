@@ -150,6 +150,12 @@
 **C. 할루시네이션 방어 레이어**
 - [x] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
   - 근거: `query_validator.py` `unknown_sitename` / `missing_*` 검증 (L24-49, CORRECTION_TEMPLATES) + `param_extractor.py` fuzzy fallback 3종 (sitename/facilitytype/datainfo) + `korean_fuzzy.find_best_match`
+- [x] ANOMALY_FACILITY_DETAIL stale 데이터 대응 — max(bucket) 기준 시간창 동적 조정
+  - `ai_server.py` `/ask`·`/ask/stream` 양쪽 경로에 `cagg_5min_raw_stats_ai.max(bucket)` 조회 후 1시간 이상 오래됐으면 SQL 내 `bucket >= now() - interval '3 hours'` 및 `'1 hour'`을 max_bucket 기준 명시 범위로 regex 치환
+  - 테이블 별칭(`c.bucket`)도 지원 — `(\w+\.)?bucket` 패턴
+  - 365일 baseline CTE는 유지
+  - 검증: 우강 가압장 이상진단 → SQL 0행 → 4행 정상 반환 (이상 1건, 정상 3건)
+  - 참고: `equipment_diagnosis` 배열은 `tb_tag_info.equipment_id`가 대부분 NULL이라 현재 빈 리스트 반환 (별개 데이터 이슈, 추후 equipment_id 매핑 보강 필요)
 - [x] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 + 출력 검증
   - 응답 템플릿: `{placeholder}` 치환으로 DB 값 직접 주입 (`ai_server.py:3019-3129`)
   - AI 요약 LLM 경로 (`endpoints/trend.py:/trend/explain`) 강화:
