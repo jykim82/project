@@ -127,7 +127,14 @@
 **C. 할루시네이션 방어 레이어**
 - [x] Entity 검증 레이어 — LLM 추출값 → DB 퍼지매칭 → 실제 ID 치환
   - 근거: `query_validator.py` `unknown_sitename` / `missing_*` 검증 (L24-49, CORRECTION_TEMPLATES) + `param_extractor.py` fuzzy fallback 3종 (sitename/facilitytype/datainfo) + `korean_fuzzy.find_best_match`
-- [ ] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 **부분** (응답 템플릿은 `{placeholder}` 치환으로 DB 값 직접 주입 — `ai_server.py` L3019-3129. AI 요약 LLM 경로의 값 주입 강제 조건은 미확인)
+- [x] 값 주입 프롬프트 — DB 수치만 사용하도록 생성 전 제약 + 출력 검증
+  - 응답 템플릿: `{placeholder}` 치환으로 DB 값 직접 주입 (`ai_server.py:3019-3129`)
+  - AI 요약 LLM 경로 (`endpoints/trend.py:/trend/explain`) 강화:
+    - 엄격 프롬프트 (5개 절대 규칙: 제공 수치 외 숫자 금지, 외부 지식 금지, 권고 금지 등)
+    - `_extract_numbers` + `_validate_summary_numbers` — 출력에서 숫자 추출 후 허용값과 대조 (2% tolerance)
+    - `_fallback_summary` — 검증 실패 또는 LLM 불가 시 결정적 템플릿 요약 (할루시네이션 0)
+    - 응답에 `source: "llm" | "fallback"` + 실패 시 `llm_rejected`/`violations` 포함
+  - 검증: 일반/제로/이상구간 3종 E2E, 단위 테스트 5종 (할루시네이션 감지 + tolerance + ignore_words)
 - [x] SQL 생성 완전 차단 — SQL_TEMPLATES dict 고정
   - 근거: 모든 SQL은 `intent_def.get("sql", "")`에서만 로드 (`ai_server.py` L2912, L4434, L2337), LLM SQL 생성 경로 없음. `execute_sql(sql_template, params)` 만 사용 (L2549)
 - [x] 시맨틱 마커 일관 적용 — `<<ok>>` `<<warn>>` `<<error>>`
