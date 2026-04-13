@@ -377,6 +377,34 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 
 ---
 
+### [E-018] 위기대응 화면 수위 알람의 검출 로직 다이어그램 미표시
+
+- **날짜:** 2026-04-13
+- **증상:** `tb_equipment_alarm_report.diagnosed_msg`(text)에 `<div class="diagram-container">` + `<div class="flow-row">` + `<div class="flow-step">` + `<div class="flow-box COLOR">` 구조의 검출 로직 흐름도(flowchart) HTML이 들어 있는 수위 경보가 다수 존재하지만, 위기대응 → 경보분석(`/crisis/alarm-analysis`) 우측 패널에 다이어그램이 한 건도 표시되지 않음.
+
+- **원인 (복합):**
+  1. **프런트엔드 파서 누락** — `AlarmAnalysisDetail.tsx`의 `parseDiagnosedMsg()`가 섹션 자식 요소 중 `<p>`, `<ul>/<ol>`, `.info-box`/`.info`만 처리. 수위 알람 4번 섹션 "발생원인"에 들어가는 `<span>` 본문, `<h3>(로직점검 프로세스)` 헤딩, `.diagram-container` 다이어그램 컨테이너는 모두 무시되고 있었음
+  2. **백엔드 30일 컷오프** — `endpoints/alarm_crisis.py` `/crisis/alarm-analysis`가 `WHERE alarm_start_time >= NOW() - INTERVAL '30 days'`로 하드코딩. 다이어그램 포함 행 583건이 모두 2026-02-01 ~ 02-27 범위라 4월 시점에서 컷오프에 잘려 endpoint가 0건 반환
+
+- **해결:**
+  1. `parseDiagnosedMsg()` 확장 — 자식 요소 분기에 `SPAN`(텍스트), `H2/H3/H4`(heading 블록), `.diagram-container`(diagram 블록) 추가
+  2. 신규 `parseDiagramContainer()` 헬퍼 — `.flow-row` → `.flow-step`/`.flow-vertical`/`.arrow-down-connector`를 문서 순서로 순회, `arrow-down-connector`를 row 구분자로 사용해 `DiagramRow[]`로 변환. `.flow-box`의 `blue/green/yellow/pink/purple/gray` 클래스 → `DiagramColor` 열거형
+  3. 신규 `DiagramFlow` 컴포넌트 — `DIAGRAM_COLOR_CLASSES` 정적 매핑(Tailwind purge 호환)으로 색상 적용, 가로 flex + `→` 화살표, `arrow_down` 행은 `↓` 중앙 정렬로 다음 그룹과 시각적 분리
+  4. `endpoints/alarm_crisis.py` `get_alarm_analysis()` — `days: int = 90` 쿼리 파라미터화 (7~365 클램프), 기본값 30→90 확장. 옛 다이어그램 데이터까지 포함되도록
+
+- **검증:**
+  - Playwright + 백엔드 직접 fetch로 실제 DB 행 1건의 `diagnosed_msg`에 신규 파서 로직 inline 실행 → DiagramRow 정확히 5개 (steps 3 + arrow_down 2) 추출, 15개 flow-box 색상 분류 정상 (`수위분석 알고리즘 시작:blue`, `헌팅여부:green`, ...)
+  - `curl /crisis/alarm-analysis?days=90` → 500건 중 183건이 `diagram-container` 포함 (이전 0건 → 183건)
+
+- **한계:**
+  - 신규(2026-03 이후) 알람은 다이어그램 HTML이 더 이상 생성되지 않음 — 백엔드 알람 생성 로직(다른 파일/시스템)의 회귀일 가능성 별도 조사 필요
+
+- **관련 파일:**
+  - `slm-dashboard/slm-dashboard/src/components/crisis/AlarmAnalysisDetail.tsx`
+  - `slm/endpoints/alarm_crisis.py:476`
+
+---
+
 ## 관련 파일
 
 - 시작 스크립트: `D:\web\start-services.bat`

@@ -2,6 +2,26 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — 위기대응 수위 알람 검출 로직 다이어그램 렌더링 [E-018])
+
+- 증상: `tb_equipment_alarm_report.diagnosed_msg`에 들어있는 검출 로직 흐름도(`<div class="diagram-container">` + `.flow-row/.flow-step/.flow-box` + `.arrow-down-connector`)가 위기대응 화면에 한 건도 표시되지 않음
+- 원인 (복합):
+  1. 프런트엔드 파서 누락 — `parseDiagnosedMsg()`가 `<p>/<ul>/<ol>/.info-box`만 처리, `<span>/<h3>/.diagram-container`는 무시
+  2. 백엔드 30일 컷오프 — 다이어그램 행 583건이 모두 2026-02-01~02-27 범위라 30일 필터에 잘림
+- 해결:
+  1. `AlarmAnalysisDetail.tsx` 파서 확장 — `<span>` (text), `<h3>` (heading), `.diagram-container` (diagram) 블록 추가
+  2. 신규 `parseDiagramContainer()` — `.flow-step/.flow-vertical/.arrow-down-connector`를 문서 순서로 순회, `arrow-down-connector`를 row 구분자로 사용해 `DiagramRow[]` 생성
+  3. 신규 `DiagramFlow` 컴포넌트 — Tailwind 정적 매핑(`bg-sky-500/15` 등)으로 6색 지원, 가로 flex + `→`/`↓` 화살표
+  4. `endpoints/alarm_crisis.py:476` `days` 쿼리 파라미터(7~365 클램프), 기본값 30→90으로 확장
+- 검증: Playwright + 실제 DB 행으로 신규 파서 inline 실행 → DiagramRow 5개 (steps 3 + arrow_down 2), 15개 flow-box 색상 분류 정상. `curl /crisis/alarm-analysis?days=90` → 500건 중 183건이 다이어그램 포함 (이전 0건)
+
+#### 커밋
+- `slm@(예정)` endpoints/alarm_crisis.py days 파라미터화
+- `slm-dashboard@(예정)` AlarmAnalysisDetail.tsx 파서 + DiagramFlow 컴포넌트
+- `web@(예정)` docs E-018 + work-history
+
+---
+
 ### 완료 (2026-04-13 — /monitoring/flow 첫 접속 18s 지연 제거 — dev JIT 프리워밍 사이드카)
 
 - 증상: 백엔드·프런트엔드 기동 직후 처음 용수 흐름 페이지 접속 시 데이터가 18초 가까이 뜨지 않음 [E-017]
