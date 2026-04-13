@@ -742,6 +742,76 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
   - `slm/endpoints/scan_all_explain.py` (전면 재작성, ~440 lines)
   - `slm-dashboard/slm-dashboard/src/components/chat/anomaly/AnomalyScanView.tsx:255-280`
 
+- **관련 커밋:** `slm@f4355a9` / `slm-dashboard@e588b3f` / `web@09eb77d` / `web@9e60912`
+
+---
+
+### [E-024] 위기대응 검출 로직 다이어그램 시각 디자인 개선
+
+- **날짜:** 2026-04-13
+- **사용자 요청:** "(로직점검 프로세스)의 도형 화살표 및 디자인을 디자인 관점에서 가독성 있고, 직관적으로 개선해줘"
+- **이전 디자인의 문제점 ([E-019] 1차 구현):**
+  1. 박스 너무 작음 — `min-w-[84px]`, `text-[11px]` → 가독성 떨어짐
+  2. 형태 구분 없음 — 알고리즘 시작 박스(blue)와 일반 단계 박스(green)가 같은 사각형 → 흐름의 시작점 시각적으로 안 보임
+  3. 화살표가 텍스트 — `→` `↓` 글자 사용 → 시각적 무게 없음, 방향성 불명확
+  4. 검출 강조 약함 — `ring-2 + scale-105` → 다른 박스와 큰 차이 없음
+  5. dimmed 모호 — `opacity-30 + grayscale` → 거의 안 보여서 전체 흐름 추적 어려움
+  6. 색 대비 약함 — `bg-*-500/15` → 박스가 배경과 거의 비슷
+  7. 행 구분 없음 — `arrow-down-connector`가 단순 `↓` 한 글자 → 단계 phase 구분 모호
+
+- **개선 (`AlarmAnalysisDetail.tsx`의 `DiagramFlow` + `DiagramBox` 신규 추출):**
+
+  **A) 박스 디자인**
+  - 크기: `min-w-[100px] max-w-[150px]` + 패딩 `px-3 py-2.5` (이전 84px/p2)
+  - 텍스트: `text-[12px] font-semibold` (이전 11px/medium)
+  - 형태 분리:
+    - **알고리즘 시작 (blue)**: `rounded-full` (pill) + `PlayCircle` 아이콘 — 흐름의 진입점 즉시 시각화
+    - **일반 단계 (green/yellow/...)**: `rounded-xl` (rounded-rect) — 작업 노드
+  - 색상 강도 향상: `bg-*-500/15` → `bg-*-500/20` + `border-*-500/50~60` 2px solid
+
+  **B) 검출 단계 강조** (`DETECTED_CLASSES`)
+  - `border-red-500` + `bg-red-500/20` + `text-red-100`
+  - `shadow-lg shadow-red-500/30` (글로우 효과)
+  - `scale-[1.08]` (시각적 부각)
+  - `ring-2 ring-red-500/60 ring-offset-2 ring-offset-background` (외곽 ring)
+  - **박스 위쪽에 떠 있는 "✓ 검출" 배지**: `bg-red-500 px-2 py-0.5 rounded-full` + `CheckCircle2` 아이콘 + ring으로 배경에 분리
+
+  **C) Dimmed 단계 명료화** (`DIMMED_CLASSES`)
+  - `border-dashed border-border/50` — 점선 테두리로 "실행 안 됨" 의미 강조
+  - `bg-transparent` — 배경 비움
+  - `text-muted-foreground/50` — 회색 텍스트
+  - `scale-95` — 약간 축소
+  - 박스 위쪽에 작은 `Circle` 마커 (회색 점) — 추가 시각 단서
+
+  **D) 화살표 — Lucide 아이콘으로 전환**
+  - 가로 화살표: `ChevronRight` (`size-4 stroke-[2.5]`)
+    - 검출 전: `text-sky-400/80`
+    - 검출 박스 직후: `text-red-400/60`
+    - dimmed 영역: `text-border/40`
+  - 행 구분자: `ChevronsDown` (`size-5`) + 양쪽 horizontal divider
+    - `bg-gradient-to-r from-transparent to-border/60` 으로 자연스럽게 페이드
+
+  **E) 컨테이너**
+  - `rounded-xl border bg-gradient-to-b from-muted/30 to-muted/5 p-4`
+  - 그라데이션 배경으로 깊이감
+  - 검출 헤더: `border-red-500/30 bg-red-500/10` + CheckCircle2 아이콘 + 검출 단계 라벨 + 안내 텍스트
+
+- **검증 (Playwright 라이브 시각 확인):**
+  - `/crisis/alarm-analysis` → 송산2산단(배) 1지 수위 LL 알람 클릭 → 다이어그램 영역 스크린샷
+  - 검출 단계 "유입유출량 분석"이 빨간 테두리 + ✓ 배지 + scale로 즉시 식별됨
+  - 이후 8개 박스가 dashed border + 회색으로 "실행 안 됨" 시각화
+  - Algorithm start (수위분석/가압장분석) pill 형태 + PlayCircle 아이콘 명확
+  - ChevronRight 화살표가 단계별 색상 차등 (sky → red → grey)
+  - ChevronsDown 행 구분자가 phase 경계 명확화
+  - tsc --noEmit 신규 에러 없음
+
+- **참고 사항:**
+  - dev 환경에서 Turbopack 캐시 stale로 한 번 build error 발생 → `touch` 후 정상화
+  - 좁은 패널(~500px)에서는 row 5개 박스가 2줄로 wrap되지만 ChevronsDown 구분자로 phase 구분은 유지됨
+
+- **관련 파일:**
+  - `slm-dashboard/slm-dashboard/src/components/crisis/AlarmAnalysisDetail.tsx:354-440` (DiagramFlow + DiagramBox)
+
 ---
 
 ## 관련 파일

@@ -2,6 +2,30 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — 위기대응 검출 로직 다이어그램 시각 디자인 개선 [E-024])
+
+- 사용자 요청: "(로직점검 프로세스)의 도형 화살표 및 디자인을 디자인 관점에서 가독성 있고, 직관적으로 개선"
+- 이전 디자인 문제: 박스 너무 작음(11px), 형태 구분 없음, 화살표가 텍스트, 검출 강조 약함, dimmed 모호, 색 대비 약함, 행 구분 없음
+- 개선 (`AlarmAnalysisDetail.tsx`의 `DiagramFlow` + 신규 `DiagramBox` 컴포넌트):
+  1. **박스 크기·텍스트** 100px+ / 12px / px-3 py-2.5 + 2px solid border
+  2. **형태 분리** — 알고리즘 시작(blue)은 `rounded-full` pill + `PlayCircle` 아이콘, 일반 단계는 `rounded-xl` rounded-rect
+  3. **검출 강조** — `border-red-500 + bg-red-500/20 + scale-[1.08] + ring-2 + shadow-lg shadow-red-500/30` + 박스 위쪽 떠 있는 "✓ 검출" 배지(`bg-red-500 rounded-full + CheckCircle2`)
+  4. **dimmed 명료화** — `border-dashed + bg-transparent + text-muted-foreground/50 + scale-95` + 위쪽 작은 회색 Circle 마커
+  5. **화살표 Lucide 전환** — `ChevronRight` (가로, 검출 전 sky / 검출 후 red / dimmed grey), `ChevronsDown` (행 구분, 양쪽 그라데이션 divider)
+  6. **컨테이너** — `rounded-xl + gradient bg + border` + 검출 헤더 카드 (`border-red-500/30 bg-red-500/10 + CheckCircle2`)
+- 검증 (Playwright 라이브):
+  - 송산2산단(배) 1지 수위 LL 알람의 다이어그램 스크린샷 캡처
+  - 검출 박스 "유입유출량 분석" 빨간 테두리 + ✓ 배지로 즉시 식별
+  - 이후 8개 박스 dashed + 회색으로 "실행 안 됨" 시각화
+  - Algorithm start 박스가 pill + PlayCircle 아이콘으로 일반 단계와 즉시 구분
+  - tsc --noEmit 신규 에러 없음
+
+#### 커밋
+- `slm-dashboard@(예정)` AlarmAnalysisDetail.tsx DiagramFlow/DiagramBox 디자인 개선
+- `web@(예정)` docs E-024
+
+---
+
 ### 완료 (2026-04-13 — AI 현황 요약 Hybrid 재설계 [E-023])
 
 - 사용자 의도: "교차 검증의 의미, 가장 중요한 항목, 알람의 위급한 순서대로 보라고 가이드". 통계 수치 나열 → 카테고리 의미 + 점검 순서 가이드 형식
