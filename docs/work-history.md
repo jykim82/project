@@ -2,6 +2,28 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — 검출 로직 다이어그램 현재 알람 반영 + 검출 단계 시각화 [E-019])
+
+- 증상: [E-018]로 옛 다이어그램 583건은 표시되지만 신규 알람에 다이어그램 미생성 + 검출 단계 표시 없음
+- 원인: Node-RED `flows_deploy.json`의 다이어그램 생성 함수 `a655fae0839ec028`(17,574 chars)가 upstream/downstream wires 모두 끊긴 dead 노드. 활성 체인은 단축 함수 `820cf7cd8e67c2f9`(8,719 chars)로 wired
+- 해결 (3-layer):
+  1. **Node-RED 함수 swap + 검출 단계 로직 주입** — `820cf7cd8e67c2f9.func` ← dead a655 코드 + 신규 헬퍼 2종(`detectStep` 키워드 매칭, `applyDetectionClasses` 클래스 주입). HTML 템플릿에 `.detected`/`.dimmed` CSS 추가. a655는 `disabled=true`로 백업 마킹
+  2. **프런트엔드 파서/렌더러** — `DiagramStep`에 `detected`/`dimmed` 추가, 첫 detected 발견 후 후속 박스 자동 dimmed (Node-RED 누락 대비 보강), `DETECTED_BOX_CLASSES`(red ring + scale + glow) / `DIMMED_BOX_CLASSES`(opacity 0.3 + grayscale), 검출 단계 범례 + tooltip + aria-label
+  3. **백엔드** — E-018에서 이미 `?days=90` 노출 처리됨
+- 검증:
+  - Node-RED 라이브: 죽동(배) HH 알람 + 송산2산단생활(배) 수위 LL 주의 알람 NULL→재처리 → 13977/14042 chars + detected + data-step 정상
+  - 박스 분포: plain 6 + detected 1 (#7 유입유출량 분석) + dimmed 8 = 15
+  - React 파서 라이브 (Playwright): `{detected:{label:"유입유출량 분석"}, counts:{plain:6,detected:1,dimmed:8}}` 정확 추출
+- 한계:
+  1. 배수지 수위 전용 — 가압장/네트워크/UPS/펌프/밸브는 다이어그램 함수 미존재 (Phase 2)
+  2. 휴리스틱 매칭(~80% 정확도) — 정확한 단계 추적은 상위 switch에서 `msg.detection_step` 직접 set하는 Phase 2 리팩토링 필요
+
+#### 커밋
+- `web@(예정)` flows_deploy.json swap + CSS + docs E-019
+- `slm-dashboard@(예정)` AlarmAnalysisDetail.tsx 파서/렌더러 detected/dimmed
+
+---
+
 ### 완료 (2026-04-13 — 위기대응 수위 알람 검출 로직 다이어그램 렌더링 [E-018])
 
 - 증상: `tb_equipment_alarm_report.diagnosed_msg`에 들어있는 검출 로직 흐름도(`<div class="diagram-container">` + `.flow-row/.flow-step/.flow-box` + `.arrow-down-connector`)가 위기대응 화면에 한 건도 표시되지 않음

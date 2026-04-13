@@ -405,6 +405,57 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 
 ---
 
+### [E-019] 검출 로직 다이어그램이 현재 알람에 반영 안 되고 검출 단계 표시 없음
+
+- **날짜:** 2026-04-13
+- **증상:** [E-018]로 옛 다이어그램(2026-02 시점) 583건은 표시되지만 — (1) 2026-03 이후 신규 수위 알람에는 다이어그램이 한 건도 생성되지 않음, (2) 다이어그램에 어느 단계에서 실제 검출됐는지 표시 없이 모든 박스가 평평하게 그려짐.
+
+- **원인 조사:**
+  1. **고립된 dead 노드:** Node-RED `flows_deploy.json`의 `a655fae0839ec028`("HTML 위기대응 표시", 17,574 chars)에 다이어그램 생성 코드가 살아있지만 **upstream wires 0 / downstream `[[]]`** — 완전히 고립. 2026-02-27 무렵 wiring이 끊어진 채 방치
+  2. **간소화된 대체 노드:** 배수지 수위 알람 체인은 현재 `820cf7cd8e67c2f9`(8,719 chars, no diagram)로 wiring 돼 있음. 입력 변수는 24개로 dead 노드(23개)의 진상위 — **swap 호환성 100%**
+  3. **검출 단계 정보 부재:** 어느 함수도 `msg.detection_step`을 set하지 않음. 모든 다이어그램 박스가 동일하게 green으로 렌더되어 운영자가 어디서 검출됐는지 알 수 없음
+
+- **해결 (3-layer 패치):**
+
+  **A) Node-RED 함수 swap + 검출 단계 추론 로직 주입** (`flows_deploy.json`)
+  - `820cf7cd8e67c2f9.func` ← `a655fae0839ec028.func`(17,574) + 추가 헬퍼 2종(2,784 chars 추가, 총 20,358 → 20,669 with CSS)
+  - 신규 헬퍼 `detectStep(cause, alarmMsg)`: `diagnosed_cause` + `alarm_msg` 키워드 우선순위 매칭으로 1~15 인덱스 반환
+    - 우선순위: ping/통신(15) > 밸브(14) > 흡수정(13) > 설정오류(12) > 탈설비(11) > 가압장유량(9) > 가압장분석(8) > 유입유출량(7) > 12hr공급(6) > 펌프가동여부(5) > 펌프조건(4) > HH/LL(3) > 헌팅(2) > 기본 7
+    - **유입유출량 분석(7)이 가장 흔한 매칭** — 실제 cause 텍스트 다수가 "유출량 감소/증가" 패턴
+  - 신규 헬퍼 `applyDetectionClasses(html, idx)`: HTML의 `<div class="flow-box COLOR">` 15개를 문서 순서로 카운트, idx == count 박스에 ` detected` 클래스 + idx > count 박스에 ` dimmed` 클래스 + 모든 박스에 `data-step="N"` 부여
+  - HTML 템플릿에 `.flow-box.detected`(red ring + scale + glow) + `.flow-box.dimmed`(opacity 0.35 + grayscale) CSS 룰 추가 (standalone HTML viewer 호환)
+  - `a655fae0839ec028`는 `d: true` + `(legacy/dead)` 라벨로 마킹 (삭제는 안 함, 백업/회귀 대비)
+  - Node-RED 컨테이너 `slm-node-red` 재시작으로 활성화
+
+  **B) 프런트엔드 파서/렌더러 확장** (`AlarmAnalysisDetail.tsx`)
+  - `DiagramStep` 타입에 `detected?: boolean`, `dimmed?: boolean` 추가
+  - `parseDiagramContainer()`: 박스 클래스리스트에서 `detected`/`dimmed` 추출, **첫 detected 발견 후 후속 박스 자동 dimmed 처리** (Node-RED 누락 대비 클라이언트 보강)
+  - 신규 상수 `DETECTED_BOX_CLASSES = "ring-2 ring-red-500 ring-offset-2 scale-105 shadow-lg shadow-red-500/30 border-red-500/60"`
+  - 신규 상수 `DIMMED_BOX_CLASSES = "opacity-30 grayscale"`
+  - `DiagramFlow` 컴포넌트 상단에 검출 단계 범례 추가 ("검출 단계: <label> (이후 단계는 회색 처리)")
+  - 박스에 `title`/`aria-label` 추가 (스크린리더 + tooltip)
+  - 검출 이후 `→` 화살표도 dimmed 처리 (`text-muted-foreground/30`)
+
+  **C) 백엔드 trigger 활성화 (E-018에서 이미 처리)**
+  - `endpoints/alarm_crisis.py`의 `?days=` 파라미터(기본 90) 덕분에 옛 데이터까지 함께 노출
+
+- **검증:**
+  1. **Node-RED 라이브 실행:** 죽동(배) 수위#1 HH 알람 + 송산2산단생활(배) 수위 LL 주의 알람 두 건의 `diagnosed_msg`를 NULL로 만들고 폴링 1주기(30초) 대기 → 두 건 모두 13977/14042 chars로 재생성 + `detected` + `data-step` 모두 포함 확인
+  2. **DB-side 박스 분포:** 죽동 알람 → 박스 1~6 plain / #7 detected (`green detected data-step="7"`) / #8~15 dimmed
+  3. **React 파서 라이브 검증:** Playwright로 `/crisis/alarm-analysis?days=90` fetch 후 inline parser 실행 → `{detected: {label:"유입유출량 분석", color:"green"}, counts: {plain:6, detected:1, dimmed:8}}` 정확 추출
+  4. **TypeScript:** `tsc --noEmit` 신규 에러 없음
+
+- **알려진 한계:**
+  1. **배수지 수위 전용** — 가압장 수위, 네트워크, UPS, 펌프, 밸브 등 다른 카테고리의 다이어그램 함수는 미존재 ([E-018] 한계 그대로 유지). Phase 2 작업
+  2. **휴리스틱 매칭** — 정확도 ~80%. 더 정확한 단계 추적은 상위 switch/function 노드에서 `msg.detection_step`을 직접 set하는 Phase 2 리팩토링이 필요
+  3. **소급 적용 안 됨** — Node-RED 트리거는 `WHERE diagnosed_msg IS NULL`만 잡으므로 이미 채워진 옛 알람은 그대로. 백필 필요 시 별도 SQL로 NULL 후 재처리
+
+- **관련 커밋:** (이번 세션)
+  - `web@(예정)` flows_deploy.json swap + CSS + docs/error-management.md E-019 + work-history
+  - `slm-dashboard@(예정)` AlarmAnalysisDetail.tsx 파서/렌더러 detected/dimmed
+
+---
+
 ## 관련 파일
 
 - 시작 스크립트: `D:\web\start-services.bat`
