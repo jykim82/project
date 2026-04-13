@@ -2,6 +2,22 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — GIS 유량흐름 초기 visibility race 버그 [E-021])
+
+- 증상: `/monitoring/gis` 첫 접속 시 "유량 흐름" 토글이 모두 off인데 flow 레이어(Glow/Base/Anim/Imbalance/Node)가 화면에 렌더됨. 사용자가 토글을 on→off 한 번 거쳐야 사라짐
+- 원인: `GisFlowOverlayLayer.tsx`의 `addFlowLayers`가 `map.addLayer(...)`에 `layout.visibility` 미지정 → MapLibre 기본값 `"visible"` 적용. Mount effect의 `initLayers`가 비동기 실행되는 사이 visibility 보정 effect는 source 미존재로 bail out → 레이어 추가 후 보정이 재실행되지 않음 → 초기 상태가 visible로 고정
+- 수정: `addFlowLayers`의 5개 `map.addLayer` 모두에 `layout.visibility = "none"` 초기값 주입. Visibility effect는 그대로 — show* props가 true로 바뀔 때 `setLayoutProperty("visible")`로 승격
+- 검증 (Playwright 라이브):
+  1. 초기 진입 → 5개 레이어 모두 `none` ✅
+  2. "유량 두께·색상" 토글 on → `gis-flow-base`만 `visible`, 나머지 `none` ✅
+  3. 다시 토글 → 5개 모두 `none` 복귀 ✅
+
+#### 커밋
+- `slm-dashboard@(예정)` GisFlowOverlayLayer.tsx addFlowLayers visibility 초기값
+- `web@(예정)` docs/error-management.md E-021 + work-history.md
+
+---
+
 ### 완료 (2026-04-13 — DB 미사용 테이블 12종 정리 + 핫 테이블 최적화 [E-020])
 
 - 사용자 요청: "현재 db에서 사용하지 않는 테이블은 삭제하고 최적화 해줘"

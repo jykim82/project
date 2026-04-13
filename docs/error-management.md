@@ -542,6 +542,41 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
   - `db/init/02_tables_core.sql`, `db/init/03_tables_chat.sql`, `db/init/05_tables_tag_timeseries.sql`, `db/init/06_tables_admin.sql`
   - `db/seed/05_chat_faq.sql` (삭제), `db/seed/06_prompts.sql` (삭제), `db/init/01_schema.sql.bak` (삭제)
 
+- **관련 커밋:** `web@1fd89bc`
+
+---
+
+### [E-021] GIS 관망도 초기 진입 시 유량흐름이 토글 OFF인데 렌더됨 (race condition)
+
+- **날짜:** 2026-04-13
+- **증상:** `/monitoring/gis` 첫 접속 시 "유량 흐름" 패널이 닫혀 있고(`showFlowPanel=false`) 개별 토글도 모두 OFF(`showBase/showGlow/showImbalance/showShimmer` 초기값 `false`)인데도 flow 레이어(Glow/Base/Anim/Imbalance/Node)가 지도에 렌더됨. 사용자가 패널을 열고 해당 토글을 한 번 켰다 끄면 그제서야 사라짐.
+
+- **원인 (race condition):** `GisFlowOverlayLayer.tsx`의 mount 순서
+  1. **Mount effect** (`useEffect([mapRef])`, L253-279): `map.isStyleLoaded()` 체크 후 `initLayers()`를 동기 또는 `map.once("load", initLayers)`로 비동기 스케줄. `initLayers` → `addFlowLayers(map)` → 5개 `map.addLayer(...)` 호출
+  2. **addFlowLayers** (L127-221): 각 `addLayer`에 `layout.visibility`를 **미지정** → MapLibre 기본값 `"visible"` 적용 → 레이어가 즉시 렌더됨
+  3. **Visibility effect** (`useEffect([mapRef, visible, showGlow, showBase, ...])`, L296-311): `if (!map.getSource(SRC_ID)) return;`로 초기 실행 시 bail out (source 미존재). 레이어가 아직 추가되지 않았으므로 visibility 보정이 스킵됨
+  4. 결과: `addFlowLayers` 호출 순간 5개 레이어가 `visibility="visible"` 기본값으로 존재 → 보정 effect는 이미 bail out 후여서 재실행되지 않음 → 화면에 flow가 그려진 상태로 고정
+  5. 사용자가 토글을 클릭하면 show* state 변경 → visibility effect 재실행 → 이제 레이어가 존재하므로 `setLayoutProperty(id, "visibility", "none")` 성공 → 사라짐
+
+- **수정:** `addFlowLayers`의 5개 `map.addLayer(...)`에 `layout.visibility = "none"` 초기값 주입
+  - Glow/Base/Anim/Imbalance: 기존 `layout: { "line-cap":..., "line-join":... }`에 `visibility: "none"` 추가
+  - Node(circle): 기존 `layout` 없음 → `layout: { visibility: "none" }` 신규 추가
+  - 주석으로 race condition 설명 추가 (파일 최상단 헬퍼 JSDoc)
+  - Visibility effect는 변경 없음 — show* props가 `true`로 바뀔 때 `setLayoutProperty("visible")`로 정상 승격
+
+- **검증 (Playwright 라이브):**
+  1. **초기 진입**: `/monitoring/gis` 접속 후 React fiber 내부에서 MapLibre 인스턴스 획득 → 5개 레이어 모두 `visibility: "none"` ✅
+  2. **토글 on**: "유량 두께·색상" 버튼 클릭 → `gis-flow-base`만 `visible`, 나머지 4개는 `none` 유지 ✅
+  3. **토글 off**: 같은 버튼 재클릭 → 5개 모두 `none` 복귀 ✅
+  4. TypeScript `tsc --noEmit` 신규 에러 없음
+
+- **재발 방지:**
+  - 새 지도 레이어 추가 시 항상 `layout.visibility` 초기값을 명시
+  - `addLayer` 호출과 visibility 보정 effect 사이 순서 race 주의 — 레이어는 항상 "none"으로 시작, state-driven effect가 "visible"로 승격
+
+- **관련 파일:**
+  - `slm-dashboard/slm-dashboard/src/components/gis/GisFlowOverlayLayer.tsx:127-221` (addFlowLayers)
+
 ---
 
 ## 관련 파일
