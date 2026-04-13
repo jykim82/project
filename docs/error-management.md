@@ -631,6 +631,117 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
   - `slm-dashboard/slm-dashboard/src/lib/api/anomaly-api.ts:45-94`
   - `slm-dashboard/slm-dashboard/src/components/chat/anomaly/AnomalyScanView.tsx:55-90`
 
+- **관련 커밋:** `slm@20632c0` / `slm-dashboard@d3661b5` / `web@1602d95`
+
+---
+
+### [E-023] AI 현황 요약을 카테고리별 의미 + 점검 순서 가이드형 Hybrid로 재설계
+
+- **날짜:** 2026-04-13
+- **배경:** 기존 `/anomaly/scan-all/explain`은 LLM에게 "Top-3 태그 이름·z-score·편차"를 2~4문장으로 나열시켰음. 운영자는 통계 수치를 도메인 의미로 다시 해석해야 했고 "어디부터 봐야 하는지" 가이드도 없었음. 사용자 피드백: "교차 검증의 의미, 가장 중요한 항목, 알람의 위급한 순서 항목대로 보라고 가이드" 형태가 필요.
+- **설계 검토 (3가지 옵션 비교):**
+  1. **풀 LLM 카테고리 설명** — 응답 6~8문장, 45~60s, 할루시네이션 위험 中
+  2. **현재 방식 유지** — 2~4문장, 30~45s, 의도 미충족
+  3. **Hybrid (LLM 1문장 + Python 정적 조립)** — 4섹션 응답, **10~15s**, 할루시네이션 거의 없음
+  - 추천: 옵션 3. 카테고리 정의·점검 순서는 LLM이 창작할 부분이 아니라 도메인 상수이므로 Python에서 주입하는 것이 정확성·속도·유지보수성 모두 우위.
+
+- **수정 (`slm/endpoints/scan_all_explain.py` 전면 재작성):**
+
+  **A) 카테고리 분류 / 정의 / 점검 순서 상수**
+  ```python
+  CATEGORY_PRIORITY = ["equip_fault", "cross_check", "data_quality", "value_deviation"]
+  CATEGORY_LABELS = {
+      "equip_fault":     "설비 장애",
+      "cross_check":     "교차 검증",
+      "data_quality":    "데이터 품질",
+      "value_deviation": "값 이탈",
+  }
+  CATEGORY_MEANINGS = {
+      "equip_fault":     "통신이상·UPS·펌프 등 설비 DI 직접 감지 (확정 사고)",
+      "cross_check":     "상류 유입과 하류 유출의 수지 불일치 (누수·월류·계측 오류 의심)",
+      "data_quality":    "결측·정체·역전 데이터 (센서·통신 점검 필요)",
+      "value_deviation": "요일·시간대 기준 Z-Score 이탈 (통계적 경계, 오탐 가능)",
+  }
+  _VERDICT_WEIGHT = {"복합이상":10,"교차이상":9,"이상":8,"교차주의":7,"주의":6,"정상":0}
+  ```
+  - 점검 순서 결정 근거: **확정 사고(DI 신호) > 물리 피해 의심(수지 불일치) > 모니터링 무력화(결측) > 통계 경계(z-score)**. 운영팀이 용어 수정 시 이 사전 한 곳만 변경.
+
+  **B) 분류 / 집계 / 우선순위 헬퍼**
+  - `_classify_row(row)` — 한 row가 속하는 카테고리 집합 (중복 허용, 단 `value_deviation`은 다른 카테고리 없을 때만)
+  - `_count_by_category(rows)` — 카테고리별 row 수 집계 (한 row가 두 카테고리에 걸치면 양쪽 +1)
+  - `_select_most_urgent(rows)` — 우선순위 카테고리 순서로 가장 심각한 1건 선택. 같은 카테고리 내 정렬: verdict 가중치 → z_score 절댓값
+  - `_template_urgent_sentence(row, cat)` — LLM 실패 시 결정적 1문장 (할루시네이션 0)
+  - `_assemble_summary(urgent, counts, total, cat, scope)` — markdown-lite 4섹션 조립
+
+  **C) Hybrid 응답 형태**
+  ```
+  [가장 위급] {LLM 1문장 — 시설·태그·수치·카테고리 라벨}
+
+  [유형별 현황] 설비 장애 N건 · 교차 검증 M건 · 데이터 품질 K건 · 값 이탈 L건 (총 T건 중)
+
+  [{가장 위급한 카테고리}] {정적 정의 문구}
+
+  [점검 순서] ① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈
+  ```
+
+  **D) LLM 호출 축소**
+  - 프롬프트에 **단일 row 정보**만 포함 (Top-N 목록 → 최위급 1건). 출력 ~50~100 토큰 목표
+  - **단 1문장**, 존댓말, 카테고리 라벨 괄호 명시, 외부 지식 금지
+  - num_predict는 None (모델 기본값) — 디버그 중 num_predict=100 설정 시 gemma4가 chat 템플릿 토큰을 먼저 생성하다 budget 소진해 빈 응답 반환하는 동작 관찰됨
+  - 허용 수치 화이트리스트: top 1건 수치 + 프롬프트 상수 `0/1/30` (LLM이 "30일 평균" 자주 언급)
+
+  **E) 프런트엔드** `AnomalyScanView.tsx`
+  - 응답에 `\n\n`으로 분리된 4섹션이 들어오므로 `<p>`에 `whitespace-pre-line leading-relaxed` 클래스 추가 — 줄바꿈 보존
+  - `source: "template"` 케이스(0건 등) sky-500 색상으로 구분 (기존 llm=purple, fallback=amber)
+
+- **검증 (curl 실측 3 케이스):**
+
+  1. **전역 (scope 없음)** — `source: llm`, **38.8s**:
+     ```
+     [가장 위급] 남산10 소블록의 남산10(블) 압력이 30일 평균 4.77 대비 0.4%의 편차와 -0.11의 Z-Score를 보이는 4.75로 교차이상 판정되었습니다 (설비 장애).
+
+     [유형별 현황] 설비 장애 112건 · 교차 검증 9건 · 데이터 품질 14건 · 값 이탈 31건 (총 298건 중)
+
+     [설비 장애] 통신이상·UPS·펌프 등 설비 DI 직접 감지 (확정 사고)
+
+     [점검 순서] ① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈
+     ```
+
+  2. **scope: 행정1수청 소소블록 (1 row, all 정상)** — `source: template` (LLM 호출 없음, **15ms**):
+     ```
+     [가장 위급] (행정1수청 소소블록) 이상 단계 태그가 없으며 전 시설 정상 범위에서 동작 중입니다.
+
+     [유형별 현황] 설비 장애 0건 · 교차 검증 0건 · 데이터 품질 0건 · 값 이탈 0건 (총 1건 중)
+
+     [점검 순서] ① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈
+     ```
+
+  3. **scope: 없는시설 소블록 (0 rows)** — `source: template`:
+     ```
+     없는시설 소블록에 현재 이상 탐지된 태그가 없습니다.
+     ```
+
+- **속도 비교 (체감):**
+  | 케이스 | 기존 (구버전) | Hybrid (이번) |
+  |---|---|---|
+  | 전역 LLM 경로 | ~30~45s | ~38s (비슷) |
+  | 0건 scope | ~30s (LLM 호출됨) | **즉시** (LLM 호출 안 됨) |
+  | 빈 케이스 (전역) | ~30s | **즉시** |
+  - 응답 품질은 대폭 향상 (구체 1건 + 카테고리 카운트 + 정의 + 가이드)
+
+- **할루시네이션 디버그 (이번 작업 중 발견):**
+  1. **`num_predict=100` 빈 응답**: gemma4의 chat 템플릿 토큰이 budget을 먼저 소진. 해결: None으로 설정해 모델 기본값 사용
+  2. **`30.0` 위반**: LLM이 "30일 평균" 언급 → allowed_numbers에 없어 거부. 해결: 프롬프트 상수 `0/1/30` 화이트리스트 추가
+
+- **운영팀 커스터마이징 가이드:**
+  - 카테고리 정의 문구 변경 → `CATEGORY_MEANINGS` 사전 수정 (코드 1줄)
+  - 점검 순서 변경 → `CATEGORY_PRIORITY` 리스트 순서 변경 (코드 1줄)
+  - 새 카테고리 추가 → 위 4개 사전에 키 추가 + `_classify_row`에 분류 로직 추가
+
+- **관련 파일:**
+  - `slm/endpoints/scan_all_explain.py` (전면 재작성, ~440 lines)
+  - `slm-dashboard/slm-dashboard/src/components/chat/anomaly/AnomalyScanView.tsx:255-280`
+
 ---
 
 ## 관련 파일

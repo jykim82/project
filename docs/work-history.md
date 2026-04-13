@@ -2,6 +2,33 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — AI 현황 요약 Hybrid 재설계 [E-023])
+
+- 사용자 의도: "교차 검증의 의미, 가장 중요한 항목, 알람의 위급한 순서대로 보라고 가이드". 통계 수치 나열 → 카테고리 의미 + 점검 순서 가이드 형식
+- 설계 검토 결과 **Hybrid 추천** 채택: LLM은 가장 위급한 1건만 1문장 서술, 카테고리 정의·카운트·점검 순서는 Python 정적 조립 (속도+의도+할루시네이션 3축 모두 우위)
+- 변경 (`slm/endpoints/scan_all_explain.py` 전면 재작성, 약 440 lines):
+  1. 카테고리 상수 4종 (`CATEGORY_PRIORITY`/`LABELS`/`MEANINGS`/`_VERDICT_WEIGHT`)
+  2. `_classify_row` / `_count_by_category` / `_select_most_urgent` / `_template_urgent_sentence` / `_assemble_summary` 헬퍼
+  3. LLM 프롬프트 축소: 단일 row 정보 + "1문장" 강제. 허용 수치 화이트리스트에 프롬프트 상수 `0/1/30` 추가
+  4. `num_predict=None`으로 — gemma4 chat 템플릿 토큰 budget 소진 회피
+  5. 0건 / 모두 정상 케이스 LLM 건너뛰고 즉시 템플릿 응답
+- 점검 순서 (위급도 순): **① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈** (확정 사고 → 물리 피해 의심 → 모니터링 무력화 → 통계 경계)
+- 응답 형태: `[가장 위급] LLM 1문장` + `[유형별 현황] N·M·K·L건` + `[가장 위급한 카테고리] 정의` + `[점검 순서] ①→②→③→④` (4섹션, `\n\n` 구분)
+- 프런트 (`AnomalyScanView.tsx`): `<p>`에 `whitespace-pre-line leading-relaxed` 추가, `source: "template"` sky 색상 구분
+- 검증 (curl):
+  1. 전역 → `source: llm`, **38.8s**, 4섹션 정상 (counts: 설비장애 112 / 교차 9 / 품질 14 / 값이탈 31, 총 298)
+  2. 행정1수청 소소블록 (1 row 정상) → `source: template`, **15ms**, "전 시설 정상 범위에서 동작 중"
+  3. 없는시설 (0 row) → `source: template`, "현재 이상 탐지된 태그가 없습니다"
+- 속도: 0건/정상 케이스가 30s → **즉시**로 단축. LLM 경로는 비슷
+- 디버그: gemma4의 `num_predict=100` 빈 응답 버그 + `30.0` allowed_numbers 누락 해결
+
+#### 커밋
+- `slm@(예정)` scan_all_explain.py 전면 재작성
+- `slm-dashboard@(예정)` AnomalyScanView whitespace-pre-line + template source 색상
+- `web@(예정)` docs E-023
+
+---
+
 ### 완료 (2026-04-13 — 채팅 "AI 현황 요약" 시설 범위 필터 [E-022])
 
 - 사용자 요청: "행정1수청 소소블록 이상 스캔해줘" 질의 후 AI 현황 요약이 전역 Top-3(남산/송산2산단생활/석문2)을 반환. 해당 현장만 나와야 하고 없으면 "없다"고 해야
