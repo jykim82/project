@@ -2,6 +2,36 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — DB 미사용 테이블 12종 정리 + 핫 테이블 최적화 [E-020])
+
+- 사용자 요청: "현재 db에서 사용하지 않는 테이블은 삭제하고 최적화 해줘"
+- 조사: ANALYZE 후 빈 테이블 19개 → 코드 grep + FK + view 검사로 진짜 미사용 12개 확정
+- 삭제 12개 (모두 0 rows, 외부 FK 없음, view 참조 없음):
+  - `tb_alarm_log` → `tb_equipment_alarm_report`로 통합
+  - `tb_user_session` → `tb_user.current_session_id` 컬럼으로 통합
+  - `tb_menu_api`, `tb_file_history` → 미구현
+  - `tb_ai_chat_faq` → `chat_faq_examples.py`가 동적 생성
+  - `tb_ai_chat_ask/bot/ask_group/ask_image/bot_image` (5개) → 채팅 히스토리는 클라이언트 localStorage만 사용. FK 5건 모두 자기들끼리만 묶임
+  - `tb_prompt_template/column` → 코드(슬롯필링 + example3.json) 직접 관리, 메뉴 숨김 처리됨
+- 유지 (빈 테이블이지만 사용 중): `tb_leak_cusum_alert`, `tb_facility_alias`, `tb_ai_chat_feedback`, `tb_field_lock`, `tb_causal_chain_override`
+- 단계:
+  1. 백업 — `pg_dump --schema-only` 12개 → `db/backups/unused_tables_backup_2026-04-13.sql` (롤백용)
+  2. 트랜잭션 DROP CASCADE — 의존성 순서로 12개 (BEGIN/COMMIT)
+  3. VACUUM ANALYZE + REINDEX — `tb_network_status`, `tb_equipment_alarm_report`, `tb_tag_info` 등 핫 테이블
+  4. CLUSTER `tb_equipment_alarm_report USING idx_alarm_report_start_time` (시계열 정렬)
+  5. 시드 SQL 정리 — `db/init/02/03/05/06_*.sql` 정의 제거 + 주석 마킹, `db/seed/05_chat_faq.sql`/`06_prompts.sql` + `db/init/01_schema.sql.bak` 삭제
+- 결과:
+  - 테이블 수: **59 → 47** (-12, -20%)
+  - `tb_equipment_alarm_report`: 71 MB → **65 MB** (-8.5%)
+  - `tb_network_status`: 267 MB → **263 MB** (-1.5%)
+- 검증: 백엔드 `/health` 200 OK, 로그에 "relation does not exist" 0건. 정리된 init SQL 재로드 시 SET/CREATE TABLE 모두 통과 (기존 ALTER ADD CONSTRAINT 패턴은 멱등성 없음 — 기존 코드 유지)
+- 롤백: `psql -d slm < db/backups/unused_tables_backup_2026-04-13.sql`
+
+#### 커밋
+- `web@(예정)` db/backups + db/init/* + db/seed/* + docs/error-management.md E-020 + docs/work-history.md + docs/slm-api-contract-final.md (E-019 추가)
+
+---
+
 ### 완료 (2026-04-13 — 검출 로직 다이어그램 현재 알람 반영 + 검출 단계 시각화 [E-019])
 
 - 증상: [E-018]로 옛 다이어그램 583건은 표시되지만 신규 알람에 다이어그램 미생성 + 검출 단계 표시 없음

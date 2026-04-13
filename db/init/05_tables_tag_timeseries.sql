@@ -64,31 +64,10 @@ CREATE TABLE IF NOT EXISTS tb_trend_catalog (
     PRIMARY KEY (region, trend_id)
 );
 
--- ------------------------------------------------------------
--- 알람 로그
--- ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS tb_alarm_log (
-    alarm_id          bigserial PRIMARY KEY,
-    region            character varying(10),
-    sitename          character varying(50),
-    facilitytype      character varying(30),
-    tagsn             character varying(50),
-    alarm_level       character varying(10),         -- 'HH', 'H', 'L', 'LL'
-    alarm_value       double precision,
-    alarm_threshold   double precision,
-    alarm_message     text,
-    alarm_event_time  character varying(14),          -- 레거시: YYYYMMDDHHMMSS
-    alarm_at          timestamp with time zone,       -- 개선: timestamptz
-    resolved_at       timestamp with time zone,
-    resolved_yn       character varying(1) DEFAULT 'N'
-);
-COMMENT ON TABLE tb_alarm_log IS '센서 알람 이력. alarm_level은 HH/H/L/LL';
-
-CREATE INDEX IF NOT EXISTS idx_alarm_log_time
-    ON tb_alarm_log(alarm_at DESC NULLS LAST);
-
-CREATE INDEX IF NOT EXISTS idx_alarm_log_site
-    ON tb_alarm_log(region, sitename, facilitytype);
+-- ⚠ tb_alarm_log 제거됨 [E-020] (2026-04-13)
+-- 알람 이력은 tb_equipment_alarm_report로 통합되었음 (richer schema:
+-- alarm_severity / diagnosed_cause / countermeasure / meta jsonb / diagnosed_msg HTML).
+-- 백업: db/backups/unused_tables_backup_2026-04-13.sql
 
 -- ------------------------------------------------------------
 -- 누수 CUSUM 알림 이력 (야간최소유량 기반)

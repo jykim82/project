@@ -450,9 +450,97 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
   2. **휴리스틱 매칭** — 정확도 ~80%. 더 정확한 단계 추적은 상위 switch/function 노드에서 `msg.detection_step`을 직접 set하는 Phase 2 리팩토링이 필요
   3. **소급 적용 안 됨** — Node-RED 트리거는 `WHERE diagnosed_msg IS NULL`만 잡으므로 이미 채워진 옛 알람은 그대로. 백필 필요 시 별도 SQL로 NULL 후 재처리
 
-- **관련 커밋:** (이번 세션)
-  - `web@(예정)` flows_deploy.json swap + CSS + docs/error-management.md E-019 + work-history
-  - `slm-dashboard@(예정)` AlarmAnalysisDetail.tsx 파서/렌더러 detected/dimmed
+- **관련 커밋:** `web@4632710` (flows_deploy.json swap + CSS + docs E-019 + work-history) / `slm-dashboard@55e9d66` (AlarmAnalysisDetail.tsx 파서/렌더러 detected/dimmed)
+
+---
+
+### [E-020] DB 미사용 테이블 12종 정리 + 핫 테이블 최적화
+
+- **날짜:** 2026-04-13
+- **목적:** 사용자 요청 "현재 db에서 사용하지 않는 테이블은 삭제하고 최적화 해줘". 스키마 정합성 + 백업/재시드 부담 감소 + 핫 테이블 인덱스 bloat 정리.
+
+- **조사 절차:**
+  1. `ANALYZE` 후 `pg_stat_user_tables.n_live_tup` 정확화 (autovacuum 미실행으로 stale 상태였음)
+  2. 빈 테이블(0 rows) 19개 후보 추출
+  3. 코드베이스 grep — `slm/` Python + `slm-dashboard/src/` TypeScript 참조 0건인 것만 남김
+  4. FK 의존성 검사 (`pg_constraint`로 외부 참조 확인 → 12개 모두 외부 FK 없음)
+  5. View 정의 검사 (`pg_views` → 0건)
+
+- **삭제 결정 (12개):**
+
+  | 테이블 | 대체 / 사유 |
+  |---|---|
+  | `tb_alarm_log` | `tb_equipment_alarm_report`로 통합 (richer schema: severity/cause/countermeasure/meta jsonb/diagnosed_msg HTML) |
+  | `tb_user_session` | `tb_user.current_session_id` 컬럼으로 통합 (auth_crud.py 사용 패턴) |
+  | `tb_menu_api` | 메뉴-API 매핑 미구현. 향후 RBAC 확장 시 재도입 가능 |
+  | `tb_file_history` | 파일 이력 추적 미구현. tb_file_storage에 audit 컬럼 추가로 대체 가능 |
+  | `tb_ai_chat_faq` | `endpoints/chat_faq_examples.py`가 동적 생성 (DB 테이블 미사용) |
+  | `tb_ai_chat_ask` / `tb_ai_chat_bot` / `tb_ai_chat_ask_group` / `tb_ai_chat_ask_image` / `tb_ai_chat_bot_image` | 채팅 히스토리 미사용 (slm-dashboard `chat-store.ts`가 클라이언트 localStorage에만 저장). FK 5건 모두 자기들끼리만 묶임 |
+  | `tb_prompt_template` / `tb_prompt_column` | `/admin/prompts` 메뉴(M100-3)는 sidebar-menus.ts에서 숨김 처리됨. 프롬프트는 코드(슬롯-필링 + example3.json)에서 직접 관리 |
+
+- **유지 (빈 테이블이지만 코드가 사용):**
+  - `tb_leak_cusum_alert` (py=2 — leak_cusum_alert.py)
+  - `tb_facility_alias` (py=3 — facility_alias.py)
+  - `tb_ai_chat_feedback` (py=2 — chat_feedback.py)
+  - `tb_field_lock` (ts=1 — slm-dashboard에서 사용)
+  - `tb_causal_chain_override` (py=2 — causal 로직)
+
+- **실행 단계:**
+
+  **A) 백업 (롤백 안전)**
+  - `pg_dump --schema-only` 12개 테이블 → `db/backups/unused_tables_backup_2026-04-13.sql` (673 lines, 12 CREATE TABLE)
+  - 모두 0 rows이라 schema-only로 충분
+
+  **B) 트랜잭션 DROP**
+  ```sql
+  BEGIN;
+  DROP TABLE tb_ai_chat_ask_image  CASCADE;  -- depends on tb_ai_chat_ask
+  DROP TABLE tb_ai_chat_bot_image  CASCADE;  -- depends on tb_ai_chat_bot
+  DROP TABLE tb_ai_chat_bot        CASCADE;  -- depends on tb_ai_chat_ask
+  DROP TABLE tb_ai_chat_ask        CASCADE;  -- depends on tb_ai_chat_ask_group
+  DROP TABLE tb_ai_chat_ask_group  CASCADE;
+  DROP TABLE tb_prompt_column      CASCADE;  -- depends on tb_prompt_template
+  DROP TABLE tb_prompt_template    CASCADE;
+  DROP TABLE tb_alarm_log          CASCADE;
+  DROP TABLE tb_user_session       CASCADE;
+  DROP TABLE tb_menu_api           CASCADE;
+  DROP TABLE tb_file_history       CASCADE;
+  DROP TABLE tb_ai_chat_faq        CASCADE;
+  COMMIT;
+  ```
+  - 결과: 59 → 47 테이블
+
+  **C) 핫 테이블 최적화**
+  - `VACUUM ANALYZE` — `tb_network_status`, `tb_equipment_alarm_report`, `tb_tag_info`, `tb_tag_group_map`, `tb_equipment_tag_map`
+  - `REINDEX TABLE` — `tb_network_status`, `tb_equipment_alarm_report`
+  - `CLUSTER tb_equipment_alarm_report USING idx_alarm_report_start_time` — 시계열 정렬로 range scan 가속
+  - 결과:
+    - `tb_equipment_alarm_report`: 71 MB → **65 MB** (8.5% 축소)
+    - `tb_network_status`: 267 MB → **263 MB** (1.5% 축소)
+
+  **D) 시드 SQL 정리** (재시드 시 다시 생성 안 되도록)
+  - `db/init/02_tables_core.sql` — `tb_user_session`, `tb_menu_api` 정의 제거 + 제거 주석
+  - `db/init/03_tables_chat.sql` — 6개 chat 테이블 정의 제거, `tb_ai_chat_feedback`만 남김 + 제거 주석
+  - `db/init/05_tables_tag_timeseries.sql` — `tb_alarm_log` 정의 제거 + 제거 주석
+  - `db/init/06_tables_admin.sql` — `tb_prompt_template`, `tb_prompt_column`, `tb_file_history` + FK 정의 제거 + 제거 주석
+  - `db/seed/05_chat_faq.sql` 삭제
+  - `db/seed/06_prompts.sql` 삭제
+  - `db/init/01_schema.sql.bak` 삭제 (untracked stale 백업)
+
+- **검증:**
+  - DROP 후 백엔드 `/health` → 200 OK, `current_model`/`ollama_available` 정상
+  - 백엔드 로그 30초 스캔 → "relation does not exist" 에러 0건
+  - 정리된 init SQL 재로드 → SET/CREATE TABLE 단계 모두 통과 (기존 ALTER ADD CONSTRAINT는 PostgreSQL `IF NOT EXISTS` 미지원으로 멱등 실패 — 기존 패턴 그대로 유지)
+
+- **롤백 절차:**
+  ```bash
+  docker exec -i slm-timescaledb psql -U slm_dev -d slm < db/backups/unused_tables_backup_2026-04-13.sql
+  ```
+
+- **관련 파일:**
+  - `db/backups/unused_tables_backup_2026-04-13.sql` (신규, schema dump)
+  - `db/init/02_tables_core.sql`, `db/init/03_tables_chat.sql`, `db/init/05_tables_tag_timeseries.sql`, `db/init/06_tables_admin.sql`
+  - `db/seed/05_chat_faq.sql` (삭제), `db/seed/06_prompts.sql` (삭제), `db/init/01_schema.sql.bak` (삭제)
 
 ---
 

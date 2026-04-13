@@ -1060,7 +1060,150 @@ ORDER BY a.ask_seq ASC;
 | GET/POST/PUT/DELETE | `/api/admin/prompts/{id}/columns` | 프롬프트 컬럼 CRUD | tb_prompt_column |
 | GET/POST/PUT/DELETE | `/api/admin/faq` | FAQ CRUD | tb_ai_chat_faq |
 | GET/POST/PATCH/DELETE | `/admin/facility-alias` | 시설명 약칭 매핑 CRUD (런타임 리로드) | tb_facility_alias |
+| GET | `/admin/equipment-mtbf` | 설비 MTBF 집계 (query: `days, sitename?, facilitytype?, limit`) | tb_equipment_alarm_report + tb_equipment_info |
+| GET | `/admin/llm-narrative/stats` | LLM narrative 통과율·거부율·응답시간 통계 (query: `days`) | `logs/llm_narrative/*.jsonl` |
 | POST | `/tags` | 태그 마스터 신규 등록 (tagsn UNIQUE) | tb_tag_info |
+
+### AI 서술 (LLM + 할루시네이션 검증)
+
+아래 엔드포인트들은 모두 동일한 응답 스키마를 사용한다:
+`{summary: string, source: "llm"|"fallback", llm_rejected?: boolean, violations?: number[], context_fetch_ms?: number, llm_generate_ms?: number, context_used?: string[], ...}`
+
+"수치 화이트리스트" 정책: 응답 텍스트에 허용되지 않은 숫자가 등장하면 할루시네이션으로 간주 → 템플릿 폴백으로 대체. `context_used`로 실제 반영된 컨텍스트 종류를 확인할 수 있다 (예: `["baseline_30d", "thresholds", "peers"]`).
+
+| Method | Path | Request | 비고 |
+|--------|------|---------|------|
+| POST | `/trend/explain` | `{tag_name, tagsn?, unit, from_ts, to_ts, min, max, avg, count, anomaly_count}` | 트렌드 구간 요약. baseline/임계값/**피어**(P2.3) 컨텍스트 자동 주입 |
+| POST | `/anomaly/explain` | `EquipmentDiagnosis (+ user_question?)` | 이상감지 설비 단건 원인 서술 |
+| POST | `/anomaly/scan-all/explain` | `{top_n: 1..10 = 3}` | 전체 스캔 Top-N 현황 요약. 본문 없음 가능 (server-side `_ANOMALY_SCAN_CACHE` 직접 참조) |
+| POST | `/equipment-mtbf/explain` | `{days=90, sitename?, facilitytype?, top_n=5}` | MTBF 최악 Top-N 설비 자연어 요약 |
+| POST | `/tag/latest/explain` | `{tagsn, current_value, tag_name?, unit?}` | 단일 태그 현재값 → baseline·임계값·**피어**(P2.3) 대비 서술 |
+| POST | `/network/upstream-fault/explain` | 본문 없음 (`{}`) | 상위 장비(SSLVPN/UTM) 장애 → 하위 LTE 모뎀 통신이상 연쇄를 실시간 조회 후 자연어로 서술 (P2.8). 응답에 `sslvpn_count`, `global_lte_down_pct` 추가 포함 |
+
+**P2.3 피어 태그 비교 컨텍스트 (trend/explain + tag/latest/explain 공통):**
+- 같은 `facilitytype` + 같은 측정 카테고리(datainfo에서 `수위/유량/압력/순시유량/...` 추출)의 다른 현장 태그를 **최대 5개** 선정
+- 실측 태그만 대상 (`설정/알람/HH/LL/H/L/상태/고수위/저수위` 계열 datainfo 제외)
+- 각 피어의 `cagg_5min_raw_stats_ai` 30일 baseline avg 수집 → LLM 프롬프트에 "피어 비교" 섹션 추가
+- 피어 수치·시설명은 모두 허용 수치 화이트리스트에 포함, 식별자는 검증 시 strip 후 재검증 (오탐 방지)
+- 응답 `context_used`에 `"peers"` 포함 시 피어 비교가 실제 반영됨을 의미
+
+### 경보 캘린더
+
+| Method | Path | Request | Response | 비고 |
+|--------|------|---------|----------|------|
+| GET | `/alarm/calendar` | query: `days=30, sitename?, facilitytype?, alarm_category?` | `{dates: [{date, total, critical, warning, ...}]}` | 달력 히트맵 UI용 집계 |
+
+### 누수 CUSUM 경보
+
+| Method | Path | Request | Response | 비고 |
+|--------|------|---------|----------|------|
+| GET | `/leak-cusum/alerts` | query: `region=R01, acknowledged?, limit=100` | `AlertRow[]` | CUSUM 이상 감지 이력 |
+| PATCH | `/leak-cusum/alerts/{alert_id}/ack` | `{acknowledged_by, note?}` | `AlertRow` | 담당자 승인 마킹 |
+| POST | `/leak-cusum/scan` | query: `region=R01, facilitytype=소블록, days=90` | `{scanned, new_alerts}` | 수동 스캔 트리거 |
+
+### 채팅 FAQ 예시 (동적)
+
+| Method | Path | Request | Response | 비고 |
+|--------|------|---------|----------|------|
+| GET | `/chat/faq/examples` | query: `region=R01, per_category=2` | `{categories: [{id, questions[]}]}` | 실제 데이터 있는 시설·태그만 샘플링해 반환. 실패 시 클라이언트가 정적 풀로 폴백 |
+
+### 위기대응 (경보분석 / 다이어그램)
+
+| Method | Path | Request | Response | 비고 |
+|--------|------|---------|----------|------|
+| GET | `/crisis/alarm-reports` | query: `region, facilitytype?, sitename?, status?` | `AlarmReport[]` | 경보발생이력 (상세 필드 일체) |
+| GET | `/crisis/alarm-analysis` | query: `days=90 (7~365)` | `AlarmReportRecord[]` | 경보분석 목록 (`diagnosed_msg` 포함, `severity != '정상'`). days는 7~365 클램프, **기본 30→90으로 확장**해 옛 다이어그램 583건 노출 [E-018] |
+| GET | `/crisis/alarm-analysis/detail` | query: `tagsn, alarm_start_time` | `AlarmReportRecord` | 단건 상세 (PK 조회) |
+| GET | `/crisis/alarm-dashboard` | - | 대시보드 집계 | 위기대응 대시보드 카드용 |
+| PUT | `/crisis/alarm-reports/confirm` | `{tagsn, alarm_start_time, alarm_confirm_yn, ...}` | `{ok}` | 경보 확인/해제 처리 |
+
+#### `tb_equipment_alarm_report.diagnosed_msg` HTML 구조 ([E-018], [E-019])
+
+`diagnosed_msg`는 Node-RED `slm-node-red` 컨테이너의 함수 노드(`820cf7cd8e67c2f9`, "HTML 위기대응 표시 (배수지 수위 + 검출단계 시각화)")가 생성하는 **완성된 HTML 문서**. 프런트엔드 `AlarmAnalysisDetail.tsx`의 `parseDiagnosedMsg()` 파서가 섹션·블록 단위로 추출해 React 컴포넌트로 재렌더링.
+
+**최상위 구조:**
+```html
+<!doctype html><html><body>
+  <article class="card">
+    <div class="header">...</div>
+    <section class="section"><span class="label red">1. 경보 경과</span> <ul>...</ul></section>
+    <section class="section"><span class="label red">2. 경보등급분석</span> ...</section>
+    <section class="section"><span class="label blue">3. 분석결과</span>
+      <h3>(분석내용)</h3><p>...</p>
+      <h3>(로직점검 프로세스)</h3>
+      <div class="diagram-container">
+        <div class="flow-row">
+          <div class="flow-step">
+            <div class="flow-box blue [detected|dimmed]" data-step="1">수위분석 알고리즘 시작</div>
+            <div class="arrow"><svg/></div>
+          </div>
+          ... (총 15개 flow-step)
+          <div class="arrow-down-connector">...</div>  <!-- row 구분자 -->
+          ...
+        </div>
+      </div>
+    </section>
+    <section class="section"><span class="label blue">4. 발생원인</span> ...</section>
+    <section class="section"><span class="label blue">5. 대응방안</span> ...</section>
+    <section class="section"><span class="label green">6. 운영현황</span> <div class="info-box">...</div></section>
+  </article>
+</body></html>
+```
+
+**검출 단계 다이어그램 (배수지 수위 알람 전용, 15개 flow-box):**
+
+| # | label | category |
+|---|---|---|
+| 1 | 수위분석 알고리즘 시작 (blue) | row 1 시작 |
+| 2 | 헌팅여부 (green) | 수위 |
+| 3 | 수위알림판별 (green) | 수위 |
+| 4 | 펌프가동조건 (green) | 펌프 (보조) |
+| 5 | 펌프가동여부 (green) | 펌프 (보조) |
+| ↓ | arrow-down-connector | row 구분 |
+| 6 | 용수공급시간 12hr기준판별 (green) | 운영 |
+| 7 | 유입유출량 분석 (green) | 운영 |
+| 8 | 가압장분석 알고리즘 시작 (blue) | 가압장 (보조) |
+| 9 | 유입유출유량 분석 (green) | 운영 |
+| 10 | 용수공급시간 12hr기준판별 (green) | 운영 |
+| ↓ | arrow-down-connector | row 구분 |
+| 11 | 탈설비 가동여부 (green) | 보조 진단 |
+| 12 | 설정오류 분석 (green) | 보조 진단 |
+| 13 | 흡수정여부 수위판단 (green) | 보조 진단 |
+| 14 | 밸브진단 (유입유출,감압) (green) | 보조 진단 |
+| 15 | 통신기 Ping (green) | 보조 진단 |
+
+**검출 단계 동적 클래스 ([E-019]):**
+
+- `class="flow-box COLOR detected"` — Node-RED `detectStep(diagnosed_cause, alarm_msg)` 헬퍼가 키워드 우선순위 매칭으로 결정한 1~15 박스. **단일 박스에만 부여**
+- `class="flow-box COLOR dimmed"` — 검출된 박스 이후의 모든 박스 (실행되지 않은 단계). **회색 음영 + 50% 투명도**
+- `data-step="N"` — 1~15 정수, 디버깅·테스트 보조
+
+**Node-RED 키워드 우선순위 (높은 → 낮은):**
+1. `ping|통신|네트워크 단절` → 15 (통신기 Ping)
+2. `밸브` → 14
+3. `흡수정` → 13
+4. `설정오류|기준오류|임계값` → 12
+5. `탈설비|탈수|탈염` → 11
+6. `가압장.*펌프.*유량|가압장.*유입|가압장.*유출` → 9
+7. `가압장.*분석|상위.*가압장` → 8
+8. `유입.*유출|유출량.*많|유입량.*많|유출량.*증가|유출량.*감소` → 7 (가장 흔한 매칭)
+9. `12hr|12시간|공급가능시간` → 6
+10. `펌프.*가동.*여부|펌프.*동작|펌프.*가동중` → 5
+11. `펌프.*가동.*조건|펌프.*조건` → 4
+12. `HH|LL|수위.*임계|수위.*알림|상한|하한` → 3
+13. `헌팅` → 2
+14. (기본) → 7
+
+**프런트 렌더링 (`DiagramFlow` 컴포넌트):**
+- 검출 박스: `ring-2 ring-red-500 + scale-105 + shadow + border` (red glow + 5% 확대)
+- Dimmed 박스: `opacity-30 grayscale`
+- 컴포넌트 상단에 검출 단계 범례: "검출 단계: <label> (이후 단계는 회색 처리)"
+- box `title`/`aria-label`로 tooltip + 스크린리더 지원
+
+**알려진 한계:**
+- **배수지/수위 카테고리 전용** — 가압장 수위, 네트워크, UPS, 펌프, 밸브 알람은 별도 함수에서 다이어그램 없는 단축 HTML 생성
+- 휴리스틱 매칭 정확도 ~80%. 더 정확한 단계 추적은 상위 switch/function 노드에서 `msg.detection_step`을 직접 set하는 Phase 2 리팩토링 필요
+- Node-RED 트리거가 `WHERE diagnosed_msg IS NULL`만 처리하므로 옛 알람의 소급 적용은 별도 백필 SQL 필요
 
 ---
 
