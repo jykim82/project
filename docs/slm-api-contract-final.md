@@ -1066,16 +1066,21 @@ ORDER BY a.ask_seq ASC;
 
 ### AI 서술 (LLM + 할루시네이션 검증)
 
-아래 엔드포인트들은 모두 동일한 응답 스키마를 사용한다:
-`{summary: string, source: "llm"|"fallback", llm_rejected?: boolean, violations?: number[], context_fetch_ms?: number, llm_generate_ms?: number, context_used?: string[], ...}`
+대부분의 엔드포인트는 다음 공통 응답 스키마를 사용한다:
+`{summary: string, source: "llm"|"fallback"|"template", llm_rejected?: boolean, violations?: number[], context_fetch_ms?: number, llm_generate_ms?: number, context_used?: string[], ...}`
 
 "수치 화이트리스트" 정책: 응답 텍스트에 허용되지 않은 숫자가 등장하면 할루시네이션으로 간주 → 템플릿 폴백으로 대체. `context_used`로 실제 반영된 컨텍스트 종류를 확인할 수 있다 (예: `["baseline_30d", "thresholds", "peers"]`).
+
+`source` 값:
+- `"llm"` — LLM 생성 + 수치 검증 통과
+- `"fallback"` — LLM 호출 실패 또는 수치 검증 실패 → 결정적 템플릿 응답
+- `"template"` — 애초에 LLM 호출 안 함 (예: 조회 결과 0건, 모든 row 정상). [E-023] Hybrid 설계 이후 도입
 
 | Method | Path | Request | 비고 |
 |--------|------|---------|------|
 | POST | `/trend/explain` | `{tag_name, tagsn?, unit, from_ts, to_ts, min, max, avg, count, anomaly_count}` | 트렌드 구간 요약. baseline/임계값/**피어**(P2.3) 컨텍스트 자동 주입 |
 | POST | `/anomaly/explain` | `EquipmentDiagnosis (+ user_question?)` | 이상감지 설비 단건 원인 서술 |
-| POST | `/anomaly/scan-all/explain` | `{top_n: 1..10 = 3}` | 전체 스캔 Top-N 현황 요약. 본문 없음 가능 (server-side `_ANOMALY_SCAN_CACHE` 직접 참조) |
+| POST | `/anomaly/scan-all/explain` | `{top_n?, sitename?, facilitytype?}` | 스캔 현황 **Hybrid 응답** [E-023]. scope 필터 [E-022] 지원. ↓ 별도 명세 |
 | POST | `/equipment-mtbf/explain` | `{days=90, sitename?, facilitytype?, top_n=5}` | MTBF 최악 Top-N 설비 자연어 요약 |
 | POST | `/tag/latest/explain` | `{tagsn, current_value, tag_name?, unit?}` | 단일 태그 현재값 → baseline·임계값·**피어**(P2.3) 대비 서술 |
 | POST | `/network/upstream-fault/explain` | 본문 없음 (`{}`) | 상위 장비(SSLVPN/UTM) 장애 → 하위 LTE 모뎀 통신이상 연쇄를 실시간 조회 후 자연어로 서술 (P2.8). 응답에 `sslvpn_count`, `global_lte_down_pct` 추가 포함 |
@@ -1086,6 +1091,85 @@ ORDER BY a.ask_seq ASC;
 - 각 피어의 `cagg_5min_raw_stats_ai` 30일 baseline avg 수집 → LLM 프롬프트에 "피어 비교" 섹션 추가
 - 피어 수치·시설명은 모두 허용 수치 화이트리스트에 포함, 식별자는 검증 시 strip 후 재검증 (오탐 방지)
 - 응답 `context_used`에 `"peers"` 포함 시 피어 비교가 실제 반영됨을 의미
+
+#### `POST /anomaly/scan-all/explain` 상세 ([E-022] / [E-023])
+
+**Request body** (모두 옵셔널):
+```json
+{
+  "top_n": 3,                  // 레거시 — Hybrid 이후 사용 안 함
+  "sitename": "행정1수청",     // [E-022] scope 필터 — 정확 매칭
+  "facilitytype": "소소블록"   // [E-022] scope 필터 — 정확 매칭
+}
+```
+
+**Response (성공 — LLM 경로):**
+```json
+{
+  "summary": "[가장 위급] 남산10 소블록의 ... 교차이상 판정되었습니다 (설비 장애).\n\n[유형별 현황] 설비 장애 112건 · 교차 검증 9건 · 데이터 품질 14건 · 값 이탈 31건 (총 298건 중)\n\n[설비 장애] 통신이상·UPS·펌프 등 설비 DI 직접 감지 (확정 사고)\n\n[점검 순서] ① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈",
+  "source": "llm",
+  "category_counts": { "equip_fault": 112, "cross_check": 9, "data_quality": 14, "value_deviation": 31 },
+  "total_rows": 298,
+  "urgent_category": "equip_fault",
+  "scope": "전체",
+  "context_used": ["scan_cache"],
+  "llm_generate_ms": 38888,
+  "allowed_numbers_count": 7
+}
+```
+
+**Response (template — 0건 또는 모두 정상):**
+```json
+{
+  "summary": "행정1수청 소소블록에 현재 이상 탐지된 태그가 없습니다.",
+  "source": "template",
+  "scope": "행정1수청 소소블록",
+  "total_rows": 0,
+  "category_counts": { "equip_fault": 0, "cross_check": 0, "data_quality": 0, "value_deviation": 0 },
+  "llm_generate_ms": 0
+}
+```
+
+**`summary` 필드 포맷 (Hybrid markdown-lite, 4섹션, `\n\n` 구분):**
+1. `[가장 위급] {LLM 1문장}` — 시설명·태그·수치·카테고리 라벨 포함
+2. `[유형별 현황] 설비 장애 N건 · 교차 검증 M건 · 데이터 품질 K건 · 값 이탈 L건 (총 T건 중)`
+3. `[{가장 위급한 카테고리}] {정적 정의 문구}` — `CATEGORY_MEANINGS` 사전에서 주입
+4. `[점검 순서] ① 설비 장애 → ② 교차 검증 → ③ 데이터 품질 → ④ 값 이탈` — 고정 순서
+
+**카테고리 분류 규칙** (`scan_all_explain.py:_classify_row`):
+- **`equip_fault`** = `equip_failure` 비어있지 않음 OR `comm_status == "통신장애"`
+- **`cross_check`** = `verdict in ("교차이상", "교차주의", "복합이상")`
+- **`data_quality`** = `recent_holding == "Y"`
+- **`value_deviation`** = `verdict in ("이상", "주의")` AND 위 3개에 해당 안 됨
+
+한 row가 여러 카테고리에 걸칠 수 있음 (예: 설비 장애 + 교차 검증). 단 `value_deviation`은 다른 카테고리가 없을 때만 부여.
+
+**우선순위 및 정의 (점검 순서 결정 근거):**
+
+| 순위 | 카테고리 | 정의 (`CATEGORY_MEANINGS`) | 근거 |
+|---|---|---|---|
+| ① | 설비 장애 | 통신이상·UPS·펌프 등 설비 DI 직접 감지 (확정 사고) | DI 신호로 확정된 사실. 즉시 출동 |
+| ② | 교차 검증 | 상류 유입과 하류 유출의 수지 불일치 (누수·월류·계측 오류 의심) | 물리 피해 직결 가능성. 단 원인 판정 1단계 추가 |
+| ③ | 데이터 품질 | 결측·정체·역전 데이터 (센서·통신 점검 필요) | 모니터링 무력화. 직접 피해 없으나 2차 위험 |
+| ④ | 값 이탈 | 요일·시간대 기준 Z-Score 이탈 (통계적 경계, 오탐 가능) | 통계 경계 초과. 정상 운영 변동 가능성 가장 높음 |
+
+**가장 위급한 1건 선택 알고리즘** (`_select_most_urgent`):
+1. `CATEGORY_PRIORITY` 순서로 카테고리 순회
+2. 해당 카테고리에 속한 row가 있으면 그 카테고리 내에서 정렬:
+   - `verdict` 가중치 (`복합이상=10 > 교차이상=9 > 이상=8 > 교차주의=7 > 주의=6 > 정상=0`)
+   - 동률 시 `|z_score|` 내림차순
+3. 첫 번째 row 반환
+
+**LLM 프롬프트 정책:**
+- 프롬프트에 **단일 row 정보만 포함** (Top-N 목록 X)
+- 출력 ~50~100 토큰 목표, "단 1문장" 강제, 끝에 카테고리 라벨 괄호로 명시
+- `num_predict`는 `None` (모델 기본값) — gemma4가 chat 템플릿 토큰을 먼저 생성하다 budget 소진해 빈 응답 반환하는 동작 회피
+- 허용 수치: top 1건의 `z_score`/`deviation_pct`/`current_val`/`mean_30d` + 프롬프트 상수 `0`/`1`/`30`
+
+**운영팀 커스터마이징 가이드:**
+- 카테고리 정의 문구 변경 → `slm/endpoints/scan_all_explain.py`의 `CATEGORY_MEANINGS` 사전 수정 (코드 1줄)
+- 점검 순서 변경 → `CATEGORY_PRIORITY` 리스트 순서 변경 (코드 1줄)
+- 새 카테고리 추가 → 4개 사전(`PRIORITY/LABELS/MEANINGS`) + `_classify_row` 분류 로직 추가
 
 ### 경보 캘린더
 
