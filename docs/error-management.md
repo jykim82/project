@@ -220,6 +220,35 @@ python D:\slm\ai_server.py
 
 ---
 
+### [E-014] 배수지 모니터링 빈 차트 + Node-RED DB 접속 정보 오류 + 테스트 환경 데이터 수집 누락
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-12 |
+| **증상** | `/monitoring/reservoir` 등 배수지/가압장/블록 모니터링 페이지에서 "최근 24시간" 차트가 전부 비어 있음. 로그인/catalog/catalogs 엔드포인트는 200 OK지만 `/trend/data`가 `total_points=0` 반환 |
+| **원인** | 3단계 복합 문제:<br>1) **Node-RED DB 접속 정보 오류** — `flows.json`의 `postgreSQLConfig[71827310c941a9d1]`가 `host=172.17.0.1:5433` (Docker bridge gateway + 외부 포트)로 잘못 설정되어 Node-RED가 로컬 DB에 붙지 못함<br>2) **테스트 환경에 데이터 수집 파이프라인 자체가 없음** — Node-RED flows(324개 postgres 노드)는 전부 알람 조건/네트워크 판정 용도로 `tb_tag_raw_data`에 INSERT하는 노드가 0개. 프로젝트 전체에서 `INSERT INTO tb_tag_raw_data`는 스키마 dump 파일에만 존재. DB dump 로드 후 데이터가 `2026-04-11 11:42`에 정체<br>3) 이로 인해 `/trend/data`의 "최근 24시간" 요청이 빈 결과 반환 |
+| **해결** | 1) **Node-RED 설정 수정:** `flows.json`의 `71827310c941a9d1` config를 `host=slm-timescaledb`, `port=5432`로 변경 (같은 `web_default` 네트워크 내부에서 접근) 후 Node-RED 재시작 → 알람/조건 판정 복구<br>2) **테스트 전용 데이터 수집 데몬 추가:** `/Users/jykim/slm/dev_tools/tag_ingest.py` + `Dockerfile.tag_ingest`를 작성하고 `docker-compose.dev.yml`에 `dev-tag-ingest` 서비스로 등록. 원격 운영 DB(`112.166.183.65:25479`) → 로컬 `tb_tag_raw_data`를 주기 복제(backfill 48h + poll 30s, `ON CONFLICT DO NOTHING`). 원격은 tz-naive KST → 로컬 tztz로 변환<br>3) 상세 사양: `docs/dev-tag-ingest-spec.md` |
+| **수정 파일** | `slm-node-red:/data/flows.json`, `/Users/jykim/slm/dev_tools/tag_ingest.py`, `/Users/jykim/slm/dev_tools/Dockerfile.tag_ingest`, `/Users/jykim/web/docker-compose.dev.yml`, `/Users/jykim/web/docs/dev-tag-ingest-spec.md` |
+| **검증** | 복제 데몬 기동 후 로컬 max(logtime)이 1분당 2~3시간씩 전진 (backfill 완료까지 ~15분), 이후 incremental 폴링으로 유지 |
+| **⚠ 납품 시 제거** | `dev_tools/` 디렉토리, `docker-compose.dev.yml`의 `dev-tag-ingest` 서비스 블록, 원격 DB 자격 정보 전부 삭제 필요. 운영 환경은 실 PLC/Node-RED 수집 파이프라인 사용. 체크리스트: `docs/dev-tag-ingest-spec.md` 하단 |
+| **재발 방지** | 신규 환경 세팅 시 `tb_tag_raw_data` 최신 logtime과 현재 시각 차이를 점검. Node-RED 설정 편집 시 `host`/`port`가 Docker 네트워크 기준인지 확인 (외부 매핑 포트 5433 사용 금지) |
+
+---
+
+### [E-013] AI 요약/원인 분석 클릭 시 첫 화면(로그인)으로 튕김
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | 2026-04-12 |
+| **증상** | 전체 센서 이상 점검 결과의 "AI 현황 요약" 또는 "AI 원인 분석" 버튼 클릭 시 응답이 표시되지 않고 사용자가 로그인(/login) 화면으로 이동 |
+| **원인** | `src/lib/api-client.ts` `handleError`가 401 응답을 받으면 무조건 `signOut({callbackUrl:"/login"})` 호출. AI 요약/원인 서술 엔드포인트는 LLM 호출로 40~60초 걸리는 긴 요청이라 그 사이 JWT 만료 구간에 걸리면 백엔드가 401 반환 → 전역 핸들러가 즉시 로그아웃 → 첫 화면 튕김. 짧은 요청들은 토큰 갱신 버퍼(5분) 안에 끝나서 드러나지 않았던 문제. |
+| **해결** | 1) `api-client.ts`의 401 핸들러에서 `signOut` 호출 제거, `ApiError`만 throw. 실제 세션 만료는 NextAuth JWT refresh 실패 → 기존 `SessionGuard`가 처리 (역할 분리). 2) `anomaly-api.ts`의 `explainAnomalyCause`/`explainScanAll`를 `apiClient` 대신 직접 `fetch` 호출로 이중 방어. |
+| **수정 파일** | `src/lib/api-client.ts:72-85`, `src/lib/api/anomaly-api.ts` (import에서 apiClient 제거) |
+| **검증** | Playwright 헤드리스 5회 반복 테스트 전부 PASS — URL 이동 없음, 요약 결과 정상 렌더 |
+| **재발 방지** | 전역 signOut 트리거는 apiClient가 아닌 SessionGuard/refresh 실패 경로만 담당. LLM 등 장시간 호출 엔드포인트는 개별 에러 핸들링으로 처리. 새 API 래퍼 추가 시 401→전역 로그아웃 유혹을 피하고, 실패 시 컴포넌트 로컬 에러 상태로만 표현. |
+
+---
+
 ## 시작 전 체크리스트
 
 ```
@@ -240,6 +269,71 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 ```
 
 > **⚠ 포트 8000에 PID가 2개 보이면**: 구버전 서버 잔존. `taskkill /PID <오래된PID> /F`로 종료 후 `start-services.bat` 재실행.
+
+---
+
+### [E-015] 사이드바에서 알람 캘린더(히트맵) + 누수 의심 알림 + 일부 관리 메뉴 사라짐
+
+- **날짜:** 2026-04-13
+- **증상:** 모니터링 그룹의 "알람 캘린더(M003-6)"·"누수 의심 알림(M003-7)" 그리고 관리 그룹의 "채팅 피드백·시설 약칭·설비 신뢰성·LLM 서술 관찰(M100-7~10)" 메뉴가 사이드바에 표시되지 않음. 페이지는 직접 URL로는 접근 가능.
+
+- **원인:**
+  1. 사이드바 훅(`use-sidebar-menus.ts`)은 `/api/auth/me` → `tb_menu` 조회 결과를 1순위로 사용하고, 응답이 비어 있을 때만 정적 `sidebar-menus.ts`를 폴백으로 사용
+  2. `db/seed/03_menus.sql`이 `sidebar-menus.ts`와 완전히 어긋난 stale 상태였음 — M003-4~7 / M006 위기대응 그룹 / M100-5~10 / M200 전체(14건) 등 **17개 메뉴 누락**
+  3. 동적 응답이 일부 메뉴만 돌려주면서 누락된 메뉴들이 화면에서 사라진 것처럼 보임 (정적 폴백은 발동하지 않음 — 동적 응답이 비어있지 않으면 그대로 사용)
+
+- **해결:**
+  1. `tb_menu` + `tb_auth_menu`에 누락된 16개 메뉴 행 직접 INSERT (즉시 복구)
+  2. `db/seed/03_menus.sql` 전체 재작성 — 단일 출처를 `sidebar-menus.ts`로 명시, `ON CONFLICT DO UPDATE`로 재시드 시 라벨/경로/순서 변동 자동 반영, VIEWER 권한 INSERT는 EXISTS 가드 추가 (FK 위반 방지)
+  3. 정적 폴백에도 누락돼 있던 `M100-10 LLM 서술 관찰` 한 건 보완 (`sidebar-menus.ts`)
+
+- **재발 방지:**
+  - `sidebar-menus.ts` 변경 시 반드시 `db/seed/03_menus.sql` 동시 수정 (시드 파일 상단 주석에 명시)
+  - 시드는 `ON CONFLICT DO UPDATE`라 재시드만으로 라벨/경로 변경 반영됨
+  - `tb_menu` row 추가 PR에서는 `tb_auth_menu`에도 ADMIN/MASTER/USER 권한 INSERT 누락 여부 확인
+
+- **검증:**
+  - `SELECT * FROM tb_menu WHERE pmenu_idn IN ('M003','M100')` → 16건 정상
+  - `/api/auth/me` 응답에 누락 메뉴 모두 포함되는지 다음 로그인 시 확인 필요
+
+- **관련 커밋:** `web@3cb06f3` (시드 재작성), `slm-dashboard@88cd239` (정적 폴백 보완)
+
+---
+
+### [E-016] gemma4 Ollama 모델명 미스매치 + cold-start 90s 타임아웃
+
+- **날짜:** 2026-04-13
+- **증상:**
+  1. AI explain 엔드포인트들이 "Ollama 응답 오류: model 'gemma4' not found"로 실패
+  2. 첫 호출에서 90s 타임아웃 후 fallback 경로로 돌아가는 사례 빈발 (P2.6 scan-all/explain 등)
+
+- **원인:**
+  1. **태그 미스매치:** `.env`/`docker-compose.dev.yml` 기본값이 `OLLAMA_MODEL=gemma4` 또는 `gemma4:26b`였으나 실제 설치된 태그는 `gemma4:26b-a4b-it-q4_K_M` (Ollama는 정확한 태그 매칭만 허용, 별칭 자동 해석 안 함)
+  2. **모델 idle 언로드:** Ollama 기본 keep_alive 5분 후 모델이 VRAM에서 언로드되어 첫 요청에 cold-start 페널티 (gemma4:26b 기준 60~90s)
+  3. **타임아웃 마진 부족:** explain 엔드포인트 하드코딩 90s가 cold-start + tail latency 조합에서 부족 (이전 코멘트의 "p95 30s, p99 50s"는 다른 모델 측정값으로 stale)
+
+- **해결:**
+  1. `.env` 3곳 모두 정확한 태그로 통일: `gemma4:26b-a4b-it-q4_K_M`
+     - `/Users/jykim/web/.env` (Docker compose 오버라이드)
+     - `/Users/jykim/slm/.env` (네이티브 실행)
+     - `slm_config.py` 기본값 fallback도 동기화
+  2. `OLLAMA_KEEP_ALIVE="24h"` 추가 → `ollama_client.generate()` payload에 자동 주입
+  3. lifespan startup에서 백그라운드 스레드로 `generate("ping", num_predict=1)` 웜업 호출 (가중치 VRAM 상주 + 첫 사용자 요청 cold-start 제거)
+  4. 5개 explain 엔드포인트 하드코딩 timeout 상향: 90→180s (tag_latest는 60→120s)
+
+- **검증 (10회 반복 테스트, 2026-04-13):**
+  - FAQ `/chat/faq/examples` 10/10 성공 (<100ms)
+  - P2.7 `/equipment-mtbf/explain` 10/10 LLM 경로 (median 42s, range 36~94s)
+  - P2.6 `/anomaly/scan-all/explain` 10/10 LLM 경로 (median 33s, range 32~44s)
+  - **Fallback 0회** — 100% LLM 경로 통과
+  - `curl /api/ps`로 `expires_at +24h` 확인 → keep_alive 정상
+
+- **재발 방지:**
+  - 모델 변경 시 `ollama list`로 정확한 태그 확인 후 `.env` 3곳 모두 동기화
+  - 새 explain 엔드포인트는 timeout 180s + backoff 3s 패턴 준수
+  - 모델 교체/업그레이드 후 첫 호출은 웜업 완료 로그 확인 (`Ollama 웜업 완료: <model> (Nms)`)
+
+- **관련 커밋:** `slm@d6b97a9` (slm_config + ollama_client + ai_server warmup + 5종 endpoint timeout 상향)
 
 ---
 

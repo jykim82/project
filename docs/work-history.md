@@ -2,6 +2,47 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — Ollama gemma4:26b-a4b 연결 + 최적화 + 사이드바 메뉴 복원 + 10회 안정성 테스트)
+
+#### 1. Ollama 연결 [E-016]
+- Mac 네이티브 Ollama(Metal GPU) 설치 후 AI explain 엔드포인트들이 "model 'gemma4' not found"로 실패하던 문제 해결
+- 실제 설치 태그(`gemma4:26b-a4b-it-q4_K_M`)로 `.env` 3곳 + `slm_config.py` 기본값 통일
+- Docker→host 네트워크: `OLLAMA_URL=http://host.docker.internal:11434`
+
+#### 2. Ollama 최적화 (cold-start 제거)
+- `OLLAMA_KEEP_ALIVE="24h"` 도입 (`slm_config.py` + `ollama_client.generate()` payload 자동 주입)
+- ai_server.py lifespan startup에서 백그라운드 스레드로 모델 웜업 (`generate("ping", num_predict=1)`)
+- 5개 explain 엔드포인트 timeout 상향 (90→180s, tag_latest 60→120s) — 이전 코멘트의 p95/p99 stale 수치 갱신
+- `/api/ps`에서 `expires_at +24h` 확인 → 모델 VRAM 상주 정상
+
+#### 3. 10회 안정성 테스트 (2026-04-13)
+| 엔드포인트 | 성공/시도 | LLM 경로 | median | range |
+|---|---|---|---|---|
+| FAQ `/chat/faq/examples` | 10/10 | n/a | <100ms | <100ms |
+| P2.7 `/equipment-mtbf/explain` | 10/10 | 10/10 | 42s | 36~94s |
+| P2.6 `/anomaly/scan-all/explain` | 10/10 | 10/10 | 33s | 32~44s |
+
+**Fallback 0회** — 100% LLM 경로 통과. 첫 호출만 outlier(82~94s)이고 이후 안정적(~36s/~33s).
+
+#### 4. 사이드바 메뉴 17건 복원 [E-015]
+- 증상: 모니터링 그룹 "알람 캘린더(M003-6, 히트맵)"·"누수 의심 알림(M003-7)" + 관리 그룹 "채팅 피드백·시설 약칭·설비 신뢰성·LLM 서술 관찰(M100-7~10)" 메뉴가 사이드바에서 보이지 않음
+- 원인: `use-sidebar-menus.ts`가 `tb_menu` DB를 1순위로 사용하는데 시드(`db/seed/03_menus.sql`)가 `sidebar-menus.ts`와 완전 어긋난 stale 상태였음 (M003-4~7 / M006 위기대응 / M100-5~10 / M200 14건 모두 누락 — 총 17개)
+- 해결:
+  1. `tb_menu` + `tb_auth_menu` 직접 INSERT로 즉시 복구 (16건)
+  2. `db/seed/03_menus.sql` 전체 재작성 — 단일 출처를 `sidebar-menus.ts`로 명시, `ON CONFLICT DO UPDATE`로 재시드 시 변경 자동 반영, VIEWER 권한은 EXISTS 가드로 FK 위반 방지
+  3. `sidebar-menus.ts`에도 누락돼 있던 M100-10 정적 폴백 보완
+
+#### 커밋
+- `slm@d6b97a9` Ollama 연결 + 최적화 (slm_config/ollama_client/ai_server/5개 endpoint)
+- `web@3cb06f3` `db/seed/03_menus.sql` 전체 재작성 (메뉴 17건 동기화)
+- `slm-dashboard@88cd239` `sidebar-menus.ts` M100-10 정적 폴백 추가
+- `web@c979141` `f1e6679` 이전 P2.4/P2.6/P2.7/P2.8/FAQ 완료 이력 동기화
+
+#### 미커밋 잔여
+- `slm` 레포 `endpoints/trend.py`·`endpoints/tag_latest_explain.py`: 본 세션 timeout 1줄 변경이 이전 미커밋과 섞여 있어 별도 정리 필요 (운영 컨테이너에는 이미 적용됨)
+
+---
+
 ### 완료 (2026-04-13 — P2.6 종합 이상 요약 + P2.7 MTBF 서술 + FAQ 동적화)
 
 C안 중기 확장 Phase 2의 남은 3종(P2.6/P2.7/FAQ) 백엔드·프런트 연동 상태 재확인 및 문서 반영.
