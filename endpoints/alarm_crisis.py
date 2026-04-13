@@ -474,14 +474,22 @@ async def get_alarm_reports(
 # =============================================================================
 
 @router.get("/crisis/alarm-analysis")
-async def get_alarm_analysis():
-    """경보분석용 알람 목록 (diagnosed_msg 포함, 최근 30일)"""
+async def get_alarm_analysis(days: int = 90):
+    """경보분석용 알람 목록 (diagnosed_msg 포함).
+
+    days: 조회 기간(일). 기본 90일.
+      - 30일 → 90일로 확장한 이유: diagnosed_msg에 검출 로직 다이어그램 HTML이
+        포함된 옛 경보(2026-02 시점)가 30일 컷오프에 잘려 위기대응 화면에서
+        다이어그램이 한 건도 보이지 않던 회귀를 해소.
+      - days는 7~365 범위로 클램프.
+    """
     conn = None
     try:
+        days = max(7, min(int(days or 90), 365))
         conn = _get_db_connection()
         cur = conn.cursor()
 
-        cur.execute("""
+        cur.execute(f"""
             SELECT
                 TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,
                 TO_CHAR(alarm_end_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_end_time,
@@ -509,11 +517,11 @@ async def get_alarm_analysis():
                 stat,
                 diagnosed_msg
             FROM tb_equipment_alarm_report
-            WHERE alarm_start_time >= NOW() - INTERVAL '30 days'
+            WHERE alarm_start_time >= NOW() - (%s || ' days')::interval
               AND alarm_severity IS DISTINCT FROM %s
             ORDER BY alarm_start_time DESC
             LIMIT 500
-        """, ('정상',))
+        """, (days, '정상',))
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
         cur.close()
