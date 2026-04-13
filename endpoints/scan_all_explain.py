@@ -36,12 +36,30 @@ def init(get_scan_cache_fn, ollama_client=None):
 
 class ScanAllExplainRequest(BaseModel):
     top_n: int = Field(3, ge=1, le=10, description="요약에 포함할 최악 태그 수")
+    # 시설 필터 — 채팅 상에서 "행정1수청 소소블록 이상 스캔해줘" 같이 특정 시설
+    # 범위로 질의했을 때 AnomalyScanView가 scope를 추출해 전달. 백엔드는
+    # _ANOMALY_SCAN_CACHE에서 해당 scope만 필터 후 Top-N 선택. 결과 0건이면
+    # "해당 현장에 이상 탐지된 태그가 없습니다" 메시지를 반환. [E-022]
+    sitename: Optional[str] = Field(None, description="필터: 현장명 (정확 매칭)")
+    facilitytype: Optional[str] = Field(None, description="필터: 시설유형 (정확 매칭)")
 
 
-def _build_fallback(top_rows: list[dict], top_n: int) -> str:
+def _build_scope_label(sitename: Optional[str], facilitytype: Optional[str]) -> str:
+    parts = []
+    if sitename:
+        parts.append(sitename)
+    if facilitytype:
+        parts.append(facilitytype)
+    return " ".join(parts) if parts else "전체"
+
+
+def _build_fallback(top_rows: list[dict], top_n: int, scope_label: str = "전체") -> str:
     if not top_rows:
+        if scope_label != "전체":
+            return f"{scope_label}에 현재 이상 탐지된 태그가 없습니다."
         return "현재 이상 탐지된 태그가 없습니다. 전체 시스템이 정상 범위에서 동작 중입니다."
-    parts = [f"현재 이상 탐지된 태그 상위 {min(top_n, len(top_rows))}건입니다."]
+    prefix = scope_label if scope_label != "전체" else "현재"
+    parts = [f"{prefix} 이상 탐지된 태그 상위 {min(top_n, len(top_rows))}건입니다."]
     for i, r in enumerate(top_rows[:top_n], 1):
         parts.append(
             f"{i}) {r.get('sitename', '?')} {r.get('facilitytype', '?')} · "
@@ -102,6 +120,18 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
 
     rows: list[dict] = [_as_dict(r) for r in raw_rows]
 
+    # 시설 필터 적용 ([E-022]) — sitename/facilitytype이 지정되면 해당 범위만
+    scope_label = _build_scope_label(req.sitename, req.facilitytype)
+    if req.sitename or req.facilitytype:
+        before = len(rows)
+        if req.sitename:
+            rows = [r for r in rows if r.get("sitename") == req.sitename]
+        if req.facilitytype:
+            rows = [r for r in rows if r.get("facilitytype") == req.facilitytype]
+        logger.info(
+            f"scan_all_explain scope 필터: {scope_label!r} — {before} → {len(rows)} rows"
+        )
+
     # Top-N: verdict='이상' 우선, 그다음 '주의' 보충. z_score 절댓값 내림차순
     anoms = [r for r in rows if r.get("verdict") == "이상"]
     warns = [r for r in rows if r.get("verdict") == "주의"]
@@ -118,6 +148,22 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
 
     _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
     _context_used = ["scan_cache"]
+
+    # scope 필터 결과 0건 ([E-022]) — LLM 호출 없이 즉시 "없다" 응답
+    if (req.sitename or req.facilitytype) and total_rows == 0:
+        return {
+            "summary": f"{scope_label}에 현재 이상 탐지된 태그가 없습니다.",
+            "source": "template",
+            "context_used": _context_used + ["scope_filter"],
+            "context_fetch_ms": _context_fetch_ms,
+            "context_mode": _context_mode,
+            "llm_generate_ms": 0,
+            "allowed_numbers_count": 0,
+            "scope": scope_label,
+            "total_anomaly": 0,
+            "total_warn": 0,
+            "top_rows_count": 0,
+        }
 
     # 허용 수치: top_rows의 z_score, deviation_pct, current_val, mean_30d 등 + 총계
     # 프롬프트 상수 (30일 baseline 언급 가능)도 포함
@@ -155,8 +201,9 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
         )
     top_block = "\n".join(lines) if lines else "(이상 없음)"
 
+    scope_header = scope_label if scope_label != "전체" else "전체 센서"
     prompt = (
-        "다음은 전체 센서 이상 스캔 결과의 상위 심각 항목입니다. "
+        f"다음은 {scope_header} 이상 스캔 결과의 상위 심각 항목입니다. "
         "2~4문장으로 현황을 자연어 요약하라.\n\n"
         "## 절대 규칙\n"
         "1. 아래 '통계'와 'Top 목록'의 수치·명칭만 사용하라.\n"
@@ -164,7 +211,9 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
         "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라 (현황 서술에 집중).\n"
         "4. 외부 지식이나 일반 기준은 추가하지 마라.\n"
         "5. 존댓말 '~습니다' 종결.\n"
-        "6. 가장 심각한 1~2건은 시설명과 함께 구체 수치를 언급하라.\n\n"
+        "6. 가장 심각한 1~2건은 시설명과 함께 구체 수치를 언급하라.\n"
+        f"7. 분석 범위는 '{scope_header}'이며, 범위 밖 시설은 언급하지 마라.\n\n"
+        f"## 분석 범위\n- {scope_header}\n\n"
         "## 통계\n"
         f"- 총 스캔 태그: {total_rows}건\n"
         f"- 이상 판정: {total_anomaly}건\n"
@@ -175,7 +224,7 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
 
     if not _ollama_client:
         return {
-            "summary": _build_fallback(top_rows, req.top_n),
+            "summary": _build_fallback(top_rows, req.top_n, scope_label),
             "source": "fallback",
             "context_used": _context_used,
             "context_fetch_ms": _context_fetch_ms,
@@ -195,7 +244,7 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
     except Exception as e:
         logger.warning(f"scan_all_explain LLM 실패: {e}")
         return {
-            "summary": _build_fallback(top_rows, req.top_n),
+            "summary": _build_fallback(top_rows, req.top_n, scope_label),
             "source": "fallback",
             "error": str(e),
             "context_used": _context_used,
@@ -242,7 +291,7 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
             allowed_count=len(allowed_numbers),
         )
         return {
-            "summary": _build_fallback(top_rows, req.top_n),
+            "summary": _build_fallback(top_rows, req.top_n, scope_label),
             "source": "fallback",
             "llm_rejected": True,
             "violations": violations,
