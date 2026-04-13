@@ -190,7 +190,7 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
             _ollama_client.generate,
             prompt,
             None, None, None,
-            90.0, 3,
+            180.0, 3,
         )
     except Exception as e:
         logger.warning(f"scan_all_explain LLM 실패: {e}")

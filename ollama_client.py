@@ -17,6 +17,7 @@ import httpx
 from slm_config import (
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT,
+    OLLAMA_KEEP_ALIVE,
     CLASSIFIER_TEMPERATURE,
     get_model,
 )
@@ -92,6 +93,7 @@ class OllamaClient:
         num_predict: Optional[int] = None,
         timeout: Optional[float] = None,
         backoff_seconds: float = _BACKOFF_SECONDS,
+        keep_alive: Optional[str] = None,
     ) -> str:
         """
         Ollama /api/generate 호출하여 텍스트 응답을 반환한다.
@@ -131,6 +133,8 @@ class OllamaClient:
             "prompt": prompt,
             "stream": False,
             "options": options,
+            # 모델을 VRAM에 상주시켜 idle 후 cold-start 회피
+            "keep_alive": keep_alive if keep_alive is not None else OLLAMA_KEEP_ALIVE,
         }
 
         try:

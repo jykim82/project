@@ -303,7 +303,7 @@ async def explain_anomaly(diag: EquipmentDiagnosisInput):
             None,   # model
             None,   # num_ctx
             None,   # num_predict
-            90.0,   # timeout — Gemma4:26b tail latency 커버 (측정: p95 약 30s, p99 약 50s)
+            180.0,  # timeout — Gemma4:26b a4b tail latency 커버 (M4 Pro Metal 실측 p95 ~70s, p99 ~110s)
             3,      # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
         )
         _elapsed = time.perf_counter() - _t0

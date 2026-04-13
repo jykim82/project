@@ -120,6 +120,10 @@ from endpoints.equipment_mtbf_explain import (
     router as equipment_mtbf_explain_router,
     init as init_equipment_mtbf_explain,
 )
+from endpoints.network_upstream_explain import (
+    router as network_upstream_explain_router,
+    init as init_network_upstream_explain,
+)
 from endpoints.chat_faq_examples import (
     router as chat_faq_examples_router,
     init as init_chat_faq_examples,
@@ -1394,6 +1398,21 @@ async def lifespan(app: FastAPI):
         logger.info(f"Ollama 연결 성공: {get_model()}")
         if embedding_index.ready:
             logger.info(f"벡터 검색 활성화: {embedding_index.size}벡터")
+        # 모델 웜업 — 첫 사용자 요청이 cold-start 페널티(gemma4:26b 기준 60~90s)를 맞지 않도록
+        # 백그라운드 스레드에서 짧은 generate 호출해 가중치를 VRAM에 올려둠.
+        # keep_alive는 OLLAMA_KEEP_ALIVE(기본 24h) 설정에 따라 상주 유지.
+        def _warmup_model():
+            import time as _t
+            _t0 = _t.time()
+            try:
+                ollama_client.generate(
+                    "ping", None, None, 1, 120.0, 3,
+                )
+                logger.info(f"Ollama 웜업 완료: {get_model()} ({int((_t.time()-_t0)*1000)}ms)")
+            except Exception as _e:
+                logger.warning(f"Ollama 웜업 실패 (무시): {_e}")
+        import threading as _th
+        _th.Thread(target=_warmup_model, daemon=True, name="ollama-warmup").start()
     else:
         logger.warning("Ollama 연결 실패 — 키워드 매칭 폴백 모드로 동작")
         # Ollama 비가용: embed_query + generate 백오프 즉시 설정 (첫 요청 타임아웃 방지)
@@ -2673,6 +2692,10 @@ app.include_router(scan_all_explain_router)
 # 설비 MTBF AI 해석 엔드포인트 (P2.7)
 init_equipment_mtbf_explain(get_db_connection, ollama_client)
 app.include_router(equipment_mtbf_explain_router)
+
+# NETWORK_UPSTREAM_FAULT_ANALYSIS AI 원인 추정 (P2.8)
+init_network_upstream_explain(get_db_connection, ollama_client)
+app.include_router(network_upstream_explain_router)
 
 # 채팅 FAQ 예시 구문 동적 생성 (실제 답변 있는 지점으로 치환)
 init_chat_faq_examples(get_db_connection, _get_scan_cache)

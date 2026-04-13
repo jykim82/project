@@ -203,7 +203,7 @@ async def explain_mtbf(req: MtbfExplainRequest = MtbfExplainRequest()):
     try:
         text = await asyncio.to_thread(
             _ollama_client.generate,
-            prompt, None, None, None, 90.0, 3,
+            prompt, None, None, None, 180.0, 3,
         )
     except Exception as e:
         logger.warning(f"mtbf_explain LLM 실패: {e}")
