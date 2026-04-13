@@ -337,6 +337,46 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 
 ---
 
+### [E-017] 첫 /monitoring/flow 접속 시 데이터 18초 지연
+
+- **날짜:** 2026-04-13
+- **증상:** 백엔드 기동 직후 처음 용수 흐름 페이지(`/monitoring/flow`)를 열면 데이터가 18초 가까이 뜨지 않음. 두 번째 접속부터는 수백 ms로 정상.
+- **재현 로그 (Next.js dev):**
+  ```
+  GET /monitoring/flow          200 in 600ms (compile: 567ms, render: 30ms)
+  GET /api/proxy/flow-map       200 in 18.3s (compile: 32ms, render: 18.3s)
+  GET /api/proxy/flow-map/roots 200 in 18.3s (compile: 38ms, render: 18.3s)
+  GET /api/proxy/flow-map/realtime 200 in 18.3s (compile: 4ms, render: 18.3s)
+  ```
+
+- **원인 (복합):**
+  1. **Next.js Turbopack dev-mode JIT 컴파일** — `next dev --turbopack`은 라우트를 처음 요청할 때 JIT 컴파일. `/api/proxy/[...path]/route.ts` 카탈-올 핸들러가 cold 상태일 때 최초 컴파일에 약 500ms 소요. 세 개의 병렬 프록시 호출이 모두 같은 route.ts 컴파일을 기다리는 구조
+  2. **백엔드 cold 경합** — `slm-backend` 기동 직후 `lifespan`에서 IForest 학습(37s) + SCAN_ALL SQL(98s) + SNMP 폴링 + 현장 프로파일링이 병렬로 돌면서 동일 DB 커서/리소스 경합. 이 구간에 `/flow-map/realtime`이 들어오면 `render` 시간이 18초까지 늘어남 (`flow_realtime.py`는 한 요청에 10~12개 쿼리를 연쇄, `tb_tag_raw_data` LATERAL JOIN으로 배수지 7일 야간최소유량 + 적산유량 + 가압장 펌프 상태 조회)
+  3. 안정 상태에서는 cold-start 페널티가 모두 사라져 `/flow-map/realtime`은 ~300~400ms, proxy route는 수 ms
+
+- **해결 (옵션 B: dev 전용 프리워밍 사이드카):**
+  - 신규 스크립트 `slm/dev_tools/prewarm.sh` — backend `/health` + frontend `/login` 준비 대기 후:
+    1. 백엔드 `/flow-map`, `/flow-map/roots`, `/flow-map/realtime`, `/dashboard/summary` 직접 호출 → 백엔드 쿼리 캐시 + `_flow_baseline_cache` 워밍 + IForest/SCAN_ALL 경합 구간에 첫 호출이 떨어지게 강제
+    2. 프런트엔드 페이지 10종 curl → Next.js 페이지 컴파일 트리거 (login 307 리다이렉트라도 middleware/proxy 컴파일 진행)
+    3. `/api/proxy/flow-map` 3건 curl → `[...path]/route.ts` 카탈-올 핸들러 JIT 컴파일 트리거 (401 응답이지만 route 컴파일은 완료)
+  - 신규 compose 서비스 `frontend-prewarm` (이미지 `curlimages/curl:latest`, `restart: no`) — `depends_on: [frontend, backend]`로 스택 기동마다 1회 실행 후 종료
+  - `OLLAMA_KEEP_ALIVE=24h` + ai_server 모델 웜업 스레드(E-016)와 같은 패턴 확장
+
+- **검증:**
+  - cold 상태 `.next/dev` 디렉토리 제거 후 frontend 재기동 → prewarm 사이드카 실행 → `docker logs slm-frontend`에서 `/api/proxy/flow-map 401 in 23ms (compile: 16ms)` 확인 (이전 cold 500~700ms → 20ms 수준 축소)
+  - 백엔드 `/flow-map/realtime` 직접 호출 시 첫 호출도 수백 ms 수준 (IForest 학습 중에도 경합 개선)
+
+- **한계:**
+  - 인증 없이 curl하므로 middleware가 307 리다이렉트 → `/monitoring/flow/page.tsx` 자체 컴파일은 실제 로그인 세션이 있어야 발생(한 번 발생하면 이후 캐시). prewarm으로는 `page.tsx` 단독 컴파일 비용 완전 제거는 안 됨 — 다만 이 부분은 수백 ms 수준이라 체감 영향이 작음
+  - 운영 환경에서는 `next build && next start` (prod)를 사용하므로 JIT 컴파일 자체가 없어 prewarm 사이드카 불필요 → docker-compose.dev.yml 블록에 **납품 시 제거** 주석 명시
+
+- **관련 파일:**
+  - `slm/dev_tools/prewarm.sh`
+  - `docker-compose.dev.yml` (`frontend-prewarm` 서비스)
+  - `slm/endpoints/flow_realtime.py` (쿼리 연쇄 — 향후 최적화 후보)
+
+---
+
 ## 관련 파일
 
 - 시작 스크립트: `D:\web\start-services.bat`

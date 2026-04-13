@@ -2,6 +2,25 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — /monitoring/flow 첫 접속 18s 지연 제거 — dev JIT 프리워밍 사이드카)
+
+- 증상: 백엔드·프런트엔드 기동 직후 처음 용수 흐름 페이지 접속 시 데이터가 18초 가까이 뜨지 않음 [E-017]
+- 원인 (복합):
+  1. Turbopack `next dev` JIT 컴파일 — `/api/proxy/[...path]/route.ts` 카탈-올 첫 컴파일 ~500ms, 세 개 병렬 호출이 같은 compile을 대기
+  2. 백엔드 cold 경합 — IForest 학습(37s) + SCAN_ALL SQL(98s) + SNMP 폴링이 동일 DB 리소스 경합 구간에 `flow_realtime.py`의 10~12개 쿼리 연쇄가 떨어지면서 render 시간 18s까지 증가
+- 해결: dev 전용 프리워밍 사이드카 `frontend-prewarm` 추가
+  - `slm/dev_tools/prewarm.sh` — backend /health + frontend /login 준비 대기 후 백엔드 핵심 엔드포인트 4건 + 프런트엔드 페이지 10종 + 프록시 라우트 3건 순차 curl
+  - `docker-compose.dev.yml` — `curlimages/curl:latest` 기반 원샷 서비스, `restart: no`, `depends_on: [frontend, backend]`
+  - 스택 기동마다 1회 자동 실행 → 카탈-올 프록시 핸들러 컴파일 + 백엔드 캐시 + `_flow_baseline_cache` 워밍
+- 검증: `.next/dev` 디렉토리 제거 후 frontend 재기동 → prewarm 사이드카 실행 → `/api/proxy/flow-map 401 in 23ms (compile: 16ms)` 확인 (cold 500~700ms → 20ms)
+- 납품 시 제거: `next build && next start` 운영 빌드는 JIT 컴파일이 없어 불필요. docker-compose.dev.yml에 제거 주석 명시
+
+#### 커밋
+- `slm@(예정)` dev_tools/prewarm.sh 신규
+- `web@(예정)` docker-compose.dev.yml + docs/error-management.md E-017 + work-history.md
+
+---
+
 ### 완료 (2026-04-13 — Ollama gemma4:26b-a4b 연결 + 최적화 + 사이드바 메뉴 복원 + 10회 안정성 테스트)
 
 #### 1. Ollama 연결 [E-016]

@@ -75,6 +75,44 @@ services:
     restart: unless-stopped
 
   # ============================================================
+  # [DEV-ONLY] tb_tag_raw_data 원격 → 로컬 복제 데몬
+  # ============================================================
+  # 목적: 테스트 환경에서 원격 운영 DB(참고 사이트)의 실측 시계열을
+  #       로컬 TimescaleDB로 주기 복제해 모니터링/트렌드/이상감지 검증 가능하게 함.
+  # 납품 시 제거: 이 서비스 블록과 ../slm/dev_tools/ 디렉토리 전체 삭제.
+  #               운영 환경은 실제 PLC/Node-RED 수집 파이프라인을 사용하므로 불필요.
+  # 상세 사양: docs/dev-tag-ingest-spec.md
+  dev-tag-ingest:
+    build:
+      context: ../slm/dev_tools
+      dockerfile: Dockerfile.tag_ingest
+    container_name: slm-dev-tag-ingest
+    environment:
+      TZ: Asia/Seoul
+      # 로컬 TimescaleDB (같은 compose 네트워크)
+      LOCAL_DB_HOST: timescaledb
+      LOCAL_DB_PORT: "5432"
+      LOCAL_DB_NAME: ${DB_NAME:-slm}
+      LOCAL_DB_USER: ${DB_USER:-slm_dev}
+      LOCAL_DB_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
+      LOCAL_REGION: ${DEV_TAG_INGEST_REGION:-KW}
+      # 원격 운영 DB (외부)
+      REMOTE_DB_HOST: ${REMOTE_DB_HOST:-112.166.183.65}
+      REMOTE_DB_PORT: ${REMOTE_DB_PORT:-25479}
+      REMOTE_DB_NAME: ${REMOTE_DB_NAME:-postgres}
+      REMOTE_DB_USER: ${REMOTE_DB_USER:-postgres}
+      REMOTE_DB_PASSWORD: ${REMOTE_DB_PASSWORD:-DJpost0827///}
+      # 폴링 파라미터
+      POLL_INTERVAL_S: ${DEV_TAG_INGEST_POLL_S:-30}
+      BACKFILL_HOURS: ${DEV_TAG_INGEST_BACKFILL_H:-48}
+      BACKOFF_S: ${DEV_TAG_INGEST_BACKOFF_S:-15}
+      BATCH_SIZE: ${DEV_TAG_INGEST_BATCH:-5000}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================
   # Frontend (Next.js 대시보드)
   # ============================================================
   frontend:
@@ -101,6 +139,31 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  # ============================================================
+  # [DEV-ONLY] Turbopack JIT 컴파일 프리워밍 사이드카
+  # ============================================================
+  # 목적: `next dev --turbopack`이 첫 페이지/프록시 라우트 요청마다 JIT 컴파일
+  #       (관측 18초+)하는 지연을, 서버 기동 직후 자동 curl로 미리 트리거해 제거.
+  #       백엔드 /flow-map/realtime 등도 함께 warm해 IForest/SCAN_ALL 백그라운드
+  #       작업과 사용자 첫 요청의 경합 가능성을 낮춤.
+  # 납품 시 제거: 이 서비스 블록 삭제. 운영 빌드(`next build && next start`)는
+  #               JIT 컴파일이 없어 이 사이드카가 불필요.
+  # 관련 이력: docs/error-management.md E-017 (첫 접속 18s)
+  frontend-prewarm:
+    image: curlimages/curl:latest
+    container_name: slm-frontend-prewarm
+    volumes:
+      - ../slm/dev_tools/prewarm.sh:/prewarm.sh:ro
+    environment:
+      FRONTEND_URL: https://frontend:3000
+      BACKEND_URL: http://backend:8000
+      MAX_WAIT_S: "180"
+    entrypoint: ["/bin/sh", "/prewarm.sh"]
+    depends_on:
+      - frontend
+      - backend
+    restart: "no"
 
 volumes:
   backend-venv:
