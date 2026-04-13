@@ -577,6 +577,60 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 - **관련 파일:**
   - `slm-dashboard/slm-dashboard/src/components/gis/GisFlowOverlayLayer.tsx:127-221` (addFlowLayers)
 
+- **관련 커밋:** `slm-dashboard@868f472` / `web@f9630b1`
+
+---
+
+### [E-022] "AI 현황 요약" 버튼이 시설 범위 질의에도 전역 Top-3을 반환
+
+- **날짜:** 2026-04-13
+- **증상:** AI 채팅에서 "행정1수청 소소블록 이상 스캔해줘"처럼 시설 범위를 지정해 질의하면 `AnomalyVisualization` → `AnomalyScanView`가 **백엔드에서 이미 필터된 rawData**를 표시하지만(`_filter_anomaly_cache_rows` 적용됨), 그 위 "AI 현황 요약" 버튼을 클릭하면 전역 Top-3("남산 배수지 · 남산(배) 탁도", "송산2산단생활 가압장", "석문2 소블록")이 응답으로 뜸. 해당 현장에 대해서만 나와야 하고, 없으면 "없습니다"로 응답해야 함.
+
+- **원인:**
+  1. `AnomalyScanView`의 `handleExplainScan`이 `explainScanAll(3)`을 호출 — **scope 필터 없이**
+  2. `explainScanAll` API 래퍼도 `top_n`만 전달, 시설 필터 파라미터 없음
+  3. 백엔드 `POST /anomaly/scan-all/explain`(`scan_all_explain.py`)이 `_ANOMALY_SCAN_CACHE` 전체를 그대로 읽어 Top-N 선택 → 전역 결과 반환
+  4. 결과: 채팅 상단의 rawData(필터됨)와 버튼 응답(전역)이 불일치 → 사용자 혼란
+
+- **수정 (3-layer):**
+
+  **A) 백엔드** `endpoints/scan_all_explain.py`
+  - `ScanAllExplainRequest`에 `sitename: Optional[str]`, `facilitytype: Optional[str]` 필드 추가
+  - `_build_scope_label()` 헬퍼 신설 — 필터 파라미터 조합해서 "행정1수청 소소블록" / "전체" 라벨 생성
+  - 캐시 rows 로드 직후 scope 필터 적용 (`rows = [r for r in rows if r["sitename"] == req.sitename]` 등)
+  - **필터 결과 0건이면 LLM 호출 없이 즉시 "`{scope}에 현재 이상 탐지된 태그가 없습니다.`" 템플릿 응답** (`source: "template"`)
+  - LLM 프롬프트에 분석 범위 섹션 + 규칙 7번("범위 밖 시설은 언급하지 마라") 추가
+  - `_build_fallback(top_rows, top_n, scope_label)` 시그니처 확장 — fallback 응답도 scope 레이블 반영
+
+  **B) 프런트엔드 API 래퍼** `slm-dashboard/src/lib/api/anomaly-api.ts`
+  - `ScanScope` 인터페이스 신설 (`{sitename?, facilitytype?}`)
+  - `explainScanAll(topN, scope?)` 시그니처 확장 — scope 값이 있으면 body에 포함
+  - `ScanAllExplainResult`에 `source: "template"` 추가 + 옵셔널 `scope?` 필드
+
+  **C) 프런트엔드 컴포넌트** `slm-dashboard/src/components/chat/anomaly/AnomalyScanView.tsx`
+  - `useMemo`로 rawData에서 scope 추출 — 모든 row의 sitename/facilitytype을 Set으로 수집, **크기 1인 경우만** 값 전달 (mixed면 undefined로 전역 유지)
+  - `handleExplainScan`이 `explainScanAll(3, scanScope)` 호출
+  - 백엔드가 rawData를 필터해 돌려준 경우에만 scope가 확정되므로 채팅 의도와 자동 일치
+
+- **검증 (curl 실측):**
+  1. **`sitename=행정1수청, facilitytype=소소블록`** (실데이터 1건 존재):
+     ```
+     source: llm
+     top_rows_count: 1 / total_anomaly: 0 / total_warn: 1
+     summary: "행정1수청 소소블록의 총 스캔 태그는 1건이며, 이상 판정은 0건, 주의 판정은 1건입니다. 주의 항목인 행정1(수청)소블럭 압력은 현재 5.77, 30일 평균 6.10, 편차 5.5%, z=-2.38입니다."
+     ```
+  2. **`sitename=없는시설, facilitytype=소소블록`** (0건):
+     ```
+     source: template
+     summary: "없는시설 소소블록에 현재 이상 탐지된 태그가 없습니다."
+     ```
+  - TypeScript `tsc --noEmit` 신규 에러 없음
+
+- **관련 파일:**
+  - `slm/endpoints/scan_all_explain.py:37-50,95-133,168-204`
+  - `slm-dashboard/slm-dashboard/src/lib/api/anomaly-api.ts:45-94`
+  - `slm-dashboard/slm-dashboard/src/components/chat/anomaly/AnomalyScanView.tsx:55-90`
+
 ---
 
 ## 관련 파일

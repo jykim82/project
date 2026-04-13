@@ -2,6 +2,26 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-13 — 채팅 "AI 현황 요약" 시설 범위 필터 [E-022])
+
+- 사용자 요청: "행정1수청 소소블록 이상 스캔해줘" 질의 후 AI 현황 요약이 전역 Top-3(남산/송산2산단생활/석문2)을 반환. 해당 현장만 나와야 하고 없으면 "없다"고 해야
+- 원인: `AnomalyScanView`의 `handleExplainScan`이 `explainScanAll(3)`을 scope 필터 없이 호출 → 백엔드가 전역 `_ANOMALY_SCAN_CACHE`에서 Top-N 반환
+- 수정 (3-layer):
+  1. **백엔드** `scan_all_explain.py` — `ScanAllExplainRequest`에 `sitename/facilitytype` 필드 추가, 캐시 rows 로드 직후 scope 필터, 0건 시 LLM 건너뛰고 "`{scope}에 현재 이상 탐지된 태그가 없습니다.`" 템플릿 응답, LLM 프롬프트에 분석 범위 섹션 + "범위 밖 시설 언급 금지" 규칙 7 추가, `_build_fallback(top_rows, top_n, scope_label)` 시그니처 확장
+  2. **API 래퍼** `anomaly-api.ts` — `ScanScope` 타입 신설, `explainScanAll(topN, scope?)` 시그니처, `source: "template"` 추가
+  3. **컴포넌트** `AnomalyScanView.tsx` — rawData에서 scope 추출(sitename/facilitytype Set이 크기 1인 경우만 확정), `explainScanAll(3, scanScope)` 호출
+- 검증 (curl 실측):
+  - `sitename=행정1수청, facilitytype=소소블록` → `"행정1수청 소소블록의 총 스캔 태그는 1건이며, 이상 판정은 0건, 주의 판정은 1건입니다. 주의 항목인 행정1(수청)소블럭 압력은 현재 5.77, 30일 평균 6.10, 편차 5.5%, z=-2.38입니다."` (`source: llm`, `top_rows_count: 1`)
+  - `sitename=없는시설, facilitytype=소소블록` → `"없는시설 소소블록에 현재 이상 탐지된 태그가 없습니다."` (`source: template`)
+  - tsc --noEmit 신규 에러 없음
+
+#### 커밋
+- `slm@(예정)` endpoints/scan_all_explain.py scope 필터
+- `slm-dashboard@(예정)` anomaly-api.ts + AnomalyScanView.tsx scope 전달
+- `web@(예정)` docs E-022
+
+---
+
 ### 완료 (2026-04-13 — GIS 유량흐름 초기 visibility race 버그 [E-021])
 
 - 증상: `/monitoring/gis` 첫 접속 시 "유량 흐름" 토글이 모두 off인데 flow 레이어(Glow/Base/Anim/Imbalance/Node)가 화면에 렌더됨. 사용자가 토글을 on→off 한 번 거쳐야 사라짐
