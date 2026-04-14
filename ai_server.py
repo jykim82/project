@@ -2701,6 +2701,15 @@ app.include_router(network_upstream_explain_router)
 init_chat_faq_examples(get_db_connection, _get_scan_cache)
 app.include_router(chat_faq_examples_router)
 
+# 멀티모달 현장 진단 프록시 [E-025]
+# /ask/multimodal/stream 엔드포인트 — vision_agent(8100)로 multipart 포워딩 + SSE
+from endpoints.vision_proxy import (
+    router as vision_proxy_router,
+    init as init_vision_proxy,
+)
+init_vision_proxy(get_db_connection)
+app.include_router(vision_proxy_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""

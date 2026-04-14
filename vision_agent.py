@@ -1,0 +1,535 @@
+"""
+vision_agent.py — 멀티모달 현장 진단 에이전트 (포트 8100)
+
+ai_server.py(8000)와 분리된 FastAPI 프로세스. Zero-Hallucination 경계를 프로세스
+수준에서 강제하기 위해 분리. 다음 3가지 엔드포인트를 제공한다:
+
+  POST /vision/diagnose       — 채팅 진단 (PLC/유량계/모뎀/RTU 사진 + 텍스트)
+  POST /vision/register-parse — 명판/외관 OCR+VLM 파싱 → 설비 등록 초안
+  POST /vision/manual-search  — 매뉴얼 RAG 단독 검색 (P3에서 구현)
+  GET  /health                — 모델 상태
+
+이 프로세스는 gemma3:4b (Ollama) 만 사용한다:
+  - 멀티모달 VLM 호출 (이미지 → 텍스트 설명)
+  - OCR 기능 내장 (한국어 명판 텍스트 파싱)
+  - 동일 모델로 2차 검증 (OCR 결과 재확인)
+
+원칙 (work-history.md 1946~1957 / [E-019/E-023] 근거):
+  1. advice_text는 "[AI 참고 의견] " 접두어 고정
+  2. 수치·운영 지시·조치 생성 금지 (정규식 후처리로 강제)
+  3. 매뉴얼 인용은 원문 그대로만 (요약·재구성 금지)
+  4. DB 사실 응답과 시각적 분리를 위해 응답 스키마에 separate 필드
+"""
+
+import base64
+import logging
+import os
+import re
+import time
+from typing import Optional, Any
+
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+# ─────────────────────────────────────────────────────────────────────
+# 설정
+# ─────────────────────────────────────────────────────────────────────
+
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+# ai_server의 gemma4:26b-a4b-it-q4_K_M이 multimodal(capabilities=['vision',...])
+# 지원하므로 동일 모델 재사용. Ollama /api/show로 `vision` capability 확인됨.
+# 같은 모델을 두 프로세스에서 참조해도 Ollama가 단일 인스턴스로 serving해서
+# VRAM 중복 없음 (19.7GB 1벌 + keep_alive 24h 공유).
+VISION_MODEL = os.environ.get("VISION_MODEL", "gemma4:26b-a4b-it-q4_K_M")
+VISION_KEEP_ALIVE = os.environ.get("VISION_KEEP_ALIVE", "24h")
+# 비전 호출은 이미지 처리로 cold-start 60~90s 발생 가능 → 텍스트 pipeline보다 여유
+VISION_TIMEOUT_S = int(os.environ.get("VISION_TIMEOUT_S", "120"))
+
+# facility-files 저장소 — ai_server와 공유
+# docker-compose.dev.yml에서 ../slm:/app 마운트되므로 endpoints/admin.py의
+# FACILITY_FILE_BASE_DIR 와 동일 경로를 기본값으로 사용.
+FACILITY_FILE_BASE_DIR = os.environ.get(
+    "FACILITY_FILE_BASE_DIR",
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "web", "files", "facility")),
+)
+# 레거시 환경변수명 하위호환
+FILES_BASE = os.environ.get("FILES_BASE", FACILITY_FILE_BASE_DIR)
+
+logger = logging.getLogger("vision_agent")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+# ─────────────────────────────────────────────────────────────────────
+# FastAPI 앱
+# ─────────────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="SLM Vision Agent",
+    version="0.1.0",
+    description="멀티모달 현장 진단 에이전트 (Zero-Hallucination 참고 의견 전용)",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # dev 환경 — 프로덕션은 ai_server만 허용
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─────────────────────────────────────────────────────────────────────
+# 모델
+# ─────────────────────────────────────────────────────────────────────
+
+EQUIPMENT_WHITELIST = [
+    "PLC", "유량계", "모뎀", "RTU", "펌프", "밸브",
+    "수위계", "압력계", "UPS", "기타",
+]
+
+
+class DiagnoseRequest(BaseModel):
+    image_url: str = Field(..., description="facility-files 저장 경로 (/files/...)")
+    user_text: Optional[str] = Field("", description="사용자 질의 (옵셔널)")
+    sitename: Optional[str] = Field(None, description="GIS 컨텍스트")
+    facilitytype: Optional[str] = Field(None, description="GIS 컨텍스트")
+
+
+class ManualExcerpt(BaseModel):
+    manual_id: int
+    manual_title: str
+    page: int
+    text: str
+    score: float
+
+
+class DiagnoseResponse(BaseModel):
+    equipment_guess: str
+    equipment_type: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    confidence: float
+    observed_state: list[str]
+    advice_text: str
+    manual_excerpts: list[ManualExcerpt] = []
+    is_registered: bool = False
+    matched_equipment_id: Optional[str] = None
+    sitename: Optional[str] = None
+    facilitytype: Optional[str] = None
+    # 디버그·감사
+    vlm_generate_ms: int
+    raw_vlm_response: Optional[str] = None
+
+
+class RegisterParseRequest(BaseModel):
+    image_url: str
+    image_kind: str = Field("nameplate", description="nameplate|exterior|location")
+
+
+class RegisterParseFields(BaseModel):
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    serial: Optional[str] = None
+    capacity: Optional[str] = None
+    installed_year: Optional[str] = None
+    equipment_type: Optional[str] = None  # PLC/유량계/...
+
+
+class RegisterParseResponse(BaseModel):
+    ocr_text: str
+    fields: RegisterParseFields
+    confidence_per_field: dict[str, float]
+    needs_manual_input: bool
+    raw_vlm_response: Optional[str] = None
+    vlm_generate_ms: int
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 유틸 — 이미지 로드 + Ollama 호출
+# ─────────────────────────────────────────────────────────────────────
+
+def _resolve_image_path(image_url: str) -> str:
+    """이미지 URL을 로컬 파일 경로로 변환.
+
+    지원 포맷:
+      /api/files/facility/site_photo/<uuid>.jpg  (실제 facility-files 업로드)
+        → {FACILITY_FILE_BASE_DIR}/site_photo/<uuid>.jpg
+      /files/samples/ls_plc.jpg                  (레거시 / 테스트용)
+        → {FILES_BASE}/samples/ls_plc.jpg
+      http(s)://...                              (원격 — 미지원)
+      절대경로(/app/test.jpg 등)                  (테스트 편의)
+    """
+    if image_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "원격 URL은 현재 지원하지 않습니다. facility-files 업로드 후 경로 전달 필요")
+    # 절대 경로로 들어온 경우 (테스트 편의)
+    if image_url.startswith("/") and os.path.exists(image_url):
+        return image_url
+    # 실제 API 경로
+    if image_url.startswith("/api/files/facility/"):
+        return os.path.join(FACILITY_FILE_BASE_DIR, image_url[len("/api/files/facility/"):])
+    # 레거시 /files/ 경로
+    if image_url.startswith("/files/"):
+        return os.path.join(FILES_BASE, image_url[len("/files/"):])
+    # 상대 경로 fallback
+    return os.path.join(FILES_BASE, image_url.lstrip("/"))
+
+
+def _load_image_base64(image_url: str) -> str:
+    """이미지 파일 → base64 (Ollama /api/generate images 파라미터용)."""
+    path = _resolve_image_path(image_url)
+    if not os.path.exists(path):
+        raise HTTPException(404, f"이미지 파일을 찾을 수 없습니다: {path}")
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("ascii")
+
+
+def _ollama_generate_vision(
+    prompt: str,
+    image_b64: str,
+    num_predict: Optional[int] = None,
+) -> tuple[str, int]:
+    """Ollama /api/generate 호출 (gemma3:4b vision).
+
+    Returns:
+        (response_text, elapsed_ms)
+    """
+    payload: dict[str, Any] = {
+        "model": VISION_MODEL,
+        "prompt": prompt,
+        "images": [image_b64],
+        "stream": False,
+        "keep_alive": VISION_KEEP_ALIVE,
+        "options": {
+            "temperature": 0.1,  # vision은 deterministic 선호
+        },
+    }
+    if num_predict is not None:
+        payload["options"]["num_predict"] = num_predict
+
+    t0 = time.perf_counter()
+    try:
+        with httpx.Client(timeout=VISION_TIMEOUT_S) as client:
+            resp = client.post(f"{OLLAMA_BASE_URL}/api/generate", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(504, f"Ollama 응답 타임아웃 ({VISION_TIMEOUT_S}s)")
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Ollama 호출 실패: {e}")
+
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    text = (data.get("response") or "").strip()
+    return text, elapsed_ms
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Zero-Hallucination 가드 — 수치 생성 차단
+# ─────────────────────────────────────────────────────────────────────
+
+# 운영 수치 패턴 — 이 패턴이 응답에 있으면 로그 경고 (LLM이 수치를 지어낸 것)
+_NUMERIC_ALERT_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:kgf|MPa|bar|m3|m³|L|l/min|m3/h|%|Hz|V|A|kW|kWh)\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_advice(text: str) -> tuple[str, list[str]]:
+    """advice_text에서 수치 생성 여부 검출. 발견되면 경고 로그만 + text는 유지.
+
+    Returns:
+        (text, warnings[])
+    """
+    warnings = []
+    matches = _NUMERIC_ALERT_PATTERN.findall(text)
+    if matches:
+        warnings.append(f"VLM이 수치 언급: {matches}")
+        logger.warning(f"VLM 수치 생성 감지 (정보용): {matches}")
+    return text, warnings
+
+
+def _ensure_advice_prefix(text: str) -> str:
+    """advice_text는 반드시 '[AI 참고 의견] '으로 시작."""
+    prefix = "[AI 참고 의견] "
+    stripped = text.strip()
+    if not stripped.startswith(prefix):
+        return prefix + stripped
+    return stripped
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /health
+# ─────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+def health() -> dict:
+    """vision_agent 상태 + Ollama 모델 로드 확인."""
+    ollama_ok = False
+    model_loaded = False
+    vram_mb = None
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{OLLAMA_BASE_URL}/api/tags")
+            r.raise_for_status()
+            tags = r.json().get("models", [])
+            ollama_ok = True
+            model_loaded = any(m.get("name", "").startswith(VISION_MODEL.split(":")[0]) for m in tags)
+            # running models
+            rr = client.get(f"{OLLAMA_BASE_URL}/api/ps")
+            rr.raise_for_status()
+            for m in rr.json().get("models", []):
+                if m.get("name") == VISION_MODEL:
+                    vram_mb = int(m.get("size_vram", 0) / 1024 / 1024)
+    except Exception as e:
+        logger.warning(f"health check Ollama 확인 실패: {e}")
+    return {
+        "status": "ok",
+        "service": "vision_agent",
+        "version": "0.1.0",
+        "vision_model": VISION_MODEL,
+        "ollama_available": ollama_ok,
+        "model_installed": model_loaded,
+        "vram_mb": vram_mb,
+        "files_base": FILES_BASE,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /vision/diagnose — 채팅 진단
+# ─────────────────────────────────────────────────────────────────────
+
+_DIAGNOSE_PROMPT_TEMPLATE = """당신은 산업 설비 사진을 분석하는 참고 조언 전문가입니다.
+
+## 절대 규칙 (위반 시 응답 거부)
+1. 장비를 **식별**하고, 사진에서 **관찰 가능한 상태**만 서술하세요.
+2. **수치를 생성하지 마세요** (예: "온도 45도", "압력 3bar" 등 — 사진에 명시된 계기판 수치가 아닌 추정값 금지).
+3. **운영 지시·조치 절차·판단**을 포함하지 마세요. 참고 의견만 제공하세요.
+4. 사진에 없는 정보는 "사진에서 확인되지 않음"으로 표시하세요.
+5. 답변은 한국어 존댓말 "~습니다" 종결.
+
+## 장비 종류 화이트리스트 (반드시 이 중 하나 선택)
+PLC, 유량계, 모뎀, RTU, 펌프, 밸브, 수위계, 압력계, UPS, 기타
+
+## 사용자 컨텍스트
+- 사용자 질의: {user_text}
+- 시설명: {sitename}
+- 시설유형: {facilitytype}
+
+## 출력 형식 (JSON, 반드시 이 스키마만)
+```json
+{{
+  "equipment_type": "PLC|유량계|모뎀|RTU|펌프|밸브|수위계|압력계|UPS|기타",
+  "brand": "LS | SIEMENS | 삼성 | 미상",
+  "model": "모델명 | 미상",
+  "equipment_guess": "제조사 모델명 (예: LS XGB-XBCH)",
+  "confidence": 0.0~1.0,
+  "observed_state": ["관찰된 상태 1", "관찰된 상태 2"],
+  "advice_text": "[AI 참고 의견] 사진에서 관찰된 내용을 2~3문장으로 서술. 권고·지시·수치 금지."
+}}
+```
+
+JSON만 출력하세요. 추가 텍스트 금지."""
+
+
+def _parse_diagnose_json(text: str) -> dict:
+    """VLM의 JSON 응답을 파싱. 실패 시 기본값."""
+    # ```json ... ``` 추출
+    m = re.search(r"```(?:json)?\s*(\{[\s\S]+?\})\s*```", text)
+    blob = m.group(1) if m else text
+    # 중괄호 내부만 추출 (JSON 앞뒤 쓰레기 텍스트 제거)
+    m2 = re.search(r"\{[\s\S]+\}", blob)
+    if m2:
+        blob = m2.group(0)
+    try:
+        import json
+        data = json.loads(blob)
+    except Exception as e:
+        logger.warning(f"VLM JSON 파싱 실패: {e}, raw={text[:200]}")
+        return {
+            "equipment_type": "기타",
+            "brand": "미상",
+            "model": "미상",
+            "equipment_guess": "식별 실패",
+            "confidence": 0.0,
+            "observed_state": [],
+            "advice_text": "[AI 참고 의견] 사진을 분석했으나 구조화된 결과를 추출하지 못했습니다. 다른 각도에서 재촬영하거나 수기 입력을 시도해 주세요.",
+        }
+    # 화이트리스트 강제
+    et = data.get("equipment_type", "기타")
+    if et not in EQUIPMENT_WHITELIST:
+        data["equipment_type"] = "기타"
+    return data
+
+
+@app.post("/vision/diagnose", response_model=DiagnoseResponse)
+def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
+    """사진 + 사용자 질의 → 장비 식별 + 관찰 상태 + 참고 의견."""
+    logger.info(f"/vision/diagnose image={req.image_url} user_text={req.user_text!r}")
+
+    image_b64 = _load_image_base64(req.image_url)
+
+    prompt = _DIAGNOSE_PROMPT_TEMPLATE.format(
+        user_text=(req.user_text or "(질의 없음)"),
+        sitename=(req.sitename or "미상"),
+        facilitytype=(req.facilitytype or "미상"),
+    )
+
+    raw_text, elapsed_ms = _ollama_generate_vision(prompt, image_b64)
+    data = _parse_diagnose_json(raw_text)
+
+    # advice_text 가드
+    advice = data.get("advice_text", "")
+    advice = _ensure_advice_prefix(advice)
+    advice, warnings = _sanitize_advice(advice)
+
+    return DiagnoseResponse(
+        equipment_guess=data.get("equipment_guess", "식별 실패"),
+        equipment_type=data.get("equipment_type", "기타"),
+        brand=data.get("brand"),
+        model=data.get("model"),
+        confidence=float(data.get("confidence", 0.0)),
+        observed_state=data.get("observed_state", []),
+        advice_text=advice,
+        manual_excerpts=[],  # P3에서 구현
+        is_registered=False,  # P3에서 DB 매칭
+        matched_equipment_id=None,
+        sitename=req.sitename,
+        facilitytype=req.facilitytype,
+        vlm_generate_ms=elapsed_ms,
+        raw_vlm_response=raw_text[:500] if os.environ.get("VISION_DEBUG") else None,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /vision/register-parse — 명판/외관 파싱
+# ─────────────────────────────────────────────────────────────────────
+
+_REGISTER_PARSE_PROMPT = """당신은 산업 설비 명판(nameplate) 사진에서 텍스트를 추출하는 OCR+파싱 전문가입니다.
+
+## 작업
+사진에 찍힌 명판의 텍스트를 읽고, 구조화된 필드로 추출하세요.
+
+## 출력 형식 (JSON만)
+```json
+{{
+  "ocr_text": "명판에 적힌 모든 텍스트를 원본 그대로 (줄바꿈 유지)",
+  "fields": {{
+    "manufacturer": "제조사 (LS, LSIS, SIEMENS, 삼성, ABB 등 | 미상)",
+    "model": "모델명 (예: XGB-XBCH | 미상)",
+    "serial": "일련번호 (S/N, Serial | 미상)",
+    "capacity": "용량 (예: 5.5kW, 100m3/h | 미상)",
+    "installed_year": "제조/설치 연도 (4자리 | 미상)",
+    "equipment_type": "PLC|유량계|모뎀|RTU|펌프|밸브|수위계|압력계|UPS|기타"
+  }},
+  "confidence_per_field": {{
+    "manufacturer": 0.0~1.0,
+    "model": 0.0~1.0,
+    "serial": 0.0~1.0,
+    "capacity": 0.0~1.0,
+    "installed_year": 0.0~1.0,
+    "equipment_type": 0.0~1.0
+  }},
+  "needs_manual_input": false
+}}
+```
+
+## 규칙
+1. 사진에서 읽을 수 없는 필드는 `"미상"` + confidence 0.0
+2. 모든 필드가 불확실하면 `"needs_manual_input": true`
+3. OCR 원본 텍스트는 절대 수정하지 말고 그대로 보존
+4. 장비 종류는 명판의 단서(제조사/형식/모델 패턴)로 추정
+
+JSON만 출력하세요."""
+
+
+def _parse_register_json(text: str) -> dict:
+    """register-parse VLM 응답 파싱."""
+    m = re.search(r"```(?:json)?\s*(\{[\s\S]+?\})\s*```", text)
+    blob = m.group(1) if m else text
+    m2 = re.search(r"\{[\s\S]+\}", blob)
+    if m2:
+        blob = m2.group(0)
+    try:
+        import json
+        data = json.loads(blob)
+    except Exception as e:
+        logger.warning(f"register-parse JSON 파싱 실패: {e}, raw={text[:200]}")
+        return {
+            "ocr_text": text[:500],
+            "fields": {},
+            "confidence_per_field": {},
+            "needs_manual_input": True,
+        }
+    return data
+
+
+@app.post("/vision/register-parse", response_model=RegisterParseResponse)
+def register_parse(req: RegisterParseRequest) -> RegisterParseResponse:
+    """명판/외관 사진 → OCR + 구조화 필드 파싱."""
+    logger.info(f"/vision/register-parse image={req.image_url} kind={req.image_kind}")
+
+    image_b64 = _load_image_base64(req.image_url)
+    raw_text, elapsed_ms = _ollama_generate_vision(_REGISTER_PARSE_PROMPT, image_b64)
+    data = _parse_register_json(raw_text)
+
+    fields_raw = data.get("fields", {}) or {}
+    fields = RegisterParseFields(
+        manufacturer=fields_raw.get("manufacturer") if fields_raw.get("manufacturer") not in ("미상", "", None) else None,
+        model=fields_raw.get("model") if fields_raw.get("model") not in ("미상", "", None) else None,
+        serial=fields_raw.get("serial") if fields_raw.get("serial") not in ("미상", "", None) else None,
+        capacity=fields_raw.get("capacity") if fields_raw.get("capacity") not in ("미상", "", None) else None,
+        installed_year=fields_raw.get("installed_year") if fields_raw.get("installed_year") not in ("미상", "", None) else None,
+        equipment_type=fields_raw.get("equipment_type"),
+    )
+
+    # needs_manual_input 추가 판정
+    needs_manual = data.get("needs_manual_input", False)
+    conf = data.get("confidence_per_field", {}) or {}
+    if conf and sum(conf.values()) / max(1, len(conf)) < 0.3:
+        needs_manual = True
+    if not any([fields.manufacturer, fields.model, fields.serial]):
+        needs_manual = True
+
+    return RegisterParseResponse(
+        ocr_text=data.get("ocr_text", ""),
+        fields=fields,
+        confidence_per_field=conf,
+        needs_manual_input=needs_manual,
+        raw_vlm_response=raw_text[:500] if os.environ.get("VISION_DEBUG") else None,
+        vlm_generate_ms=elapsed_ms,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /vision/manual-search — P3에서 구현, 현재는 스텁
+# ─────────────────────────────────────────────────────────────────────
+
+class ManualSearchRequest(BaseModel):
+    equipment_type: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    query: str
+
+
+@app.post("/vision/manual-search")
+def manual_search(req: ManualSearchRequest) -> dict:
+    """매뉴얼 RAG 검색 — P3에서 snowflake-arctic-embed2 + tb_equipment_manual 구현."""
+    logger.info(f"/vision/manual-search (P3 스텁) type={req.equipment_type}")
+    return {
+        "status": "not_implemented",
+        "message": "매뉴얼 RAG는 P3에서 구현 예정",
+        "excerpts": [],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 실행
+# ─────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("VISION_AGENT_PORT", "8100"))
+    logger.info(f"vision_agent starting on :{port} (model={VISION_MODEL})")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
