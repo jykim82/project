@@ -33,11 +33,20 @@
 #### 후속 (LED 관찰 프롬프트 강화)
 - `vision_agent.py` `_DIAGNOSE_PROMPT_TEMPLATE`에 LED 관찰 가이드 섹션 추가 — 각 LED 라벨 분리 + 색상 명시 + 매뉴얼 참조 안내 자동 부착. observed_state 2개 → 7개로 가독성 향상. 응답 시간 75s → 44s. Zero-Hallucination 유지 (단정 0건, 운영 지시 0건). 실제 LS XGK 사진으로 라이브 재검증 완료.
 
-#### 커밋
+#### 커밋 (P1~P5 + 프롬프트 개선)
 - `slm@474352f` vision_agent.py + endpoints/vision_proxy.py + ai_server.py router
 - `slm-dashboard@8f51b8b` 프론트 8개 파일 (types + stream + hook + ChatInput + VisionAdviceCard + BotMessage + mapper + ChatMessageArea)
 - `web@b13fa2e` db/migrations/0043 + docs E-025 + work-history
 - `slm@c19c3a4` 후속 — vision_agent 프롬프트 LED 관찰 강화
+- `web@71557ae` docs 후속
+
+#### P6/P7 후속 (2026-04-15)
+- P6 작업 등록 연동: VisionAdviceCard "작업 등록" → TaskFormDialog compact 자동 채움 + `tb_task_master.vision_session_id` + `tb_vision_session.linked_task_id` 5회 매치 검증 완료
+- P7 현장 설비 등록: VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog 단일 페이지 폼 + `tb_equipment_info` + `tb_equipment_image` + `linked_equipment_id` 5회 매치 검증 완료
+- `slm@3e487e6` /crisis/tasks POST에 vision_session_id 지원
+- `slm-dashboard@f5fb968` VisionAdviceCard "작업 등록" → TaskFormDialog compact 연동
+- `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
+- `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
 ---
 
