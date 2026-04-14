@@ -2,6 +2,41 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-14 — 멀티모달 현장 진단 MVP P1~P5 [E-025])
+
+- 목표: Plan(docs/ultraplan_*.html)의 워크플로우 A "채팅 멀티모달 진단" 구현. P6/P7은 별도 세션으로 분리.
+- 핵심 결정:
+  1. **에이전트 분리** — `vision_agent.py` 별도 FastAPI 프로세스(포트 8100)로 Zero-Hallucination 경계 프로세스 수준 강제
+  2. **단일 모델 재사용** — 기존 `gemma4:26b-a4b-it-q4_K_M`이 vision capability 지원(`/api/show` 확인)으로 신규 모델 불필요, 19.7GB VRAM 1벌 공유
+  3. **Proxy 재사용** — `/api/proxy/[...path]/route.ts`가 이미 multipart+SSE 지원
+- 구현 (5 phase):
+  - **P1**: `db/migrations/0043_vision_agent.sql` — `tb_equipment_image`/`tb_equipment_manual`/`tb_vision_session` 신규 + `tb_task_master.vision_session_id` + `tb_equipment_info.equipment_photo_url/nameplate_photo_url` 확장. `tb_equipment` → 실제 `tb_equipment_info` 매핑
+  - **P2**: `slm/vision_agent.py` (~400 lines) — FastAPI 8100, `/health`/`/vision/diagnose`/`/vision/register-parse`/`/vision/manual-search`, Ollama `images:[base64]` 호출, 장비 화이트리스트, advice_text 접두어 강제, 수치 생성 감시, `num_predict=None`
+  - **P3**: 매뉴얼 RAG 스텁 (PDF 없이 구조만)
+  - **P4**: `slm/endpoints/vision_proxy.py` 신규 — `POST /ask/multimodal/stream` multipart + SSE 4단계(classify/extract/fetch/result), `vision_advice` 필드 격리 + `answer_text: null`, `tb_vision_session` INSERT
+  - **P5**: 프론트 — `VisionAdvice` 타입 + `streamMultimodalChat` + `executeMultimodalStream` + `ChatInput` 카메라/이미지 버튼 + 썸네일 칩 + `VisionAdviceCard` (violet 테마 + 면책 푸터) + `BotMessage.visionAdvice` prop + response mapper
+- 검증 (Playwright 브라우저 E2E):
+  - 백엔드 curl: `/ask/multimodal/stream` SSE 4프레임 → `vision_advice.equipment_guess="LS XBCH-16MW", confidence=1.0` + `answer_text=null` + `vision_session_id=1`, 29.6s
+  - DB: `tb_vision_session` row 1개 (agent_response JSON 저장 완료)
+  - 브라우저 (/chat): 카메라/이미지 버튼 렌더 → 이미지 업로드 → 썸네일 칩 → "비전 진단 모드" 안내 → SSE progress chip (분류/추출/조회/렌더링) → VisionAdviceCard 렌더(장비 추정/관찰 상태/참고 의견/작업 등록/설비 등록 버튼/**면책 푸터**) 스크린샷 캡처
+  - tsc --noEmit 신규 에러 0건
+- Zero-Hallucination 검증:
+  - advice_text `[AI 참고 의견]` 접두어 강제
+  - VLM이 수치 생성 0건 ("고장 여부는 사진만으로 판단할 수 없습니다")
+  - `answer_text: null` 명시로 DB 사실 영역과 격리
+  - violet-500 테두리로 시각적 분리 (기존 slate 카드와 구분)
+- 미완료:
+  - **P6**: 작업 등록 버튼 → TaskFormDialog compact 자동 채움
+  - **P7**: 설비 등록 버튼 → EquipmentPhotoRegisterDialog 3단계
+  - 매뉴얼 PDF 업로드 → RAG 실데이터
+
+#### 커밋
+- `slm@(예정)` vision_agent.py + endpoints/vision_proxy.py + ai_server.py router
+- `web@(예정)` db/migrations/0043 + docs E-025 + work-history
+- `slm-dashboard@(예정)` 프론트 6개 파일 (types + stream + hook + ChatInput + VisionAdviceCard + BotMessage + mapper)
+
+---
+
 ### 완료 (2026-04-13 — 위기대응 검출 로직 다이어그램 시각 디자인 개선 [E-024])
 
 - 사용자 요청: "(로직점검 프로세스)의 도형 화살표 및 디자인을 디자인 관점에서 가독성 있고, 직관적으로 개선"

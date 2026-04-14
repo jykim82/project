@@ -812,6 +812,93 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 - **관련 파일:**
   - `slm-dashboard/slm-dashboard/src/components/crisis/AlarmAnalysisDetail.tsx:354-440` (DiagramFlow + DiagramBox)
 
+- **관련 커밋:** `slm-dashboard@e224c46` / `web@853e108`
+
+---
+
+### [E-025] 멀티모달 현장 진단 MVP (Phase 1~5) — 채팅에서 장비 사진 → AI 참고 의견
+
+- **날짜:** 2026-04-14
+- **배경:** Plan(`docs/ultraplan_*.html`)에서 구상한 3가지 워크플로우 중 **채팅 멀티모달 진단**(Workflow A)을 P1~P5 5단계로 구현. P6(작업 등록 연동) + P7(현장 설비 등록 Dialog)은 별도 세션으로 분리.
+
+- **아키텍처 결정:**
+  1. **에이전트 분리** — `vision_agent.py`를 별도 FastAPI 프로세스(포트 8100)로 격리. Zero-Hallucination 경계를 프로세스 수준에서 강제 + VLM 모델 리스크를 ai_server에서 분리
+  2. **단일 모델 재사용** — 기존 `gemma4:26b-a4b-it-q4_K_M`이 vision 지원(`/api/show` `capabilities: ['completion','vision','tools','thinking']` 확인)으로 밝혀져 신규 vision 모델 추가 불필요. ai_server(텍스트)와 vision_agent(이미지)가 같은 Ollama 인스턴스에 있는 동일 모델을 공유 (~19.7GB VRAM 1벌)
+  3. **Proxy route 재사용** — `/api/proxy/[...path]/route.ts`가 이미 multipart/form-data + SSE 양쪽 모두 지원하므로 별도 multimodal 프록시 라우트 불필요
+
+- **구현 단계 (5 phase):**
+
+  **P1 — DB 마이그레이션** (`db/migrations/0043_vision_agent.sql`)
+  - 신규 3개 테이블: `tb_equipment_image`, `tb_equipment_manual`, `tb_vision_session`
+  - 기존 확장: `tb_task_master.vision_session_id`, `tb_equipment_info.equipment_photo_url`, `tb_equipment_info.nameplate_photo_url`
+  - **중요 수정**: plan의 `tb_equipment`는 실제 테이블명 `tb_equipment_info`로 매핑. PK는 `(equipment_id)` 단일(멀티테넌시 아님)
+  - FK: `tb_equipment_image.equipment_id` → `tb_equipment_info(equipment_id)`, `tb_vision_session.linked_task_id` → `tb_task_master(task_id)`, `linked_equipment_id` → `tb_equipment_info(equipment_id)`
+
+  **P2 — `vision_agent.py` MVP** (신규, ~400 lines)
+  - FastAPI 프로세스, 포트 8100
+  - 엔드포인트: `/health`, `POST /vision/diagnose`, `POST /vision/register-parse`, `POST /vision/manual-search` (스텁)
+  - Ollama `/api/generate` 호출 (`images: [base64]` 파라미터), `VISION_MODEL=gemma4:26b-a4b-it-q4_K_M`, `VISION_KEEP_ALIVE=24h`
+  - 장비 화이트리스트 (PLC/유량계/모뎀/RTU/펌프/밸브/수위계/압력계/UPS/기타)
+  - Zero-Hallucination 가드: advice_text 접두어 `[AI 참고 의견]` 강제 + 수치 생성 정규식 감시 + 권고·조치 금지 프롬프트 규칙
+  - 이미지 경로 해석: `/api/files/facility/...` / `/files/...` / 절대 경로 fallback 3종 지원
+  - JSON 응답 파싱 (```json ... ``` 또는 중괄호 추출), 파싱 실패 시 기본값
+  - **디버그 이력**: `num_predict` 옵션이 있으면 gemma4가 chat 템플릿 budget 소진 → None으로 설정
+
+  **P3 — 매뉴얼 RAG** (스텁만)
+  - 구조만: `/vision/manual-search` 엔드포인트 + `tb_equipment_manual` 테이블 준비
+  - 실제 임베딩 로직은 매뉴얼 PDF 원본 확보 후 별도 phase
+
+  **P4 — `ai_server.py` 라우팅** (`endpoints/vision_proxy.py` 신규)
+  - 신규 엔드포인트 `POST /ask/multimodal/stream` (multipart, SSE)
+  - 기존 `/ask/stream`(JSON)은 그대로, 멀티모달 경로만 분리 → Zero-Hallucination 격리
+  - SSE 4단계: `classify → extract → fetch → result`
+  - 이미지 저장: `/web/files/chat_attachments/<uuid>.jpg`
+  - vision_agent 호출 후 `tb_vision_session` INSERT → `vision_session_id` 반환
+  - 응답 스키마: `vision_advice` 필드로만 격리, `answer_text: null` 명시 (DB 사실 필드 비움)
+  - ai_server.py에 `init_vision_proxy(get_db_connection)` + `include_router` 등록
+
+  **P5 — 프론트 채팅 멀티모달 UI**
+  - **타입** (`src/lib/types/chat.ts`): `VisionAdvice`, `VisionManualExcerpt` 인터페이스 신규, `AiServerResponse.vision_advice` + `ChatMessage.bot.vision_advice` 필드 추가
+  - **스트림 헬퍼** (`src/lib/chat-stream.ts`): `streamMultimodalChat()` 신규 — FormData 전송, SSE 파싱, `MultimodalChatRequest` 타입
+  - **훅** (`src/hooks/use-chat-submit.ts`): `executeMultimodalStream()` 추가, `handleSubmit(images?: File[])` 시그니처 확장 — 이미지 있으면 멀티모달 경로, 없으면 기존 경로
+  - **Input UI** (`src/components/chat/ChatInput.tsx`): 카메라 버튼(capture="environment") + 이미지 버튼 + 썸네일 칩(최대 3장, X 제거), 10MB 크기 제한, placeholder 동적 변경
+  - **VisionAdviceCard** (`src/components/chat/VisionAdviceCard.tsx` 신규, ~180 lines): violet-500 테마, "AI 참고 의견" Camera 배지, 신뢰도 badge, 미등록 장비 amber 배지, 장비 추정·관찰 상태·참고 의견 본문·매뉴얼 인용 섹션, "작업 등록"/"설비 등록" 액션 버튼(현재는 disabled — P6/P7 예정), 면책 푸터 필수
+  - **BotMessage 통합** (`src/components/chat/BotMessage.tsx`): `visionAdvice?` prop 추가, 답변 버블 위에 VisionAdviceCard 렌더
+  - **Response Mapper** (`src/lib/chat-response-mapper.ts`): `response.vision_advice` → `ChatMessage.bot.vision_advice`로 매핑, summary 없을 때 `📷 {equipment_guess} ({type}) — {advice_text}`로 대체
+
+- **검증 (Playwright 브라우저 E2E):**
+  1. **백엔드 curl**: `/ask/multimodal/stream`에 합성 PLC 명판 이미지 + "이 장비 뭐야 고장인지 봐줘" 전송 → SSE 4프레임 순차 수신 → `vision_advice: {equipment_guess: "LS XBCH-16MW", confidence: 1.0, advice_text: "[AI 참고 의견]..."}` + `answer_text: null` + `vision_session_id: 1` + 29.6초 ✅
+  2. **DB 확인**: `SELECT * FROM tb_vision_session` → row 1개, `user_id=admin`, `sitename=행정1수청`, `facilitytype=소소블록`, `agent_response->>'equipment_guess'='LS XBCH-16MW'` ✅
+  3. **브라우저 UI** (`https://localhost:3000/chat`, jykim 로그인):
+     - 카메라/이미지 버튼 2개 렌더 확인 ✅
+     - 이미지 업로드 → 썸네일 칩 `fake_ls_plc` + X 버튼 + "1/3장 첨부됨 · 비전 진단 모드로 전송됩니다" 안내 ✅
+     - placeholder 자동 변경: "사진에 대해 질문하거나 '진단해줘'라고 입력" ✅
+     - 전송 후 SSE 4단계 progress chip (분류→추출→조회→렌더링) 표시 ✅
+     - ~90초 후 VisionAdviceCard 렌더:
+       - 장비 추정 섹션: "LS XBCH-16MW (PLC)" + 제조사/모델
+       - 관찰 상태 2개 bullet (CheckCircle2 아이콘)
+       - AI 참고 의견 본문 박스
+       - "작업 등록" (purple) + "설비 등록" (amber) 버튼
+       - **면책 푸터**: "본 AI 참고 의견은 사진에서 관찰된 내용만 기반합니다. 운영 지시가 아니며, 반드시 현장 확인 후 조치하세요. 수치·권고·판단은 포함되지 않습니다." ✅
+     - violet-500 테두리로 기존 DB 사실 응답(slate 카드)과 시각적 완전 분리 ✅
+  4. **TypeScript**: `tsc --noEmit` 신규 에러 0건
+
+- **Zero-Hallucination 검증:**
+  - advice_text 접두어 `[AI 참고 의견]` 강제 적용 확인
+  - VLM이 수치 생성 0건 (검증 텍스트: "장비의 실제 작동 여부나 고장 여부는 사진만으로 판단할 수 없습니다")
+  - `answer_text: null` 필드로 DB 사실 영역 격리
+  - 프론트 렌더 violet 테마로 시각적 분리
+  - 면책 푸터 필수 노출
+
+- **미완료 / 다음 세션:**
+  - **P6**: "작업 등록" 버튼 → `TaskFormDialog compact` 자동 채움 → `tb_task_master.vision_session_id` 연결
+  - **P7**: "설비 등록" 버튼 → `EquipmentPhotoRegisterDialog` 3단계 Stepper → OCR 파싱 → `tb_equipment_info` INSERT
+  - 매뉴얼 PDF 업로드 → `/vision/manual-search` 실데이터
+
+- **관련 파일:**
+  - 신규: `slm/vision_agent.py`, `slm/endpoints/vision_proxy.py`, `db/migrations/0043_vision_agent.sql`, `slm-dashboard/src/components/chat/VisionAdviceCard.tsx`
+  - 수정: `slm/ai_server.py` (+9 lines router 등록), `slm-dashboard/src/lib/types/chat.ts`, `src/lib/chat-stream.ts`, `src/lib/chat-response-mapper.ts`, `src/hooks/use-chat-submit.ts`, `src/components/chat/ChatInput.tsx`, `src/components/chat/BotMessage.tsx`, `src/components/chat/ChatMessageArea.tsx`
+
 ---
 
 ## 관련 파일
