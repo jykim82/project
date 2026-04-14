@@ -921,6 +921,56 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
 
 Playwright 브라우저 라이브 검증 완료 — VisionAdviceCard에 6개 LED bullet 정상 렌더 (RUN/STOP 노랑, 나머지 빨강).
 
+#### [E-025] P6: 작업 등록 연동 (slm@3e487e6 + slm-dashboard@f5fb968)
+
+채팅 VisionAdviceCard "작업 등록" 버튼 → TaskFormDialog compact 모드가 자동 채움 상태로 열림.
+
+**백엔드** `slm/endpoints/alarm_crisis.py`:
+- `/crisis/tasks` POST body에 `vision_session_id` 옵셔널 수용
+- `tb_task_master` INSERT 컬럼 추가
+- 저장 후 `tb_vision_session.linked_task_id` 역방향 UPDATE (동일 트랜잭션)
+
+**프런트엔드**:
+- `TaskFormDialog`에 `compact?` + `visionSessionId?` + `visionContext?` props 추가
+- compact 모드: 시작/종료 시간 + 개별 태그 섹션 숨김 (현재 + 4시간 기본값 사용)
+- 상단 보라 배너: "AI 비전 진단에서 등록 #N" + 장비명/유형/advice_text
+- 앰버 경고 배너: "억제할 알람 유형을 선택하지 않으면 작업 중에도 알람이 정상 발생합니다" (자동 체크 금지 원칙 유지)
+- `chat/page.tsx`에 `handleCreateTaskFromVision` → `setTaskDialogOpen(true)` + defaults 자동 채움 (sitename/facilitytype/task_category="정비"/task_content="[AI 참고 진단]...")
+- TaskFormDialog `key` prop에 `vision_session_id` 바인딩 → 컨텍스트 변경 시 내부 state 재초기화 강제
+
+**검증 (5회 반복 API + 브라우저 1회):**
+- vision_session_id 10~14 → task_id 8~12 생성, linked_task_id 1:1 매치 ✅
+- task_content = "[AI 참고 진단] LS XGK Test-N PLC — 테스트 N" 자동 저장 ✅
+- 브라우저: "작업 등록" 클릭 → TaskFormDialog compact 오픈 → 보라 배너 + 앰버 경고 렌더 → 스크린샷 캡처 ✅
+
+#### [E-025] P7: 현장 설비 등록 (slm@5e7c144 + slm-dashboard@e402285)
+
+채팅 VisionAdviceCard "설비 등록" 버튼 → EquipmentPhotoRegisterDialog가 OCR+VLM 파싱 결과를 자동 채움. Plan의 3단계 Stepper는 단일 페이지 폼으로 간소화 (채팅 경로는 vision_agent가 이미 파싱 완료했기 때문).
+
+**백엔드** `slm/endpoints/facility_crud.py`:
+- `EquipmentCreateRequest`에 `equipment_photo_url` / `nameplate_photo_url` / `vision_session_id` 옵셔널 필드
+- `create_equipment()` 확장:
+  1. `tb_equipment_info` INSERT 컬럼에 사진 URL 2개 추가
+  2. `vision_session_id`가 있으면 `tb_vision_session.linked_equipment_id` 역방향 UPDATE
+  3. 사진 URL이 있으면 `tb_equipment_image`에 kind별 INSERT (nameplate + exterior, 최대 2건)
+  4. 모두 동일 트랜잭션
+
+**프런트엔드** `EquipmentPhotoRegisterDialog.tsx` (신규, ~280 lines):
+- VisionAdvice 수신 → 상단 보라 배너로 AI 진단 결과 표시 (guess / confidence / observed_state)
+- 시설유형/현장명 드롭다운 (`/autocomplete/candidates` 재사용, `_facilityMapCache`로 세션 캐시)
+- 장비유형/제조사/모델 입력 (자동 채움, 편집 가능)
+- `EQUIPMENT_TYPE_PREFIX_MAP` — "PLC"→"plc", "유량계"→"flow_meter" 등 10종 매핑 (백엔드가 prefix_N 자동 부여)
+- 설명 자동 채움: `[AI 비전 등록] {guess} — {observed_state 상위 2개}`
+- 업로드된 사진 경로 read-only 표시
+- `createEquipment()` 호출 후 toast
+
+**검증 (5회 반복 API 테스트):**
+- vision_session_id 15~19 → plc_85~plc_89 생성 ✅
+- 각 equipment → `linked_equipment_id` 1:1 매치 ✅
+- `tb_equipment_image` 10 rows (5 × nameplate + 5 × exterior) INSERT 확인 ✅
+- `has_photo=true`, sitename=행정1수청, facilitytype=소소블록 모두 정상 저장 ✅
+- tsc --noEmit 신규 에러 0건 (기존 equipment-api.ts의 7개 에러는 pre-existing)
+
 ---
 
 ## 관련 파일
