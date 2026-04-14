@@ -775,16 +775,17 @@ async def get_tasks(
 
 @router.post("/crisis/tasks")
 async def create_task(body: dict = Body(...)):
-    """작업 등록."""
+    """작업 등록. [E-025] vision_session_id 파라미터 옵셔널 지원."""
     conn = None
     try:
         conn = _get_db_connection()
         cur = conn.cursor()
+        vision_session_id = body.get("vision_session_id")
         cur.execute("""
             INSERT INTO tb_task_master
                 (sitename, facilitytype, task_category, task_start_time, task_end_time,
-                 suspend_alarm_types, task_content, alarm_report_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 suspend_alarm_types, task_content, alarm_report_id, vision_session_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING task_id
         """, (
             body.get("sitename", ""),
@@ -795,11 +796,21 @@ async def create_task(body: dict = Body(...)):
             json.dumps(body.get("suspend_alarm_types", [])),
             body.get("task_content", ""),
             body.get("alarm_report_id") or None,
+            vision_session_id,
         ))
         task_id = cur.fetchone()[0]
+        # [E-025] vision_session에 linked_task_id 역방향 업데이트
+        if vision_session_id:
+            try:
+                cur.execute(
+                    "UPDATE tb_vision_session SET linked_task_id = %s WHERE vision_session_id = %s",
+                    (task_id, vision_session_id),
+                )
+            except Exception as e:
+                logger.warning(f"tb_vision_session.linked_task_id 업데이트 실패: {e}")
         conn.commit()
         cur.close()
-        return {"status": "OK", "task_id": task_id}
+        return {"status": "OK", "task_id": task_id, "vision_session_id": vision_session_id}
     except Exception as e:
         logger.error(f"작업 등록 실패: {e}")
         if conn:
