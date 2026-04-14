@@ -899,6 +899,28 @@ curl http://127.0.0.1:8000/health  # 반드시 127.0.0.1 사용 (localhost=::1 �
   - 신규: `slm/vision_agent.py`, `slm/endpoints/vision_proxy.py`, `db/migrations/0043_vision_agent.sql`, `slm-dashboard/src/components/chat/VisionAdviceCard.tsx`
   - 수정: `slm/ai_server.py` (+9 lines router 등록), `slm-dashboard/src/lib/types/chat.ts`, `src/lib/chat-stream.ts`, `src/lib/chat-response-mapper.ts`, `src/hooks/use-chat-submit.ts`, `src/components/chat/ChatInput.tsx`, `src/components/chat/BotMessage.tsx`, `src/components/chat/ChatMessageArea.tsx`
 
+#### [E-025] 후속: LED 관찰 프롬프트 강화 (slm@c19c3a4)
+
+기존 프롬프트는 "관찰 가능한 상태"만 요구해 VLM이 LED 6개를 한 줄에 뭉뚱그리는 문제. 운영자 가독성을 위해 다음 강화:
+
+- `_DIAGNOSE_PROMPT_TEMPLATE`에 "LED·표시등 관찰 가이드" 섹션 추가
+- 각 LED 라벨을 **1개씩** 분리 강제, 색상(빨강/녹색/노랑) 함께 명시
+- "허용 패턴 vs 금지 패턴" 예시로 단정 회피 학습 (`ERR 점등 → CPU 고장입니다 ❌`)
+- `advice_text` 끝에 "각 표시등의 정확한 의미는 제조사 매뉴얼을 참조해 주세요." 안전 안내 자동 부착 — **의미 해석 책임 분산** (Zero-Hallucination 유지하면서 운영자에게 다음 단계 안내)
+- `observed_state` JSON 스키마 안내도 LED별 분리 강제
+
+검증 (동일 LS XGK CPUE 에러 사진):
+| | Before | After |
+|---|---|---|
+| `observed_state` 항목 | 2 | **7** (LED 6개 + POWER) |
+| LED별 분리 | 한 줄에 합침 | **각각 1줄** |
+| 색상 명시 | 없음 | **있음** (RUN/STOP=노랑, ERR/REM/P.S./BAT/CHK=빨강) |
+| 매뉴얼 안내 | 없음 | "각 표시등의 정확한 의미는 제조사 매뉴얼을 참조해 주세요." |
+| 응답 시간 | 75s | **44s** (출력 길이 무관, 오히려 빠름) |
+| 고장 단정 | 0건 | 0건 (유지) |
+
+Playwright 브라우저 라이브 검증 완료 — VisionAdviceCard에 6개 LED bullet 정상 렌더 (RUN/STOP 노랑, 나머지 빨강).
+
 ---
 
 ## 관련 파일

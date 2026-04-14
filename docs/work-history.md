@@ -30,10 +30,14 @@
   - **P7**: 설비 등록 버튼 → EquipmentPhotoRegisterDialog 3단계
   - 매뉴얼 PDF 업로드 → RAG 실데이터
 
+#### 후속 (LED 관찰 프롬프트 강화)
+- `vision_agent.py` `_DIAGNOSE_PROMPT_TEMPLATE`에 LED 관찰 가이드 섹션 추가 — 각 LED 라벨 분리 + 색상 명시 + 매뉴얼 참조 안내 자동 부착. observed_state 2개 → 7개로 가독성 향상. 응답 시간 75s → 44s. Zero-Hallucination 유지 (단정 0건, 운영 지시 0건). 실제 LS XGK 사진으로 라이브 재검증 완료.
+
 #### 커밋
-- `slm@(예정)` vision_agent.py + endpoints/vision_proxy.py + ai_server.py router
-- `web@(예정)` db/migrations/0043 + docs E-025 + work-history
-- `slm-dashboard@(예정)` 프론트 6개 파일 (types + stream + hook + ChatInput + VisionAdviceCard + BotMessage + mapper)
+- `slm@474352f` vision_agent.py + endpoints/vision_proxy.py + ai_server.py router
+- `slm-dashboard@8f51b8b` 프론트 8개 파일 (types + stream + hook + ChatInput + VisionAdviceCard + BotMessage + mapper + ChatMessageArea)
+- `web@b13fa2e` db/migrations/0043 + docs E-025 + work-history
+- `slm@c19c3a4` 후속 — vision_agent 프롬프트 LED 관찰 강화
 
 ---
 
