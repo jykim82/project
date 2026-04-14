@@ -42,6 +42,10 @@ class EquipmentCreateRequest(BaseModel):
     decommissioned_at: Optional[str] = None
     description: Optional[str] = None
     meta: Optional[dict] = None
+    # [E-025 P7] 비전 등록용 옵셔널 필드
+    equipment_photo_url: Optional[str] = None
+    nameplate_photo_url: Optional[str] = None
+    vision_session_id: Optional[int] = None
 
 
 class EquipmentUpdateRequest(BaseModel):
@@ -209,17 +213,46 @@ async def create_equipment(req: EquipmentCreateRequest):
         cur.execute("""
             INSERT INTO tb_equipment_info
                 (equipment_id, sitename, facilitytype, equipmenttype, status,
-                 commissioned_at, decommissioned_at, description, meta)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 commissioned_at, decommissioned_at, description, meta,
+                 equipment_photo_url, nameplate_photo_url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             equipment_id, req.sitename.strip(), req.facilitytype,
             req.equipmenttype, req.status,
             req.commissioned_at or None, req.decommissioned_at or None,
             req.description or None, meta_json,
+            req.equipment_photo_url, req.nameplate_photo_url,
         ))
+        # [E-025 P7] vision_session 연결 + 사진이 있으면 tb_equipment_image 기록
+        if req.vision_session_id:
+            try:
+                cur.execute(
+                    "UPDATE tb_vision_session SET linked_equipment_id = %s WHERE vision_session_id = %s",
+                    (equipment_id, req.vision_session_id),
+                )
+            except Exception as e:
+                logger.warning(f"tb_vision_session.linked_equipment_id 업데이트 실패: {e}")
+        for url, kind in (
+            (req.nameplate_photo_url, "nameplate"),
+            (req.equipment_photo_url, "exterior"),
+        ):
+            if not url:
+                continue
+            try:
+                cur.execute("""
+                    INSERT INTO tb_equipment_image
+                        (equipment_id, sitename, facilitytype, image_url, image_kind)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (equipment_id, req.sitename.strip(), req.facilitytype, url, kind))
+            except Exception as e:
+                logger.warning(f"tb_equipment_image INSERT 실패 ({kind}): {e}")
         conn.commit()
         cur.close()
-        return {"status": "OK", "equipment_id": equipment_id}
+        return {
+            "status": "OK",
+            "equipment_id": equipment_id,
+            "vision_session_id": req.vision_session_id,
+        }
     except Exception as e:
         if conn:
             conn.rollback()
