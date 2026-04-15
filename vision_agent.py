@@ -29,6 +29,8 @@ import time
 from typing import Optional, Any
 
 import httpx
+import numpy as np
+import psycopg2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -56,6 +58,19 @@ FACILITY_FILE_BASE_DIR = os.environ.get(
 )
 # 레거시 환경변수명 하위호환
 FILES_BASE = os.environ.get("FILES_BASE", FACILITY_FILE_BASE_DIR)
+
+# [E-025 P3] 매뉴얼 RAG 설정
+EMBEDDINGS_DIR = os.environ.get(
+    "EMBEDDINGS_DIR",
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "manual_embeddings")),
+)
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "snowflake-arctic-embed2:latest")
+
+DB_HOST = os.environ.get("DB_HOST", "timescaledb")
+DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+DB_NAME = os.environ.get("DB_NAME", "slm")
+DB_USER = os.environ.get("DB_USER", "slm_dev")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
 
 logger = logging.getLogger("vision_agent")
 logging.basicConfig(
@@ -397,16 +412,33 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
     advice = _ensure_advice_prefix(advice)
     advice, warnings = _sanitize_advice(advice)
 
+    equipment_guess = data.get("equipment_guess", "식별 실패")
+    equipment_type = data.get("equipment_type", "기타")
+    brand = data.get("brand")
+    observed_state = data.get("observed_state", [])
+
+    # [E-025 P3] 매뉴얼 RAG — 장비 식별 성공 시에만 검색
+    manual_excerpts_raw: list[dict] = []
+    if equipment_guess and equipment_guess != "식별 실패" and equipment_type != "기타":
+        manual_excerpts_raw = _retrieve_manual_excerpts(
+            equipment_guess=equipment_guess,
+            equipment_type=equipment_type,
+            brand=brand,
+            observed_state=observed_state,
+            user_text=req.user_text,
+            top_k=3,
+        )
+
     return DiagnoseResponse(
-        equipment_guess=data.get("equipment_guess", "식별 실패"),
-        equipment_type=data.get("equipment_type", "기타"),
-        brand=data.get("brand"),
+        equipment_guess=equipment_guess,
+        equipment_type=equipment_type,
+        brand=brand,
         model=data.get("model"),
         confidence=float(data.get("confidence", 0.0)),
-        observed_state=data.get("observed_state", []),
+        observed_state=observed_state,
         advice_text=advice,
-        manual_excerpts=[],  # P3에서 구현
-        is_registered=False,  # P3에서 DB 매칭
+        manual_excerpts=[ManualExcerpt(**e) for e in manual_excerpts_raw],
+        is_registered=False,  # P4에서 DB 매칭
         matched_equipment_id=None,
         sitename=req.sitename,
         facilitytype=req.facilitytype,
@@ -516,7 +548,202 @@ def register_parse(req: RegisterParseRequest) -> RegisterParseResponse:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# /vision/manual-search — P3에서 구현, 현재는 스텁
+# [E-025 P3] 매뉴얼 RAG 인덱스 (lazy-load NPZ + cosine search)
+# ─────────────────────────────────────────────────────────────────────
+
+class _ManualRagIndex:
+    """tb_equipment_manual + NPZ 임베딩 캐시를 메모리로 로드해서 cosine 검색 제공.
+
+    - 최초 검색 호출 시점에 일괄 로드 (startup 지연 회피)
+    - NPZ는 L2 normalized float32 (index_manuals.py가 보장)
+    - 17개 매뉴얼 × ~150 청크 = ~2580 × 1024 × 4B ≈ 10MB — 전량 RAM 유지
+    """
+
+    def __init__(self) -> None:
+        self._loaded = False
+        self._embeddings: Optional[np.ndarray] = None  # (N, 1024)
+        self._rows: list[dict] = []
+
+    def load(self) -> None:
+        if self._loaded:
+            return
+        t0 = time.perf_counter()
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT manual_id, equipment_type, brand, model, title, embedding_key
+                FROM tb_equipment_manual
+                WHERE embedding_key IS NOT NULL
+                ORDER BY manual_id
+                """
+            )
+            manuals = cur.fetchall()
+            cur.close()
+        finally:
+            conn.close()
+
+        all_embs: list[np.ndarray] = []
+        for manual_id, etype, brand, model, title, key in manuals:
+            npz_path = os.path.join(EMBEDDINGS_DIR, f"{key}.npz")
+            if not os.path.exists(npz_path):
+                logger.warning(f"[RAG] npz missing: {npz_path}")
+                continue
+            try:
+                data = np.load(npz_path, allow_pickle=True)
+                embs = data["embeddings"].astype(np.float32)
+                pages = data["pages"]
+                texts = data["texts"]
+            except Exception as e:
+                logger.warning(f"[RAG] npz load failed {npz_path}: {e}")
+                continue
+            for i in range(embs.shape[0]):
+                self._rows.append({
+                    "manual_id": int(manual_id),
+                    "title": title,
+                    "brand": brand,
+                    "model": model,
+                    "equipment_type": etype,
+                    "page": int(pages[i]),
+                    "text": str(texts[i]),
+                })
+            all_embs.append(embs)
+
+        if all_embs:
+            self._embeddings = np.concatenate(all_embs, axis=0)
+        else:
+            self._embeddings = np.zeros((0, 1024), dtype=np.float32)
+
+        self._loaded = True
+        logger.info(
+            f"[RAG] loaded {len(manuals)} manuals / {len(self._rows)} chunks / "
+            f"{int((time.perf_counter()-t0)*1000)}ms"
+        )
+
+    def search(
+        self,
+        query_emb: np.ndarray,
+        top_k: int = 3,
+        equipment_type: Optional[str] = None,
+        brand: Optional[str] = None,
+    ) -> list[dict]:
+        """query_emb (shape (1024,), L2 normalized) → top_k 인용."""
+        if not self._loaded or self._embeddings is None or self._embeddings.shape[0] == 0:
+            return []
+
+        scores = self._embeddings @ query_emb  # (N,)
+
+        # 장비 타입/브랜드 일치 보너스 (filter 대신 soft boost — 다른 매뉴얼에도 관련 내용이 있을 수 있음)
+        if equipment_type or brand:
+            bonus = np.zeros(len(self._rows), dtype=np.float32)
+            for i, row in enumerate(self._rows):
+                if equipment_type and row["equipment_type"] == equipment_type:
+                    bonus[i] += 0.15
+                if brand and row["brand"] and row["brand"].lower() == brand.lower():
+                    bonus[i] += 0.10
+            final_scores = scores + bonus
+        else:
+            final_scores = scores
+
+        # top-k 후보를 넉넉히 뽑아 중복 페이지 제거
+        k_pool = min(top_k * 4, len(self._rows))
+        top_idx = np.argpartition(-final_scores, k_pool - 1)[:k_pool]
+        top_idx = top_idx[np.argsort(-final_scores[top_idx])]
+
+        seen: set[tuple[int, int]] = set()
+        results: list[dict] = []
+        for idx in top_idx:
+            r = self._rows[int(idx)]
+            key = (r["manual_id"], r["page"])
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({
+                "manual_id": r["manual_id"],
+                "manual_title": r["title"],
+                "page": r["page"],
+                "text": r["text"][:600],
+                "score": float(scores[int(idx)]),
+            })
+            if len(results) >= top_k:
+                break
+        return results
+
+
+_rag_index = _ManualRagIndex()
+
+
+def _embed_query(text: str) -> np.ndarray:
+    """Ollama /api/embed → snowflake-arctic-embed2, L2 normalized (1024,) float32."""
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{OLLAMA_BASE_URL}/api/embed",
+            json={"model": EMBED_MODEL, "input": text},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    emb = np.array(data["embeddings"][0], dtype=np.float32)
+    norm = float(np.linalg.norm(emb))
+    if norm > 0:
+        emb = emb / norm
+    return emb
+
+
+def _build_search_query(
+    equipment_guess: str,
+    observed_state: list[str],
+    user_text: Optional[str],
+) -> str:
+    """VLM 결과에서 매뉴얼 검색용 쿼리 문자열 조립."""
+    parts: list[str] = []
+    if equipment_guess and equipment_guess != "식별 실패":
+        parts.append(equipment_guess)
+    if observed_state:
+        parts.extend(observed_state[:6])
+    if user_text:
+        parts.append(user_text)
+    return " ".join(parts).strip() or equipment_guess or "PLC status LED"
+
+
+def _retrieve_manual_excerpts(
+    equipment_guess: str,
+    equipment_type: str,
+    brand: Optional[str],
+    observed_state: list[str],
+    user_text: Optional[str],
+    top_k: int = 3,
+) -> list[dict]:
+    """VLM 출력 → 매뉴얼 RAG 검색 → ManualExcerpt dict 리스트."""
+    try:
+        _rag_index.load()
+    except Exception as e:
+        logger.warning(f"[RAG] index load 실패: {e}")
+        return []
+
+    query = _build_search_query(equipment_guess, observed_state, user_text)
+    try:
+        query_emb = _embed_query(query)
+    except Exception as e:
+        logger.warning(f"[RAG] query embed 실패: {e}")
+        return []
+
+    # equipment_type은 화이트리스트(PLC/유량계/...) — tb_equipment_manual과 동일 키 사용
+    results = _rag_index.search(
+        query_emb,
+        top_k=top_k,
+        equipment_type=equipment_type if equipment_type and equipment_type != "기타" else None,
+        brand=brand,
+    )
+    logger.info(f"[RAG] query={query[:80]!r} → {len(results)} excerpts")
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /vision/manual-search — 독립 RAG 엔드포인트
 # ─────────────────────────────────────────────────────────────────────
 
 class ManualSearchRequest(BaseModel):
@@ -524,16 +751,37 @@ class ManualSearchRequest(BaseModel):
     brand: Optional[str] = None
     model: Optional[str] = None
     query: str
+    top_k: int = 3
 
 
 @app.post("/vision/manual-search")
 def manual_search(req: ManualSearchRequest) -> dict:
-    """매뉴얼 RAG 검색 — P3에서 snowflake-arctic-embed2 + tb_equipment_manual 구현."""
-    logger.info(f"/vision/manual-search (P3 스텁) type={req.equipment_type}")
+    """매뉴얼 RAG 검색 — snowflake-arctic-embed2 쿼리 임베딩 → cosine top-k."""
+    logger.info(
+        f"/vision/manual-search type={req.equipment_type} brand={req.brand} q={req.query[:60]!r}"
+    )
+    try:
+        _rag_index.load()
+    except Exception as e:
+        logger.error(f"[RAG] index load 실패: {e}")
+        raise HTTPException(500, f"RAG 인덱스 로드 실패: {e}")
+
+    try:
+        query_emb = _embed_query(req.query)
+    except Exception as e:
+        raise HTTPException(502, f"embedding 호출 실패: {e}")
+
+    excerpts = _rag_index.search(
+        query_emb,
+        top_k=req.top_k,
+        equipment_type=req.equipment_type if req.equipment_type != "기타" else None,
+        brand=req.brand,
+    )
     return {
-        "status": "not_implemented",
-        "message": "매뉴얼 RAG는 P3에서 구현 예정",
-        "excerpts": [],
+        "status": "ok",
+        "query": req.query,
+        "excerpts": excerpts,
+        "total_chunks": len(_rag_index._rows),
     }
 
 
