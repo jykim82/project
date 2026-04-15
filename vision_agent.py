@@ -119,6 +119,8 @@ class ManualExcerpt(BaseModel):
     page: int
     text: str
     score: float
+    # [E-025 폐쇄망] 매뉴얼 PDF 다운로드 URL (프록시 경로)
+    file_url: Optional[str] = None
 
 
 class ActiveAlarm(BaseModel):
@@ -640,7 +642,7 @@ class _ManualRagIndex:
                 cur.execute(
                     """
                     SELECT manual_id, equipment_type, brand, model, title, embedding_key,
-                           COALESCE(manual_type, 'user_manual')
+                           COALESCE(manual_type, 'user_manual'), file_url
                     FROM tb_equipment_manual
                     WHERE embedding_key IS NOT NULL
                     ORDER BY manual_id
@@ -650,7 +652,7 @@ class _ManualRagIndex:
                 cur.execute(
                     """
                     SELECT manual_id, equipment_type, brand, model, title, embedding_key,
-                           'user_manual' AS manual_type
+                           'user_manual' AS manual_type, file_url
                     FROM tb_equipment_manual
                     WHERE embedding_key IS NOT NULL
                     ORDER BY manual_id
@@ -662,7 +664,7 @@ class _ManualRagIndex:
             conn.close()
 
         all_embs: list[np.ndarray] = []
-        for manual_id, etype, brand, model, title, key, manual_type in manuals:
+        for manual_id, etype, brand, model, title, key, manual_type, file_url in manuals:
             npz_path = os.path.join(EMBEDDINGS_DIR, f"{key}.npz")
             if not os.path.exists(npz_path):
                 logger.warning(f"[RAG] npz missing: {npz_path}")
@@ -683,6 +685,7 @@ class _ManualRagIndex:
                     "model": model,
                     "equipment_type": etype,
                     "manual_type": manual_type or "user_manual",
+                    "file_url": file_url,
                     "page": int(pages[i]),
                     "text": str(texts[i]),
                 })
@@ -749,6 +752,7 @@ class _ManualRagIndex:
                 "page": r["page"],
                 "text": r["text"][:600],
                 "score": float(scores[int(idx)]),
+                "file_url": r.get("file_url"),
             })
             if len(results) >= top_k:
                 break

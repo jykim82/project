@@ -646,6 +646,49 @@ async def update_site_settings(request: Request):
 
 
 # =============================================================================
+# [E-025 폐쇄망] 매뉴얼 PDF 다운로드 라우트
+# =============================================================================
+
+_MANUALS_DIR = os.environ.get(
+    "MANUALS_DEST_DIR",
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "manuals")),
+)
+
+
+@router.get("/files/manual/{filename:path}")
+async def download_equipment_manual(filename: str):
+    """매뉴얼 PDF 직접 서빙 — 로컬 파일만 (외부 링크 없음, 폐쇄망 대응).
+
+    file_url(`/api/proxy/files/manual/<name>.pdf`)이 Next.js BFF 프록시를 거쳐
+    이 엔드포인트로 라우팅된다. MANUALS_DEST_DIR(기본 `/app/data/manuals`) 밖의
+    경로는 path traversal로 거부.
+    """
+    # path traversal 방어
+    safe = os.path.normpath(os.path.join(_MANUALS_DIR, filename))
+    if not safe.startswith(os.path.abspath(_MANUALS_DIR) + os.sep) and safe != os.path.abspath(_MANUALS_DIR):
+        logger.warning(f"매뉴얼 path traversal 시도: {filename}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="접근 거부")
+
+    if not os.path.exists(safe):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+
+    # 파일명에 한글이 있을 수 있어 Content-Disposition은 RFC 5987 (filename*=utf-8)로
+    from urllib.parse import quote
+    display_name = os.path.basename(safe)
+    encoded = quote(display_name)
+    return FileResponse(
+        safe,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"inline; filename=\"{display_name}\"; filename*=UTF-8''{encoded}",
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+# =============================================================================
 # [E-025 review #5] 관리자 API: 장비 매뉴얼 관리 (RAG 인덱스)
 # =============================================================================
 

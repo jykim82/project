@@ -37,9 +37,11 @@ logger = logging.getLogger("index_manuals")
 # ─────────────────────────────────────────────────────────────────────
 
 MANUALS_SRC_DIR = os.environ.get("MANUALS_SRC_DIR", "/tmp/manuals_src")
+# [폐쇄망 납품] /app/data/manuals = ../slm/data/manuals (호스트 바인드 마운트)
+# 컨테이너 ephemeral FS였던 /web/files/manuals에서 이동.
 MANUALS_DEST_DIR = os.environ.get(
     "MANUALS_DEST_DIR",
-    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "web", "files", "manuals")),
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "manuals")),
 )
 EMBEDDINGS_DIR = os.environ.get(
     "EMBEDDINGS_DIR",
@@ -262,7 +264,7 @@ def index_single_pdf(
     dest_path = os.path.join(MANUALS_DEST_DIR, dest_filename)
     if not os.path.exists(dest_path):
         _sh.copyfile(src_path, dest_path)
-    file_url = f"/api/files/manual/{dest_filename}"
+    file_url = f"/api/proxy/files/manual/{dest_filename}"
 
     embedding_key = re.sub(r"[^\w\-]", "_", meta["title"])[:80]
     npz_path = os.path.join(EMBEDDINGS_DIR, f"{embedding_key}.npz")
@@ -411,7 +413,7 @@ def main():
             import shutil
             shutil.copyfile(src_path, dest_path)
 
-        file_url = f"/api/files/manual/{dest_filename}"
+        file_url = f"/api/proxy/files/manual/{dest_filename}"
 
         embedding_key = re.sub(r"[^\w\-]", "_", meta["title"])[:80]
         npz_path = os.path.join(EMBEDDINGS_DIR, f"{embedding_key}.npz")
