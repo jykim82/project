@@ -289,6 +289,174 @@ async def ask_multimodal_stream(
     )
 
 
+# [E-025 P13] 시설물 사진 등록 — chat_attachment → tb_file_storage + tb_facility_file
+FACILITY_FILE_BASE_DIR = os.environ.get(
+    "FACILITY_FILE_BASE_DIR",
+    os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "web", "files", "facility"
+    )),
+)
+
+_FACILITY_FILE_TYPES = {"site_photo", "system_diagram", "manual"}
+
+
+@router.post("/vision/register-facility-photo")
+async def register_facility_photo(request: dict):
+    """chat_attachment에 업로드된 이미지를 tb_facility_file에 등록.
+
+    기존 admin 업로드 엔드포인트(multipart)와 달리, 이미 서버에 저장된 파일을
+    경로로만 받아서 facility/<file_type>/<new_uuid> 로 복사 후 DB UPSERT 한다.
+
+    Body:
+        {"image_url": "/api/files/chat_attachments/<uuid>.jpg",
+         "region": "R01", "sitename": "행정", "file_type": "site_photo",
+         "vision_session_id": 123}
+    Response:
+        {"status": "OK", "facility_file_id": N, "file_url": "/api/files/facility/site_photo/<uuid>.jpg"}
+    """
+    import pathlib
+    import shutil
+
+    image_url = request.get("image_url") or ""
+    region = request.get("region") or "R01"
+    sitename = request.get("sitename") or ""
+    file_type = request.get("file_type") or "site_photo"
+    vision_session_id = request.get("vision_session_id")
+
+    if not sitename:
+        raise HTTPException(400, "sitename 필수")
+    if file_type not in _FACILITY_FILE_TYPES:
+        raise HTTPException(400, f"file_type 허용되지 않음: {file_type}")
+    if not image_url:
+        raise HTTPException(400, "image_url 필수")
+
+    # 1. image_url → 로컬 경로 해결
+    if image_url.startswith("/api/files/chat_attachments/"):
+        src_path = os.path.join(
+            CHAT_ATTACHMENT_DIR,
+            image_url[len("/api/files/chat_attachments/"):],
+        )
+    elif image_url.startswith("/") and os.path.exists(image_url):
+        src_path = image_url
+    else:
+        raise HTTPException(400, f"지원하지 않는 image_url 형식: {image_url[:60]}")
+
+    if not os.path.exists(src_path):
+        raise HTTPException(404, f"원본 파일을 찾을 수 없습니다: {src_path}")
+
+    # 2. facility/<file_type>/<new_uuid>.<ext> 로 복사
+    ext = pathlib.Path(src_path).suffix.lower() or ".jpg"
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    dest_dir = os.path.join(FACILITY_FILE_BASE_DIR, file_type)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = os.path.join(dest_dir, stored_name)
+    try:
+        shutil.copyfile(src_path, dest_path)
+    except OSError as e:
+        raise HTTPException(500, f"파일 복사 실패: {e}")
+
+    file_url = f"/api/files/facility/{file_type}/{stored_name}"
+    file_size = os.path.getsize(dest_path)
+
+    # 3. DB INSERT — tb_file_storage + tb_facility_file UPSERT
+    if _get_db_connection is None:
+        raise HTTPException(500, "DB 커넥션 미초기화")
+
+    conn = None
+    try:
+        conn = _get_db_connection()
+        # _PooledConnection wrapper는 autocommit 속성이 없을 수 있음 — getattr로 안전 처리
+        try:
+            conn.autocommit = False
+        except Exception:
+            pass
+        cur = conn.cursor()
+
+        # 기존 파일 조회 (UPSERT 시 제거 대상)
+        cur.execute(
+            "SELECT ff.file_id, fs.stored_name "
+            "FROM tb_facility_file ff JOIN tb_file_storage fs ON ff.file_id = fs.file_id "
+            "WHERE ff.region=%s AND ff.sitename=%s AND ff.file_type=%s",
+            (region, sitename, file_type),
+        )
+        old_row = cur.fetchone()
+
+        cur.execute(
+            "INSERT INTO tb_file_storage "
+            "(region, file_category, original_name, stored_name, file_path, file_url, mime_type, file_size, uploaded_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING file_id",
+            (region, "facility", os.path.basename(src_path), stored_name,
+             f"facility/{file_type}/{stored_name}", file_url,
+             "image/jpeg", file_size, "vision_agent"),
+        )
+        new_file_id = cur.fetchone()[0]
+
+        cur.execute(
+            "INSERT INTO tb_facility_file (region, sitename, file_type, file_id) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (region, sitename, file_type) "
+            "DO UPDATE SET file_id = EXCLUDED.file_id, updated_at = now() "
+            "RETURNING facility_file_id",
+            (region, sitename, file_type, new_file_id),
+        )
+        facility_file_id = cur.fetchone()[0]
+
+        # vision_session 역연결 — savepoint로 격리 (linked_facility_file_id 컬럼
+        # 없는 구버전 스키마에서도 facility_file 삽입이 롤백되지 않도록)
+        if vision_session_id:
+            cur.execute("SAVEPOINT vision_link")
+            try:
+                cur.execute(
+                    "UPDATE tb_vision_session SET linked_facility_file_id=%s WHERE vision_session_id=%s",
+                    (facility_file_id, vision_session_id),
+                )
+                cur.execute("RELEASE SAVEPOINT vision_link")
+            except Exception as e:
+                cur.execute("ROLLBACK TO SAVEPOINT vision_link")
+                logger.info(f"vision_session linked_facility_file_id 업데이트 스킵: {e}")
+
+        conn.commit()
+
+        # 이전 파일 정리
+        if old_row:
+            old_file_id, old_stored_name = old_row
+            try:
+                cur.execute("DELETE FROM tb_file_storage WHERE file_id=%s", (old_file_id,))
+                conn.commit()
+            except Exception as e:
+                logger.warning(f"이전 시설 파일 DB 삭제 실패: {e}")
+            old_path = os.path.join(FACILITY_FILE_BASE_DIR, file_type, old_stored_name)
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+
+        cur.close()
+        logger.info(
+            f"시설 사진 등록 완료 (vision): {sitename}/{file_type}/{stored_name}"
+        )
+        return {
+            "status": "OK",
+            "facility_file_id": facility_file_id,
+            "file_url": file_url,
+        }
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        # 복사된 파일 롤백
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+        logger.error(f"시설 사진 등록 실패: {e}")
+        raise HTTPException(500, f"시설 사진 등록 실패: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
 # [E-025 P12] 명판/계기판 OCR 파싱 프록시 — vision_agent /vision/register-parse 포워딩
 @router.post("/vision/register-parse")
 async def vision_register_parse(request: dict):
