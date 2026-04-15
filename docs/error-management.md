@@ -1150,6 +1150,45 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 - S/N / 용량 / 설치년도 3개 입력 필드 렌더 (PLC는 명판에 이 필드 없어 공란, 유량계 계기판일 경우 자동 채움 예상)
 - 스크린샷 `e025-p12-ocr-autofill-dialog.png`
 
+#### [E-025] P13: 시설물 사진 등록 (slm@e04df56 + slm-dashboard@cf87358)
+
+장비(equipment) 등록과 별도로, 시설(facility) 자체의 현장 사진/계통도/매뉴얼 슬롯(`tb_facility_file`)에 1-click 등록. 기존 admin 업로드 엔드포인트는 multipart 재전송이 필요했지만, 채팅에서 이미 서버에 있는 파일을 경로로만 전달해 복사 + DB UPSERT 한다.
+
+**백엔드 (`slm/endpoints/vision_proxy.py`):**
+- `POST /vision/register-facility-photo` 신규
+- body: `{image_url, region, sitename, file_type, vision_session_id?}`
+- `file_type` ∈ `{site_photo, system_diagram, manual}` (기존 `FACILITY_FILE_ALLOWED_TYPES` 재사용)
+- 로직: `image_url` → 로컬 경로 해결 → `facility/{file_type}/{uuid}{ext}` 복사 → `tb_file_storage` INSERT → `tb_facility_file` UPSERT (같은 region/sitename/file_type 슬롯) → 이전 파일 디스크+DB 정리
+- **savepoint 격리** — vision_session 역연결(linked_facility_file_id) 시도가 실패해도 facility_file 삽입은 보존 (구버전 스키마에서 컬럼 없는 경우)
+
+**API 클라이언트 (`equipment-api.ts`):**
+- `FacilityFileType` 타입 + `RegisterFacilityPhotoPayload` / `Response`
+- `registerFacilityPhoto(payload)` 헬퍼
+
+**새 Dialog (`FacilityPhotoRegisterDialog.tsx`):**
+- 시설유형/현장명 Select (autocomplete 캐시 재사용, sitename 추론으로 자동 채움)
+- 파일 유형 3개 카드형 버튼 (현장 사진 / 계통도 / 매뉴얼)
+- AI 비전 진단 참고 배너 (옵셔널)
+- 저장 시 `registerFacilityPhoto` 호출 + toast + auto-close
+- emerald 테마 (설비 등록의 amber와 시각적 분리)
+
+**VisionAdviceCard 버튼 추가:**
+- `onRegisterFacilityPhoto` prop → "시설물 사진" 버튼 (emerald, ImageIcon)
+- 기존 작업 등록 + 설비 등록 + **시설물 사진** 3개 액션 병렬 노출
+
+**prop drilling:** BotMessage → ChatMessageArea → chat/page.tsx `handleRegisterFacilityPhotoFromVision`
+
+**E2E 검증 (Playwright):**
+- `/chat` → ls_xgk_error.jpg 업로드 + "행정 배수지 현장 사진" 전송
+- VisionAdviceCard 렌더 → "시설물 사진" 버튼 클릭 → Dialog 오픈
+- 시설유형=**배수지** / 현장명=**행정** 자동 채움 (sitename 추론 효과)
+- 파일 유형 3개 버튼 렌더, 현장 사진 기본 선택
+- 등록 클릭 → `POST /vision/register-facility-photo` → 200 OK (initial 실패 후 savepoint 수정 → 재검증 성공)
+- DB 확인: `tb_facility_file` row 1건 (`행정/site_photo`, file_url=`/api/files/facility/site_photo/3bd1c993..jpg`, uploaded_by=`vision_agent`)
+- 스크린샷 `e025-p13-facility-photo-dialog.png`
+
+**버그 수정 메모 (savepoint):** 최초 구현에서 `linked_facility_file_id` UPDATE가 실패했을 때 try/except로 삼켰지만 psycopg2 트랜잭션이 error state로 들어가 이후 commit이 rollback되어 row가 사라지는 현상. 해결: `SAVEPOINT vision_link` / `ROLLBACK TO SAVEPOINT`로 격리.
+
 ---
 
 ## 관련 파일

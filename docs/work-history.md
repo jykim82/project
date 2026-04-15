@@ -48,6 +48,14 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P13 시설물 사진 등록 (2026-04-15)
+- `vision_proxy POST /vision/register-facility-photo` 신규 — chat_attachment 이미지 → facility/<type>/<uuid> 복사 + tb_file_storage INSERT + tb_facility_file UPSERT, savepoint로 vision_session 역연결 격리
+- `FacilityPhotoRegisterDialog.tsx` 신규 (240줄, emerald 테마) — 시설유형/현장명 Select + 파일 유형 3개 카드 (현장 사진/계통도/매뉴얼) + 저장
+- VisionAdviceCard에 "시설물 사진" 버튼 (emerald, ImageIcon) — 작업/설비 등록과 병렬 노출
+- E2E: ls_xgk_error.jpg → 행정 배수지 질의 → 버튼 클릭 → Dialog 자동 채움 → 등록 → tb_facility_file row 확인
+- 버그 수정: savepoint 격리로 linked_facility_file_id 컬럼 미존재 시 facility_file 삽입 롤백 방지
+- `slm@e04df56` + `slm-dashboard@cf87358`
+
 #### P12 명판/계기판 OCR 자동 등록 (2026-04-15)
 - 설비 등록 버튼 클릭 시 `/vision/register-parse` 자동 호출로 manufacturer/model/serial/capacity/installed_year 판독
 - 백엔드: `endpoints/vision_proxy.py` POST `/vision/register-parse` 프록시 추가 (ai_server 8000 → vision_agent 8100)
