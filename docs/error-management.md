@@ -1289,6 +1289,39 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - AC&T 제품 VLM 식별 정확도 — 실제 제품 사진이 없어 `/vision/diagnose` 경로 스킵
 - 향후 AC&T 4G-210N/ETOS-XP/EtherFOS-EZ/IIoT RTU 사진이 추가되면 `docs/매뉴얼/<카테고리> 사진/`에 배치 후 VLM end-to-end 재검증 필요
 
+#### [E-025] 3종 신규 이미지 VLM E2E + 인버터 whitelist 버그 수정 (slm@39becfb, 2026-04-15)
+
+사용자가 `docs/매뉴얼/plc 사진/`에 PLC 3장 + AC&T LTE 모뎀(RCS-XG) 3장 + 인버터 1장(`inverter2.jpg`)을 추가. 각 카테고리 대표 1장씩 `/vision/diagnose` 직접 호출로 VLM 경로 검증.
+
+**1. test_plc1.jpg (LS XBF-DR32H)** ✅
+- VLM: equipment_type=PLC, brand=LS, model=XBF-DR32H, confidence=0.95
+- matched_equipment_id=plc_1 (행정/PLC 매칭)
+- manual_excerpts 3/3: XGL-EFMTB 트러블슈팅 2건 + XGB Cnet 각부 명칭
+- has_issue=false (observed_state에서 "LED 상태 확인되지 않음")
+
+**2. test_rcs_xg.jpg (AC&T RCS-XG LTE 모뎀)** ✅ (AC&T 첫 E2E)
+- VLM: equipment_type=**모뎀**, model=RCG-XG (RCS 오타), brand=미상, confidence=0.95
+- matched_equipment_id=None (brand 미상 + 행정엔 AC&T 모뎀 없음)
+- **manual_excerpts 3/3 4G-210N_NS_NKA 매뉴얼 (AC&T)** — 완벽 매칭
+  - #1 [0.668] p20 "2.5 LED 표시 내용 RCS-XG"
+  - #2 [0.582] p24 "2.6.5 RCS-XG 상태 요청"
+  - #3 [0.578] p21 "Call is active LED / STRx GREEN"
+- **핵심 발견:** VLM이 brand를 못 잡아도 equipment_type=모뎀 필터 + 쿼리 내 "RCS-XG" 토큰으로 정확한 제품 매뉴얼 검색 가능
+
+**3. test_inverter.jpg (LS S100 인버터)** ✅ (버그 수정 후)
+- **최초 실행 결과 (버그):** equipment_type=**기타** (화이트리스트 미포함), manual_excerpts=**0건** (기타면 RAG skip)
+- **근본 원인:** `EQUIPMENT_WHITELIST`가 `[PLC, 유량계, 모뎀, RTU, 펌프, 밸브, 수위계, 압력계, UPS, 기타]`로 **인버터 누락**. tb_equipment_manual에는 인버터 3건(G100 Catalog, G100 사용설명서 385p, iS7 Catalog)이 인덱싱되어 있었는데 RAG 경로에서 사용 불가했음.
+- **수정 (`vision_agent.py`):** 3곳 업데이트 — `EQUIPMENT_WHITELIST` 리스트 + `_DIAGNOSE_PROMPT_TEMPLATE` 장비 종류 화이트리스트 문구 + JSON schema `equipment_type` enum. vision_agent 재시작.
+- **재검증:**
+  - equipment_type=**인버터** (정정), brand=LS, model=S100, confidence=0.95
+  - observed: "1번/2번 인버터 7세그먼트 디스플레이 숫자 표시 + 리액터/변압기 연결"
+  - **manual_excerpts 3/3 G100(C)_사용설명서** — LS 인버터 사용설명서 정확 매칭
+    - #1 [0.559] p349 "9장 문제 해결하기" — 인버터 트립/경보 섹션
+    - #2 [0.526] p357 "OC2 출력선 합선 / IGBT 문제 조치"
+    - #3 [0.518] p356 "LV2 입력 전원 전압 저하 조치"
+
+**영향 범위:** 인버터는 E-025 범위의 공식 장비 카테고리였으나 매뉴얼(manual 등록)만 있고 VLM 파이프라인(화이트리스트 + 프롬프트)이 누락된 불완전 지원 상태였음. 본 수정으로 일관성 확보.
+
 ---
 
 ## 관련 파일

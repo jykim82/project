@@ -48,6 +48,14 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### 3종 신규 이미지 E2E + 인버터 whitelist 버그 수정 (2026-04-15)
+- 사용자가 `docs/매뉴얼/plc 사진/`에 PLC 3장 + AC&T RCS-XG LTE 모뎀 3장 + 인버터 1장 추가
+- **plc1.jpg**: LS XBF-DR32H 정확 식별, matched=plc_1, manual 3건 (XGL-EFMTB 트러블슈팅)
+- **rcs_xg_lte.jpg**: 모뎀/RCS-XG 식별, **AC&T 첫 VLM E2E 성공**, manual 3/3 4G-210N 매뉴얼(p20 LED 표시 등 완벽 매칭)
+- **inverter2.jpg 버그**: equipment_type=기타로 fallback → manual 0건 → `EQUIPMENT_WHITELIST` + prompt + JSON schema 3곳에 "인버터" 누락 발견
+- **수정**: whitelist에 "인버터" 추가 → 재검증 시 LS S100 정확 식별, G100 사용설명서 p349 "9장 문제 해결하기" 정확 매칭
+- `slm@39becfb`
+
 #### AC&T 제품 RAG 직접 검증 (2026-04-15)
 - 4개 제품(4G-210N / ETOS-XP / EtherFOS-EZ / IIoT RTU) × 각 제품 관련 쿼리 × top-5 = **20/20 정확 매칭**
 - brand='AC&T System' + equipment_type 필터로 타 제조사(LS) 매뉴얼 완벽 배제
