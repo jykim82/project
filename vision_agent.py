@@ -415,6 +415,7 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
     equipment_guess = data.get("equipment_guess", "식별 실패")
     equipment_type = data.get("equipment_type", "기타")
     brand = data.get("brand")
+    model = data.get("model")
     observed_state = data.get("observed_state", [])
 
     # [E-025 P3] 매뉴얼 RAG — 장비 식별 성공 시에만 검색
@@ -429,17 +430,31 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
             top_k=3,
         )
 
+    # [E-025 P8] 기존 설비 DB 매칭 — sitename + equipmenttype + (model|brand)
+    matched_equipment_id: Optional[str] = None
+    try:
+        matched_equipment_id = _match_existing_equipment(
+            brand=brand,
+            model=model,
+            equipment_type=equipment_type,
+            sitename=req.sitename,
+        )
+    except Exception as e:
+        logger.warning(f"[MATCH] 매칭 중 에러: {e}")
+    if matched_equipment_id:
+        logger.info(f"[MATCH] is_registered=True equipment_id={matched_equipment_id}")
+
     return DiagnoseResponse(
         equipment_guess=equipment_guess,
         equipment_type=equipment_type,
         brand=brand,
-        model=data.get("model"),
+        model=model,
         confidence=float(data.get("confidence", 0.0)),
         observed_state=observed_state,
         advice_text=advice,
         manual_excerpts=[ManualExcerpt(**e) for e in manual_excerpts_raw],
-        is_registered=False,  # P4에서 DB 매칭
-        matched_equipment_id=None,
+        is_registered=bool(matched_equipment_id),
+        matched_equipment_id=matched_equipment_id,
         sitename=req.sitename,
         facilitytype=req.facilitytype,
         vlm_generate_ms=elapsed_ms,
@@ -707,6 +722,87 @@ def _build_search_query(
     if user_text:
         parts.append(user_text)
     return " ".join(parts).strip() or equipment_guess or "PLC status LED"
+
+
+def _match_existing_equipment(
+    brand: Optional[str],
+    model: Optional[str],
+    equipment_type: str,
+    sitename: Optional[str],
+) -> Optional[str]:
+    """[E-025 P8] VLM 식별 결과 → tb_equipment_info 매칭 → equipment_id 반환.
+
+    매칭 우선순위 (sitename + equipmenttype 내에서):
+      1. meta.model ILIKE %VLM model% (substring, 대소문자 무시)
+      2. meta.manufacturer ILIKE %VLM brand% (model 없을 때 fallback)
+
+    sitename이 없거나 site-내 매칭 실패 시 글로벌 검색으로 한 번 더 시도
+    (단 이 경우는 다중 후보가 흔해서 "가장 최근 등록"을 1개만 반환).
+    """
+    if not model and not brand:
+        return None
+    if not equipment_type or equipment_type == "기타":
+        return None
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+    except Exception as e:
+        logger.warning(f"[MATCH] DB 연결 실패: {e}")
+        return None
+
+    try:
+        cur = conn.cursor()
+
+        def _search(with_sitename: bool) -> Optional[str]:
+            where = ["equipmenttype = %s"]
+            params: list = [equipment_type]
+            if with_sitename and sitename:
+                where.append("sitename = %s")
+                params.append(sitename)
+            # model 우선 (substring ILIKE)
+            if model:
+                where.append("(meta->>'model') ILIKE %s")
+                params.append(f"%{model}%")
+            elif brand:
+                where.append("(meta->>'manufacturer') ILIKE %s")
+                params.append(f"%{brand}%")
+            sql = f"""
+                SELECT equipment_id FROM tb_equipment_info
+                WHERE {' AND '.join(where)}
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """
+            cur.execute(sql, tuple(params))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+        eq_id = _search(with_sitename=True)
+        if not eq_id and sitename:
+            # site 내 실패 → brand fallback
+            if model and brand:
+                where_params = [equipment_type, sitename, f"%{brand}%"]
+                cur.execute(
+                    """
+                    SELECT equipment_id FROM tb_equipment_info
+                    WHERE equipmenttype = %s AND sitename = %s
+                      AND (meta->>'manufacturer') ILIKE %s
+                    ORDER BY updated_at DESC LIMIT 1
+                    """,
+                    tuple(where_params),
+                )
+                row = cur.fetchone()
+                if row:
+                    eq_id = row[0]
+        if not eq_id:
+            eq_id = _search(with_sitename=False)
+
+        cur.close()
+        return eq_id
+    finally:
+        conn.close()
 
 
 def _retrieve_manual_excerpts(
