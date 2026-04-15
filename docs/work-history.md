@@ -48,6 +48,12 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### AC&T 제품 RAG 직접 검증 (2026-04-15)
+- 4개 제품(4G-210N / ETOS-XP / EtherFOS-EZ / IIoT RTU) × 각 제품 관련 쿼리 × top-5 = **20/20 정확 매칭**
+- brand='AC&T System' + equipment_type 필터로 타 제조사(LS) 매뉴얼 완벽 배제
+- IIoT RTU score 0.689 최상, 실제 매뉴얼 설치/배선 섹션 정확 매칭
+- VLM 경로는 AC&T 제품 사진이 없어 스킵 — 향후 이미지 추가 시 E2E 재검증 필요
+
 #### 10회 Web E2E 안정성 검증 (2026-04-15)
 - P1~P15 완료 후 실제 브라우저 회귀 — `xgk plc cpue.jpeg` 업로드+질의 × 10회
 - 10/10 성공: VisionAdviceCard 렌더, manual_excerpts 30/30, 작업+시설물 버튼 10/10회, 설비 등록 1회 (is_registered=False 케이스), catalog 노출 0/30 (P14 boost 검증)

@@ -1257,6 +1257,38 @@ P1~P15 완료 후 실제 브라우저에서 10회 반복 회귀 테스트. canon
 
 **북극성 안정성 결론:** 정방향(사진→진단→작업) + 시설물 등록 + 설비 등록 + 매뉴얼 RAG가 10회 반복에서 0건 failure. VLM의 소폭 변동이 있어도 RAG는 manual_type boost로 일관성 확보. `_detect_issue` heuristic이 low-res 이미지에서 보수적으로 False를 내는 것은 Zero-Hallucination 관점에서 바람직한 동작. 스크린샷: `e025-10run-e2e-final.png`.
 
+#### [E-025] AC&T 제품 RAG 직접 검증 (2026-04-15)
+
+LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 제품(모뎀 2, RTU 2)의 RAG 품질을 직접 `/vision/manual-search` 호출로 검증. AC&T 제품 사진이 없어 VLM 경로는 스킵.
+
+**DB 상태:**
+
+| manual_id | equipment_type | brand | model | page_count |
+|---|---|---|---|---|
+| 1 | 모뎀 | AC&T System | 4G-210N | 67 |
+| 2 | RTU | AC&T System | ETOS-XP | 65 |
+| 3 | 모뎀 | AC&T System | EtherFOS-EZ | 43 |
+| 7 | RTU | AC&T System | IIoT RTU | 56 |
+
+**4개 쿼리 × top-5 결과 (20/20 MATCH):**
+
+| 쿼리 | 기대 모델 | #1 score | top1 발췌 | top-5 MATCH |
+|---|---|---|---|---|
+| "LTE 4G 모뎀 통신 이상 해결 방법" | 4G-210N | 0.521 | p51 "4.2.11 [vmodem] 시리얼 케이블 → LTE 전환 설정" | **5/5** |
+| "EtherFOS 이더넷 광통신 스위치 설치" | EtherFOS | 0.632 | p6 "2.4.1 이더넷 10/100 Base-T" | **5/5** |
+| "ETOS-XP RTU 설치 통신 설정" | ETOS-XP | 0.637 | p43 "제3장 설치 및 배선" | **5/5** |
+| "IIoT RTU 하드웨어 단자 배선" | IIoT | **0.689** | p31 "제3장 설치 및 배선 3.1 전원 및 커넥터 규격" | **5/5** |
+
+**검증 포인트:**
+- `brand='AC&T System'` + `equipment_type=모뎀/RTU` soft boost로 타 제조사(LS ELECTRIC) 매뉴얼 완벽 배제 — 20건 중 catalog/타 브랜드 0건
+- 모든 결과가 해당 제품 매뉴얼의 **실제 관련 섹션**을 가리킴 (1장 개요, 2장 규격, 3장 설치/배선, 4장 세부 설정)
+- IIoT RTU가 최고 score(0.689) — 매뉴얼 1p에 "IIoT RTU Series / AC&T System Co., Ltd." 명시되어 brand+model 일치도 최상
+- P14 user_manual boost 효과 확인 — AC&T 4개 모두 user_manual이라 homogeneous. catalog 혼재 없음
+
+**미검증 영역:**
+- AC&T 제품 VLM 식별 정확도 — 실제 제품 사진이 없어 `/vision/diagnose` 경로 스킵
+- 향후 AC&T 4G-210N/ETOS-XP/EtherFOS-EZ/IIoT RTU 사진이 추가되면 `docs/매뉴얼/<카테고리> 사진/`에 배치 후 VLM end-to-end 재검증 필요
+
 ---
 
 ## 관련 파일
