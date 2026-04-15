@@ -414,12 +414,12 @@ async def get_flow_diagram_edges():
         features = []
         for r in rows:
             (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
-            # 직각 엘보우: 상류와 하류가 수평 레이어 다르면 중간 Y 지점에 꺾임
-            mid_y = (float(uy) + float(dy)) / 2.0
+            # 좌→우 흐름용 직각 엘보우: 중간 X 지점에서 꺾임 (수평 우선)
+            mid_x = (float(ux) + float(dx)) / 2.0
             coords = [
                 [float(ux), float(uy)],
-                [float(ux), mid_y],
-                [float(dx), mid_y],
+                [mid_x, float(uy)],
+                [mid_x, float(dy)],
                 [float(dx), float(dy)],
             ]
             features.append({

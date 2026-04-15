@@ -5,14 +5,14 @@ tb_facility_flow_map(upstream→downstream 엣지)에서 노드 집합을 추출
 Sugiyama 스타일 층별 좌표(group_level + depth 기반 column)로 배치한 뒤
 tb_flow_diagram_node에 UPSERT한다.
 
-레이아웃 규칙:
+레이아웃 규칙 (좌→우 수계 흐름):
   1. facilitytype 기반 group_level 고정
-     - 0: 정수장, 댐, 취수장 (source)
+     - 0: 정수장, 댐, 취수장 (source) — 가장 왼쪽
      - 1: 배수지 (top-level)
      - 2: 가압장, 감압설비 (intermediate)
-     - 3: 소블록, 소소블록, 블록 (leaf)
-  2. diagram_y = group_level * LAYER_HEIGHT  (수평 레이어)
-  3. diagram_x = 같은 level 내 알파벳 정렬 index * COLUMN_WIDTH
+     - 3: 소블록, 소소블록, 블록 (leaf) — 가장 오른쪽
+  2. diagram_x = group_level * COLUMN_X_STEP  (수직 컬럼, 수계 방향 좌→우)
+  3. diagram_y = 같은 level 내 알파벳 정렬 index * ROW_Y_STEP  (세로 배치)
   4. box_width/height: level별 차등 (source 크게, leaf 작게)
   5. display_from_z: level이 높을수록 늦게(= 더 줌 인해야) 노출
      - level 0: 8~22 (항상 보임)
@@ -70,11 +70,11 @@ DISPLAY_FROM_Z = {
     3: 12.0,
 }
 
-# 레이아웃 canvas 상수 (fake lng/lat)
-LAYER_Y_STEP = 0.015     # 레벨 간 세로 간격 (lat)
-COLUMN_X_STEP = 0.004    # 같은 레벨 내 가로 간격 (lng)
-ORIGIN_X = 126.5         # 중심 lng (fake, 충남 인근 값으로 초기화)
-ORIGIN_Y = 36.8          # 중심 lat (fake)
+# 레이아웃 canvas 상수 (fake lng/lat, 좌→우 수계 흐름)
+COLUMN_X_STEP = 0.040    # 레벨 간 가로 간격 (lng) — 수계 방향 컬럼
+ROW_Y_STEP    = 0.004    # 같은 레벨 내 세로 간격 (lat)
+ORIGIN_X = 126.5         # 레벨 0 시작 lng (맨 왼쪽)
+ORIGIN_Y = 36.8          # 중심 lat (각 레벨 세로 중앙값)
 
 
 def _db():
@@ -117,19 +117,20 @@ def _layout(nodes: list[tuple[str, str]]) -> list[dict]:
         items = sorted(by_level[level], key=lambda t: (t[1], t[0]))
         if not items:
             continue
-        # 중앙 정렬: 같은 레벨의 노드들을 ORIGIN_X 중심으로 분포
+        # 좌→우 흐름: 같은 레벨의 노드들을 같은 X 컬럼에 세로로 중앙 정렬 배치
         n = len(items)
         half = (n - 1) / 2.0
+        x_col = ORIGIN_X + level * COLUMN_X_STEP  # 레벨별 X 컬럼 (정수장 leftmost)
         for idx, (sitename, facilitytype) in enumerate(items):
             offset = idx - half
-            x = ORIGIN_X + offset * COLUMN_X_STEP
-            y = ORIGIN_Y - level * LAYER_Y_STEP  # 위에서 아래로 흐름: 정수장이 맨 위
+            # Y는 중앙 정렬 + 소량 랜덤 오프셋 방지 위해 단순 offset*step
+            y = ORIGIN_Y - offset * ROW_Y_STEP
             w, h = BOX_SIZES[level]
             rows.append({
                 "sitename": sitename,
                 "facilitytype": facilitytype,
                 "group_level": level,
-                "diagram_x": round(x, 6),
+                "diagram_x": round(x_col, 6),
                 "diagram_y": round(y, 6),
                 "box_width": w,
                 "box_height": h,
