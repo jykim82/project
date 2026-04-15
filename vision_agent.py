@@ -101,7 +101,7 @@ app.add_middleware(
 # ─────────────────────────────────────────────────────────────────────
 
 EQUIPMENT_WHITELIST = [
-    "PLC", "유량계", "모뎀", "RTU", "펌프", "밸브",
+    "PLC", "유량계", "모뎀", "RTU", "인버터", "펌프", "밸브",
     "수위계", "압력계", "UPS", "기타",
 ]
 
@@ -353,7 +353,7 @@ _DIAGNOSE_PROMPT_TEMPLATE = """당신은 산업 설비 사진을 분석하는 �
 - **허용 패턴**: "ERR LED가 빨간색으로 점등되어 있습니다. 각 표시등의 정확한 의미는 제조사 매뉴얼을 참조해 주세요." ✅
 
 ## 장비 종류 화이트리스트 (반드시 이 중 하나 선택)
-PLC, 유량계, 모뎀, RTU, 펌프, 밸브, 수위계, 압력계, UPS, 기타
+PLC, 유량계, 모뎀, RTU, 인버터, 펌프, 밸브, 수위계, 압력계, UPS, 기타
 
 ## 사용자 컨텍스트
 - 사용자 질의: {user_text}
@@ -363,7 +363,7 @@ PLC, 유량계, 모뎀, RTU, 펌프, 밸브, 수위계, 압력계, UPS, 기타
 ## 출력 형식 (JSON, 반드시 이 스키마만)
 ```json
 {{
-  "equipment_type": "PLC|유량계|모뎀|RTU|펌프|밸브|수위계|압력계|UPS|기타",
+  "equipment_type": "PLC|유량계|모뎀|RTU|인버터|펌프|밸브|수위계|압력계|UPS|기타",
   "brand": "LS | SIEMENS | 삼성 | 미상",
   "model": "모델명 | 미상",
   "equipment_guess": "제조사 모델명 (예: LS XGB-XBCH)",
@@ -520,7 +520,7 @@ _REGISTER_PARSE_PROMPT = """당신은 산업 설비 명판(nameplate) 사진에�
     "serial": "일련번호 (S/N, Serial | 미상)",
     "capacity": "용량 (예: 5.5kW, 100m3/h | 미상)",
     "installed_year": "제조/설치 연도 (4자리 | 미상)",
-    "equipment_type": "PLC|유량계|모뎀|RTU|펌프|밸브|수위계|압력계|UPS|기타"
+    "equipment_type": "PLC|유량계|모뎀|RTU|인버터|펌프|밸브|수위계|압력계|UPS|기타"
   }},
   "confidence_per_field": {{
     "manufacturer": 0.0~1.0,
