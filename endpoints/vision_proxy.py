@@ -287,3 +287,32 @@ async def ask_multimodal_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# [E-025 P12] 명판/계기판 OCR 파싱 프록시 — vision_agent /vision/register-parse 포워딩
+@router.post("/vision/register-parse")
+async def vision_register_parse(request: dict):
+    """프런트가 image_url(+image_kind)을 주면 vision_agent로 포워딩해서 OCR+필드 파싱.
+
+    Body:
+        {"image_url": "/api/files/...", "image_kind": "nameplate|exterior|location"}
+    Response: vision_agent RegisterParseResponse 그대로 (ocr_text, fields, confidence_per_field, needs_manual_input)
+    """
+    image_url = request.get("image_url") or ""
+    image_kind = request.get("image_kind") or "nameplate"
+    if not image_url:
+        raise HTTPException(400, "image_url 필수")
+
+    try:
+        async with httpx.AsyncClient(timeout=VISION_AGENT_TIMEOUT_S) as client:
+            resp = await client.post(
+                f"{VISION_AGENT_URL}/vision/register-parse",
+                json={"image_url": image_url, "image_kind": image_kind},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.TimeoutException:
+        raise HTTPException(504, "vision_agent register-parse 타임아웃")
+    except httpx.HTTPError as e:
+        logger.warning(f"register-parse 포워딩 실패: {e}")
+        raise HTTPException(502, f"vision_agent 호출 실패: {e}")
