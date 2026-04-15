@@ -21,16 +21,8 @@
 
 ---
 
-### 2. master-k 매뉴얼 1페이지만 추출됨
-**현상:** `master-k_H카타로그2.pdf` → `tb_equipment_manual.page_count=1`. 실제 카탈로그는 더 많은 페이지일 가능성.
-
-**원인 추정:** 스캔 이미지 PDF여서 `pypdf.extract_text()`가 빈 결과 → `MIN_PAGE_CHARS=100` 필터에 걸려 대부분 제외.
-
-**선택지:**
-- (a) OCR(tesseract/paddleocr) 파이프라인 추가
-- (b) 해당 매뉴얼 제외 + 텍스트 기반 매뉴얼로 교체
-
-**결정 필요:** OCR 도입 범위 (제품 카탈로그 전반에 적용할지).
+### 2. master-k 매뉴얼 1페이지만 추출됨 ✅ 해결 (slm@decb86c, 2026-04-15)
+**조치:** 사용자 결정에 따라 option (b) — master-k 제외. `tools/index_manuals.py`에 `SKIP_FILENAME_PATTERNS = ["master-k"]` 추가 + 기존 row(manual_id=15) + NPZ 삭제. `_ManualRagIndex` 2833 → **2830 chunks**. OCR 파이프라인은 도입하지 않음.
 
 ---
 
@@ -52,28 +44,34 @@
 
 ---
 
-### 5. 매뉴얼 업로드 UI 부재
-**현상:** 추가 매뉴얼은 `docs/매뉴얼/`에 수동 복사 후 `slm/tools/index_manuals.py` CLI 재실행해야 함.
+### 5. 매뉴얼 업로드 UI 부재 ✅ 해결 (slm@decb86c + slm-dashboard@a81ae5e, 2026-04-15)
+**조치:**
+- `tools/index_manuals.py` 리팩토링: `index_single_pdf(src_path, filename, conn, meta_override)` 헬퍼 추출 (main() 루프 로직 재사용)
+- `endpoints/admin.py` 신규 엔드포인트 3종:
+  - `GET /admin/equipment-manuals` — 목록 조회 (manual_type 포함)
+  - `POST /admin/equipment-manuals/upload` — PDF + 메타 multipart → index_single_pdf 호출 → UPSERT → hint 반환
+  - `DELETE /admin/equipment-manuals/{id}` — DB row + NPZ 파일 삭제
+- `slm-dashboard/src/app/(dashboard)/admin/equipment-manuals/page.tsx` 신규 — 테이블 + 업로드 Dialog + 삭제 action
+- 재시작 안내: vision_agent의 `_ManualRagIndex`가 lazy-load 후 메모리 유지하므로 업로드·삭제 반영 위해 수동 재시작 필요 (hot-reload API는 미구현)
 
-**선택지:** 관리자 페이지에 PDF 업로드 + 자동 인덱싱 트리거.
-
-**결정 필요:** 관리자 UI 필요 여부 (운영 단계에서 매뉴얼이 자주 추가되는지).
-
----
-
-### 6. is_registered 매칭 엄격도 ✅ 부분 해결 (slm@fdda15d, 2026-04-15)
-**해결 내용:** `vision_agent._match_existing_equipment()` 구현으로 sitename + equipmenttype 필터 + `meta->>'model'` ILIKE 우선 + `meta->>'manufacturer'` ILIKE fallback + 글로벌 재시도. 5회 rotation 테스트 5/5 매칭 성공.
-
-**남은 판단:** 현재는 `site 내 실패 → 글로벌 1건 반환` 순서인데, 글로벌 매칭은 오탐 위험이 있다. 글로벌 단계를 비활성화할지 여부 결정 필요.
+**남은 판단:** vision_agent hot-reload API 도입 여부 (업로드 시 즉시 검색에 반영되게). 현재는 수동 `kill + python3 vision_agent.py`. 우선순위 낮음.
 
 ---
 
-### 7. Playwright 샘플 이미지 canonical 경로
-**현상:** 테스트 이미지가 `.playwright-mcp/ls_xgk_error.jpg`, `slm/test_images/fake_ls_plc.jpg`, 컨테이너 `/tmp/ls_xgk_error.jpg` 세 군데에 분산.
+### 6. is_registered 매칭 엄격도 ✅ 완전 해결 (slm@fdda15d → slm@decb86c, 2026-04-15)
+**P8 (fdda15d):** `vision_agent._match_existing_equipment()` 초기 구현 — sitename + equipmenttype 필터 + model ILIKE + brand fallback + **글로벌 재시도**. 5회 rotation 5/5 성공.
 
-**조치 필요:** 검증용 고정 경로 선정 + README 또는 docs/ 내 안내.
+**P8 후속 (decb86c):** **글로벌 매칭 비활성화** — sitename 없거나 site 내 실패 시 바로 None 반환. 내부 `_search_model`/`_search_brand`로 리팩토링(site-scoped only). 오탐 위험 제거, is_registered=False 노출로 사용자 명시 등록 유도.
 
-**결정 필요:** 어디를 canonical로 할지 (예: `slm/test_images/` 단일화).
+**검증 (decb86c):**
+- `sitename=None` → None ✅
+- `sitename='가상없음'` → None (존재하지 않는 사이트 오탐 없음) ✅
+- 5 site rotation (행정/석문/신평/송악1/갈산) → plc_1/2/3/4/79 정확 매칭 ✅
+
+---
+
+### 7. Playwright 샘플 이미지 canonical 경로 ✅ 해결 (web@... 2026-04-15)
+**조치:** `docs/매뉴얼/plc 사진/`을 canonical 경로로 지정. 실제 XGK CPUE 현장 사진이 여기 있음. `docs/test-image-samples.md` 신규 작성 — canonical 경로 + 비-canonical 레거시 경로 구분 + 새 샘플 추가 가이드 포함. 레거시 `slm/test_images/fake_ls_plc.jpg`, `.playwright-mcp/*.jpg`는 사용 금지로 명시.
 
 ---
 
@@ -83,3 +81,8 @@
 - 2026-04-15: #6 is_registered 매칭 P8에서 부분 해결 (`slm@fdda15d`)
 - 2026-04-15: **#1 RAG 쿼리 튜닝 + #4 catalog vs manual 분리** P14에서 해결 (`slm@184764e`) — manual_type soft boost. 검증: manual-search 15/15 user_manual, diagnose 3/3 user_manual, 이전 XGT Catalog 끌어올림 현상 제거
 - 2026-04-15: **#3 XGK 전용 매뉴얼** 사용자 추가로 해결 (XGK-CPU_Manual V3.0 239페이지/253청크 인덱싱, manual_id=18). 실제 XGK CPUE 사진 E2E: VLM=LS XGK-CPUE 정확 식별, manual_excerpts #1 XGK p48 (각부 명칭) + #2 XGK p52 (ERR LED 조치) + #3 XGL-EFMTB
+- 2026-04-15: **#2 master-k 제외** (`slm@decb86c`) — SKIP_FILENAME_PATTERNS + DB/NPZ 제거, 2830 chunks
+- 2026-04-15: **#6 is_registered 매칭 완전 해결** (`slm@decb86c`) — 글로벌 fallback 제거, site-scoped only
+- 2026-04-15: **#7 canonical 경로** — docs/매뉴얼/plc 사진/ 지정 + docs/test-image-samples.md 신규
+- 2026-04-15: **#5 매뉴얼 업로드 UI** (`slm@decb86c` + `slm-dashboard@a81ae5e`) — `index_single_pdf` 헬퍼 + `/admin/equipment-manuals` CRUD 엔드포인트 + `/admin/equipment-manuals/page.tsx` 관리자 페이지 + 업로드 Dialog
+- **✅ review-items 7건 전부 해결** (1,2,3,4,5,6,7)

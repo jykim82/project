@@ -48,6 +48,14 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P15 리뷰 항목 일괄 해결 — master-k 제외 / 글로벌 매칭 제거 / 매뉴얼 업로드 UI / canonical 샘플 경로 (2026-04-15)
+- **#2 master-k 제외**: `SKIP_FILENAME_PATTERNS`에 master-k 추가, DB row+NPZ 삭제, 2833→2830 chunks
+- **#6 글로벌 매칭 제거**: `_match_existing_equipment` site-scoped only로 리팩토링, 오탐 방지. 5 site rotation 유지 확인
+- **#5 매뉴얼 업로드 UI**: `index_single_pdf` 헬퍼 추출 + `/admin/equipment-manuals` 3개 엔드포인트 (GET/POST upload/DELETE) + `/admin/equipment-manuals/page.tsx` 관리자 페이지 (테이블 + 업로드 Dialog + 삭제)
+- **#7 canonical 경로**: `docs/매뉴얼/plc 사진/`를 공식 경로로 지정, `docs/test-image-samples.md` 가이드 신규
+- **✅ review-items 7건 전부 해결**
+- `slm@decb86c` + `slm-dashboard@a81ae5e`
+
 #### P14 RAG 품질 개선 — user_manual boost (2026-04-15)
 - `tb_equipment_manual.manual_type` 컬럼 추가 + 17건 title pattern 분류 (catalog 4 / user_manual 13)
 - `_ManualRagIndex` search에 soft boost (user_manual +0.08 / catalog -0.05), backward compat (information_schema 확인)
