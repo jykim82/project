@@ -121,6 +121,20 @@ class ManualExcerpt(BaseModel):
     score: float
 
 
+class ActiveAlarm(BaseModel):
+    """[E-025 P9] 매칭 설비와 연결된 활성 알람 1건.
+
+    PK 매칭 키: (alarm_start_time, tagsn) — tb_equipment_alarm_report 기준.
+    """
+    alarm_start_time: str  # ISO string
+    tagsn: str
+    alarm_category: Optional[str] = None
+    alarm_msg: Optional[str] = None
+    alarm_severity: Optional[str] = None
+    diagnosed_cause: Optional[str] = None
+    duration_hours: Optional[float] = None
+
+
 class DiagnoseResponse(BaseModel):
     equipment_guess: str
     equipment_type: str
@@ -134,6 +148,10 @@ class DiagnoseResponse(BaseModel):
     matched_equipment_id: Optional[str] = None
     sitename: Optional[str] = None
     facilitytype: Optional[str] = None
+    # [E-025 P9] 문제 감지 + 활성 알람
+    has_issue: bool = False
+    issue_reasons: list[str] = []
+    active_alarms: list[ActiveAlarm] = []
     # 디버그·감사
     vlm_generate_ms: int
     raw_vlm_response: Optional[str] = None
@@ -444,6 +462,24 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
     if matched_equipment_id:
         logger.info(f"[MATCH] is_registered=True equipment_id={matched_equipment_id}")
 
+    # [E-025 P9] 문제 감지 + 활성 알람 조회
+    has_issue, issue_reasons = _detect_issue(observed_state, req.user_text)
+    active_alarms_raw: list[dict] = []
+    if equipment_type != "기타":
+        active_alarms_raw = _fetch_active_alarms(
+            sitename=req.sitename,
+            equipmenttype=equipment_type,
+            limit=5,
+        )
+    if active_alarms_raw:
+        has_issue = True  # 활성 알람이 있으면 무조건 문제 있음
+        if "연결된 활성 알람" not in issue_reasons:
+            issue_reasons.append("연결된 활성 알람")
+    logger.info(
+        f"[ISSUE] has_issue={has_issue} reasons={issue_reasons} "
+        f"active_alarms={len(active_alarms_raw)}"
+    )
+
     return DiagnoseResponse(
         equipment_guess=equipment_guess,
         equipment_type=equipment_type,
@@ -455,6 +491,9 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
         manual_excerpts=[ManualExcerpt(**e) for e in manual_excerpts_raw],
         is_registered=bool(matched_equipment_id),
         matched_equipment_id=matched_equipment_id,
+        has_issue=has_issue,
+        issue_reasons=issue_reasons,
+        active_alarms=[ActiveAlarm(**a) for a in active_alarms_raw],
         sitename=req.sitename,
         facilitytype=req.facilitytype,
         vlm_generate_ms=elapsed_ms,
@@ -803,6 +842,101 @@ def _match_existing_equipment(
         return eq_id
     finally:
         conn.close()
+
+
+# [E-025 P9] 문제 감지 heuristic + 활성 알람 조회
+# ─────────────────────────────────────────────────────────────────────
+
+# observed_state 텍스트에 이 패턴이 있으면 "문제 있음"으로 간주
+# Zero-Hallucination — LLM이 판단하지 않고 후처리로만 태깅
+_ISSUE_KEYWORDS = [
+    # LED 에러 계열 — 색상 포함 점등 (GREEN/녹색 제외)
+    (re.compile(r"(ERR|ERROR|CHK|CHECK|BAT|BATTERY|FAULT|ALARM|ALM)\s*LED.*(점등|ON|켜)", re.IGNORECASE), "에러 LED 점등"),
+    (re.compile(r"(빨간|빨강|적색|RED).*(점등|켜|ON)", re.IGNORECASE), "빨간 LED 점등"),
+    (re.compile(r"(POWER|PWR|RUN)\s*LED.*(소등|OFF|꺼)", re.IGNORECASE), "전원/RUN LED 소등"),
+    # 외관 이상
+    (re.compile(r"(파손|균열|부식|누수|변색|그을|탄|찢어|깨진)", re.IGNORECASE), "외관 이상"),
+    (re.compile(r"(연기|화염|스파크)", re.IGNORECASE), "연기·화재 징후"),
+]
+
+
+def _detect_issue(observed_state: list[str], user_text: Optional[str]) -> tuple[bool, list[str]]:
+    """observed_state + user_text에서 문제 단서 탐지 (heuristic, LLM 판단 아님).
+
+    Returns:
+        (has_issue, matched_reasons[])
+    """
+    haystack = " ".join(observed_state or []) + " " + (user_text or "")
+    reasons: list[str] = []
+    for pattern, label in _ISSUE_KEYWORDS:
+        if pattern.search(haystack):
+            if label not in reasons:
+                reasons.append(label)
+    return bool(reasons), reasons
+
+
+def _fetch_active_alarms(
+    sitename: Optional[str],
+    equipmenttype: Optional[str],
+    limit: int = 5,
+) -> list[dict]:
+    """tb_equipment_alarm_report에서 (sitename, equipmenttype)의 활성 알람 조회.
+
+    active = alarm_end_time IS NULL.
+    equipment_id 컬럼은 현재 모두 NULL이라 사용 불가 — sitename/equipmenttype 기반.
+    """
+    if not sitename or not equipmenttype:
+        return []
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+    except Exception as e:
+        logger.warning(f"[ALARM] DB 연결 실패: {e}")
+        return []
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT alarm_start_time, tagsn, alarm_category, alarm_msg,
+                   alarm_severity, diagnosed_cause,
+                   EXTRACT(EPOCH FROM (NOW() - alarm_start_time))/3600.0 AS duration_h
+            FROM tb_equipment_alarm_report
+            WHERE sitename = %s
+              AND equipmenttype = %s
+              AND alarm_end_time IS NULL
+            ORDER BY alarm_start_time DESC
+            LIMIT %s
+            """,
+            (sitename, equipmenttype, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.warning(f"[ALARM] 조회 실패: {e}")
+        conn.close()
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    results: list[dict] = []
+    for r in rows:
+        results.append({
+            "alarm_start_time": r[0].isoformat() if r[0] else "",
+            "tagsn": r[1] or "",
+            "alarm_category": r[2],
+            "alarm_msg": r[3],
+            "alarm_severity": r[4],
+            "diagnosed_cause": r[5],
+            "duration_hours": round(float(r[6]), 1) if r[6] is not None else None,
+        })
+    return results
 
 
 def _retrieve_manual_excerpts(
