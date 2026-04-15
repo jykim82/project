@@ -48,6 +48,12 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P8 기존 설비 DB 매칭 (2026-04-15)
+- `vision_agent._match_existing_equipment()` — sitename + equipmenttype + `meta->>'model'` ILIKE 우선, 실패 시 `meta->>'manufacturer'` ILIKE fallback, site 내 실패 시 글로벌 재시도
+- `/vision/diagnose` 응답의 `is_registered`/`matched_equipment_id` 하드코딩 제거
+- 검증: sitename 5종(행정/석문/신평/송악1/갈산) → plc_1/plc_2/plc_3/plc_4/plc_79 5/5 매칭 성공. VLM 모델(XGK-CPUE) 미스매치였으나 brand fallback(LS → LSE)으로 site별 PLC 1:1 매칭
+- `slm@fdda15d` _match_existing_equipment + diagnose 통합
+
 #### P3 매뉴얼 RAG 실구현 (2026-04-15)
 - `docs/매뉴얼/` 18개 PDF(LS PLC/인버터 14 + AC&T RTU/모뎀 4) → snowflake-arctic-embed2 임베딩 → NPZ 캐시 + `tb_equipment_manual` 등록 (2469 페이지 / 2580 청크)
 - `slm/tools/index_manuals.py` 신규 — 파일명 → equipment_type/brand/model 자동 매핑, 장문 페이지 overlap 분할, idempotent UPSERT

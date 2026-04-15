@@ -1015,6 +1015,27 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 - 인용 3건: `XGT Series_Catalog_KR_202510 p.107` / `XGL-EFMTB_T8_Manual_V3.71_202601_KR p.33` (LED 표시부 명칭) / `p.358` (제9장 트러블 슈팅 XGL-EH5T 이상동작 LED)
 - 작업 등록 / 설비 등록 버튼 + 면책 푸터 정상, 스크린샷 `e025-p3-manual-excerpts-rendered.png` 캡처
 
+#### [E-025] P8: 기존 설비 DB 매칭 (slm@fdda15d)
+
+진단 응답에서 항상 `is_registered=false`/`matched_equipment_id=null`이던 P5 스텁을 제거하고, VLM 식별 결과를 `tb_equipment_info`와 실제 매칭하도록 개선.
+
+**`_match_existing_equipment()` 로직 (`slm/vision_agent.py`):**
+1. `equipmenttype` + `sitename`으로 후보 축소
+2. `meta->>'model' ILIKE '%VLM_model%'` 우선 (substring, 대소문자 무시)
+3. 모델 매칭 실패 시 `meta->>'manufacturer' ILIKE '%VLM_brand%'` fallback
+4. site 내 전부 실패 시 글로벌 검색으로 한 번 더 (updated_at DESC LIMIT 1)
+5. 예외 발생 시 None 반환 (진단 응답은 계속 진행)
+
+**검증 (5회 반복, sitename 5종 rotation):**
+- 행정 → plc_1 매칭 ✅
+- 석문 → plc_2 매칭 ✅
+- 신평 → plc_3 매칭 ✅
+- 송악1 → plc_4 매칭 ✅
+- 갈산 → plc_79 매칭 ✅
+- 전 5회 200 OK, 매칭 성공률 5/5, manual_excerpts 3/3 동시 유지
+- VLM이 뱉은 모델(`XGK-CPUE`)은 DB(`XGI-CPUS`)와 미스매치였으나 brand fallback(`'LS' ILIKE '%LS%'` → `meta.manufacturer='LSE'`)으로 각 site의 PLC와 1:1 매칭에 성공
+- VisionAdviceCard "미등록 장비" 앰버 뱃지가 사라지고 matched_equipment_id가 채워지는 동작 확인
+
 ---
 
 ## 관련 파일
