@@ -1322,6 +1322,43 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 
 **영향 범위:** 인버터는 E-025 범위의 공식 장비 카테고리였으나 매뉴얼(manual 등록)만 있고 VLM 파이프라인(화이트리스트 + 프롬프트)이 누락된 불완전 지원 상태였음. 본 수정으로 일관성 확보.
 
+#### [E-025] 매뉴얼 PDF 다운로드 경로 폐쇄망 대응 (slm@230dabf + slm-dashboard@3dbd834, 2026-04-15)
+
+**사용자 시나리오:**
+1. 관리자가 XGT 매뉴얼 직접 열람·다운로드
+2. 현장 작업자가 비전 진단 → AI 설명 → 관련 매뉴얼 PDF 1-click 열람
+
+**폐쇄망 요건:** 매뉴얼은 전부 로컬 서빙(PC), 외부 제조사(LS/AC&T) 홈페이지 링크 절대 금지.
+
+**발견된 구조적 문제:**
+- 기존 `tb_equipment_manual.file_url`이 `/api/files/manual/*`로 Next.js BFF 로컬 FS를 참조 — 하지만 `slm-frontend` 컨테이너엔 매뉴얼 PDF가 없음 (404)
+- `slm-backend` 컨테이너가 `/web/files/manuals/` **ephemeral 경로**에 저장 (바인드 마운트 없음) — 재시작 시 소실 위험
+- 결과: 프론트엔드 전혀 다운로드 불가, 배포 안정성 없음
+
+**수정:**
+1. **경로 이동:** `MANUALS_DEST_DIR` 기본값을 `/web/files/manuals`(ephemeral) → `/app/data/manuals`(`../slm/data/manuals` 바인드 마운트)로 변경. 기존 18개 PDF를 호스트 `/Users/jykim/slm/data/manuals/`로 물리 이동.
+2. **URL 프리픽스:** `/api/files/manual/<name>` → `/api/proxy/files/manual/<name>`. Next.js BFF 프록시가 인증 게이트 통과 후 백엔드로 라우팅.
+3. **백엔드 라우트:** `endpoints/admin.py`에 `GET /files/manual/{filename:path}` 신규 — `FileResponse`로 PDF 스트리밍, `_MANUALS_DIR` 밖 경로는 path traversal 403, UTF-8 `Content-Disposition filename*=`로 한글 파일명 지원.
+4. **DB 업데이트:** 기존 17 rows(manual_id=15 master-k 제외)의 `file_url` 일괄 REPLACE.
+5. **vision_agent 확장:** `_ManualRagIndex.load` SQL에 `file_url` 추가, `_rows` 저장, `search()` 결과에 포함. `ManualExcerpt` 모델에 `file_url: Optional[str]` 필드 추가.
+6. **인덱서 동기화:** `tools/index_manuals.py`의 file_url 생성 코드도 새 프리픽스 사용 (향후 업로드 자동 적용).
+7. **프런트엔드:**
+   - `types/chat.ts VisionManualExcerpt` `file_url?: string | null` 필드
+   - `VisionAdviceCard` 매뉴얼 인용 우측 상단에 `[Download PDF]` 버튼 (보라 테마, target=_blank) — 각 excerpt에 `ex.file_url` 있으면 노출
+   - `/admin/equipment-manuals` "작업" 컬럼에 다운로드 아이콘(sky) + 삭제 아이콘(red) 병렬 배치
+
+**외부 URL 부재 감사 (grep):**
+- `slm/` + `slm-dashboard/src/`에서 `lsis|lselectric|actsystem` 도메인 참조 **0건**
+- `web/docs/매뉴얼/XGF-DL16A_Manual.pdf` 내 LSIS URL은 PDF 콘텐츠일 뿐 우리 코드와 무관
+
+**검증:**
+- 백엔드 직접 호출: `GET /files/manual/XGK-CPU_Manual_V3.0_202508_KR.pdf` → 200, `content-type=application/pdf`, `content-length=6188563`, `%PDF-1.6` magic, UTF-8 filename 헤더 확인
+- Next.js BFF 프록시: `/api/proxy/files/manual/*` → 401 (인증 게이트 정상, 세션 있으면 통과)
+- `/vision/manual-search` 응답에 `file_url` 필드 포함 확인 (XGR-CPU / XGK-CPU / XGL-EFMTB 3건)
+- `tsc --noEmit` 신규 TS 에러 0건
+
+**미검증:** Playwright 브라우저 E2E는 세션 만료 + 비밀번호 정책(tb_user pw_migrated=t but user_pw NULL) 문제로 로그인 실패해서 UI 상 클릭 테스트 생략. 사용자가 실제 브라우저에서 로그인 상태로 확인 필요.
+
 ---
 
 ## 관련 파일

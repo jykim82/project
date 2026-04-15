@@ -48,6 +48,19 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### 매뉴얼 PDF 다운로드 경로 폐쇄망 대응 (2026-04-15)
+- 배경: 사용자 시나리오 "XGT 매뉴얼 열람" + "비전 진단 후 매뉴얼 다운로드 링크", 폐쇄망 = 외부 벤더 사이트 링크 금지
+- 발견 문제: file_url이 /api/files/manual/*로 Next.js BFF 로컬 FS 참조했으나 slm-frontend엔 파일 없음 + slm-backend는 ephemeral /web/files/manuals/에 저장 중
+- 수정:
+  - 18개 PDF를 ../slm/data/manuals/ (바인드 마운트)로 물리 이동
+  - file_url 프리픽스 /api/files/manual/ → /api/proxy/files/manual/
+  - 백엔드 GET /files/manual/{filename} 신규 (path traversal 방어 + UTF-8 Content-Disposition)
+  - tb_equipment_manual 17건 file_url 일괄 UPDATE, vision_agent _ManualRagIndex + ManualExcerpt 모델 확장
+  - VisionAdviceCard 매뉴얼 인용에 [Download PDF] 버튼 + /admin/equipment-manuals 다운로드 아이콘
+- 외부 URL grep 결과: slm/slm-dashboard 코드 0건 (PDF 콘텐츠 내부만)
+- 검증: 백엔드 직접 200 PDF 응답, 프록시 401 게이트 정상, manual-search 응답 file_url 포함
+- `slm@230dabf` + `slm-dashboard@3dbd834`
+
 #### 3종 신규 이미지 E2E + 인버터 whitelist 버그 수정 (2026-04-15)
 - 사용자가 `docs/매뉴얼/plc 사진/`에 PLC 3장 + AC&T RCS-XG LTE 모뎀 3장 + 인버터 1장 추가
 - **plc1.jpg**: LS XBF-DR32H 정확 식별, matched=plc_1, manual 3건 (XGL-EFMTB 트러블슈팅)
