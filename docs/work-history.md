@@ -48,6 +48,13 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P12 명판/계기판 OCR 자동 등록 (2026-04-15)
+- 설비 등록 버튼 클릭 시 `/vision/register-parse` 자동 호출로 manufacturer/model/serial/capacity/installed_year 판독
+- 백엔드: `endpoints/vision_proxy.py` POST `/vision/register-parse` 프록시 추가 (ai_server 8000 → vision_agent 8100)
+- 프런트: `equipment-api.ts parseNameplate`, `EquipmentPhotoRegisterDialog` ocrFields/ocrText props + S/N·용량·설치년도 입력 필드, sky 테마 OCR 배너, `chat/page.tsx handleRegisterEquipmentFromVision` 비동기화
+- E2E: ls_xgk_error.jpg → 설비 등록 → OCR 자동 호출 → Dialog 오픈 시 brand=LS, model=XGP-ACF2+XGK-CPUE 자동 채움 + 원본 OCR 12라인 표시
+- `slm@61737bb` + `slm-dashboard@b23c70d`
+
 #### P11 경보 → /chat 딥링크 진입 (역방향 플로우) (2026-04-15)
 - `AlarmReportTable` 각 행에 카메라 버튼 (`/chat?sitename=X&facilitytype=Y&prefill=...`)
 - `chat/page.tsx` `deepLinkSite` state + `useEffect`에서 query params 읽어 prefill + 컨텍스트 저장, URL 즉시 clean

@@ -1115,6 +1115,41 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 
 이로써 북극성 루프가 **정방향(사진→진단→조치) + 역방향(알람→현장확인)** 양쪽 진입점이 모두 완성됨.
 
+#### [E-025] P12: 명판/계기판 OCR 자동 등록 (slm@61737bb + slm-dashboard@b23c70d)
+
+유량계 계기판이나 PLC 명판을 찍어 등록할 때 제조사·모델·S/N·용량·설치년도를 VLM OCR로 자동 판독하여 `EquipmentPhotoRegisterDialog`에 미리 채운다. 기존 P7은 VLM diagnose의 equipment_guess만 사용했는데, 그건 참고 의견 텍스트일 뿐 구조화된 필드가 아니었다. 이번에는 `/vision/register-parse` 전용 프롬프트를 활용해 JSON 스키마로 파싱된 값을 받아온다.
+
+**백엔드 프록시 (`slm/endpoints/vision_proxy.py`):**
+- `POST /vision/register-parse` — body `{image_url, image_kind}` → vision_agent(8100) `/vision/register-parse` 포워딩
+- 기존 vision_agent 엔드포인트를 프런트에서 ai_server 경유로 호출 가능하게 함 (CORS·auth 일관성)
+
+**API 클라이언트 (`slm-dashboard/.../equipment-api.ts`):**
+- `OcrFields` 인터페이스 + `ParseNameplateResponse` 신규
+- `parseNameplate(imageUrl, kind)` 헬퍼 (apiClient 경유)
+
+**Dialog 확장 (`EquipmentPhotoRegisterDialog.tsx`):**
+- `ocrFields` / `ocrText` props 추가
+- brand/model 초기값 우선순위: **OCR → VLM diagnose → 빈 값** (OCR이 원문 보존이므로 상위)
+- S/N / 용량 / 설치년도 input 필드 조건부 노출 (`ocrFields` 있을 때만)
+- sky 테마 OCR 결과 배너 + `<details>` 원본 텍스트 토글
+- `handleSubmit` → `commissioned_at = '{year}-01-01'` + meta에 serial/capacity/installed_year 저장
+
+**chat/page.tsx 통합:**
+- `handleRegisterEquipmentFromVision` 비동기화 — 버튼 클릭 → setEquipmentVisionContext + setOcrLoading(true) → `parseNameplate(vision.image_url)` 호출 → 결과 state 저장 → Dialog 렌더 (OCR 필드 자동 채움 완료)
+- Dialog `key`에 OCR 여부 포함 (`vision-eq-{id}-{ocr|none}`) — 컨텍스트 변경 시 내부 state 재초기화 강제
+- 우하단 "명판 OCR 판독 중..." 로딩 인디케이터 (sky 테마, 로딩 중에만)
+
+**Playwright E2E 검증:**
+- `/chat` → ls_xgk_error.jpg 업로드 + "이 PLC 등록해줘" 전송 → VisionAdviceCard 렌더
+- "설비 등록" 버튼 클릭 → register-parse 자동 호출 (~30s VLM)
+- Dialog 오픈 → OCR 섹션 확인:
+  - 제조사: **LS** ✅
+  - 모델: **XGP-ACF2, XGK-CPUE** ✅
+  - 원본 OCR 텍스트: "XGP-ACF2 / POWER / XGT / PROGRAMMABLE LOGIC CONTROLLER / XGK-CPUE / RUN/STOP / REM. / ERR. / P.S. / BAT. / CHK." (12라인)
+- brand input "LS", model input "XGP-ACF2, XGK-CPUE" 자동 채움 확인
+- S/N / 용량 / 설치년도 3개 입력 필드 렌더 (PLC는 명판에 이 필드 없어 공란, 유량계 계기판일 경우 자동 채움 예상)
+- 스크린샷 `e025-p12-ocr-autofill-dialog.png`
+
 ---
 
 ## 관련 파일
