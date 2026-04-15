@@ -48,6 +48,13 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P3 매뉴얼 RAG 실구현 (2026-04-15)
+- `docs/매뉴얼/` 18개 PDF(LS PLC/인버터 14 + AC&T RTU/모뎀 4) → snowflake-arctic-embed2 임베딩 → NPZ 캐시 + `tb_equipment_manual` 등록 (2469 페이지 / 2580 청크)
+- `slm/tools/index_manuals.py` 신규 — 파일명 → equipment_type/brand/model 자동 매핑, 장문 페이지 overlap 분할, idempotent UPSERT
+- `slm/vision_agent.py` `_ManualRagIndex` 클래스 — lazy-load NPZ + cosine search + 장비 타입/브랜드 soft boost. `/vision/manual-search` 실구현, `/vision/diagnose` 응답에 `manual_excerpts` 자동 채움
+- 검증: LS XGK ERR LED 이미지 5회 반복 — 전 5회 3/3 excerpts, avg top score 0.640, #1 결과 5/5회 `XGR-CPU p251 "15.2.3 ERR LED 점등 조치방법"` 안정 검색
+- `slm@5d0374f` vision_agent RAG + tools/index_manuals.py
+
 ---
 
 ### 완료 (2026-04-13 — 위기대응 검출 로직 다이어그램 시각 디자인 개선 [E-024])

@@ -971,6 +971,44 @@ Playwright 브라우저 라이브 검증 완료 — VisionAdviceCard에 6개 LED
 - `has_photo=true`, sitename=행정1수청, facilitytype=소소블록 모두 정상 저장 ✅
 - tsc --noEmit 신규 에러 0건 (기존 equipment-api.ts의 7개 에러는 pre-existing)
 
+#### [E-025] P3: 매뉴얼 RAG 실구현 (slm@5d0374f)
+
+장비 사진 진단 응답에 제조사 매뉴얼의 원문 페이지를 실데이터로 인용하도록 RAG 파이프라인을 완성. 기존 `manual_excerpts=[]` 스텁을 실제 cosine similarity 검색 결과로 대체했다.
+
+**인덱싱** `slm/tools/index_manuals.py` (신규):
+- `docs/매뉴얼/` 18개 PDF 스캔 → `pypdf` 페이지 추출 (≥100자 필터)
+- 장문 페이지(>3000자)는 1500자 / 300자 overlap 분할 → 청크 단위
+- Ollama `/api/embed` (snowflake-arctic-embed2, 1024 dim) 배치 16 호출 → L2 normalize
+- `data/manual_embeddings/<embedding_key>.npz` 저장 (embeddings / pages / texts)
+- `tb_equipment_manual` UPSERT (idempotent — title + npz 존재 매칭)
+- 파일명 → `equipment_type` / `brand` / `model` 자동 매핑 (LS XGB/XGT/GLOFA/Master-K → PLC, G100/iS7 → 인버터, AC&T ETOS/IIoT → RTU, 4G-210N/EtherFOS → 모뎀)
+- **1회 실행 결과:** 18개 매뉴얼 / 2469 페이지 / 2580 청크 / ~30초
+
+**런타임 검색** `slm/vision_agent.py`:
+- `_ManualRagIndex` 클래스 (lazy-load): 최초 검색 시 17개 NPZ + tb_equipment_manual 메타 전량 로드 (~10MB, RAM 상주)
+- `_embed_query()`: snowflake-arctic-embed2로 쿼리 임베딩 → L2 normalize
+- `search()`: `embeddings @ query_emb` dot product (L2 normalized이라 cosine) + 장비 타입 `+0.15` / 브랜드 `+0.10` soft boost
+- `argpartition`로 top-k*4 후보 → (manual_id, page) 중복 제거 → top-k 반환
+- `/vision/manual-search` 엔드포인트: 독립 RAG 검색 (equipment_type / brand / query / top_k)
+- `/vision/diagnose`: VLM 식별 결과(equipment_guess / equipment_type / brand / observed_state)와 user_text를 concat → `_retrieve_manual_excerpts()` 호출 → `manual_excerpts` 필드 자동 채움 (장비 식별 실패 시 skip)
+
+**검증 (5회 반복, `/tmp/ls_xgk_error.jpg` + "ERR LED 점등" 질의):**
+- 전 5회 HTTP 200 ✅
+- 전 5회 3/3 excerpts 반환 ✅
+- avg top cosine score: **0.640** (문턱 0.5 상회)
+- #1 결과 안정성: 5/5회 모두 `XGR-CPU_Manual_V3.0` **p251 "15.2.3 ERR.(Error) LED가 점등하고 있는 경우의 조치방법"** 검색됨 — 질의와 매뉴얼 원문 정확 매칭
+- 보조 인용: `XGL-EFMTB` p32/34 LED 상태표 + `XGR-CPU` p247 WAR LED 조치
+- avg VLM 생성시간 35.5s (gemma4:26b 비전), RAG 검색은 <50ms (index 사전 로드 후)
+
+**독립 엔드포인트 검증 (manual-search 단독):**
+```
+POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XGB ERR LED 점등 CPU 고장 원인"}
+→ total_chunks: 2580
+→ [0.556] XGR-CPU p251 "제15장 트러블슈팅 ERR LED 점등 조치방법"
+→ [0.505] XGR-CPU p51 "WAR LED 경고 LED 용도"
+→ [0.503] XGL-EFMTB p361 "XGK CPU 운전 중 에러 코드 및 조치방법"
+```
+
 ---
 
 ## 관련 파일
