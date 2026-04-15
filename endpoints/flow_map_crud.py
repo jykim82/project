@@ -317,3 +317,176 @@ async def import_flow_map_csv(file: UploadFile):
     finally:
         if conn:
             conn.close()
+
+
+# =============================================================================
+# [다이어그램 모드] tb_flow_diagram_node — GeoJSON 서빙 + 드래그 저장
+# =============================================================================
+
+@router.get("/flow-diagram/nodes")
+async def get_flow_diagram_nodes():
+    """tb_flow_diagram_node → GeoJSON FeatureCollection.
+
+    MapLibreGL이 addSource(type: 'geojson')로 그대로 로드 가능한 포맷.
+    각 feature의 properties에 group_level/box_width/display_from_z 등을
+    포함해 layer filter/expression에서 활용.
+    """
+    conn = None
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT node_id, sitename, facilitytype, parent_node_id, group_level,
+                   diagram_x, diagram_y, box_width, box_height, label_text,
+                   display_from_z, display_to_z, meta
+            FROM tb_flow_diagram_node
+            ORDER BY group_level, sitename
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        features = []
+        for r in rows:
+            (node_id, sitename, facilitytype, parent_id, level,
+             x, y, w, h, label, from_z, to_z, meta) = r
+            features.append({
+                "type": "Feature",
+                "id": int(node_id),
+                "geometry": {"type": "Point", "coordinates": [float(x), float(y)]},
+                "properties": {
+                    "node_id": int(node_id),
+                    "sitename": sitename,
+                    "facilitytype": facilitytype,
+                    "parent_node_id": int(parent_id) if parent_id else None,
+                    "group_level": int(level),
+                    "box_width": float(w),
+                    "box_height": float(h),
+                    "label_text": label,
+                    "display_from_z": float(from_z),
+                    "display_to_z": float(to_z),
+                    "meta": meta or {},
+                },
+            })
+        return {"type": "FeatureCollection", "features": features}
+    except Exception as e:
+        logger.error(f"flow-diagram nodes GeoJSON 실패: {e}")
+        return {"type": "FeatureCollection", "features": [], "error": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.get("/flow-diagram/edges")
+async def get_flow_diagram_edges():
+    """tb_facility_flow_map + tb_flow_diagram_node 조인 → LineString 배열.
+
+    각 엣지를 (upstream 좌표) → 중간점(직각 엘보우) → (downstream 좌표)로
+    구성. MapLibreGL이 addSource로 로드.
+    """
+    conn = None
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                fm.upstream_sitename, fm.upstream_facilitytype,
+                fm.downstream_sitename, fm.downstream_facilitytype,
+                fm.relation_type,
+                u.diagram_x AS up_x, u.diagram_y AS up_y,
+                u.group_level AS up_level,
+                d.diagram_x AS dn_x, d.diagram_y AS dn_y,
+                d.group_level AS dn_level
+            FROM tb_facility_flow_map fm
+            JOIN tb_flow_diagram_node u
+                ON u.sitename = fm.upstream_sitename
+               AND u.facilitytype = fm.upstream_facilitytype
+            JOIN tb_flow_diagram_node d
+                ON d.sitename = fm.downstream_sitename
+               AND d.facilitytype = fm.downstream_facilitytype
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        features = []
+        for r in rows:
+            (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
+            # 직각 엘보우: 상류와 하류가 수평 레이어 다르면 중간 Y 지점에 꺾임
+            mid_y = (float(uy) + float(dy)) / 2.0
+            coords = [
+                [float(ux), float(uy)],
+                [float(ux), mid_y],
+                [float(dx), mid_y],
+                [float(dx), float(dy)],
+            ]
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {
+                    "upstream_sitename": us,
+                    "upstream_facilitytype": uf,
+                    "downstream_sitename": ds,
+                    "downstream_facilitytype": df,
+                    "relation_type": rel,
+                    "upstream_level": int(ul),
+                    "downstream_level": int(dl),
+                    # 노출 제어: 두 노드의 from_z 중 큰 값 이상에서만 보이게 하려면
+                    # 프런트에서 해당 로직 처리 (여기선 기본값만 전달)
+                    "min_display_z": max(10.0, float(min(ul, dl)) * 0.5 + 8.0),
+                },
+            })
+        return {"type": "FeatureCollection", "features": features}
+    except Exception as e:
+        logger.error(f"flow-diagram edges GeoJSON 실패: {e}")
+        return {"type": "FeatureCollection", "features": [], "error": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.put("/flow-diagram/nodes/{node_id}")
+async def update_flow_diagram_node(node_id: int, req: dict):
+    """드래그 이동 후 diagram_x/y 저장 + 기타 필드 업데이트.
+
+    Body 지원 필드: diagram_x, diagram_y, box_width, box_height,
+    label_text, group_level, display_from_z, display_to_z, parent_node_id.
+    """
+    allowed = {
+        "diagram_x", "diagram_y", "box_width", "box_height",
+        "label_text", "group_level", "display_from_z", "display_to_z",
+        "parent_node_id",
+    }
+    updates = {k: v for k, v in (req or {}).items() if k in allowed}
+    if not updates:
+        return {"status": "ERROR", "message": "업데이트 가능 필드 없음"}
+
+    set_sql = ", ".join(f"{k} = %s" for k in updates.keys())
+    params = list(updates.values()) + [node_id]
+
+    conn = None
+    try:
+        conn = _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE tb_flow_diagram_node SET {set_sql}, updated_at = now() "
+            f"WHERE node_id = %s RETURNING node_id",
+            params,
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return {"status": "ERROR", "message": "node not found"}
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "node_id": int(row[0])}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"flow-diagram node PUT 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
