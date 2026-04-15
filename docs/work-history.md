@@ -48,6 +48,12 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P10 경보 목록 비전 해제 배지 + 5회 회귀 테스트 (2026-04-15)
+- `AlarmReportTable` — `isVisionResolved()` + "상태" 컬럼에 보라 `<Badge>카메라 비전</Badge>` (user_cause_description에 '[비전 점검 해제]' prefix 있으면). title attribute로 hover시 전체 note 노출
+- 감사 추적: 해제된 알람 중 현장 비전 점검으로 해제된 건을 즉시 식별
+- 5회 회귀 테스트: 5 site rotation × diagnose → resolve, 전 10회 성공 (has_issue 5/5, active_alarms 5/5, manual 5/5, resolve 5/5)
+- `slm-dashboard@9b41987`
+
 #### P9 알람 연계 — 점검→장애→알람 단방향 플로우 (2026-04-15)
 - **P9a 백엔드**: `vision_agent.ActiveAlarm` + `_detect_issue`(regex heuristic, LED/외관/화재) + `_fetch_active_alarms(sitename, equipmenttype)` → `tb_equipment_alarm_report WHERE alarm_end_time IS NULL`
 - **P9a sitename 추론**: `vision_proxy._infer_site_from_text` — `tb_equipment_info` 캐시 substring 매칭 (가장 긴 것 우선), 프론트 미명시 시 자동

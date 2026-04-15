@@ -1075,6 +1075,25 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 - DB 확인: 2건 모두 `alarm_end_time` 세팅됨 + `user_cause_description='[비전 점검 해제] LS XGK-CPUE'` ✅
 - 스크린샷: `e025-p9-alarm-section-rendered.png`
 
+#### [E-025] P10: 경보 목록 "비전" 해제 배지 + 5회 회귀 테스트 (slm-dashboard@9b41987)
+
+북극성 플로우의 감사 추적을 시각화. 해제된 알람 중 "현장 사진으로 확인 후 해제"된 건을 경보 이력에서 한눈에 식별 가능하게 함.
+
+**변경 (`slm-dashboard/.../AlarmReportTable.tsx`):**
+- `isVisionResolved()` 헬퍼 — `user_cause_description`에 `[비전 점검 해제]` 포함 여부
+- 경보 목록 "상태" 컬럼에 기존 `StatusBadge` 아래로 `<Badge><Camera /> 비전</Badge>` (보라 500) 추가 노출 (vertical flex)
+- title attribute에 전체 resolution note 제공 (hover tooltip)
+
+**E2E 검증 (Playwright):**
+- `user_cause_description='[비전 점검 해제] LS XGK-CPUE 현장 확인 완료'` 테스트 알람 seed
+- `/crisis/alarm-dashboard?tab=history` → 해당 행에 `경고` + `inactive` + `비전` 3배지 동시 렌더 확인, 다른 4778개 행엔 '비전' 배지 없음 (conditional 정상 동작)
+- 스크린샷 `e025-p10-vision-badge-focused.png`
+
+**5회 회귀 테스트 (slm@6d8291a + slm-dashboard@13981be P9 플로우):**
+- 5개 site × 알람 seed (행정/석문/신평/송악1/갈산) × PLC 경고
+- Round 1 (`/vision/diagnose` × 5): 전 5회 200 OK, `has_issue=True`, `active_alarms=1`, `manual_excerpts=3`, matched_equipment_id plc_1/2/3/4/79 (brand fallback로 전 매칭 성공), avg total 38.2s
+- Round 2 (`/crisis/alarm-reports/resolve` × 5): 전 5회 `resolved=1`, DB 확인 5건 모두 `alarm_end_time` 세팅 + `user_cause_description='[비전 점검 해제] 회귀 RN'` 개별 저장
+
 ---
 
 ## 관련 파일
