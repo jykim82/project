@@ -125,6 +125,53 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
+# [E-025 P9] 질의 텍스트에서 sitename/facilitytype 추론 (사용자가 직접 명시 안 한 경우)
+_sitename_cache: list[str] = []
+_facilitytype_cache: list[str] = []
+
+
+def _load_site_cache() -> None:
+    global _sitename_cache, _facilitytype_cache
+    if _sitename_cache:
+        return
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT sitename FROM tb_equipment_info WHERE sitename IS NOT NULL")
+        _sitename_cache = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT facilitytype FROM tb_equipment_info WHERE facilitytype IS NOT NULL")
+        _facilitytype_cache = [r[0] for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        logger.info(
+            f"[vision_proxy] site cache: {len(_sitename_cache)} sites, "
+            f"{len(_facilitytype_cache)} facility types"
+        )
+    except Exception as e:
+        logger.warning(f"[vision_proxy] site cache 로드 실패: {e}")
+
+
+def _infer_site_from_text(user_text: str) -> tuple[Optional[str], Optional[str]]:
+    """user_text에서 알려진 sitename/facilitytype substring 매칭.
+
+    가장 긴 매칭을 우선 (행정1수청 > 행정).
+    """
+    if not user_text:
+        return None, None
+    _load_site_cache()
+    matched_site: Optional[str] = None
+    matched_ft: Optional[str] = None
+    for s in sorted(_sitename_cache, key=lambda x: -len(x)):
+        if s in user_text:
+            matched_site = s
+            break
+    for ft in sorted(_facilitytype_cache, key=lambda x: -len(x)):
+        if ft in user_text:
+            matched_ft = ft
+            break
+    return matched_site, matched_ft
+
+
 @router.post("/ask/multimodal/stream")
 async def ask_multimodal_stream(
     user_question: str = Form(""),
@@ -166,12 +213,28 @@ async def ask_multimodal_stream(
         })
 
         primary_image_path = saved_paths[0]
+
+        # [E-025 P9] sitename/facilitytype 미지정 시 질의 텍스트에서 추론
+        effective_site = sitename
+        effective_ft = facilitytype
+        if not effective_site or not effective_ft:
+            inferred_site, inferred_ft = _infer_site_from_text(user_question)
+            if not effective_site:
+                effective_site = inferred_site
+            if not effective_ft:
+                effective_ft = inferred_ft
+            if effective_site or effective_ft:
+                logger.info(
+                    f"[vision_proxy] site inferred from text: "
+                    f"site={effective_site} ft={effective_ft}"
+                )
+
         try:
             agent_resp = await _call_vision_agent("/vision/diagnose", {
                 "image_url": primary_image_path,
                 "user_text": user_question,
-                "sitename": sitename,
-                "facilitytype": facilitytype,
+                "sitename": effective_site,
+                "facilitytype": effective_ft,
             })
         except httpx.TimeoutException:
             yield _sse("error", {
@@ -193,8 +256,8 @@ async def ask_multimodal_stream(
             image_url=primary_image_path,
             image_kind="chat_attachment",
             agent_response=agent_resp,
-            sitename=sitename,
-            facilitytype=facilitytype,
+            sitename=effective_site,
+            facilitytype=effective_ft,
         )
 
         elapsed_ms = int((time.perf_counter() - t_start) * 1000)

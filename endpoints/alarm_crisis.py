@@ -707,6 +707,63 @@ async def confirm_alarm_report_api(request: Request):
             conn.close()
 
 
+# [E-025 P9c] 비전 점검에서 알람 해제
+@router.post("/crisis/alarm-reports/resolve")
+async def resolve_alarm_reports_api(request: Request):
+    """복수 알람을 일괄로 해제 (alarm_end_time = NOW()).
+
+    Body:
+        {
+          "alarms": [{"alarm_start_time": "...", "tagsn": "..."}],
+          "resolution_note": "[비전 점검 해제] ..."
+        }
+    Response:
+        {"status": "OK", "resolved": N}
+    """
+    conn = None
+    try:
+        body = await request.json()
+        alarms: list[dict] = body.get("alarms") or []
+        note: str = (body.get("resolution_note") or "").strip()
+
+        if not alarms:
+            return {"status": "error", "message": "alarms 필수"}
+
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        resolved = 0
+        for a in alarms:
+            alarm_start_time = a.get("alarm_start_time")
+            tagsn = a.get("tagsn")
+            if not alarm_start_time or not tagsn:
+                continue
+            cur.execute(
+                """
+                UPDATE tb_equipment_alarm_report
+                SET alarm_end_time = NOW(),
+                    alarm_confirm_yn = 'Y',
+                    user_cause_description = COALESCE(user_cause_description || ' | ', '') || %s,
+                    info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+                WHERE tagsn = %s
+                  AND alarm_start_time = %s::timestamp
+                  AND alarm_end_time IS NULL
+                """,
+                [note or "[비전 점검 해제]", tagsn, alarm_start_time],
+            )
+            resolved += cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "resolved": resolved}
+    except psycopg2.Error as e:
+        logger.error(f"알람 해제 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
 # =============================================================================
 # 작업관리 CRUD API
 # =============================================================================
