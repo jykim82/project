@@ -643,3 +643,185 @@ async def update_site_settings(request: Request):
     finally:
         if conn:
             conn.close()
+
+
+# =============================================================================
+# [E-025 review #5] 관리자 API: 장비 매뉴얼 관리 (RAG 인덱스)
+# =============================================================================
+
+@router.get("/admin/equipment-manuals")
+async def list_equipment_manuals():
+    """인덱싱된 장비 매뉴얼 목록 + 각 매뉴얼의 청크 수 조회."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT manual_id, equipment_type, brand, model, title, file_url,
+                   page_count, embedding_key,
+                   COALESCE(manual_type, 'user_manual') AS manual_type,
+                   uploaded_by, uploaded_at
+            FROM tb_equipment_manual
+            ORDER BY manual_id DESC
+            """
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        cur.close()
+        return {"status": "OK", "data": rows, "total": len(rows)}
+    except psycopg2.Error as e:
+        logger.error(f"매뉴얼 목록 조회 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
+
+EQUIPMENT_MANUAL_MAX_SIZE = 100 * 1024 * 1024  # 100MB (큰 PDF 지원)
+
+
+@router.post("/admin/equipment-manuals/upload")
+async def upload_equipment_manual(
+    file: UploadFile = File(...),
+    equipment_type: str = Form(""),
+    brand: str = Form(""),
+    model: str = Form(""),
+    manual_type: str = Form("user_manual"),
+):
+    """장비 매뉴얼 PDF 업로드 + 자동 인덱싱 (text extract → embed → NPZ + DB).
+
+    기존 `index_manuals.py` 로직을 재사용(`index_single_pdf`)하여 업로드 즉시
+    RAG 인덱스에 반영한다. 동일 title이 이미 있으면 UPSERT (NPZ도 교체).
+    인덱싱 후 vision_agent가 새 매뉴얼을 검색 결과에 포함시키려면 **재시작 필요**
+    (`_ManualRagIndex._loaded=False`로 강제 재로드하는 API는 미구현 — 수동 restart).
+    """
+    # 파일 검증
+    contents = await file.read()
+    if not contents:
+        return {"status": "ERROR", "message": "빈 파일"}
+    if len(contents) > EQUIPMENT_MANUAL_MAX_SIZE:
+        return {"status": "ERROR", "message": f"파일 크기 {EQUIPMENT_MANUAL_MAX_SIZE // (1024*1024)}MB 초과"}
+    filename = file.filename or f"{uuid.uuid4().hex}.pdf"
+    if not filename.lower().endswith(".pdf"):
+        return {"status": "ERROR", "message": "PDF만 지원"}
+
+    # 임시 파일로 저장 (index_single_pdf가 경로 기반으로 동작)
+    tmp_dir = "/tmp/admin_manual_upload"
+    os.makedirs(tmp_dir, exist_ok=True)
+    tmp_path = os.path.join(tmp_dir, filename)
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(contents)
+    except OSError as e:
+        logger.error(f"매뉴얼 임시 저장 실패: {e}")
+        return {"status": "ERROR", "message": "임시 저장 실패"}
+
+    # index_single_pdf 호출
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from tools.index_manuals import index_single_pdf  # noqa: E402
+    except Exception as e:
+        logger.error(f"index_manuals 모듈 import 실패: {e}")
+        return {"status": "ERROR", "message": f"인덱서 import 실패: {e}"}
+
+    meta_override = {}
+    if equipment_type:
+        meta_override["equipment_type"] = equipment_type
+    if brand:
+        meta_override["brand"] = brand
+    if model:
+        meta_override["model"] = model
+
+    # DB 연결 (index_single_pdf가 commit까지 처리)
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        result = index_single_pdf(
+            src_path=tmp_path,
+            filename=filename,
+            conn=conn,
+            meta_override=meta_override or None,
+            uploaded_by="admin_upload",
+        )
+
+        # manual_type 업데이트 (index_single_pdf는 기본값 사용)
+        if result.get("status") == "ok" and manual_type in {"catalog", "user_manual", "datasheet"}:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE tb_equipment_manual SET manual_type=%s WHERE manual_id=%s",
+                (manual_type, result["manual_id"]),
+            )
+            conn.commit()
+            cur.close()
+
+        logger.info(f"매뉴얼 업로드+인덱싱 완료: {filename} → {result}")
+        return {"status": "OK", "result": result, "hint": "vision_agent 재시작 필요"}
+    except ValueError as e:
+        logger.warning(f"매뉴얼 인덱싱 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    except Exception as e:
+        logger.error(f"매뉴얼 업로드 처리 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        # 임시 파일 정리
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if conn:
+            conn.close()
+
+
+@router.delete("/admin/equipment-manuals/{manual_id}")
+async def delete_equipment_manual(manual_id: int):
+    """매뉴얼 삭제 — tb_equipment_manual row + NPZ 파일."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT embedding_key FROM tb_equipment_manual WHERE manual_id=%s", (manual_id,))
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return {"status": "ERROR", "message": "manual not found"}
+        embedding_key = row[0]
+
+        cur.execute("DELETE FROM tb_equipment_manual WHERE manual_id=%s", (manual_id,))
+        conn.commit()
+        cur.close()
+
+        # NPZ 파일 삭제
+        if embedding_key:
+            try:
+                import sys as _sys
+                _sys.path.insert(0, "/app")
+                from tools.index_manuals import EMBEDDINGS_DIR  # noqa: E402
+                npz_path = os.path.join(EMBEDDINGS_DIR, f"{embedding_key}.npz")
+                if os.path.exists(npz_path):
+                    os.remove(npz_path)
+            except Exception as e:
+                logger.warning(f"NPZ 삭제 실패: {e}")
+
+        return {"status": "OK", "hint": "vision_agent 재시작 필요"}
+    except psycopg2.Error as e:
+        logger.error(f"매뉴얼 삭제 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()

@@ -796,15 +796,19 @@ def _match_existing_equipment(
     equipment_type: str,
     sitename: Optional[str],
 ) -> Optional[str]:
-    """[E-025 P8] VLM 식별 결과 → tb_equipment_info 매칭 → equipment_id 반환.
+    """[E-025 P8 + review #6] VLM 식별 결과 → tb_equipment_info 매칭 → equipment_id 반환.
 
-    매칭 우선순위 (sitename + equipmenttype 내에서):
+    매칭 우선순위 (sitename + equipmenttype 내에서만):
       1. meta.model ILIKE %VLM model% (substring, 대소문자 무시)
-      2. meta.manufacturer ILIKE %VLM brand% (model 없을 때 fallback)
+      2. meta.manufacturer ILIKE %VLM brand% (model 실패 시 fallback)
 
-    sitename이 없거나 site-내 매칭 실패 시 글로벌 검색으로 한 번 더 시도
-    (단 이 경우는 다중 후보가 흔해서 "가장 최근 등록"을 1개만 반환).
+    [review #6] 글로벌 매칭(sitename 없이)은 **비활성화**. 사이트 컨텍스트 없이
+    brand/model만으로 매칭하면 동명 장비가 여러 사이트에 있을 때 오탐 발생.
+    sitename이 없거나 site 내 매칭 실패면 `None` 반환 (is_registered=False로
+    노출되어 사용자가 명시적으로 등록하도록 유도).
     """
+    if not sitename:
+        return None
     if not model and not brand:
         return None
     if not equipment_type or equipment_type == "기타":
@@ -822,49 +826,37 @@ def _match_existing_equipment(
     try:
         cur = conn.cursor()
 
-        def _search(with_sitename: bool) -> Optional[str]:
-            where = ["equipmenttype = %s"]
-            params: list = [equipment_type]
-            if with_sitename and sitename:
-                where.append("sitename = %s")
-                params.append(sitename)
-            # model 우선 (substring ILIKE)
-            if model:
-                where.append("(meta->>'model') ILIKE %s")
-                params.append(f"%{model}%")
-            elif brand:
-                where.append("(meta->>'manufacturer') ILIKE %s")
-                params.append(f"%{brand}%")
-            sql = f"""
+        def _search_model() -> Optional[str]:
+            if not model:
+                return None
+            cur.execute(
+                """
                 SELECT equipment_id FROM tb_equipment_info
-                WHERE {' AND '.join(where)}
-                ORDER BY updated_at DESC
-                LIMIT 1
-            """
-            cur.execute(sql, tuple(params))
+                WHERE equipmenttype = %s AND sitename = %s
+                  AND (meta->>'model') ILIKE %s
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (equipment_type, sitename, f"%{model}%"),
+            )
             row = cur.fetchone()
             return row[0] if row else None
 
-        eq_id = _search(with_sitename=True)
-        if not eq_id and sitename:
-            # site 내 실패 → brand fallback
-            if model and brand:
-                where_params = [equipment_type, sitename, f"%{brand}%"]
-                cur.execute(
-                    """
-                    SELECT equipment_id FROM tb_equipment_info
-                    WHERE equipmenttype = %s AND sitename = %s
-                      AND (meta->>'manufacturer') ILIKE %s
-                    ORDER BY updated_at DESC LIMIT 1
-                    """,
-                    tuple(where_params),
-                )
-                row = cur.fetchone()
-                if row:
-                    eq_id = row[0]
-        if not eq_id:
-            eq_id = _search(with_sitename=False)
+        def _search_brand() -> Optional[str]:
+            if not brand:
+                return None
+            cur.execute(
+                """
+                SELECT equipment_id FROM tb_equipment_info
+                WHERE equipmenttype = %s AND sitename = %s
+                  AND (meta->>'manufacturer') ILIKE %s
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (equipment_type, sitename, f"%{brand}%"),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
+        eq_id = _search_model() or _search_brand()
         cur.close()
         return eq_id
     finally:

@@ -22,6 +22,8 @@ import sys
 import time
 from pathlib import Path
 
+from typing import Optional
+
 import httpx
 import numpy as np
 import psycopg2
@@ -48,6 +50,12 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "snowflake-arctic-embed2:latest")
 
 MIN_PAGE_CHARS = 100  # 이 미만은 표지/빈 페이지로 간주
+
+# [E-025 review #2] 인덱싱에서 제외할 파일명 패턴 (case insensitive substring)
+# master-k: 스캔 이미지 PDF라 pypdf extract_text가 빈 결과 — OCR 없이는 사용 불가
+SKIP_FILENAME_PATTERNS = [
+    "master-k",
+]
 
 DB_HOST = os.environ.get("DB_HOST", "timescaledb")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
@@ -166,6 +174,147 @@ def _embed_batch(texts: list[str]) -> np.ndarray:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# [E-025 review #5] 단일 PDF 인덱싱 — 관리자 업로드 endpoint에서 재사용
+# ─────────────────────────────────────────────────────────────────────
+
+def index_single_pdf(
+    src_path: str,
+    filename: str,
+    conn,
+    meta_override: dict | None = None,
+    uploaded_by: str = "admin_upload",
+) -> dict:
+    """단일 PDF를 추출·임베딩·저장·DB UPSERT. 기존 main() 루프 로직을 재사용.
+
+    Args:
+        src_path: 추출할 PDF 절대 경로
+        filename: title 추론용 원본 파일명
+        conn: psycopg2 connection (커밋은 호출자 책임)
+        meta_override: `_infer_meta` 결과를 덮어쓸 필드 (equipment_type/brand/model/title)
+        uploaded_by: tb_equipment_manual.uploaded_by
+
+    Returns:
+        {"status": "ok"|"skipped"|"empty", "manual_id": int?, "page_count": int, "chunk_count": int, "title": str}
+
+    Raises:
+        ValueError: 빈 매뉴얼(0 페이지) 또는 임베딩 실패
+    """
+    os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+    os.makedirs(MANUALS_DEST_DIR, exist_ok=True)
+
+    meta = _infer_meta(filename)
+    if meta_override:
+        meta.update({k: v for k, v in meta_override.items() if v})
+
+    cur = conn.cursor()
+
+    # 기존 row 확인 (title 매칭)
+    cur.execute(
+        "SELECT manual_id, embedding_key FROM tb_equipment_manual WHERE title = %s",
+        (meta["title"],),
+    )
+    existing = cur.fetchone()
+    manual_id_existing: Optional[int] = None
+    if existing:
+        mid, existing_key = existing
+        existing_npz = os.path.join(EMBEDDINGS_DIR, f"{existing_key}.npz") if existing_key else None
+        if existing_npz and os.path.exists(existing_npz):
+            cur.close()
+            return {
+                "status": "skipped",
+                "manual_id": int(mid),
+                "title": meta["title"],
+                "reason": "이미 인덱싱됨",
+            }
+        manual_id_existing = int(mid)
+
+    # 1. 페이지 추출
+    pages = _extract_pages(src_path)
+    if not pages:
+        cur.close()
+        return {"status": "empty", "title": meta["title"], "reason": "텍스트 추출 불가"}
+
+    # 2. 청크 분할 (긴 페이지 overlap)
+    chunks: list[tuple[int, str]] = []
+    for page_num, text in pages:
+        if len(text) > 3000:
+            start = 0
+            while start < len(text):
+                chunk = text[start : start + 1500]
+                if len(chunk) >= MIN_PAGE_CHARS:
+                    chunks.append((page_num, chunk))
+                start += 1200
+        else:
+            chunks.append((page_num, text))
+
+    # 3. 임베딩
+    BATCH = 16
+    all_embs = []
+    for i in range(0, len(chunks), BATCH):
+        batch_texts = [c[1] for c in chunks[i : i + BATCH]]
+        embs = _embed_batch(batch_texts)
+        all_embs.append(embs)
+    embeddings = np.concatenate(all_embs, axis=0)
+
+    # 4. 파일 복사 + npz 저장
+    import shutil as _sh
+    dest_filename = filename.replace(" ", "_")
+    dest_path = os.path.join(MANUALS_DEST_DIR, dest_filename)
+    if not os.path.exists(dest_path):
+        _sh.copyfile(src_path, dest_path)
+    file_url = f"/api/files/manual/{dest_filename}"
+
+    embedding_key = re.sub(r"[^\w\-]", "_", meta["title"])[:80]
+    npz_path = os.path.join(EMBEDDINGS_DIR, f"{embedding_key}.npz")
+    np.savez_compressed(
+        npz_path,
+        embeddings=embeddings.astype(np.float32),
+        pages=np.array([c[0] for c in chunks], dtype=np.int32),
+        texts=np.array([c[1] for c in chunks], dtype=object),
+    )
+
+    # 5. DB UPSERT
+    if manual_id_existing:
+        cur.execute(
+            """
+            UPDATE tb_equipment_manual
+            SET equipment_type=%s, brand=%s, model=%s, file_url=%s,
+                page_count=%s, embedding_key=%s
+            WHERE manual_id=%s
+            """,
+            (meta["equipment_type"], meta["brand"], meta["model"],
+             file_url, len(pages), embedding_key, manual_id_existing),
+        )
+        manual_id = manual_id_existing
+    else:
+        cur.execute(
+            """
+            INSERT INTO tb_equipment_manual
+                (equipment_type, brand, model, title, file_url, page_count, embedding_key, uploaded_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING manual_id
+            """,
+            (meta["equipment_type"], meta["brand"], meta["model"],
+             meta["title"], file_url, len(pages), embedding_key, uploaded_by),
+        )
+        manual_id = int(cur.fetchone()[0])
+
+    conn.commit()
+    cur.close()
+    return {
+        "status": "ok",
+        "manual_id": manual_id,
+        "title": meta["title"],
+        "page_count": len(pages),
+        "chunk_count": len(chunks),
+        "equipment_type": meta["equipment_type"],
+        "brand": meta["brand"],
+        "model": meta["model"],
+        "file_url": file_url,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────────────────────────────────
 
@@ -178,7 +327,16 @@ def main():
         sys.exit(1)
 
     pdfs = sorted([f for f in os.listdir(MANUALS_SRC_DIR) if f.lower().endswith(".pdf")])
-    logger.info(f"대상 PDF: {len(pdfs)}개")
+    # SKIP 패턴 필터링 (review-items #2)
+    filtered_pdfs = []
+    for f in pdfs:
+        lower = f.lower()
+        if any(pat.lower() in lower for pat in SKIP_FILENAME_PATTERNS):
+            logger.info(f"SKIP (exclude 패턴): {f}")
+            continue
+        filtered_pdfs.append(f)
+    pdfs = filtered_pdfs
+    logger.info(f"대상 PDF: {len(pdfs)}개 (exclude 패턴 적용 후)")
 
     conn = _db()
     cur = conn.cursor()
