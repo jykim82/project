@@ -1189,6 +1189,32 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 
 **버그 수정 메모 (savepoint):** 최초 구현에서 `linked_facility_file_id` UPDATE가 실패했을 때 try/except로 삼켰지만 psycopg2 트랜잭션이 error state로 들어가 이후 commit이 rollback되어 row가 사라지는 현상. 해결: `SAVEPOINT vision_link` / `ROLLBACK TO SAVEPOINT`로 격리.
 
+#### [E-025] P14: RAG 품질 개선 — manual_type user_manual boost (slm@184764e)
+
+기존 `/vision/diagnose` 쿼리에서 observed_state LED 라벨(`XGT`/`XGP`/`XGK`)이 카탈로그 목차·스펙 페이지를 끌어올리던 문제(review-items #1)를 manual_type 기반 soft boost로 해결. docs/review-items.md #1 + #4 동시 해결.
+
+**Migration (ALTER TABLE):**
+- `tb_equipment_manual.manual_type` 컬럼 추가 (default `user_manual`)
+- 기존 17건 UPDATE by title pattern: `ILIKE '%Catalog%' OR LIKE '%카타로그%'` → **catalog 4건** (G100 Catalog, XGT Catalog, iS7 Catalog, master-k 카타로그) / 나머지 **user_manual 13건**
+
+**RAG Index 변경 (`vision_agent.py _ManualRagIndex`):**
+- `information_schema`로 manual_type 컬럼 존재 확인 후 조회 (backward compat — 컬럼 없으면 `'user_manual'` 상수 fallback)
+- `_rows`에 `manual_type` 필드 포함
+- `search()` soft boost:
+  - `user_manual`: **+0.08** (트러블슈팅·조치방법 등 실전 정보 우선)
+  - `catalog`: **−0.05** (표지·스펙·목차 위주의 표면적 키워드 매칭 억제)
+- 기존 equipment_type(+0.15) / brand(+0.10) boost와 합산
+
+**검증:**
+- `/vision/manual-search` 3쿼리 ("ERR LED 점등 조치방법" / "PLC CPU 고장 원인 진단" / "XGK 트러블 슈팅") × top-5: **15/15 모두 user_manual** (catalog 0건)
+- `/vision/diagnose` 전체 경로 (ls_xgk_error.jpg): `manual_excerpts` **3/3 user_manual**
+  - #1 XGL-EFMTB p33 (LED 표시부 규격)
+  - #2 XGR-CPU p251 (15.2.3 ERR LED 점등 조치방법)
+  - #3 XGR-CPU p51 (WAR LED 용도)
+- 이전엔 #1=`XGT Catalog p.107`이었으나 완전히 제거됨
+
+**무리 없는 boost 설계:** 점수 차(+0.08 / −0.05)는 의미 있는 catalog 결과(예: 실제 dimension·온도 스펙)가 user_manual의 무관한 매칭을 덮지 않도록 제한적. NPZ 재인덱싱 없이 DB UPDATE + 런타임 boost만으로 즉시 효과.
+
 ---
 
 ## 관련 파일

@@ -10,17 +10,14 @@
 
 ## [E-025] 멀티모달 현장 진단
 
-### 1. 쿼리 구성 튜닝 (매뉴얼 RAG)
-**현상:** 백엔드 단독 테스트(`/vision/manual-search`)는 `XGR-CPU p251 "ERR LED 점등 조치방법"`이 #1로 안정 매칭되지만, 프런트 E2E(`/vision/diagnose` 경유)에서는 `XGT Series Catalog p.107` (카탈로그 페이지)이 상위에 노출됨.
+### 1. 쿼리 구성 튜닝 (매뉴얼 RAG) ✅ 해결 (slm@184764e, 2026-04-15)
+**조치:** `manual_type` 컬럼 추가 + `_ManualRagIndex`가 로드 시 함께 읽어와서 검색 시 **user_manual +0.08 / catalog -0.05** soft boost 적용. 인덱싱·NPZ 재생성 없이 DB UPDATE + 런타임 스코어 조정만으로 해결.
 
-**원인 추정:** `/vision/diagnose`에서 observed_state 7줄(LED 라벨 `XGT`/`XGP`/`XGK`)이 쿼리에 합쳐지면서 catalog가 끌어올려짐. 트러블슈팅 섹션보다 표지·목차·스펙 페이지가 해당 키워드를 더 많이 포함.
+**검증 결과:**
+- `/vision/manual-search` 직접 호출 3쿼리(`ERR LED 점등 조치방법` / `PLC CPU 고장 원인 진단` / `XGK 트러블 슈팅`): 전 15/15 top-5 결과가 user_manual (catalog 0건)
+- `/vision/diagnose` 전체 경로 (ls_xgk_error.jpg): `manual_excerpts` 3/3 user_manual — 이전엔 #1=`XGT Catalog p.107`, 이제 #1=`XGL-EFMTB p.33 LED 표시부 규격`, #2=`XGR-CPU p.251 15.2.3 ERR LED 조치방법`, #3=`XGR-CPU p.51 WAR LED 용도`
 
-**선택지:**
-- (a) 인덱싱 시 `Catalog`/`FEATURES`/`Contents` 페이지 제외
-- (b) 쿼리에 "트러블슈팅 원인 조치방법" 같은 액션 토큰 강제 추가
-- (c) BM25 + 벡터 하이브리드 (현재는 dense only)
-
-**결정 필요:** 어느 방향으로 갈지.
+**남은 판단:** boost 계수(+0.08/-0.05)가 적절한지 프로덕션에서 모니터링 필요. 너무 강하면 catalog에만 있는 실제 스펙 정보(dimension, 최대 사용 온도 등)를 묻힐 수 있음.
 
 ---
 
@@ -46,12 +43,8 @@
 
 ---
 
-### 4. Catalog vs 사용설명서 분리
-**현상:** `G100_Series_Catalog_KR_202506.pdf` (70p) + `G100_C__사용설명서_KR_V4_03_250829.pdf` (385p) 둘 다 인덱싱됨. brand/model 동일이라 검색 시 둘이 섞여 나옴.
-
-**선택지:** `tb_equipment_manual`에 `manual_type` 컬럼 추가 (`catalog`/`user_manual`/`datasheet`) 후 기본 검색 시 user_manual 우선.
-
-**결정 필요:** 분리 정책 도입 여부.
+### 4. Catalog vs 사용설명서 분리 ✅ 해결 (slm@184764e, 2026-04-15)
+**조치:** `tb_equipment_manual.manual_type` 컬럼 추가 + 기존 row 17건을 title pattern으로 분류 (catalog 4건 / user_manual 13건). 검색 시 user_manual +0.08 / catalog -0.05 boost. 동일 brand/model의 Catalog + 사용설명서가 공존해도 user_manual이 우선 노출.
 
 ---
 
@@ -84,3 +77,4 @@
 
 - 2026-04-15: E-025 P3 매뉴얼 RAG 실구현 직후 7개 항목 등록 (쿼리 튜닝 / master-k OCR / XGR-CPU vs XGK / catalog vs manual / 업로드 UI / is_registered 매칭 / 샘플 이미지 경로)
 - 2026-04-15: #6 is_registered 매칭 P8에서 부분 해결 (`slm@fdda15d`)
+- 2026-04-15: **#1 RAG 쿼리 튜닝 + #4 catalog vs manual 분리** P14에서 해결 (`slm@184764e`) — manual_type soft boost. 검증: manual-search 15/15 user_manual, diagnose 3/3 user_manual, 이전 XGT Catalog 끌어올림 현상 제거

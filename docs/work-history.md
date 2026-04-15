@@ -48,6 +48,13 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P14 RAG 품질 개선 — user_manual boost (2026-04-15)
+- `tb_equipment_manual.manual_type` 컬럼 추가 + 17건 title pattern 분류 (catalog 4 / user_manual 13)
+- `_ManualRagIndex` search에 soft boost (user_manual +0.08 / catalog -0.05), backward compat (information_schema 확인)
+- 검증: manual-search 3쿼리 15/15 user_manual, diagnose 3/3 user_manual, 기존 XGT Catalog p.107 #1 끌어올림 현상 제거
+- review-items #1(쿼리 튜닝) + #4(catalog 분리) 동시 해결
+- `slm@184764e`
+
 #### P13 시설물 사진 등록 (2026-04-15)
 - `vision_proxy POST /vision/register-facility-photo` 신규 — chat_attachment 이미지 → facility/<type>/<uuid> 복사 + tb_file_storage INSERT + tb_facility_file UPSERT, savepoint로 vision_session 역연결 격리
 - `FacilityPhotoRegisterDialog.tsx` 신규 (240줄, emerald 테마) — 시설유형/현장명 Select + 파일 유형 3개 카드 (현장 사진/계통도/매뉴얼) + 저장
