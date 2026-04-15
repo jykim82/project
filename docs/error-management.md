@@ -1036,6 +1036,45 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 - VLM이 뱉은 모델(`XGK-CPUE`)은 DB(`XGI-CPUS`)와 미스매치였으나 brand fallback(`'LS' ILIKE '%LS%'` → `meta.manufacturer='LSE'`)으로 각 site의 PLC와 1:1 매칭에 성공
 - VisionAdviceCard "미등록 장비" 앰버 뱃지가 사라지고 matched_equipment_id가 채워지는 동작 확인
 
+#### [E-025] P9: 알람 연계 — 점검 → 장애 → 알람 단방향 플로우 (slm@6d8291a + slm-dashboard@13981be)
+
+북극성 목표 "현장 작업자가 사진 → 진단 → 문제 감지 → 작업 등록 → 알람 해제"를 1화면·1플로우로 완결.
+
+**P9a 백엔드 (`vision_agent.py`):**
+- `ActiveAlarm` pydantic 모델 + `DiagnoseResponse`에 `has_issue`/`issue_reasons`/`active_alarms` 필드 확장
+- `_detect_issue(observed_state, user_text)` — regex heuristic (Zero-Hallucination 유지, LLM 판단 아님): `(ERR|CHK|BAT|FAULT|ALARM|ALM) LED.*점등` / `빨간 LED 점등` / `(POWER|PWR|RUN) LED.*(소등|OFF)` / 외관 이상(파손/균열/부식/누수) / 연기·화재
+- `_fetch_active_alarms(sitename, equipmenttype, limit=5)` — `tb_equipment_alarm_report WHERE alarm_end_time IS NULL` + `EXTRACT(EPOCH FROM NOW() - alarm_start_time)/3600` 경과 시간 계산
+- 활성 알람 발견 시 `has_issue=True` 무조건 승격 + "연결된 활성 알람" reason 추가
+
+**sitename 추론 (`vision_proxy.py`):**
+- `tb_equipment_info`에서 `sitename`/`facilitytype` 캐시 로드 후 `user_text` substring 매칭 (가장 긴 매칭 우선, 행정1수청 > 행정)
+- 프론트가 명시 안 한 경우에만 추론. `effective_site`로 `vision_agent` 호출 + `tb_vision_session` 저장
+
+**P9c 알람 해제 API (`endpoints/alarm_crisis.py`):**
+- `POST /crisis/alarm-reports/resolve` — body: `{alarms:[{alarm_start_time, tagsn}], resolution_note}`
+- `alarm_end_time=NOW()` + `alarm_confirm_yn='Y'` + `user_cause_description` 누적 append
+- `WHERE alarm_end_time IS NULL` 조건부 UPDATE로 이미 해제된 row 재해제 방지
+
+**P9b 프론트 (`VisionAdviceCard.tsx`):**
+- "문제 감지" 빨간 뱃지 (`has_issue=true`)
+- "연결된 활성 알람 · N건" 섹션: 알람별 체크박스(기본 체크), 심각도 색상(경고=red / 주의=amber / 기본=sky), `duration_hours` 경과 라벨
+- 작업 등록 버튼에 "+알람 N건 해제" 동적 배지
+- `onCreateTask` 시그니처 `(keys: string[]) => void`로 변경, 선택된 키를 상위로 전달
+
+**프론트 플로우 통합 (`BotMessage` + `ChatMessageArea` + `chat/page.tsx`):**
+- `onCreateTaskFromVision(vision, selectedAlarmKeys)` prop drilling
+- `pendingAlarmKeys` state + `handleTaskSubmit`에서 `createTask` 성공 후 `resolveActiveAlarms` 호출 (병렬, 실패해도 작업은 유지)
+- toast에 "알람 N건 해제" 카운트 병기
+
+**Playwright E2E 검증:**
+- 사전 seed: `TEST_E025_P9_PLC_001/002` 2건을 행정/배수지/PLC로 등록 (경고/주의)
+- `/chat` → ls_xgk_error.jpg 업로드 + "행정 배수지 PLC ERR LED 점등 확인" 질의
+- sitename 추론 `행정/배수지` → VLM 진단 → vision_agent `_detect_issue` (에러 LED/빨간 LED) + `_fetch_active_alarms` 2건 → SSE result
+- VisionAdviceCard 렌더: "문제 감지" 빨간 뱃지 ✅, "연결된 활성 알람 · 2건" 섹션에 "주의/PLC/1.1h 경과 RUN LED 소등" + "경고/PLC/3.1h 경과 ERR LED 점등 의심" 2건 체크 상태 ✅, 작업 등록 버튼에 "+알람 2건 해제" 배지 ✅
+- 작업 등록 클릭 → TaskFormDialog compact 자동 채움 → 등록 → `task_id=13` 생성 (`vision_session_id=22` 연결) ✅
+- DB 확인: 2건 모두 `alarm_end_time` 세팅됨 + `user_cause_description='[비전 점검 해제] LS XGK-CPUE'` ✅
+- 스크린샷: `e025-p9-alarm-section-rendered.png`
+
 ---
 
 ## 관련 파일

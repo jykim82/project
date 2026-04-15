@@ -48,6 +48,16 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P9 알람 연계 — 점검→장애→알람 단방향 플로우 (2026-04-15)
+- **P9a 백엔드**: `vision_agent.ActiveAlarm` + `_detect_issue`(regex heuristic, LED/외관/화재) + `_fetch_active_alarms(sitename, equipmenttype)` → `tb_equipment_alarm_report WHERE alarm_end_time IS NULL`
+- **P9a sitename 추론**: `vision_proxy._infer_site_from_text` — `tb_equipment_info` 캐시 substring 매칭 (가장 긴 것 우선), 프론트 미명시 시 자동
+- **P9c 알람 해제 API**: `POST /crisis/alarm-reports/resolve` — `alarm_end_time=NOW()` + `alarm_confirm_yn='Y'` + `user_cause_description` append
+- **P9b 프런트**: `VisionAdviceCard` "문제 감지" 빨간 뱃지 + "연결된 활성 알람 · N건" 섹션(체크박스 기본 체크) + 작업 등록 버튼에 "+알람 N건 해제" 배지
+- **프론트 통합**: `onCreateTaskFromVision(vision, selectedAlarmKeys)` 시그니처 확장, `chat/page.tsx pendingAlarmKeys` state + `handleTaskSubmit`에서 createTask 성공 후 `resolveActiveAlarms` 호출
+- **E2E**: 행정 배수지 PLC 2건 알람 seed → 질의 → VisionAdviceCard 2건 알람 체크 상태 렌더 → 작업 등록 → task_id=13 생성(vision_session_id=22) + 2건 알람 alarm_end_time DB 확인
+- `slm@6d8291a` vision_agent + vision_proxy + alarm_crisis
+- `slm-dashboard@13981be` 6개 파일 (chat.ts + VisionAdviceCard + BotMessage + ChatMessageArea + chat/page + alarm-api)
+
 #### P8 기존 설비 DB 매칭 (2026-04-15)
 - `vision_agent._match_existing_equipment()` — sitename + equipmenttype + `meta->>'model'` ILIKE 우선, 실패 시 `meta->>'manufacturer'` ILIKE fallback, site 내 실패 시 글로벌 재시도
 - `/vision/diagnose` 응답의 `is_registered`/`matched_equipment_id` 하드코딩 제거
