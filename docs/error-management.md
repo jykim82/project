@@ -1009,6 +1009,12 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 → [0.503] XGL-EFMTB p361 "XGK CPU 운전 중 에러 코드 및 조치방법"
 ```
 
+**프런트엔드 E2E (Playwright 라이브):**
+- `/chat` → 이미지 업로드(`ls_xgk_error.jpg`) → "ERR LED 점등 상태인데 관련 매뉴얼이 있으면 알려줘" 질의
+- SSE 수신 → `VisionAdviceCard` (violet 테마) 렌더 → **관련 매뉴얼** 섹션 자동 노출
+- 인용 3건: `XGT Series_Catalog_KR_202510 p.107` / `XGL-EFMTB_T8_Manual_V3.71_202601_KR p.33` (LED 표시부 명칭) / `p.358` (제9장 트러블 슈팅 XGL-EH5T 이상동작 LED)
+- 작업 등록 / 설비 등록 버튼 + 면책 푸터 정상, 스크린샷 `e025-p3-manual-excerpts-rendered.png` 캡처
+
 ---
 
 ## 관련 파일
