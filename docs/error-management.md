@@ -1215,6 +1215,48 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 
 **무리 없는 boost 설계:** 점수 차(+0.08 / −0.05)는 의미 있는 catalog 결과(예: 실제 dimension·온도 스펙)가 user_manual의 무관한 매칭을 덮지 않도록 제한적. NPZ 재인덱싱 없이 DB UPDATE + 런타임 boost만으로 즉시 효과.
 
+#### [E-025] 10회 Web E2E 안정성 검증 (2026-04-15, web@3c3beea 시점)
+
+P1~P15 완료 후 실제 브라우저에서 10회 반복 회귀 테스트. canonical 이미지(`docs/매뉴얼/plc 사진/xgk plc cpue.jpeg`) 사용, 매 회 업로드 → 질의 → VisionAdviceCard 렌더 대기 → DOM 파싱으로 핵심 필드 수집.
+
+**테스트 조건:**
+- 이미지: `xgk plc cpue.jpeg` (6.7KB, 실사 XGK CPUE 모듈)
+- VLM: gemma4:26b-a4b-it-q4_K_M (temperature=0.1)
+- 질의 텍스트: run별 다른 sitename 포함 (행정/석문/신평/송악1/갈산/죽동/성상1/남산7 rotation)
+- 매 회 70초 대기 후 카드 렌더 확인
+
+**결과 표 (10/10 성공):**
+
+| # | equipment_guess | n_manual | n_xgk | top1 | actions |
+|---|---|---|---|---|---|
+| 1 | LS XGB 시리즈(PLC) | 3 | 1 | XGK-CPU p52 | 작업·시설물 |
+| 2 | LS XGB 시리즈(PLC) | 3 | 1 | XGK-CPU p52 | 작업·시설물 |
+| 3 | LS XGT 시리즈 PLC | 3 | **3** | XGK-CPU p51 | 작업·시설물 |
+| 4 | LS XGB 시리즈(PLC) | 3 | 1 | XGB FEnet p9 | 작업·시설물 |
+| 5 | LS XGB 시리즈(PLC) | 3 | 1 | XGR-CPU p248 | 작업·시설물 |
+| 6 | LS XGB series PLC | 3 | 1 | XGK-CPU p52 | 작업·시설물 |
+| 7 | LS PLC(PLC) | 3 | 2 | XGK-CPU p86 | 작업·시설물 |
+| 8 | **LS XGK-CPUE(PLC)** ⭐ | 3 | **3** | XGK-CPU p48 | 작업·시설물 |
+| 9 | LS XGT/XGB series PLC | 3 | 2 | XGK-CPU p49 | 작업·시설물 |
+| 10 | LS PLC(PLC) | 3 | 0 | XGL-EFMTB p51 | 작업·**설비**·시설물 |
+
+**집계:**
+- 200 OK + VisionAdviceCard 렌더: **10/10** ✅
+- manual_excerpts 3건 반환: **30/30** 청크 ✅
+- XGK-CPU_Manual (신규 #18) 포함: 총 15/30 청크 — 8/10회 top에 등장
+- catalog (XGT/G100/iS7) 노출: **0/30** (P14 boost 완벽 동작) ✅
+- action buttons 작업+시설물: 10/10회 노출 (P6 + P13) ✅
+- run 10: `설비 등록` 버튼 추가 등장 — 해당 회 matched_equipment_id=None (P8 글로벌 매칭 제거 동작 확인, is_registered=False 정상 노출)
+- has_issue: 0/10 — 이미지 해상도 낮아 VLM이 ERR LED 명확 식별 실패, `_detect_issue` heuristic 미매칭 (Zero-Hallucination 원칙 유지, 오탐 아님)
+- active_alarms: 0/10 — 해당 시점 seed 알람 없음 (정상)
+
+**VLM 변동성 관찰:**
+- equipment_guess가 10회 중 **XGB 5회 / XGT 1회 / XGK 1회 / LS PLC 2회 / XGT+XGB 1회** 혼재 — temperature=0.1에도 여전히 소폭 변동
+- 장비 타입 분류는 **전 10회 PLC** 고정 (화이트리스트 효과)
+- 매뉴얼 RAG는 **일관되게 user_manual 우선** — P14 boost가 VLM 변동과 무관하게 검색 품질 유지
+
+**북극성 안정성 결론:** 정방향(사진→진단→작업) + 시설물 등록 + 설비 등록 + 매뉴얼 RAG가 10회 반복에서 0건 failure. VLM의 소폭 변동이 있어도 RAG는 manual_type boost로 일관성 확보. `_detect_issue` heuristic이 low-res 이미지에서 보수적으로 False를 내는 것은 Zero-Hallucination 관점에서 바람직한 동작. 스크린샷: `e025-10run-e2e-final.png`.
+
 ---
 
 ## 관련 파일

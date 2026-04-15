@@ -48,6 +48,13 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### 10회 Web E2E 안정성 검증 (2026-04-15)
+- P1~P15 완료 후 실제 브라우저 회귀 — `xgk plc cpue.jpeg` 업로드+질의 × 10회
+- 10/10 성공: VisionAdviceCard 렌더, manual_excerpts 30/30, 작업+시설물 버튼 10/10회, 설비 등록 1회 (is_registered=False 케이스), catalog 노출 0/30 (P14 boost 검증)
+- VLM 변동성: equipment_guess가 XGB/XGT/XGK/LS PLC 혼재, 장비 타입은 전 10회 PLC 고정
+- has_issue 0/10 — 저해상도 이미지에서 heuristic 보수적(Zero-Hallucination 유지)
+- 스크린샷 `e025-10run-e2e-final.png`
+
 #### P15 리뷰 항목 일괄 해결 — master-k 제외 / 글로벌 매칭 제거 / 매뉴얼 업로드 UI / canonical 샘플 경로 (2026-04-15)
 - **#2 master-k 제외**: `SKIP_FILENAME_PATTERNS`에 master-k 추가, DB row+NPZ 삭제, 2833→2830 chunks
 - **#6 글로벌 매칭 제거**: `_match_existing_equipment` site-scoped only로 리팩토링, 오탐 방지. 5 site rotation 유지 확인
