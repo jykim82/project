@@ -628,21 +628,41 @@ class _ManualRagIndex:
         )
         try:
             cur = conn.cursor()
+            # manual_type 컬럼 존재 확인 후 조회 (migration 전 스키마 호환)
             cur.execute(
                 """
-                SELECT manual_id, equipment_type, brand, model, title, embedding_key
-                FROM tb_equipment_manual
-                WHERE embedding_key IS NOT NULL
-                ORDER BY manual_id
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name='tb_equipment_manual' AND column_name='manual_type'
                 """
             )
+            has_manual_type = cur.fetchone() is not None
+            if has_manual_type:
+                cur.execute(
+                    """
+                    SELECT manual_id, equipment_type, brand, model, title, embedding_key,
+                           COALESCE(manual_type, 'user_manual')
+                    FROM tb_equipment_manual
+                    WHERE embedding_key IS NOT NULL
+                    ORDER BY manual_id
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT manual_id, equipment_type, brand, model, title, embedding_key,
+                           'user_manual' AS manual_type
+                    FROM tb_equipment_manual
+                    WHERE embedding_key IS NOT NULL
+                    ORDER BY manual_id
+                    """
+                )
             manuals = cur.fetchall()
             cur.close()
         finally:
             conn.close()
 
         all_embs: list[np.ndarray] = []
-        for manual_id, etype, brand, model, title, key in manuals:
+        for manual_id, etype, brand, model, title, key, manual_type in manuals:
             npz_path = os.path.join(EMBEDDINGS_DIR, f"{key}.npz")
             if not os.path.exists(npz_path):
                 logger.warning(f"[RAG] npz missing: {npz_path}")
@@ -662,6 +682,7 @@ class _ManualRagIndex:
                     "brand": brand,
                     "model": model,
                     "equipment_type": etype,
+                    "manual_type": manual_type or "user_manual",
                     "page": int(pages[i]),
                     "text": str(texts[i]),
                 })
@@ -691,17 +712,23 @@ class _ManualRagIndex:
 
         scores = self._embeddings @ query_emb  # (N,)
 
-        # 장비 타입/브랜드 일치 보너스 (filter 대신 soft boost — 다른 매뉴얼에도 관련 내용이 있을 수 있음)
-        if equipment_type or brand:
-            bonus = np.zeros(len(self._rows), dtype=np.float32)
-            for i, row in enumerate(self._rows):
-                if equipment_type and row["equipment_type"] == equipment_type:
-                    bonus[i] += 0.15
-                if brand and row["brand"] and row["brand"].lower() == brand.lower():
-                    bonus[i] += 0.10
-            final_scores = scores + bonus
-        else:
-            final_scores = scores
+        # 장비 타입/브랜드 일치 + manual_type 선호도 soft boost
+        # (filter 대신 boost — catalog에도 의미 있는 내용이 있을 수 있어 완전 제외하지 않음)
+        bonus = np.zeros(len(self._rows), dtype=np.float32)
+        for i, row in enumerate(self._rows):
+            if equipment_type and row["equipment_type"] == equipment_type:
+                bonus[i] += 0.15
+            if brand and row["brand"] and row["brand"].lower() == brand.lower():
+                bonus[i] += 0.10
+            # [E-025 P14] user_manual은 트러블슈팅·조치방법 등 실전 정보가 많으므로
+            # catalog(표지/스펙/목차 위주)보다 우선. 점수 차는 작게(0.08)해서
+            # 의미 없는 user_manual이 의미 있는 catalog를 덮지 않도록 함.
+            mt = row.get("manual_type")
+            if mt == "user_manual":
+                bonus[i] += 0.08
+            elif mt == "catalog":
+                bonus[i] -= 0.05
+        final_scores = scores + bonus
 
         # top-k 후보를 넉넉히 뽑아 중복 페이지 제거
         k_pool = min(top_k * 4, len(self._rows))
