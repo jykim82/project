@@ -34,12 +34,16 @@
 
 ---
 
-### 3. XGR-CPU vs XGK 모델 혼동
-**현상:** VLM이 "LS XGK-CPUE"로 식별 후 매뉴얼 검색 결과 1위가 `XGR-CPU Manual` (다른 모델). XGK 전용 매뉴얼이 인덱싱되어 있지 않음 (XGT 공통 매뉴얼만 존재).
+### 3. XGR-CPU vs XGK 모델 혼동 ✅ 해결 (2026-04-15, 사용자가 XGK 매뉴얼 추가)
+**조치:** 사용자가 `docs/매뉴얼/XGK-CPU_Manual_V3.0_202508_KR.pdf` (6.2 MB, 239 페이지)를 추가. `index_manuals.py` 재실행으로 manual_id=18 등록 (253 청크), `_ManualRagIndex` 2833 chunks로 확장.
 
-**영향:** 모델 정확도는 떨어지지만 동일 제조사 공통 트러블슈팅 내용은 유효.
-
-**결정 필요:** XGK 전용 매뉴얼 추가 수급 or 현재 상태 유지.
+**검증:**
+- `/vision/manual-search` "XGK-CPUE ERR LED 점등 조치방법": #1 **XGK-CPU_Manual p223** (score 0.648) — 이전 1위 XGR-CPU p251 (0.638)을 밀어냄
+- 실제 XGK CPUE 사진(`docs/매뉴얼/plc 사진/xgk plc cpue.jpeg`) `/vision/diagnose` E2E: manual_excerpts 3건 중 2건이 XGK 전용 매뉴얼
+  - #1 XGK-CPU_Manual p48 (CPU 모듈 각부 명칭 — XGK-CPUS/E/A/H/U)
+  - #2 XGK-CPU_Manual p52 ("ERR LED 점등(적색): 운전이 불가한 에러가 발생한 경우를 표시" — 질의와 정확 매칭)
+  - #3 XGL-EFMTB p360 (XG5000 에러 확인)
+- VLM 식별: LS XGK-CPUE (brand/model 정확), has_issue=True, matched=plc_1
 
 ---
 
@@ -78,3 +82,4 @@
 - 2026-04-15: E-025 P3 매뉴얼 RAG 실구현 직후 7개 항목 등록 (쿼리 튜닝 / master-k OCR / XGR-CPU vs XGK / catalog vs manual / 업로드 UI / is_registered 매칭 / 샘플 이미지 경로)
 - 2026-04-15: #6 is_registered 매칭 P8에서 부분 해결 (`slm@fdda15d`)
 - 2026-04-15: **#1 RAG 쿼리 튜닝 + #4 catalog vs manual 분리** P14에서 해결 (`slm@184764e`) — manual_type soft boost. 검증: manual-search 15/15 user_manual, diagnose 3/3 user_manual, 이전 XGT Catalog 끌어올림 현상 제거
+- 2026-04-15: **#3 XGK 전용 매뉴얼** 사용자 추가로 해결 (XGK-CPU_Manual V3.0 239페이지/253청크 인덱싱, manual_id=18). 실제 XGK CPUE 사진 E2E: VLM=LS XGK-CPUE 정확 식별, manual_excerpts #1 XGK p48 (각부 명칭) + #2 XGK p52 (ERR LED 조치) + #3 XGL-EFMTB
