@@ -48,6 +48,14 @@
 - `slm@5e7c144` /equipments POST에 vision 등록 필드 지원
 - `slm-dashboard@e402285` VisionAdviceCard "설비 등록" → EquipmentPhotoRegisterDialog
 
+#### P11 경보 → /chat 딥링크 진입 (역방향 플로우) (2026-04-15)
+- `AlarmReportTable` 각 행에 카메라 버튼 (`/chat?sitename=X&facilitytype=Y&prefill=...`)
+- `chat/page.tsx` `deepLinkSite` state + `useEffect`에서 query params 읽어 prefill + 컨텍스트 저장, URL 즉시 clean
+- `ChatInput`/`useChatSubmit` `siteContext` prop drill → `streamMultimodalChat`에 `sitename/facilitytype` 자동 첨부
+- E2E: 테스트 알람 seed → 카메라 버튼 클릭 → /chat 진입 → prefill 확인 → 이미지 업로드 → VisionAdviceCard "연결된 활성 알람" 섹션에 시드 알람 정확히 1건 노출
+- 정방향(사진→진단→조치) + 역방향(알람→현장확인) 북극성 루프 완성
+- `slm-dashboard@f9e51b8`
+
 #### P10 경보 목록 비전 해제 배지 + 5회 회귀 테스트 (2026-04-15)
 - `AlarmReportTable` — `isVisionResolved()` + "상태" 컬럼에 보라 `<Badge>카메라 비전</Badge>` (user_cause_description에 '[비전 점검 해제]' prefix 있으면). title attribute로 hover시 전체 note 노출
 - 감사 추적: 해제된 알람 중 현장 비전 점검으로 해제된 건을 즉시 식별

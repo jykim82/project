@@ -1094,6 +1094,27 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 - Round 1 (`/vision/diagnose` × 5): 전 5회 200 OK, `has_issue=True`, `active_alarms=1`, `manual_excerpts=3`, matched_equipment_id plc_1/2/3/4/79 (brand fallback로 전 매칭 성공), avg total 38.2s
 - Round 2 (`/crisis/alarm-reports/resolve` × 5): 전 5회 `resolved=1`, DB 확인 5건 모두 `alarm_end_time` 세팅 + `user_cause_description='[비전 점검 해제] 회귀 RN'` 개별 저장
 
+#### [E-025] P11: 경보 → /chat 딥링크 진입 (역방향 플로우) (slm-dashboard@f9e51b8)
+
+북극성 플로우의 **진입점** 보강 — 원격 알람이 울리면 관리자가 경보 이력에서 한 번의 클릭으로 현장 확인 채팅으로 이동, 해당 site 컨텍스트를 자동 유지한 상태로 사진 업로드·진단을 수행하게 한다. 지금까지는 사용자가 `/chat`에 직접 가서 질의 텍스트에 site를 적어야 했다.
+
+**변경:**
+- `AlarmReportTable.tsx`: `useRouter()` import, 각 행에 카메라 버튼(보라) 추가. 클릭 시 `/chat?sitename=X&facilitytype=Y&prefill=...&alarm_tagsn=...&alarm_start_time=...` 로 navigate. `prefill`은 `"{sitename} {facilitytype} {equipmenttype} — {alarm_msg}"` 형식.
+- `chat/page.tsx`: `deepLinkSite` state (sitename/facilitytype). 마운트 시 `useEffect`에서 `URLSearchParams` 읽어 `prefill` 있으면 `ChatInput.setText()` 호출, site 값은 state에 보존. URL 즉시 clean (`window.history.replaceState`).
+- `ChatInput.tsx`: `siteContext` prop 추가 → `useChatSubmit({ siteContext })`에 전달. `node.setText = setMessage` ref 노출 (외부에서 textarea prefill).
+- `use-chat-submit.ts`: `UseChatSubmitOptions` 인터페이스 + `siteContext` 옵션 → `streamMultimodalChat` 호출에 `sitename`/`facilitytype` 자동 첨부. deps 배열에 `siteContext.sitename/facilitytype` 추가.
+
+**E2E 검증 (Playwright):**
+- `TEST_E025_P11_DEEPLINK` 알람 seed (행정/배수지/PLC/경고)
+- `/crisis/alarm-dashboard?tab=history` → 해당 행 카메라 버튼 클릭 → `/chat` navigate
+- 확인: `textareaValue="행정 배수지 PLC — [P11 TEST] 딥링크 진입용 PLC 경고"`, URL 정리됨
+- 이미지 업로드 + 전송 → 90초 내 VisionAdviceCard 렌더
+- "연결된 활성 알람" 섹션에 시드한 알람 1건 정확히 표시 (경고/PLC/0.5h 경과)
+- site context가 자동 첨부되어 vision_agent `_fetch_active_alarms(행정, PLC)`가 정확히 동작
+- 스크린샷 `e025-p11-deeplink-flow.png`
+
+이로써 북극성 루프가 **정방향(사진→진단→조치) + 역방향(알람→현장확인)** 양쪽 진입점이 모두 완성됨.
+
 ---
 
 ## 관련 파일
