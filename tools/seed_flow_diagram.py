@@ -68,39 +68,44 @@ def _build_tree(cur):
     return all_nodes, children, roots, depth
 
 
-def _count_rows(n_children: int) -> int:
-    """자식 수 → 필요한 행 수."""
-    return max(1, (n_children + MAX_PER_ROW - 1) // MAX_PER_ROW)
+def _subtree_width(node: str, children_map: dict, cache: dict) -> float:
+    """서브트리가 차지하는 X 폭 (자식들의 폭 합산)."""
+    if node in cache:
+        return cache[node]
+    kids = children_map.get(node, [])
+    if not kids:
+        cache[node] = CHILD_X_GAP
+        return CHILD_X_GAP
+    w = sum(_subtree_width(k, children_map, cache) for k in sorted(kids))
+    cache[node] = max(w, CHILD_X_GAP)
+    return cache[node]
 
 
-def _subtree_height(node: str, children_map: dict, cache: dict) -> float:
-    """서브트리가 차지하는 Y 높이 (행 수 기반)."""
+def _subtree_depth(node: str, children_map: dict, cache: dict) -> float:
+    """서브트리의 최대 Y 깊이 (가장 깊은 자손까지)."""
     if node in cache:
         return cache[node]
     kids = children_map.get(node, [])
     if not kids:
         cache[node] = ROW_Y_GAP
         return ROW_Y_GAP
-    # 자식의 행 수 + 각 비-리프 자식의 서브트리 높이
-    rows = _count_rows(len(kids))
-    h = rows * ROW_Y_GAP
-    for k in kids:
-        if children_map.get(k):
-            h += _subtree_height(k, children_map, cache)
-    cache[node] = max(h, ROW_Y_GAP)
-    return cache[node]
+    d = ROW_Y_GAP + max(_subtree_depth(k, children_map, cache) for k in kids)
+    cache[node] = d
+    return d
 
 
 def _layout(all_nodes, children_map, roots, depth_map):
     positions: dict[str, tuple[float, float]] = {}
-    height_cache: dict[str, float] = {}
+    width_cache: dict[str, float] = {}
+    depth_cache: dict[str, float] = {}
     y_cursor = ORIGIN_Y
 
     for root in roots:
-        h = _place_subtree(root, ORIGIN_X, y_cursor, children_map, depth_map, positions, height_cache)
-        y_cursor -= h + TREE_Y_GAP
+        _place_subtree(root, ORIGIN_X, y_cursor,
+                       children_map, positions, width_cache, depth_cache)
+        d = _subtree_depth(root, children_map, depth_cache)
+        y_cursor -= d + TREE_Y_GAP
 
-    # 고립 노드
     for (s, f) in sorted(all_nodes):
         k = f"{s}__{f}"
         if k not in positions:
@@ -123,44 +128,21 @@ def _layout(all_nodes, children_map, roots, depth_map):
     return rows
 
 
-def _place_subtree(node, x, y, children_map, depth_map, positions, hcache):
-    """재귀: node를 (x, y)에 배치하고, 자식을 가로로 배치.
-    Returns: 이 서브트리가 소비한 총 Y 높이."""
+def _place_subtree(node, x, y, children_map, positions, wcache, dcache):
+    """모든 자식을 동일 Y에 가로 배치. 각 자식에 서브트리 폭만큼 X 할당."""
     positions[node] = (x, y)
     kids = sorted(children_map.get(node, []))
     if not kids:
-        return ROW_Y_GAP
+        return
 
-    child_base_x = x + PARENT_X_GAP
-    # 리프 vs 브랜치 분리: 리프는 가로 배치, 브랜치는 Y 누적 배치
-    leaves = [k for k in kids if not children_map.get(k)]
-    branches = [k for k in kids if children_map.get(k)]
+    child_y = y - ROW_Y_GAP
+    cursor_x = x + PARENT_X_GAP
 
-    y_used = ROW_Y_GAP * 0.6  # 부모→자식 간격
-
-    # 리프: 가로 한 줄 (MAX_PER_ROW wrap)
-    if leaves:
-        row = 0
-        col = 0
-        for leaf in leaves:
-            cx = child_base_x + col * CHILD_X_GAP
-            cy = y - y_used - row * ROW_Y_GAP
-            positions[leaf] = (cx, cy)
-            col += 1
-            if col >= MAX_PER_ROW:
-                col = 0
-                row += 1
-        leaf_rows = (len(leaves) + MAX_PER_ROW - 1) // MAX_PER_ROW
-        y_used += leaf_rows * ROW_Y_GAP
-
-    # 브랜치: 각각 서브트리 높이만큼 Y 소비
-    for branch in branches:
-        bx = child_base_x
-        by = y - y_used
-        sub_h = _place_subtree(branch, bx, by, children_map, depth_map, positions, hcache)
-        y_used += sub_h + ROW_Y_GAP * 0.5
-
-    return y_used
+    for kid in kids:
+        kid_w = _subtree_width(kid, children_map, wcache)
+        _place_subtree(kid, cursor_x, child_y,
+                       children_map, positions, wcache, dcache)
+        cursor_x += kid_w
 
 
 def _upsert(cur, rows):
