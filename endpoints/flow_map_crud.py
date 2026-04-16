@@ -411,38 +411,80 @@ async def get_flow_diagram_edges():
         rows = cur.fetchall()
         cur.close()
 
-        # bracket 패턴: 같은 부모의 엣지들이 하나의 bus_x를 공유
-        # → 수직선이 합쳐져 "하나의 bracket"으로 보임 (레퍼런스 대응)
-        features = []
+        # ── bracket 패턴: 부모별로 묶어서 생성 ──
+        # 1. 부모→bus_x 수평 트렁크 (1개)
+        # 2. bus_x 수직 trunk (min_Y ~ max_Y, 1개)
+        # 3. bus_x→자식 수평 드롭 (N개)
+        from collections import defaultdict
+        by_parent: dict[str, list] = defaultdict(list)
         for r in rows:
-            (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
-            ux_f, uy_f = float(ux), float(uy)
-            dx_f, dy_f = float(dx), float(dy)
+            up_key = f"{r[0]}__{r[1]}"
+            by_parent[up_key].append(r)
 
-            # bus_x = 부모 바로 오른쪽 (부모-자식 간격의 30% 지점)
-            bus_x = ux_f + (dx_f - ux_f) * 0.3
-            coords = [
-                [ux_f, uy_f],
-                [bus_x, uy_f],
-                [bus_x, dy_f],
-                [dx_f, dy_f],
-            ]
+        features = []
+        for up_key, group in by_parent.items():
+            first = group[0]
+            ux_f, uy_f = float(first[5]), float(first[6])
+
+            # 자식들의 좌표
+            children = [(float(r[8]), float(r[9])) for r in group]
+            child_ys = [cy for _, cy in children]
+            min_child_x = min(cx for cx, _ in children)
+
+            # bus_x = 부모와 가장 가까운 자식 사이 30%
+            bus_x = ux_f + (min_child_x - ux_f) * 0.3
+
+            # 1) 부모→bus_x 수평 트렁크
             features.append({
                 "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": coords},
+                "geometry": {"type": "LineString", "coordinates": [
+                    [ux_f, uy_f], [bus_x, uy_f],
+                ]},
                 "properties": {
-                    "upstream_sitename": us,
-                    "upstream_facilitytype": uf,
-                    "downstream_sitename": ds,
-                    "downstream_facilitytype": df,
-                    "relation_type": rel,
-                    "upstream_level": int(ul),
-                    "downstream_level": int(dl),
-                    # 노출 제어: 두 노드의 from_z 중 큰 값 이상에서만 보이게 하려면
-                    # 프런트에서 해당 로직 처리 (여기선 기본값만 전달)
-                    "min_display_z": max(10.0, float(min(ul, dl)) * 0.5 + 8.0),
+                    "upstream_sitename": first[0], "upstream_facilitytype": first[1],
+                    "downstream_sitename": "_trunk_", "downstream_facilitytype": "",
+                    "relation_type": first[4] or "수계",
+                    "upstream_level": int(first[7]), "downstream_level": int(first[7]),
+                    "min_display_z": 8.0, "edge_type": "trunk",
                 },
             })
+
+            # 2) bus_x 수직 trunk (부모 Y 포함 범위)
+            all_ys = [uy_f] + child_ys
+            features.append({
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": [
+                    [bus_x, max(all_ys)], [bus_x, min(all_ys)],
+                ]},
+                "properties": {
+                    "upstream_sitename": first[0], "upstream_facilitytype": first[1],
+                    "downstream_sitename": "_vertical_", "downstream_facilitytype": "",
+                    "relation_type": first[4] or "수계",
+                    "upstream_level": int(first[7]), "downstream_level": int(first[7]),
+                    "min_display_z": 8.0, "edge_type": "vertical",
+                },
+            })
+
+            # 3) 개별 자식 수평 드롭
+            for r in group:
+                dx_f, dy_f = float(r[8]), float(r[9])
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": [
+                        [bus_x, dy_f], [dx_f, dy_f],
+                    ]},
+                    "properties": {
+                        "upstream_sitename": r[0],
+                        "upstream_facilitytype": r[1],
+                        "downstream_sitename": r[2],
+                        "downstream_facilitytype": r[3],
+                        "relation_type": r[4] or "수계",
+                        "upstream_level": int(r[7]),
+                        "downstream_level": int(r[10]),
+                        "min_display_z": 8.0,
+                        "edge_type": "drop",
+                    },
+                })
         return {"type": "FeatureCollection", "features": features}
     except Exception as e:
         logger.error(f"flow-diagram edges GeoJSON 실패: {e}")
