@@ -178,8 +178,9 @@ async def get_flow_map_realtime():
 
         # 3) 시설별 대표 태그 최신값 조회
         _TARGET_GROUPS = [
-            "FLOW_OUTLET", "FLOW_INSTANT", "FLOW_INLET", "WATER_LEVEL",
-            "PRESSURE_OUTLET", "PRESSURE_DISCHARGE", "PRESSURE_INLET",
+            "FLOW_OUTLET", "FLOW_INSTANT", "FLOW_INLET", "FLOW_CUMULATIVE",
+            "WATER_LEVEL",
+            "PRESSURE_OUTLET", "PRESSURE_DISCHARGE", "PRESSURE_INLET", "PRESSURE",
         ]
         cur.execute("""
             SELECT t.sitename, t.facilitytype, dg.group_code, t.tagsn, t.datainfo
@@ -187,7 +188,7 @@ async def get_flow_map_realtime():
             JOIN tb_tag_group_map gm ON gm.tagsn = t.tagsn
             JOIN tb_tag_data_group dg ON dg.group_id = gm.group_id
             WHERE dg.group_code = ANY(%s)
-              AND COALESCE(t.datainfo, '') NOT LIKE '%%적산%%'
+              AND (dg.group_code = 'FLOW_CUMULATIVE' OR COALESCE(t.datainfo, '') NOT LIKE '%%적산%%')
               AND t.tagtype = 'Analog Input'
             ORDER BY t.sitename, dg.group_code
         """, (_TARGET_GROUPS,))
@@ -413,8 +414,15 @@ def _build_node_data(node_set, facility_tag_candidates, latest_values,
         cand_groups = facility_tag_candidates.get((sn, ft), {})
         metrics: dict[str, dict] = {}
         for gc, candidates in cand_groups.items():
-            category = "flow" if "FLOW" in gc else ("level" if "LEVEL" in gc else "pressure")
-            is_summable = category == "flow"  # 유량만 합산, 수위/압력은 대표값
+            if gc == "FLOW_CUMULATIVE":
+                category = "flow_accum"
+            elif "FLOW" in gc:
+                category = "flow"
+            elif "LEVEL" in gc:
+                category = "level"
+            else:
+                category = "pressure"
+            is_summable = category == "flow"
 
             active_vals = []
             active_names = []
