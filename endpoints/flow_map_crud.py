@@ -431,7 +431,7 @@ async def get_flow_diagram_edges():
             idx = current_idx[up_key]
             total = up_counts[up_key]
             current_idx[up_key] = idx + 1
-            x_offset = (idx - (total - 1) / 2.0) * 0.0012 if total > 1 else 0.0
+            x_offset = (idx - (total - 1) / 2.0) * 0.0020 if total > 1 else 0.0
 
             bus_x = ux_f + (dx_f - ux_f) * 0.5 + x_offset
             coords = [

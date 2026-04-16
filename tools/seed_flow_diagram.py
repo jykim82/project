@@ -15,12 +15,12 @@ DB_NAME = os.environ.get("DB_NAME", "slm")
 DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
 
-# ── 레이아웃 상수 ──
-PARENT_X_GAP  = 0.040   # 부모→자식 X 간격
-CHILD_X_GAP   = 0.025   # 자식 간 가로 간격
-ROW_Y_GAP     = 0.006   # 행 wrap 시 Y 간격
-TREE_Y_GAP    = 0.015   # 서로 다른 계통(루트별) Y 간격
-MAX_PER_ROW   = 6       # 한 행 최대 자식 수
+# ── 레이아웃 상수 (넓은 간격 — 박스/라인 겹침 방지) ──
+PARENT_X_GAP  = 0.055   # 부모→자식 X 간격 (넓힘)
+CHILD_X_GAP   = 0.038   # 자식 간 가로 간격 (넓힘)
+ROW_Y_GAP     = 0.010   # 행 wrap 시 Y 간격 (넓힘)
+TREE_Y_GAP    = 0.025   # 서로 다른 계통(루트별) Y 간격 (넓힘)
+MAX_PER_ROW   = 5       # 한 행 최대 자식 수 (줄임)
 ORIGIN_X      = 126.48
 ORIGIN_Y      = 36.92
 
