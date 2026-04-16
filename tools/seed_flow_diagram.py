@@ -133,7 +133,8 @@ def _place_subtree(node, x, y, children_map, depth_map, positions, hcache):
 
     # 자식 시작 X = 부모 X + gap
     child_base_x = x + PARENT_X_GAP
-    child_y = y  # 같은 Y (가로 배치 핵심!)
+    # 자식 Y = 부모보다 한 단 아래 (bracket 수직 드롭이 보이도록)
+    child_y = y - ROW_Y_GAP * 0.6
 
     row = 0
     col = 0
