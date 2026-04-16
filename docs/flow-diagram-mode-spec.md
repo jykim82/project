@@ -1,7 +1,7 @@
 # 용수흐름도 "다이어그램 모드" 추가 구현 사양 (Draft)
 
-**작성:** 2026-04-15
-**상태:** 검토 대기 (사용자 승인 전)
+**작성:** 2026-04-15 (초안), 2026-04-16 (B안 구현 완료 업데이트)
+**상태:** B안 구현 완료
 **관련:** `docs/review-items.md`, `docs/work-history.md`
 
 ## 1. 요구사항 (사용자 원문)
@@ -75,7 +75,38 @@
 - 단점: 새 라이브러리 의존성, 기존 Sankey와 별개로 유지
 - 적합성: ⭐⭐⭐⭐
 
-**권장: Option B (MapLibreGL 재사용)** — 폐쇄망 납품 시 추가 라이브러리 0개, 기존 GisMap 컴포넌트 확장. 다만 레퍼런스와 달리 "실제 지리"가 아닌 **스키마틱 논리 캔버스** 모드로 전환하는 토글 제공.
+**확정: Option B (MapLibreGL 재사용)** — 2026-04-16 구현 완료.
+
+### 4.1a 구현 결과 (2026-04-16)
+
+**레이아웃:** B안 가로 배치 (계통.001 레퍼런스 정확 재현)
+- 자식을 부모와 같은 Y에 가로로 배치 (X 분산)
+- MAX_PER_ROW=5 초과 시 다음 Y 행 wrap
+- 자동 레이아웃 (seed_flow_diagram.py) — tb_facility_flow_map 데이터 기반, 하드코딩 아님
+
+**엣지:** bracket 패턴 (trunk + vertical + drop 분리)
+- 부모→bus_x 수평 trunk (부모당 1개)
+- bus_x 수직 trunk (min_Y~max_Y, 부모당 1개)
+- bus_x→자식 수평 drop (자식당 1개)
+- 97 엣지 → 177 segments (40 trunk + 40 vertical + 97 drops)
+
+**노드:** HTML Marker 3단계 (sm/md/lg)
+- sm (줌<11): GIS SVG 아이콘 26px 원형 (reservoir/booster/meter/purifier/valve_pressure)
+- md (줌 11~13): 아이콘 + 시설명 + 유형
+- lg (줌>13): 전체 (메트릭 + 알람 뱃지)
+
+**기능:**
+- 다이어그램 모드 기본 ON
+- 전체화면 지원 + 초기화면(fitView) 연동
+- 계통별 선택 (selectedRoot → BFS downstream 필터)
+- 레이어 토글 (라벨/메트릭/알람/엣지)
+- 드래그 편집 모드 (PUT /flow-diagram/nodes/{id})
+- 실시간 메트릭 60초 폴링
+- 애니메이션: opacity 펄스 (LineAtlas overflow 방지)
+
+**커밋 히스토리:**
+- `slm@dcd230d` Phase 1 (데이터모델+시드+API)
+- `slm-dashboard@f5c4c1c~9c4f1f6` Phase 2~3 (렌더+메트릭+하이라이트+토글+편집+전체화면+계통필터+B안레이아웃+bracket엣지+초기화면)
 
 ### 4.2 데이터 모델 확장
 
