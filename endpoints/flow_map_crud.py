@@ -411,29 +411,16 @@ async def get_flow_diagram_edges():
         rows = cur.fetchall()
         cur.close()
 
-        # (B) 같은 upstream의 엣지별 bus_x 오프셋 — 수직 드롭 겹침 방지
-        from collections import Counter
-        up_counts: dict[str, int] = Counter()
-        for r in rows:
-            up_counts[f"{r[0]}__{r[1]}"] += 1
-        current_idx: dict[str, int] = {}
-
+        # bracket 패턴: 같은 부모의 엣지들이 하나의 bus_x를 공유
+        # → 수직선이 합쳐져 "하나의 bracket"으로 보임 (레퍼런스 대응)
         features = []
         for r in rows:
             (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
             ux_f, uy_f = float(ux), float(uy)
             dx_f, dy_f = float(dx), float(dy)
 
-            # bus_x offset: 같은 출발점에서 여러 선 → X 미세 분산
-            up_key = f"{us}__{uf}"
-            if up_key not in current_idx:
-                current_idx[up_key] = 0
-            idx = current_idx[up_key]
-            total = up_counts[up_key]
-            current_idx[up_key] = idx + 1
-            x_offset = (idx - (total - 1) / 2.0) * 0.0020 if total > 1 else 0.0
-
-            bus_x = ux_f + (dx_f - ux_f) * 0.5 + x_offset
+            # bus_x = 부모 바로 오른쪽 (부모-자식 간격의 30% 지점)
+            bus_x = ux_f + (dx_f - ux_f) * 0.3
             coords = [
                 [ux_f, uy_f],
                 [bus_x, uy_f],
