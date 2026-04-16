@@ -43,7 +43,7 @@ FACILITY_LEVEL = {
 }
 
 BOX_SIZES = {0: (180, 60), 1: (160, 52), 2: (140, 44), 3: (120, 36)}
-DISPLAY_FROM_Z = {0: 8.0, 1: 10.0, 2: 11.0, 3: 12.0}
+DISPLAY_FROM_Z = {0: 8.0, 1: 9.5, 2: 9.5, 3: 10.0}
 
 SKIP_FILENAME_PATTERNS = ["master-k"]
 
