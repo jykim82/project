@@ -411,20 +411,34 @@ async def get_flow_diagram_edges():
         rows = cur.fetchall()
         cur.close()
 
+        # (B) 같은 upstream의 엣지별 bus_x 오프셋 — 수직 드롭 겹침 방지
+        from collections import Counter
+        up_counts: dict[str, int] = Counter()
+        for r in rows:
+            up_counts[f"{r[0]}__{r[1]}"] += 1
+        current_idx: dict[str, int] = {}
+
         features = []
         for r in rows:
             (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
             ux_f, uy_f = float(ux), float(uy)
             dx_f, dy_f = float(dx), float(dy)
 
-            # 직교 버스바: 부모에서 수평 → 중간 X에서 수직 → 자식 Y → 수평으로 자식
-            # 3-segment orthogonal (레퍼런스 스크린샷 패턴)
-            bus_x = ux_f + (dx_f - ux_f) * 0.5  # 부모-자식 중간 X
+            # bus_x offset: 같은 출발점에서 여러 선 → X 미세 분산
+            up_key = f"{us}__{uf}"
+            if up_key not in current_idx:
+                current_idx[up_key] = 0
+            idx = current_idx[up_key]
+            total = up_counts[up_key]
+            current_idx[up_key] = idx + 1
+            x_offset = (idx - (total - 1) / 2.0) * 0.0012 if total > 1 else 0.0
+
+            bus_x = ux_f + (dx_f - ux_f) * 0.5 + x_offset
             coords = [
-                [ux_f, uy_f],       # 부모 출발
-                [bus_x, uy_f],      # 수평으로 버스바까지
-                [bus_x, dy_f],      # 수직 드롭 (또는 상승)
-                [dx_f, dy_f],       # 수평으로 자식 도착
+                [ux_f, uy_f],
+                [bus_x, uy_f],
+                [bus_x, dy_f],
+                [dx_f, dy_f],
             ]
             features.append({
                 "type": "Feature",

@@ -30,10 +30,10 @@ DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
 
 # ── 레이아웃 상수 ──
-X_STEP = 0.035         # 깊이 간 X 간격 (lng)
-Y_GAP  = 0.0025        # 리프 간 최소 Y 간격 (lat) — 넓게
-ORIGIN_X = 126.50
-ORIGIN_Y = 36.85       # 최상단 시작 lat (아래로 내려감)
+X_STEP = 0.045         # 깊이 간 X 간격 (lng) — 컬럼 간격 넓힘
+Y_GAP  = 0.0045        # 리프 간 최소 Y 간격 (lat) — 밀집 해소 (A)
+ORIGIN_X = 126.48
+ORIGIN_Y = 36.90       # 최상단 시작 lat (아래로 내려감, 여유 확보)
 
 FACILITY_LEVEL = {
     "정수장": 0, "댐": 0, "취수장": 0,
