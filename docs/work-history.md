@@ -5,7 +5,7 @@
 ### 완료 (2026-04-16 — 다이어그램 방향 화살표 + 알갱이 애니메이션 + GIS 데이터 동기)
 
 - 엣지에 canvas 생성 화살표 아이콘 (symbol-placement=line, 폐쇄망 대응)
-- 알갱이 particle 애니메이션: 2겹 대시 + 교대 opacity, 라인 굵기 2배
+- 이동 particle 점 애니메이션: circle이 상류→하류로 이동, 방향 인식 명확 (`slm-dashboard@23fc578`)
 - lg 노드 배수지: supply_time (공급가능시간/유입/유출/야간최소) — GIS 관망도와 동일 데이터
 - 커밋: `slm-dashboard@ac8b19e`
 

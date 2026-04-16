@@ -237,7 +237,7 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 
 ### 7.3 방향 화살표 + 알갱이 애니메이션 + GIS 데이터 동기 (2026-04-16)
 - **방향 인식:** canvas 생성 화살표 아이콘을 엣지에 symbol-placement=line으로 배치 (폐쇄망 대응, 외부 glyph 불필요)
-- **알갱이 애니메이션:** 2겹 대시 레이어 (fd-particle-a/b) + 교대 opacity 펄스. 라인 굵기 2배 상향
+- **이동 particle 애니메이션:** 엣지 LineString을 따라 circle 점이 상류→하류로 이동 (세그먼트당 2개, 120ms 주기 GeoJSON 갱신). 방향 인식 명확
 - **GIS 데이터 동기:** lg 노드에 배수지 supply_time (공급가능시간/일평균유입/유출/야간최소유량) 추가. GIS 관망도 팝업과 동일 데이터 항목
 - **커밋:** `slm-dashboard@ac8b19e`
 
