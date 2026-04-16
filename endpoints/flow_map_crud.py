@@ -411,42 +411,20 @@ async def get_flow_diagram_edges():
         rows = cur.fetchall()
         cur.close()
 
-        # 같은 upstream에서 나가는 edge 수 → Y offset 계산 (선 겹침 방지)
-        from collections import Counter
-        up_counts: dict[str, int] = Counter()
-        up_indices: dict[str, int] = {}
-        for r in rows:
-            key = f"{r[0]}__{r[1]}"
-            up_counts[key] = up_counts.get(key, 0) + 1
-
-        current_idx: dict[str, int] = {}
-
         features = []
         for r in rows:
             (us, uf, ds, df, rel, ux, uy, ul, dx, dy, dl) = r
-            up_key = f"{us}__{uf}"
-            # 같은 upstream에서 나가는 엣지 간 Y offset
-            if up_key not in current_idx:
-                current_idx[up_key] = 0
-            idx = current_idx[up_key]
-            total = up_counts[up_key]
-            current_idx[up_key] = idx + 1
-
-            # Y offset: 같은 출발점에서 여러 선 → 미세 분산 (겹침 방지)
-            y_offset = (idx - (total - 1) / 2.0) * 0.0006 if total > 1 else 0.0
-
-            # 부드러운 S 커브: 시작 → 1/4 지점 → 중간 → 3/4 지점 → 끝 (6-포인트)
-            ux_f, uy_f = float(ux), float(uy) + y_offset
+            ux_f, uy_f = float(ux), float(uy)
             dx_f, dy_f = float(dx), float(dy)
-            q1_x = ux_f + (dx_f - ux_f) * 0.35
-            q3_x = ux_f + (dx_f - ux_f) * 0.65
-            mid_x = (ux_f + dx_f) / 2.0
+
+            # 직교 버스바: 부모에서 수평 → 중간 X에서 수직 → 자식 Y → 수평으로 자식
+            # 3-segment orthogonal (레퍼런스 스크린샷 패턴)
+            bus_x = ux_f + (dx_f - ux_f) * 0.5  # 부모-자식 중간 X
             coords = [
-                [ux_f, uy_f],
-                [q1_x, uy_f],          # 수평 진행
-                [mid_x, (uy_f + dy_f) / 2.0],  # 부드러운 중앙 전환
-                [q3_x, dy_f],          # 하류 Y로 이동
-                [dx_f, dy_f],
+                [ux_f, uy_f],       # 부모 출발
+                [bus_x, uy_f],      # 수평으로 버스바까지
+                [bus_x, dy_f],      # 수직 드롭 (또는 상승)
+                [dx_f, dy_f],       # 수평으로 자식 도착
             ]
             features.append({
                 "type": "Feature",
