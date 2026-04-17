@@ -241,6 +241,50 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 - **GIS 데이터 동기:** lg 노드에 배수지 supply_time (공급가능시간/일평균유입/유출/야간최소유량) 추가. GIS 관망도 팝업과 동일 데이터 항목
 - **커밋:** `slm-dashboard@ac8b19e`
 
+### 7.4 소블록 유량적산/압력 추가 (2026-04-17)
+- **백엔드:** `_TARGET_GROUPS`에 FLOW_CUMULATIVE + PRESSURE 추가, 적산 제외 필터는 FLOW_CUMULATIVE에 미적용, flow_accum 별도 카테고리 매핑 (`slm@4b09297`)
+- **프런트:** FlowDiagramNode lg + GisFacilityPopup에 유량적산(k m³) 표시 (`slm-dashboard@a147884`)
+- **GIS ↔ 다이어그램 동일 데이터:** 소블록은 유량순시 + 유량적산 + 압력 3종
+
+### 7.5 노드 클릭 flyTo 포커싱 (2026-04-17)
+- **동작:** 노드 클릭 시 해당 좌표로 `flyTo(zoom 14, 800ms)` 이동, lg 상세 뷰로 전환
+- **재클릭 토글:** 같은 노드 재클릭 시 deselect + flyTo 없음
+- **커밋:** `slm-dashboard@0f8e4f2`
+
+### 7.6 노드 간격 40% 축소 (2026-04-17)
+- PARENT_X_GAP 0.055→0.035, CHILD_X_GAP 0.038→0.025, ROW_Y_GAP 0.010→0.006, TREE_Y_GAP 0.025→0.015
+- X span 0.330→0.210, Y span 0.730→0.438, 충돌 0건 유지
+- **커밋:** `slm@116e294`
+
+### 7.7 라이트 모드 디자인 대응 (2026-04-17)
+- 맵 배경: dark `#0b0f1a` / light `#f1f5f9` (useTheme 감지, `makeMapStyle`/`makeEdgePaint` 테마별)
+- 노드 박스: 파스텔 배경(`bg-*-50/90`) + 진한 보더, 텍스트 slate-800, 아이콘 진한 컬러(*-700)
+- 엣지 dim: 라이트에서 slate-400 회색 + opacity 0.2~0.3 (가시성 확보)
+- 오버레이/범례/버튼: `dark:bg-black/60 bg-white/80` + 텍스트 slate-700
+- 필터 하이라이트: `outline outline-[3px] outline-blue-500` (ring 속성 충돌 회피, alarm ring과 공존)
+- **커밋:** `slm-dashboard@6a2614d`, `42eddd8`, `fb8b8d7`, `4cad721`, `b3dc210`
+
+### 7.8 상단 요약 패널 + 필터 동작 (2026-04-17)
+- **상단 패널:** 시설유형 범례 + 실시간 통계(유량 불균형/교차검증/알람/설비 장애/통신 이상) 카운트
+- **필터 동작:** 각 통계 배지 클릭 시 해당 노드만 하이라이트(파란 outline + scale-110), 나머지는 dim
+  - 노드: opacity 10~15%
+  - 엣지: opacity 5~8% (dark) / 20~30% + slate-400 색 (light)
+  - particle: 대상 엣지에만 흐름
+- **재클릭 해제** + 우측 "필터 해제 ✕" 링크 지원
+- **커밋:** `slm-dashboard@229d396`, `e9fb342`, `851ea09`, `876571f`
+
+### 7.9 KPI 카드 ↔ 다이어그램 필터 연동 (2026-04-17)
+- **문제:** 페이지 최상단 7개 KPI 카드는 Sankey용 `filterNodeIds`에만 연결, 다이어그램 모드에는 미연결 → 사용자가 카드 클릭해도 다이어그램 반응 없음
+- **해결:** `FlowDiagramMap`에 `externalFilter` prop 추가. KPI `activeFilter` → 다이어그램 내부 필터 매핑
+  - `crossWarn → cross`, `imbalance → imbalance`, `alarm → alarm`, `equipFailure → equip`, `commError → comm`
+- 이제 큰 KPI 카드 클릭 = 다이어그램 내부 배지 클릭 = 동일 효과
+- **커밋:** `slm-dashboard@84779a5`
+
+### 7.10 Dev 캐시 헤더 (2026-04-17)
+- 개발 환경에서 브라우저 HTTP 캐시가 old JS 번들을 사용해 HMR 후에도 반영 안 되는 문제 방지
+- `next.config.ts` dev 모드만 `Cache-Control: no-store, must-revalidate` + `Pragma: no-cache`
+- **커밋:** `slm-dashboard@2937f13`
+
 ## 8. 결정 필요 사항
 
 사용자 확인 후 Phase 1 시작:

@@ -2,12 +2,26 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
-### 완료 (2026-04-17 — 다이어그램 라이트모드 + 소블록 유량적산 + 노드 클릭 포커싱)
+### 완료 (2026-04-17 — 다이어그램 상단 패널 + KPI 연동 + 라이트모드 완성)
 
-- 라이트모드: 맵 배경/노드/오버레이/particle 전체 dark/light 대응 (`slm-dashboard@6a2614d`)
-- 소블록 유량적산+압력: 백엔드 FLOW_CUMULATIVE+PRESSURE 추가 (`slm@4b09297`) + 프론트 표시 (`slm-dashboard@a147884`)
+**상단 요약 패널 + 필터 동작 (생키 UX 동기화):**
+- 시설유형 범례 + 불균형/교차검증/알람/장애/통신 카운트 표시 (`slm-dashboard@229d396`)
+- 배지 클릭 시 대상 노드 파란 outline 하이라이트, 나머지 dim (`e9fb342`, `851ea09`)
+- 엣지/particle도 dim 처리로 생키 동일 UX (`876571f`)
+- 라이트모드에서 dim 엣지 slate-400 회색으로 가시성 확보 (`b3dc210`)
+- ring→outline 교체로 alarm ring과 충돌 해결 (`4cad721`)
+
+**KPI 카드 ↔ 다이어그램 필터 연동:**
+- externalFilter prop으로 KPI 카드 activeFilter와 다이어그램 필터 매핑 (`slm-dashboard@84779a5`)
+- 기존 KPI 카드는 Sankey에만 연결되어 다이어그램 반응 없던 문제 해결
+
+**라이트모드 + 기타 개선:**
+- 라이트모드: 맵/노드/오버레이/엣지 완전 대응 (`slm-dashboard@6a2614d`, `fb8b8d7`)
+- 박스 텍스트 가독성: slate-800 + font-medium, 아이콘 *-700 (`42eddd8`)
+- 소블록 유량적산+압력: `slm@4b09297` + `slm-dashboard@a147884`
 - 노드 클릭 flyTo zoom 14 포커싱 (`slm-dashboard@0f8e4f2`)
 - 노드 간격 40% 축소 (`slm@116e294`)
+- dev 캐시 방지 헤더 (`slm-dashboard@2937f13`)
 
 ### 완료 (2026-04-16 — 다이어그램 방향 화살표 + 알갱이 애니메이션 + GIS 데이터 동기)
 
