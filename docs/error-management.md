@@ -1363,6 +1363,17 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 
 ## 관련 파일
 
+### [E-027] AI 채팅 행 — block_builder _STATUS_MARKER_MAP NameError
+
+- **날짜:** 2026-04-17
+- **증상:** AI 채팅에서 네트워크 상태 관련 인텐트 질의 시 응답 대기 상태로 hang
+- **원인:** `response_builder.py`에서 UI 블록 빌더 함수를 `block_builder.py`로 모듈 분리할 때 `_STATUS_MARKER_MAP` 상수는 response_builder에만 남고 block_builder에 복사 안 됨. `wrap_status_marker()` 호출 시 `NameError: name '_STATUS_MARKER_MAP' is not defined` → TaskGroup 예외 → SSE 스트리밍 중단 → 프런트가 응답 대기 상태로 고정
+- **해결:** `block_builder.py` 상단에 `_STATUS_MARKER_MAP` 리스트 정의 복사 (고장/이상 → error, 경고/주의/정지 → warn, 정상/양호/가동 → ok)
+- **재발 방지:** 모듈 분리 시 의존 상수/함수도 같이 이동했는지 import 경로로 검증. grep 패턴: 함수 본문 내 대문자 변수 참조를 module scope에 정의 여부 확인
+- **커밋:** `slm@b4426e2`
+
+---
+
 ### [E-026] 용수흐름도 다이어그램 노드 좌표 충돌 — 도형 겹침
 
 - **날짜:** 2026-04-16
