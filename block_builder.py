@@ -12,6 +12,19 @@ from typing import Any
 logger = logging.getLogger("slm")
 
 
+# 상태 텍스트 → 시맨틱 마커 레벨 매핑 (순서 중요: 앞쪽이 우선)
+_STATUS_MARKER_MAP = [
+    ("고장", "error"),
+    ("이상", "error"),
+    ("경고", "warn"),
+    ("주의", "warn"),
+    ("정상", "ok"),
+    ("양호", "ok"),
+    ("가동", "ok"),
+    ("정지", "warn"),
+]
+
+
 def wrap_status_marker(text: str) -> str:
     """상태 텍스트를 시맨틱 마커로 감싼다. 예: '정상' → '<<ok:정상>>'"""
     for keyword, level in _STATUS_MARKER_MAP:
