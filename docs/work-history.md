@@ -2,6 +2,13 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-17 — 다이어그램 라이트모드 + 소블록 유량적산 + 노드 클릭 포커싱)
+
+- 라이트모드: 맵 배경/노드/오버레이/particle 전체 dark/light 대응 (`slm-dashboard@6a2614d`)
+- 소블록 유량적산+압력: 백엔드 FLOW_CUMULATIVE+PRESSURE 추가 (`slm@4b09297`) + 프론트 표시 (`slm-dashboard@a147884`)
+- 노드 클릭 flyTo zoom 14 포커싱 (`slm-dashboard@0f8e4f2`)
+- 노드 간격 40% 축소 (`slm@116e294`)
+
 ### 완료 (2026-04-16 — 다이어그램 방향 화살표 + 알갱이 애니메이션 + GIS 데이터 동기)
 
 - 엣지에 canvas 생성 화살표 아이콘 (symbol-placement=line, 폐쇄망 대응)
