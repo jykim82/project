@@ -280,7 +280,25 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 - 이제 큰 KPI 카드 클릭 = 다이어그램 내부 배지 클릭 = 동일 효과
 - **커밋:** `slm-dashboard@84779a5`
 
-### 7.10 Dev 캐시 헤더 (2026-04-17)
+### 7.10 버튼 중복 제거 + 디자인 통일 (2026-04-17)
+- 맵 내부 "전체 맞춤" 버튼 제거 (카드 헤더 "초기화면"과 기능 중복)
+- 초기화면 아이콘 Maximize2 → Scan (전체화면과 시각 차별화)
+- 전체화면 활성 시 amber 강조
+- 맵 내부 버튼: `border + dark:slate-800/80 + shadow-sm` (카드 헤더 outline Button과 일관성)
+- **커밋:** `slm-dashboard@631892b`
+
+### 7.11 계통(Root) 선택 시 자동 fit-view (2026-04-17)
+- **문제:** 드롭다운에서 특정 계통 선택 시 필터는 적용되지만 줌/뷰는 그대로 → 해당 계통 위치를 수동으로 찾아가야 했음
+- **해결:**
+  - `selectedRoot` 변경 감지 → 해당 계통 노드 bounds로 자동 `fitBounds` (800ms 애니메이션)
+  - `handleFitView` 로직 강화: `rootFilteredKeys` 있으면 해당 계통만 대상, 없으면 전체
+- **UX 효과:**
+  - 페이지 상단 드롭다운(전체/특정 계통) 변경 → 다이어그램 자동 줌인/아웃
+  - 생키 "계통" 뷰 카드 클릭 → setSelectedRoot → 다이어그램도 동일 동작
+  - "초기화면" 버튼도 현재 선택 계통에 맞게 동작
+- **커밋:** `slm-dashboard@dcb2680`
+
+### 7.12 Dev 캐시 헤더 (2026-04-17)
 - 개발 환경에서 브라우저 HTTP 캐시가 old JS 번들을 사용해 HMR 후에도 반영 안 되는 문제 방지
 - `next.config.ts` dev 모드만 `Cache-Control: no-store, must-revalidate` + `Pragma: no-cache`
 - **커밋:** `slm-dashboard@2937f13`
