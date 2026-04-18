@@ -461,13 +461,28 @@ def render_answer_template(template: dict, data: dict) -> dict:
         if rendered:
             result["summary"] = rendered
 
-    # detail 렌더링
+    # detail 렌더링 (AFTER: icon/pill 확장 필드 preservation)
     if "detail" in template:
         detail_lines = []
         for line in template["detail"]:
-            rendered = render_template_line(line, data)
-            if rendered:
-                detail_lines.append(rendered)
+            if isinstance(line, dict) and ("icon" in line or "pill" in line):
+                # AFTER 확장 필드 있는 dict: text 렌더 후 icon/pill도 같이 보존
+                rendered_text = _render_text(line.get("text", ""), data)
+                if rendered_text is None:
+                    continue
+                item = {"prefix": line.get("prefix", ""), "text": rendered_text}
+                if "icon" in line:
+                    item["icon"] = line["icon"]
+                if "pill" in line and isinstance(line["pill"], dict):
+                    pill_text = _render_text(line["pill"].get("text", ""), data)
+                    pill_tone = _render_text(line["pill"].get("tone", "neutral"), data) or "neutral"
+                    if pill_text is not None:
+                        item["pill"] = {"text": str(pill_text), "tone": str(pill_tone)}
+                detail_lines.append(item)
+            else:
+                rendered = render_template_line(line, data)
+                if rendered:
+                    detail_lines.append(rendered)
         if detail_lines:
             result["detail"] = detail_lines
 
@@ -509,6 +524,29 @@ def render_answer_template(template: dict, data: dict) -> dict:
                 ref_result["items"] = ref_items
         if ref_result:
             result["reference"] = ref_result
+
+    # meta 렌더링 (AFTER: 푸터 신뢰도 · 응답시간)
+    # 정적 값 (confidence: 92) 또는 placeholder 모두 허용.
+    if "meta" in template and isinstance(template["meta"], dict):
+        meta_raw = template["meta"]
+        meta_out: dict = {}
+        if "confidence" in meta_raw:
+            cf = meta_raw["confidence"]
+            if isinstance(cf, (int, float)):
+                meta_out["confidence"] = float(cf)
+            elif isinstance(cf, str):
+                cf_rendered = _render_text(cf, data)
+                try:
+                    if cf_rendered is not None:
+                        meta_out["confidence"] = float(cf_rendered)
+                except (TypeError, ValueError):
+                    pass
+        if "response_time_ms" in meta_raw:
+            rt = meta_raw["response_time_ms"]
+            if isinstance(rt, (int, float)):
+                meta_out["response_time_ms"] = float(rt)
+        if meta_out:
+            result["meta"] = meta_out
 
     # recommend_questions 렌더링
     if "recommend_questions" in template:

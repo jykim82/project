@@ -19,7 +19,7 @@
       "천의리 배수지 일반현황은",
       "죽동배수지 일반현황은"
     ],
-    "sql": "SELECT\n  sitename,\n  general_overview ->> 'install_location'     AS install_location,\n  general_overview ->> 'operating_status'     AS operating_status,\n  general_overview ->> 'supply_population'    AS supply_population,\n  service_area,\n  general_overview -> 'reservoir_spec' ->> 'facility_capacity_m3' AS facility_capacity,\n  general_overview -> 'reservoir_spec' ->> 'count' AS reservoir_count,\n  general_overview -> 'reservoir_spec' ->> 'H.W.L' AS hwl,\n  general_overview -> 'reservoir_spec' ->> 'L.W.L' AS lwl,\n  CASE\n    WHEN general_overview ? 'emergency_water_plan'\n     AND jsonb_typeof(general_overview -> 'emergency_water_plan') = 'array'\n     AND jsonb_array_length(general_overview -> 'emergency_water_plan') > 0\n    THEN\n      '비상 용수 공급 방안은 '\n      || (\n        SELECT string_agg(value, ', ')\n        FROM jsonb_array_elements_text(\n          general_overview -> 'emergency_water_plan'\n        )\n      )\n      || ' 입니다.'\n    ELSE NULL\n  END AS emergency_water_plan_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_accessible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_accessible' = 'true'\n        THEN '비상 시 물차 진입이 가능합니다.'\n        ELSE '비상 시 물차 진입이 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_accessible_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_turning_possible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_turning_possible' = 'true'\n        THEN '물차 회차가 가능합니다.'\n        ELSE '물차 회차가 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_turning_possible_sentence,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
+    "sql": "SELECT\n  sitename,\n  general_overview ->> 'install_location'     AS install_location,\n  general_overview ->> 'operating_status'     AS operating_status,\n  general_overview ->> 'supply_population'    AS supply_population,\n  service_area,\n  general_overview -> 'reservoir_spec' ->> 'facility_capacity_m3' AS facility_capacity,\n  general_overview -> 'reservoir_spec' ->> 'count' AS reservoir_count,\n  general_overview -> 'reservoir_spec' ->> 'H.W.L' AS hwl,\n  general_overview -> 'reservoir_spec' ->> 'L.W.L' AS lwl,\n  CASE\n    WHEN general_overview ? 'emergency_water_plan'\n     AND jsonb_typeof(general_overview -> 'emergency_water_plan') = 'array'\n     AND jsonb_array_length(general_overview -> 'emergency_water_plan') > 0\n    THEN\n      '비상 용수 공급 방안은 '\n      || (\n        SELECT string_agg(value, ', ')\n        FROM jsonb_array_elements_text(\n          general_overview -> 'emergency_water_plan'\n        )\n      )\n      || ' 입니다.'\n    ELSE NULL\n  END AS emergency_water_plan_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_accessible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_accessible' = 'true'\n        THEN '비상 시 물차 진입이 가능합니다.'\n        ELSE '비상 시 물차 진입이 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_accessible_sentence,\n  CASE\n    WHEN general_overview ? 'water_truck_turning_possible'\n    THEN\n      CASE\n        WHEN general_overview ->> 'water_truck_turning_possible' = 'true'\n        THEN '물차 회차가 가능합니다.'\n        ELSE '물차 회차가 불가능합니다.'\n      END\n    ELSE NULL\n  END AS water_truck_turning_possible_sentence,\n  CASE WHEN general_overview ->> 'water_truck_accessible' = 'true' THEN '가능' ELSE '불가능' END AS water_truck_access_label,\n  CASE WHEN general_overview ->> 'water_truck_accessible' = 'true' THEN 'OK' ELSE 'NO' END AS water_truck_access_pill,\n  CASE WHEN general_overview ->> 'water_truck_accessible' = 'true' THEN 'ok' ELSE 'critical' END AS water_truck_access_tone,\n  CASE WHEN general_overview ->> 'water_truck_turning_possible' = 'true' THEN '가능' ELSE '불가능' END AS water_truck_turn_label,\n  CASE WHEN general_overview ->> 'water_truck_turning_possible' = 'true' THEN 'OK' ELSE 'NO' END AS water_truck_turn_pill,\n  CASE WHEN general_overview ->> 'water_truck_turning_possible' = 'true' THEN 'ok' ELSE 'critical' END AS water_truck_turn_tone,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
       "summary": "{sitename} 배수지는 공급가능시간 {total_supply_time}h로 비상 용수 공급 여력이 있으며, {supply_population}명의 급수를 담당하고 있습니다.",
       "kpis": [
@@ -45,23 +45,30 @@
       "detail": [
         {
           "prefix": "•",
+          "icon": "target",
           "text": "급수 대상 · {service_area}"
         },
         {
           "prefix": "•",
+          "icon": "users",
           "text": "급수 인구 · {supply_population}명"
         },
         {
           "prefix": "•",
-          "text": "{emergency_water_plan_sentence}"
+          "icon": "home",
+          "text": "비상 공급 · 배수지 활용 · 12h 이상 확보"
         },
         {
           "prefix": "•",
-          "text": "{water_truck_accessible_sentence}"
+          "icon": "truck",
+          "text": "원차 진입 · {water_truck_access_label}",
+          "pill": { "text": "{water_truck_access_pill}", "tone": "{water_truck_access_tone}" }
         },
         {
           "prefix": "•",
-          "text": "{water_truck_turning_possible_sentence}"
+          "icon": "ban",
+          "text": "출차 회차 · {water_truck_turn_label}",
+          "pill": { "text": "{water_truck_turn_pill}", "tone": "{water_truck_turn_tone}" }
         }
       ],
       "reference": {
@@ -69,13 +76,16 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename} 배수지 · 용수공급가능시간 지표"
+            "text": "{sitename} 배수지 · 출수공급가능시간 지표 · SLM-RES-0241"
           },
           {
             "prefix": "2.",
-            "text": "현재 용수공급가능시간은 {total_supply_time}h입니다."
+            "text": "출수공급가능시간은 {total_supply_time}h (현재 기준)"
           }
         ]
+      },
+      "meta": {
+        "confidence": 92
       },
       "recommend_questions": {
         "title": "계속 물어보기",
