@@ -76,6 +76,7 @@ localStorage persist → 기기/브라우저 단위로 독립 저장.
 
 - **네트워크 페이지 상단 KPI 패널 폭 정합**: `/network/page.tsx` 요약 카드 grid에서 `2xl:grid-cols-5` 제거 → 4개 카드가 항상 하단 토폴로지 카드와 동일 폭을 채우도록 수정. 2xl 해상도에서 4/5 너비로 줄어 불일치하던 이슈 해소.
 - **브레드크럼 라벨 누락 보완**: `components/layout/DynamicBreadcrumb.tsx` LABELS에 `gis: "GIS 관망도"`, `equipment-health: "설비 장애 통계"` 추가. 세그먼트 그대로 노출되어 소문자 `gis`로 보이던 이슈 해결.
+- **DashboardShell hydration 일치화**: `mounted=false` 스켈레톤과 `layout==="sidebar"` 분기를 통합해 SSR/client 첫 렌더가 완전히 동일한 트리를 만들도록 조정. 이전엔 `<main>` 내부 `<div>` 래퍼 유무가 달라 `Hydration failed ... <main> vs <Suspense>` 경고 발생. topbar는 mounted=true 분기로 분리, localStorage 선호는 hydration 이후 useEffect가 반영.
 
 ## 7. 향후 개선 (검토)
 

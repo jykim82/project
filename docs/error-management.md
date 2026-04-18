@@ -8,6 +8,17 @@
 
 ---
 
+### [E-028] DashboardShell SSR/client 렌더 트리 불일치로 hydration 실패
+
+- **날짜:** 2026-04-18
+- **증상:** 브라우저 콘솔 `Hydration failed because the server rendered HTML didn't match the client` + DOM diff에 `+ <main>` vs `- <Suspense>`
+- **원인:** `components/layout/DashboardShell.tsx`에서 `mounted=false` 스켈레톤 분기는 `<main>{children}</main>`, `mounted=true && layout==="sidebar"` 분기는 `<main><div className="flex min-h-0 flex-1 flex-col w-full">{children}</div></main>` — children 래퍼 div 유무 차이로 Next 16 Turbopack의 Suspense 삽입 위치가 달라짐
+- **해결:** `!mounted`와 `layout==="sidebar"` 분기 통합 (동일 JSX). SSR + 첫 hydration 모두 동일 트리. topbar는 mounted=true 확인 후 분기, localStorage의 topbar 선호는 hydration 완료 후 useEffect가 state 업데이트로 반영
+- **재발 방지:** `use client` 컴포넌트에서 `mounted` 플래그로 분기할 때 **두 분기의 DOM 구조를 문자 단위로 일치**시킬 것. 한쪽에만 래퍼 div/span을 추가하면 Suspense·Streaming 경계 위치가 달라져 hydration mismatch
+- **커밋:** `slm-dashboard@5fd39e7`
+
+---
+
 ### [E-001] Next.js가 HTTP로 시작되어 HTTPS 접속 불가
 
 | 항목 | 내용 |
