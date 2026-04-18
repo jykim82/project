@@ -76,10 +76,6 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename} 배수지 용수공급가능시간"
-          },
-          {
-            "prefix": "2.",
             "text": "현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
           }
         ]
