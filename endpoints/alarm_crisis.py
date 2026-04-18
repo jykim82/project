@@ -20,6 +20,7 @@ ai_server.py에서 분리된 모듈 — init()으로 DB 커넥션 함수를 주�
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 
 import psycopg2
 from fastapi import APIRouter, Query, Request, Body
@@ -605,14 +606,93 @@ async def get_alarm_analysis_detail(tagsn: str, alarm_start_time: str):
 # GET /crisis/alarm-dashboard — 경보관리현황 대시보드
 # =============================================================================
 
+_RANGE_BUCKETS = 8  # 스파크라인 bar 개수
+
+
+def _resolve_range_window(range_key: str) -> tuple[datetime, datetime, datetime, datetime]:
+    """range 키 → (period_start, period_end, yesterday_start, yesterday_end).
+
+    - 1h/6h: 지금으로부터 trailing 윈도우
+    - today: 오늘 00:00 ~ 지금 (어제는 어제 00:00 ~ 어제 같은 시각)
+    - week: 최근 7일 trailing (어제는 그 이전 7일)
+    DB가 `timestamp without time zone`이므로 TZ-naive 로컬 시각 사용.
+    """
+    now = datetime.now()
+    if range_key == "1h":
+        period_start = now - timedelta(hours=1)
+    elif range_key == "6h":
+        period_start = now - timedelta(hours=6)
+    elif range_key == "week":
+        period_start = now - timedelta(days=7)
+    else:  # "today" 기본
+        period_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    period_end = now
+    # 어제 동일 윈도우 (단순히 1일 전 shift)
+    yday_shift = timedelta(days=7) if range_key == "week" else timedelta(days=1)
+    yday_start = period_start - yday_shift
+    yday_end = period_end - yday_shift
+    return period_start, period_end, yday_start, yday_end
+
+
+def _bucket_category_counts(
+    cur, period_start: datetime, period_end: datetime
+) -> dict[str, list[int]]:
+    """카테고리별 시간 버킷 count (길이 _RANGE_BUCKETS). 비어있는 버킷은 0."""
+    total_seconds = (period_end - period_start).total_seconds()
+    if total_seconds <= 0:
+        return {}
+    bucket_seconds = total_seconds / _RANGE_BUCKETS
+
+    cur.execute(
+        """
+        SELECT
+            COALESCE(alarm_category, '기타') AS category,
+            LEAST(
+                GREATEST(
+                    FLOOR(EXTRACT(EPOCH FROM (alarm_start_time - %s)) / %s)::int,
+                    0
+                ),
+                %s
+            ) AS bucket_idx,
+            COUNT(*) AS cnt
+        FROM tb_equipment_alarm_report
+        WHERE alarm_start_time >= %s AND alarm_start_time < %s
+        GROUP BY category, bucket_idx
+        """,
+        (period_start, bucket_seconds, _RANGE_BUCKETS - 1, period_start, period_end),
+    )
+    hourly: dict[str, list[int]] = {}
+    for category, bucket_idx, cnt in cur.fetchall():
+        arr = hourly.setdefault(category, [0] * _RANGE_BUCKETS)
+        arr[bucket_idx] = cnt
+    return hourly
+
+
 @router.get("/crisis/alarm-dashboard")
-async def get_alarm_dashboard_summary():
-    """경보관리현황 대시보드 요약 (진행중 알람 집계)"""
+async def get_alarm_dashboard_summary(
+    range: str = Query("today", description="1h|6h|today|week — 분류별/스파크라인/KPI 시간 범위"),
+):
+    """경보관리현황 대시보드 요약.
+
+    기존 totalOngoing/criticalCount/warningCount/cautionCount/categorySummary/
+    facilitySummary는 '진행중 전체' 기준(하위호환). 새 range 관련 필드:
+      - range: 선택한 키
+      - rangeCategorySummary: range 내 발생 카테고리별 count
+      - rangeStats: range 내 {total, critical, unconfirmed, resolved}
+      - hourlyByCategory: range를 _RANGE_BUCKETS로 나눈 카테고리별 count 배열
+      - yesterdayDelta: 카테고리별 (오늘 range total - 어제 동일 range total)
+    """
+    if range not in {"1h", "6h", "today", "week"}:
+        range = "today"
+    period_start, period_end, yday_start, yday_end = _resolve_range_window(range)
+
     conn = None
     try:
         conn = _get_db_connection()
         cur = conn.cursor()
 
+        # ── 진행중 전체(기존 하위호환) ──
         cur.execute("""
             SELECT
                 COUNT(*) AS total_ongoing,
@@ -650,15 +730,82 @@ async def get_alarm_dashboard_summary():
             for row in cur.fetchall()
         ]
 
+        # ── range-scoped 카테고리별 count ──
+        cur.execute(
+            """
+            SELECT COALESCE(alarm_category, '기타') AS category, COUNT(*) AS cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= %s AND alarm_start_time < %s
+            GROUP BY category
+            ORDER BY cnt DESC
+            """,
+            (period_start, period_end),
+        )
+        range_category_summary = [
+            {"category": row[0], "count": row[1]}
+            for row in cur.fetchall()
+        ]
+
+        # ── range-scoped KPI (total / critical / unconfirmed / resolved) ──
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE alarm_severity = '경고') AS critical,
+                COUNT(*) FILTER (WHERE COALESCE(alarm_confirm_yn, '') <> 'Y') AS unconfirmed,
+                COUNT(*) FILTER (WHERE alarm_status = '알람해제' OR alarm_end_time IS NOT NULL) AS resolved
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= %s AND alarm_start_time < %s
+            """,
+            (period_start, period_end),
+        )
+        rs = cur.fetchone()
+        range_stats = {
+            "total": rs[0] or 0,
+            "critical": rs[1] or 0,
+            "unconfirmed": rs[2] or 0,
+            "resolved": rs[3] or 0,
+        }
+
+        # ── 스파크라인 버킷 (현재 range) ──
+        hourly_by_category = _bucket_category_counts(cur, period_start, period_end)
+
+        # ── 어제 대비 델타 (카테고리별) ──
+        cur.execute(
+            """
+            SELECT COALESCE(alarm_category, '기타') AS category, COUNT(*) AS cnt
+            FROM tb_equipment_alarm_report
+            WHERE alarm_start_time >= %s AND alarm_start_time < %s
+            GROUP BY category
+            """,
+            (yday_start, yday_end),
+        )
+        yday_counts = {row[0]: row[1] for row in cur.fetchall()}
+        today_counts = {row["category"]: row["count"] for row in range_category_summary}
+        all_categories = set(today_counts) | set(yday_counts)
+        yesterday_delta = {
+            cat: (today_counts.get(cat, 0) - yday_counts.get(cat, 0))
+            for cat in all_categories
+        }
+
         cur.close()
 
         return {
+            # 기존 (하위호환, '진행중 전체')
             "totalOngoing": r[0] or 0,
             "criticalCount": r[1] or 0,
             "warningCount": r[2] or 0,
             "cautionCount": r[3] or 0,
             "categorySummary": category_summary,
             "facilitySummary": facility_summary,
+            # 신규 (range-scoped)
+            "range": range,
+            "rangeStart": period_start.isoformat(),
+            "rangeEnd": period_end.isoformat(),
+            "rangeCategorySummary": range_category_summary,
+            "rangeStats": range_stats,
+            "hourlyByCategory": hourly_by_category,
+            "yesterdayDelta": yesterday_delta,
         }
 
     except psycopg2.Error as e:
@@ -666,6 +813,11 @@ async def get_alarm_dashboard_summary():
         return {
             "totalOngoing": 0, "criticalCount": 0, "warningCount": 0, "cautionCount": 0,
             "categorySummary": [], "facilitySummary": [],
+            "range": range,
+            "rangeCategorySummary": [],
+            "rangeStats": {"total": 0, "critical": 0, "unconfirmed": 0, "resolved": 0},
+            "hourlyByCategory": {},
+            "yesterdayDelta": {},
         }
     finally:
         if conn:
