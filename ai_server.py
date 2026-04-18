@@ -105,6 +105,7 @@ from endpoints.flow_realtime import router as flow_realtime_router, init as init
 from endpoints.admin import router as admin_router, init as init_admin
 from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
 from endpoints.chat_fault_record import router as chat_fault_record_router, init as init_chat_fault_record
+from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
@@ -2649,6 +2650,10 @@ app.include_router(chat_feedback_router)
 # 채팅 기반 설비 장애 기록 엔드포인트 (migration 0045)
 init_chat_fault_record(get_db_connection)
 app.include_router(chat_fault_record_router)
+
+# 설비 건강성 통계 엔드포인트 (migration 0045 views)
+init_equipment_health(get_db_connection)
+app.include_router(equipment_health_router)
 
 
 def _reload_facility_aliases():
