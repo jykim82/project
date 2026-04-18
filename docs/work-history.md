@@ -2,6 +2,28 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-18 — Q/H/P 트렌드 패널 공용 컴포넌트 도입)
+
+**목적:** `trend_panels.html` 레퍼런스 기반으로 용수흐름 / GIS 관망도 우측 인스펙터의 **유량(Q)·수위(H)·압력(P)** 표출을 동일한 시각 언어로 통일
+
+**구현 (`slm-dashboard@b3e6e7a`):**
+- 신규 공용 컴포넌트 `components/monitoring/MetricTrendPanel.tsx`
+- variant(flow/level/pressure)별 컬러 토큰 + 서로 다른 SVG 차트
+  - Flow: dash 흐름 + 끝점 펄스 링
+  - Level: 수면 반짝임 + 물방울 + indicator breath
+  - Pressure: 두꺼운 파이프 + 끝점 정적 펄스
+- 헤더: 라벨 + Q/H/P 코드 뱃지 + 값 + 단위 + delta(24h 첫값 대비)
+- 푸터: MIN/AVG/MAX + LAST 24H
+- `globals.css` — 애니메이션 keyframes 10종
+- Canvas 기반 SparklineChart 2곳(FlowNodeTrendPanel, GisDetailPanel) → MetricTrendPanel로 일원화
+
+**후속 보정:**
+- `slm-dashboard@92f3d23` — LIVE 뱃지 제거 + 라벨 한글화 (유량/수위/압력)
+- `slm-dashboard@44f6f46` — 압력 흐르는 wave 애니메이션 제거
+- `slm-dashboard@6f34bfc` — 유량 dash 흐름 속도 1.5s → 4s 완화
+
+사양: `docs/metric-trend-panel-spec.md`
+
 ### 완료 (2026-04-18 — 실시간 계통도 불균형 엣지 색상 분절 수정)
 
 **문제:** bracket 레이아웃의 trunk/vertical/drop 3분할 엣지 중 drop 만 불균형 색 반영 → 부모→자식 라인이 "절반 파랑/절반 빨강"으로 렌더
