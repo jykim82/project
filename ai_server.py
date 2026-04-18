@@ -104,6 +104,7 @@ from endpoints.dashboard import router as dashboard_router, init as init_dashboa
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
 from endpoints.admin import router as admin_router, init as init_admin
 from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
+from endpoints.chat_log import router as chat_log_router, init as init_chat_log
 from endpoints.chat_fault_record import router as chat_fault_record_router, init as init_chat_fault_record
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
@@ -2646,6 +2647,8 @@ app.include_router(admin_router)
 # 채팅 봇 오분류 피드백 엔드포인트 모듈 초기화
 init_chat_feedback(get_db_connection)
 app.include_router(chat_feedback_router)
+init_chat_log(get_db_connection)
+app.include_router(chat_log_router)
 
 # 채팅 기반 설비 장애 기록 엔드포인트 (migration 0045)
 init_chat_fault_record(get_db_connection)
@@ -2850,6 +2853,79 @@ anomaly_scan.init(
 )
 
 
+def _log_chat_interaction(
+    request: "AskRequest",
+    response: Any,
+    elapsed_ms: int,
+    error: Optional[str] = None,
+) -> None:
+    """채팅 질의/응답을 tb_ai_chat_log에 기록 (폐쇄망 통계용).
+
+    실패해도 응답 블로킹하지 않음. 모든 예외를 삼킨다.
+    """
+    try:
+        if get_db_connection is None:
+            return
+        region = getattr(request, "region", None) or "R01"
+        user_id = getattr(request, "user_id", None)
+        question = getattr(request, "user_question", "") or ""
+        images = getattr(request, "images", None) or []
+        is_multi = bool(images)
+
+        resp_dict = response if isinstance(response, dict) else {}
+        intent = resp_dict.get("intent")
+        answer = resp_dict.get("answer") or {}
+        summary = answer.get("summary") if isinstance(answer, dict) else None
+        visual = resp_dict.get("visual") or {}
+        graph_type = visual.get("type") if isinstance(visual, dict) else None
+        has_visual = bool(graph_type and graph_type != "none")
+
+        # intent_confidence: 있으면 응답 meta에서, 없으면 None
+        intent_confidence = None
+        meta = answer.get("meta") if isinstance(answer, dict) else None
+        if isinstance(meta, dict):
+            conf = meta.get("confidence")
+            if isinstance(conf, (int, float)) and conf > 1:
+                intent_confidence = conf / 100.0  # 92 → 0.92
+            elif isinstance(conf, (int, float)):
+                intent_confidence = conf
+
+        # total_rows 힌트
+        total_rows = resp_dict.get("total_rows")
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tb_ai_chat_log
+                      (region, user_id, user_question, intent_name, intent_confidence,
+                       graph_type, response_time_ms, bot_summary, total_rows,
+                       has_visual, is_multimodal, error)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        region,
+                        user_id,
+                        question[:4000],
+                        intent,
+                        intent_confidence,
+                        graph_type,
+                        elapsed_ms,
+                        (summary or "")[:2000] if summary else None,
+                        total_rows,
+                        has_visual,
+                        is_multi,
+                        (error or "")[:2000] if error else None,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as _log_e:
+        logger.warning("chat_log insert 실패 (무시): %s", _log_e)
+
+
 @app.post("/ask")
 async def ask(request: AskRequest):
     """
@@ -2866,13 +2942,22 @@ async def ask(request: AskRequest):
     5. 세션 파라미터 병합 (multi-turn)
     6. 질의 검증 → NEED_CORRECTION이면 정정 응답
     7. 기존 파이프라인: SQL 실행 → 템플릿 렌더링 → 응답
+    8. tb_ai_chat_log 기록 (실패 무시)
     """
+    _t_outer = time.perf_counter()
+    response_obj = None
+    error_msg = None
     try:
-        return await _ask_inner(request)
+        response_obj = await _ask_inner(request)
+        return response_obj
     except Exception as _top_e:
         import traceback as _tb
+        error_msg = repr(_top_e)
         logger.error("ask() 최상위 예외:\n%s", _tb.format_exc())
         raise
+    finally:
+        elapsed_ms = int((time.perf_counter() - _t_outer) * 1000)
+        _log_chat_interaction(request, response_obj, elapsed_ms, error=error_msg)
 
 
 async def _ask_inner(request: AskRequest):
