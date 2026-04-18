@@ -72,9 +72,13 @@ localStorage persist → 기기/브라우저 단위로 독립 저장.
 - `slm-dashboard@7a486ca` — 탑바 레이아웃 + 브랜드 컬러 11종
 - `slm-dashboard@2ca47f6` — 오렌지 중복 제거 (최종 10종)
 
-## 6. 향후 개선 (검토)
+## 6. 후속 수정 (2026-04-18)
 
-- 네트워크 페이지 등 탑바 모드에서 상단 패널 폭 조정 (사용자 피드백)
+- **네트워크 페이지 상단 KPI 패널 폭 정합**: `/network/page.tsx` 요약 카드 grid에서 `2xl:grid-cols-5` 제거 → 4개 카드가 항상 하단 토폴로지 카드와 동일 폭을 채우도록 수정. 2xl 해상도에서 4/5 너비로 줄어 불일치하던 이슈 해소.
+- **브레드크럼 라벨 누락 보완**: `components/layout/DynamicBreadcrumb.tsx` LABELS에 `gis: "GIS 관망도"`, `equipment-health: "설비 장애 통계"` 추가. 세그먼트 그대로 노출되어 소문자 `gis`로 보이던 이슈 해결.
+
+## 7. 향후 개선 (검토)
+
 - 탑바에서 현재 페이지 breadcrumb 가시성
 - 레이아웃 전환 시 부드러운 트랜지션 (opacity fade)
 - 브랜드 컬러 커스텀 (색 선택기 추가)
