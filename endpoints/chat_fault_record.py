@@ -178,6 +178,44 @@ def resolve_equipment_id(cur, sitename: str, facilitytype: str, equipmenttype: s
     return row[0] if row else None
 
 
+def suggest_ongoing_alarms(
+    cur,
+    sitename: Optional[str],
+    facilitytype: Optional[str],
+    equipmenttype: Optional[str],
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """장애 기록과 연관된 진행 중 알람 추천.
+    우선순위: (1) 동일 sitename+facilitytype+equipmenttype (2) 동일 sitename+facilitytype (3) 동일 sitename
+    """
+    if not sitename:
+        return []
+    # 관련도 점수: 3(전체일치) > 2(시설유형까지) > 1(시설만)
+    cur.execute(
+        """
+        SELECT
+          TO_CHAR(alarm_start_time, 'YYYY-MM-DD"T"HH24:MI:SS') AS alarm_start_time,
+          tagsn,
+          sitename, facilitytype, equipmenttype,
+          alarm_category, alarm_msg, alarm_severity,
+          CASE
+            WHEN equipmenttype = %s THEN 3
+            WHEN facilitytype = %s THEN 2
+            ELSE 1
+          END AS rel_score
+        FROM tb_equipment_alarm_report
+        WHERE alarm_end_time IS NULL
+          AND sitename = %s
+          AND alarm_start_time >= now() - interval '30 days'
+        ORDER BY rel_score DESC, alarm_start_time DESC
+        LIMIT %s
+        """,
+        (equipmenttype or "", facilitytype or "", sitename, limit),
+    )
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 # ============================================================================
 # Request/Response 모델
 # ============================================================================
@@ -194,6 +232,7 @@ class DraftResponse(BaseModel):
     ready: bool  # 필수 필드 모두 채워졌는지
     missing: list[str]
     confirm_message: str
+    suggested_alarms: list[dict[str, Any]] = []  # 연관 진행중 알람 제안
 
 
 class ConfirmRequest(BaseModel):
@@ -201,6 +240,10 @@ class ConfirmRequest(BaseModel):
     user_id: str
     action: str = Field(..., description="yes | modify | cancel")
     modifications: Optional[dict[str, Any]] = Field(None, description="action=modify 시 변경 필드")
+    # 연계할 알람 키 리스트: "alarm_start_time|tagsn" 포맷
+    selected_alarm_keys: list[str] = []
+    # 선택된 알람을 해제할지 여부
+    resolve_alarms: bool = True
 
 
 class ConfirmResponse(BaseModel):
@@ -247,7 +290,13 @@ def create_draft(req: DraftRequest):
         missing = [k for k in required if not draft.get(k)]
         ready = not missing
 
-        # pending_action INSERT
+        # 연관 진행중 알람 제안
+        suggested = suggest_ongoing_alarms(
+            cur, draft.get("sitename"), draft.get("facilitytype"), draft.get("equipmenttype"),
+        )
+
+        # pending_action INSERT — draft + suggested_alarms 저장 (confirm 시 참조)
+        draft_with_alarms = {**draft, "_suggested_alarms": suggested}
         session_id = uuid.uuid4().hex
         cur.execute(
             """
@@ -255,7 +304,7 @@ def create_draft(req: DraftRequest):
             VALUES (%s, %s, %s, %s::jsonb)
             """,
             (session_id, req.user_id, "FAULT_RECORD_DRAFT",
-             __import__("json").dumps(draft, ensure_ascii=False, default=str)),
+             __import__("json").dumps(draft_with_alarms, ensure_ascii=False, default=str)),
         )
         conn.commit()
 
@@ -269,6 +318,8 @@ def create_draft(req: DraftRequest):
                 f"• 발생시각: {occurred_at.strftime('%Y-%m-%d %H:%M')}\n"
                 f"이대로 기록할까요?"
             )
+            if suggested:
+                msg += f"\n\n※ 관련 진행중 알람 {len(suggested)}건 발견 — 함께 해제할지 선택할 수 있습니다."
         else:
             msg = f"다음 정보가 부족합니다: {', '.join(missing)}. 추가 입력이 필요합니다."
 
@@ -279,6 +330,7 @@ def create_draft(req: DraftRequest):
             ready=ready,
             missing=missing,
             confirm_message=msg,
+            suggested_alarms=suggested,
         )
     except Exception as e:
         conn.rollback()
@@ -344,14 +396,25 @@ def confirm_draft(req: ConfirmRequest):
         if isinstance(occurred_at, str):
             occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
 
+        # 연계할 알람 파싱: "alarm_start_time|tagsn" → [(dt, tagsn), ...]
+        linked_alarms: list[tuple[str, str]] = []
+        for key in (req.selected_alarm_keys or []):
+            parts = key.split("|", 1)
+            if len(parts) == 2 and parts[0] and parts[1]:
+                linked_alarms.append((parts[0], parts[1]))
+        first_alarm_start = linked_alarms[0][0] if linked_alarms else None
+        first_alarm_tagsn = linked_alarms[0][1] if linked_alarms else None
+
         cur.execute(
             """
             INSERT INTO tb_task_master
               (sitename, facilitytype, task_category, task_start_time,
                equipment_id, equipmenttype, fault_category, severity,
+               linked_alarm_start, linked_alarm_tagsn,
                task_content, recorded_by, status)
             VALUES (%s, %s, '고장보고', %s,
                     %s, %s, %s, %s,
+                    %s, %s,
                     %s, %s, '진행중')
             RETURNING task_id
             """,
@@ -359,21 +422,48 @@ def confirm_draft(req: ConfirmRequest):
                 draft["sitename"], draft["facilitytype"], occurred_at,
                 draft.get("equipment_id"), draft["equipmenttype"],
                 draft["fault_category"], draft.get("severity"),
+                first_alarm_start, first_alarm_tagsn,
                 draft.get("original_text"), req.user_id,
             ),
         )
         task_id = cur.fetchone()[0]
+
+        # 선택 알람 해제 (resolve_alarms=True일 때)
+        alarm_resolved_cnt = 0
+        if linked_alarms and req.resolve_alarms:
+            for (start_t, tsn) in linked_alarms:
+                try:
+                    cur.execute(
+                        """
+                        UPDATE tb_equipment_alarm_report
+                        SET alarm_end_time = now(),
+                            user_cause_description = COALESCE(user_cause_description, '') ||
+                              CASE WHEN COALESCE(user_cause_description, '') = '' THEN '' ELSE E'\n' END ||
+                              '[장애기록 #' || %s::text || '] ' || %s
+                        WHERE alarm_start_time = %s::timestamp AND tagsn = %s
+                          AND alarm_end_time IS NULL
+                        """,
+                        (task_id, draft.get("original_text", ""), start_t, tsn),
+                    )
+                    alarm_resolved_cnt += cur.rowcount
+                except Exception as e:
+                    logger.warning(f"알람 해제 실패 ({start_t}|{tsn}): {e}")
 
         # pending 삭제
         cur.execute("DELETE FROM tb_chat_pending_action WHERE session_id = %s", (req.session_id,))
         conn.commit()
         cur.close()
 
-        logger.info(f"fault 기록 완료: task_id={task_id} user={req.user_id}")
+        logger.info(f"fault 기록 완료: task_id={task_id} user={req.user_id} alarms_linked={len(linked_alarms)} resolved={alarm_resolved_cnt}")
+        extra_msg = ""
+        if linked_alarms:
+            extra_msg = f" · 알람 {len(linked_alarms)}건 연계"
+            if req.resolve_alarms and alarm_resolved_cnt > 0:
+                extra_msg += f" ({alarm_resolved_cnt}건 자동 해제)"
         return ConfirmResponse(
             status="recorded",
             task_id=task_id,
-            message=f"장애 기록 완료 (ID: {task_id}). /crisis/tasks에서 확인할 수 있습니다.",
+            message=f"장애 기록 완료 (ID: {task_id}){extra_msg}. /crisis/tasks에서 확인할 수 있습니다.",
         )
 
     except HTTPException:
