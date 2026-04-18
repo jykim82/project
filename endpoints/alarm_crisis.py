@@ -812,7 +812,11 @@ async def get_tasks(
                    TO_CHAR(task_end_time, 'YYYY-MM-DD HH24:MI:SS') AS task_end_time,
                    suspend_alarm_types, task_content, alarm_report_id,
                    TO_CHAR(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
-                   TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at
+                   TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
+                   equipment_id, equipmenttype, fault_category, severity,
+                   recorded_by, resolved_by,
+                   TO_CHAR(resolved_at, 'YYYY-MM-DD HH24:MI:SS') AS resolved_at,
+                   resolution_note, status, photo_urls
             FROM tb_task_master
             WHERE {where}
             ORDER BY task_start_time DESC
@@ -838,11 +842,16 @@ async def create_task(body: dict = Body(...)):
         conn = _get_db_connection()
         cur = conn.cursor()
         vision_session_id = body.get("vision_session_id")
+        # [Migration 0045] 고장보고 카테고리면 장애 필드도 저장
         cur.execute("""
             INSERT INTO tb_task_master
                 (sitename, facilitytype, task_category, task_start_time, task_end_time,
-                 suspend_alarm_types, task_content, alarm_report_id, vision_session_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 suspend_alarm_types, task_content, alarm_report_id, vision_session_id,
+                 equipment_id, equipmenttype, fault_category, severity,
+                 recorded_by, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s)
             RETURNING task_id
         """, (
             body.get("sitename", ""),
@@ -854,6 +863,12 @@ async def create_task(body: dict = Body(...)):
             body.get("task_content", ""),
             body.get("alarm_report_id") or None,
             vision_session_id,
+            body.get("equipment_id") or None,
+            body.get("equipmenttype") or None,
+            body.get("fault_category") or None,
+            body.get("severity") or None,
+            body.get("recorded_by") or None,
+            body.get("status") or "진행중",
         ))
         task_id = cur.fetchone()[0]
         # [E-025] vision_session에 linked_task_id 역방향 업데이트
@@ -890,6 +905,8 @@ async def update_task(task_id: int, body: dict = Body(...)):
                 sitename = %s, facilitytype = %s, task_category = %s,
                 task_start_time = %s, task_end_time = %s,
                 suspend_alarm_types = %s, task_content = %s,
+                equipment_id = %s, equipmenttype = %s, fault_category = %s, severity = %s,
+                status = %s, resolved_by = %s, resolved_at = %s, resolution_note = %s,
                 updated_at = NOW()
             WHERE task_id = %s
         """, (
@@ -900,6 +917,14 @@ async def update_task(task_id: int, body: dict = Body(...)):
             body.get("task_end_time") or None,
             json.dumps(body.get("suspend_alarm_types", [])),
             body.get("task_content", ""),
+            body.get("equipment_id") or None,
+            body.get("equipmenttype") or None,
+            body.get("fault_category") or None,
+            body.get("severity") or None,
+            body.get("status") or "진행중",
+            body.get("resolved_by") or None,
+            body.get("resolved_at") or None,
+            body.get("resolution_note") or None,
             task_id,
         ))
         conn.commit()
