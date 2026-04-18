@@ -135,6 +135,38 @@
 - LLM 후처리로 resolution_note → 표준 원인 태깅
 - 월간 보고서 자동 생성
 
+## 9.5 장애 → 작업관리 연계 UX (2026-04-18)
+
+**플로우 확장:**
+```
+[U1] "신평 배수지 UPS 이상"
+  ↓ FaultRecordConfirmCard
+[U2] "예, 기록" → tb_task_master(task_category='고장보고') INSERT
+  ↓ 성공 메시지 + 새 카드:
+[B] "작업관리 등록하시겠습니까?"
+    [예, 작업 등록] [아니오]
+[U3] "예, 작업 등록" 클릭
+  ↓ handleCreateTaskFromFault
+  ↓ TaskFormDialog compact 자동 열림
+  ↓ 제목: "작업 등록 (장애 #N 조치)"
+  ↓ sitename/facilitytype/equipmenttype/fault_category/severity 프리필
+  ↓ task_content: "[장애 조치 작업]\n장애 기록 #N: ...\n원문: ..."
+[U4] 필요 시 내용 수정 후 저장
+  → tb_task_master(task_category='정비') INSERT (별개 레코드)
+```
+
+**테이블 관계:**
+- 고장보고 레코드 (장애 발생 사실)와 정비 작업 레코드 (조치 이력) 분리
+- task_content에 "장애 기록 #N" 참조 문자열 포함 → 추적 가능
+- 향후 linked_fault_id FK 컬럼 추가 가능 (옵션)
+
+**구현 파일:**
+- `FaultRecordConfirmCard.tsx`: followupStage/Decision + onCreateTask
+- `chat/page.tsx`: faultTaskContext state + handleCreateTaskFromFault
+- `TaskFormDialog.tsx`: faultTaskContext defaults 지원 (기존 코드 재활용)
+
+**커밋:** `slm-dashboard@eea7015`
+
 ## 10. 커밋 이력
 
 - `web@09b395d` — Migration 0045
