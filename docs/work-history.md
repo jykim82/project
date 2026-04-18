@@ -2,6 +2,25 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-18 — Tweaks 패널 + 레이아웃 분기 + 사이드바 UX 개선)
+
+**Tweaks 패널** (`slm-dashboard@bca37cc`, `2ca47f6`)
+- 우측 슬라이드 Sheet: 테마/브랜드 컬러/레이아웃 3종 설정
+- 브랜드 컬러 10종 (오렌지 기본 / 앰버 / 블루 / 시안 / 틸 / 에메랄드 / 인디고 / 바이올렛 / 핑크 / 로즈 / 슬레이트)
+- CSS 변수(`--primary`, `--ring` 등) 런타임 덮어쓰기 + localStorage persist
+
+**사이드바 스타일** (`slm-dashboard@4d3c949`, `2060559`)
+- hover: `bg-primary/5` + `text-primary`
+- active: `bg-primary/10` + `text-primary` + `font-medium` (Claude 디자인 톤)
+- 상위 드롭다운 active: `bg-primary/[0.08]` (더 subtle)
+
+**탑바 레이아웃** (`slm-dashboard@7a486ca`)
+- AppTopbar: 로고 + 가로 메뉴 + DropdownMenu 하위 + 우측 유틸
+- DashboardShell: layoutMode 감지 분기 + MutationObserver 실시간 반영
+- 동일 useSidebarMenus 훅 공유
+
+사양: `docs/tweaks-layout-spec.md`
+
 ### 완료 (2026-04-18 — 설비 장애 이력 관리 P1 구현)
 
 채팅 자연어로 설비 장애 기록 (E-025 비전 진단 확장, 태그 단위 X → 설비 단위 O)
