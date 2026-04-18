@@ -103,7 +103,7 @@ from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
 from endpoints.admin import router as admin_router, init as init_admin
-from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback
+from endpoints.chat_feedback import router as chat_feedback_router, init as init_chat_feedback, init_intent_index as init_feedback_intent_index
 from endpoints.chat_log import router as chat_log_router, init as init_chat_log
 from endpoints.chat_fault_record import router as chat_fault_record_router, init as init_chat_fault_record
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
@@ -2646,6 +2646,7 @@ app.include_router(admin_router)
 
 # 채팅 봇 오분류 피드백 엔드포인트 모듈 초기화
 init_chat_feedback(get_db_connection)
+init_feedback_intent_index(intent_index, embedding_index)
 app.include_router(chat_feedback_router)
 init_chat_log(get_db_connection)
 app.include_router(chat_log_router)

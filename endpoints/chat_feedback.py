@@ -47,6 +47,8 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackReview(BaseModel):
     reviewed_by: str = Field(..., max_length=45)
+    correct_intent: Optional[str] = Field(None, max_length=80)
+    suggested_question: Optional[str] = Field(None, max_length=4000)
 
 
 def _row_to_dict(row) -> dict:
@@ -63,12 +65,17 @@ def _row_to_dict(row) -> dict:
         "reviewed_at": row[9].isoformat() if row[9] else None,
         "reviewed_by": row[10],
         "created_at": row[11].isoformat() if row[11] else None,
+        "correct_intent": row[12],
+        "suggested_question": row[13],
+        "applied_to_index": row[14],
+        "applied_at": row[15].isoformat() if row[15] else None,
     }
 
 
 _SELECT_COLUMNS = (
     "feedback_id, region, user_id, user_question, bot_answer, intent_name, "
-    "feedback_type, comment, reviewed, reviewed_at, reviewed_by, created_at"
+    "feedback_type, comment, reviewed, reviewed_at, reviewed_by, created_at, "
+    "correct_intent, suggested_question, applied_to_index, applied_at"
 )
 
 
@@ -142,16 +149,27 @@ def list_feedback(
 
 @router.patch("/{feedback_id}/review")
 def mark_reviewed(feedback_id: int, body: FeedbackReview):
-    """수동 검토 완료 표시 — example3.json 등에 반영 후 호출"""
+    """수동 검토 완료 — 운영자가 정답 intent/유사 질문 지정 가능.
+
+    correct_intent 지정 시 classifier 재학습 대상(applied_to_index=false)으로
+    플래그. suggested_question이 None이면 user_question 그대로 샘플로 사용.
+    """
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE tb_ai_chat_feedback "
-                "SET reviewed = true, reviewed_at = now(), reviewed_by = %s "
+                "SET reviewed = true, reviewed_at = now(), reviewed_by = %s, "
+                "    correct_intent = COALESCE(%s, correct_intent), "
+                "    suggested_question = COALESCE(%s, suggested_question) "
                 "WHERE feedback_id = %s "
                 f"RETURNING {_SELECT_COLUMNS}",
-                (body.reviewed_by, feedback_id),
+                (
+                    body.reviewed_by,
+                    body.correct_intent,
+                    body.suggested_question,
+                    feedback_id,
+                ),
             )
             row = cur.fetchone()
             if not row:
@@ -163,4 +181,121 @@ def mark_reviewed(feedback_id: int, body: FeedbackReview):
     except Exception as e:
         conn.rollback()
         logger.error("mark_reviewed error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── C1: 정답 intent 지정 지원 ─────────────────────────────────────────────
+
+# intent_index (example3.json 메타) + embedding_index (런타임 임베딩)
+_intent_index_ref = None
+_embedding_index_ref = None
+
+
+def init_intent_index(intent_index, embedding_index=None):
+    """ai_server.py에서 IntentIndex + (선택) IntentEmbeddingIndex 주입.
+
+    IntentIndex는 /intents 목록 조회에 사용,
+    IntentEmbeddingIndex는 /reindex로 런타임 샘플 추가에 사용.
+    """
+    global _intent_index_ref, _embedding_index_ref
+    _intent_index_ref = intent_index
+    _embedding_index_ref = embedding_index
+
+
+@router.get("/intents")
+def list_known_intents():
+    """등록된 intent 목록 (관리자 드롭다운용). example3.json 기반."""
+    if _intent_index_ref is None:
+        return {"intents": []}
+    try:
+        intents = []
+        names = _intent_index_ref.get_all_intent_names() if hasattr(_intent_index_ref, "get_all_intent_names") else []
+        for intent_name in sorted(names):
+            summary = _intent_index_ref.get_intent_summary(intent_name) or {}
+            desc = summary.get("description") or intent_name
+            intents.append({"intent": intent_name, "description": desc})
+        return {"intents": intents}
+    except Exception as e:
+        logger.warning("list_known_intents 실패: %s", e)
+        return {"intents": []}
+
+
+# ── C2: 재학습 (피드백 샘플을 embedding_index에 주입) ──────────────────────
+
+@router.post("/reindex")
+def reindex_from_feedback():
+    """검토 완료되고 correct_intent 있는 피드백을 임베딩 인덱스에 주입.
+
+    applied_to_index=false인 항목만 대상. 성공 시 플래그 세팅 +
+    persist_cache()로 디스크 반영. 재시작 없이 즉시 분류에 반영됨.
+    """
+    if _embedding_index_ref is None:
+        raise HTTPException(
+            status_code=503,
+            detail="embedding_index 미초기화. ai_server.py에서 init_intent_index(..., embedding_index) 호출 필요",
+        )
+    add_method = getattr(_embedding_index_ref, "add_sample", None)
+    if add_method is None:
+        raise HTTPException(
+            status_code=501,
+            detail="IntentEmbeddingIndex.add_sample 미구현",
+        )
+
+    conn = _get_conn()
+    applied_ids: list[int] = []
+    samples = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT feedback_id, user_question, suggested_question, correct_intent
+                FROM tb_ai_chat_feedback
+                WHERE reviewed = true
+                  AND correct_intent IS NOT NULL
+                  AND applied_to_index = false
+                ORDER BY feedback_id ASC
+                """
+            )
+            samples = cur.fetchall()
+
+        for feedback_id, user_q, suggested_q, correct_intent in samples:
+            question = (suggested_q or user_q or "").strip()
+            if not question:
+                continue
+            try:
+                ok = add_method(correct_intent, question)
+                if ok:
+                    applied_ids.append(feedback_id)
+            except Exception as e:
+                logger.warning("reindex 샘플 추가 실패 (fid=%s): %s", feedback_id, e)
+
+        if applied_ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tb_ai_chat_feedback "
+                    "SET applied_to_index = true, applied_at = now() "
+                    "WHERE feedback_id = ANY(%s)",
+                    (applied_ids,),
+                )
+            conn.commit()
+
+        persisted = False
+        persist = getattr(_embedding_index_ref, "persist_cache", None)
+        if callable(persist) and applied_ids:
+            try:
+                persisted = persist()
+            except Exception as e:
+                logger.warning("persist_cache 실패: %s", e)
+
+        return {
+            "applied_count": len(applied_ids),
+            "applied_ids": applied_ids,
+            "total_pending": len(samples),
+            "cache_persisted": persisted,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error("reindex_from_feedback error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

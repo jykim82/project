@@ -86,6 +86,58 @@ class IntentEmbeddingIndex:
         # 재계산
         self._build_and_save(example3_path, current_hash)
 
+    def add_sample(self, intent_name: str, question: str) -> bool:
+        """런타임에 훈련 샘플을 추가한다 (C2 피드백 재학습).
+
+        임베딩을 즉시 계산하여 행렬·라벨에 append. 실패 시 False.
+        모든 추가가 끝난 후 persist_cache()를 호출해 디스크 반영.
+        """
+        if not self._ready or self._matrix is None:
+            logger.warning("add_sample 실패: 인덱스 미초기화")
+            return False
+        question = (question or "").strip()
+        if not intent_name or not question:
+            return False
+        # 중복 방지
+        for ex_intent, ex_q in self._labels:
+            if ex_intent == intent_name and ex_q == question:
+                return False
+        emb = self._batch_embed([question])
+        if not emb or len(emb) != 1:
+            logger.warning("add_sample 실패: 임베딩 반환 없음 (%s)", question[:30])
+            return False
+        vec = np.array(emb[0], dtype=np.float32)
+        n = np.linalg.norm(vec)
+        if n < 1e-10:
+            return False
+        vec = vec / n
+        self._matrix = np.vstack([self._matrix, vec[np.newaxis, :]])
+        self._labels.append((intent_name, question))
+        return True
+
+    def persist_cache(self) -> bool:
+        """현재 행렬/라벨을 디스크 캐시로 저장 (add_sample 후 호출)."""
+        try:
+            if self._matrix is None or not self._labels:
+                return False
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            np.save(CACHE_NPY, self._matrix)
+            meta = {
+                # hash 필드는 example3.json 원본과 더 이상 일치하지 않음을 표시
+                "hash": "runtime_extended",
+                "labels": self._labels,
+                "model": EMBED_MODEL,
+                "dim": EMBED_DIM,
+                "count": len(self._labels),
+                "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            with open(CACHE_META, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            logger.warning("persist_cache 실패: %s", e)
+            return False
+
     def search(self, query_embedding: np.ndarray, top_k: int = 5) -> list[dict]:
         """
         cosine 유사도 검색.
