@@ -99,9 +99,59 @@ positive 피드백은 인텐트별 오답 요약(상위 8개 뱃지)에서는 �
 - `user_id`는 AskRequest에 없음 — 현재 모두 null. 인증 미들웨어에서 주입하거나 AskRequest에 선택 필드로 추가 검토
 - 스트리밍 엔드포인트 `/ask/stream`은 별도 훅 필요 (현 구현은 `/ask`만)
 
-## 5. 커밋
+## 5. C1+C2 — 반자동 재학습 루프 (2026-04-18 완료)
+
+### 5.1 동기
+- 수집된 오답 피드백을 classifier 개선에 실제 반영하려면 **정답 intent 지정** (C1) + **임베딩 인덱스 주입** (C2) 필요
+- 폐쇄망 환경에서 human-in-the-loop 유지 (C3 자동 배치는 범위 밖)
+
+### 5.2 DB 확장 (migration 0047)
+`tb_ai_chat_feedback`에 4컬럼 추가:
+
+| 컬럼 | 타입 | 용도 |
+|---|---|---|
+| `correct_intent` | VARCHAR(80) | 운영자 지정 정답 intent |
+| `suggested_question` | TEXT | 학습용 유사 질문 (비어있으면 user_question) |
+| `applied_to_index` | BOOLEAN NOT NULL DEFAULT FALSE | embedding_index 반영 플래그 |
+| `applied_at` | TIMESTAMPTZ | 반영 시각 |
+
+partial index: `WHERE correct_intent IS NOT NULL ORDER BY applied_to_index, reviewed` → 재학습 대기열 빠른 조회.
+
+### 5.3 API
+- `PATCH /chat/feedback/{id}/review` — `correct_intent`, `suggested_question` 옵션 (COALESCE로 기존값 보존)
+- `GET /chat/feedback/intents` — IntentIndex의 74개 intent 메타 반환 (드롭다운용)
+- `POST /chat/feedback/reindex` — 검토 완료 + correct_intent 있고 미반영인 샘플을 임베딩 인덱스에 주입, 성공 시 `applied_to_index=true` + `persist_cache()`
+
+### 5.4 IntentEmbeddingIndex 런타임 확장
+`intent_embeddings.py`:
+- `add_sample(intent_name, question)`: 즉시 Ollama `/api/embed` 호출하여 L2 정규화된 vector를 `_matrix`에 vstack + `_labels` append. 중복 검사
+- `persist_cache()`: 현재 matrix/labels를 npy + meta.json에 저장. meta.hash=`"runtime_extended"` (원본과 불일치임을 표시)
+- 재시작 없이 즉시 분류에 반영. 재시작 시 load_or_build()가 hash 불일치 감지하면 원본 example3.json 기준으로 재빌드 → 재학습 샘플 휘발. **운영 시 주기적으로 `example3.json`의 questions 배열에 수동 반영 권장**
+
+### 5.5 관리자 UI (`/admin/chat-feedback`)
+- 우상단 **"재학습 적용"** 버튼 (대기 건수 Badge) — `POST /chat/feedback/reindex`
+- 오답 확장 상세에 cyan 테두리 "재학습 샘플 지정" 폼:
+  - 정답 인텐트 `<select>` (74개 옵션)
+  - 학습용 유사 질문 `<textarea>` (placeholder: user_question)
+- 정답 intent 지정 시 "검토 완료" → "**검토 + 재학습**"로 라벨 변경
+- 행 뱃지: correct_intent(cyan Sparkles), applied_to_index(emerald RotateCw "재학습 반영")
+
+### 5.6 워크플로
+1. 사용자가 👎 클릭 → `tb_ai_chat_feedback` 저장 (feedback_type=wrong_answer)
+2. 운영자가 `/admin/chat-feedback`에서 오답 행 펼침 → 정답 intent + (선택) 유사 질문 입력 → "검토 + 재학습" 버튼
+3. DB에 correct_intent 저장, `applied_to_index=false`로 대기열 대기
+4. 상단 "재학습 적용" 버튼 클릭 → 대기열 일괄 처리: 임베딩 계산 → matrix vstack → persist_cache
+5. 이후 동일 질의가 오면 classifier가 새 샘플 기반으로 올바른 intent 분류
+
+### 5.7 한계
+- 재시작 시 캐시 `hash="runtime_extended"`이면 IntentEmbeddingIndex가 원본 example3.json 기준으로 재빌드 트리거 → 재학습 샘플 휘발. 장기 반영하려면 `example3.json` questions에 수동 병합 필요 (주기적 export 기능은 미구현)
+- SQL/답변 템플릿 개선은 여전히 수동 (intent는 맞는데 템플릿이 틀린 경우)
+
+## 6. 커밋
 
 - `slm@3cfe66e` — feedback positive 허용
 - `slm-dashboard@f7ea152` — 양방향 피드백 UI + 관리자 KPI
 - `slm@e42d800` — tb_ai_chat_log 스키마/로깅/API
 - `slm-dashboard@4fa6039` — /admin/chat-log 페이지
+- `slm@a3a0ea3` — C1+C2 백엔드 (migration 0047 + intent_embeddings.add_sample/persist_cache + PATCH/GET/POST 확장)
+- `slm-dashboard@5b3135f` — C1+C2 관리자 UI (재학습 버튼 + 정답 intent 드롭다운)
