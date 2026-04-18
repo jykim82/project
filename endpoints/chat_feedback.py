@@ -19,7 +19,7 @@ router = APIRouter(prefix="/chat/feedback", tags=["chat-feedback"])
 
 _get_db_connection = None
 
-_ALLOWED_TYPES = {"wrong_answer", "misclassified", "incomplete", "other"}
+_ALLOWED_TYPES = {"wrong_answer", "misclassified", "incomplete", "other", "positive"}
 
 
 def init(get_db_connection_fn):
