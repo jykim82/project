@@ -254,4 +254,28 @@ map.setPaintProperty("fd-edges", "line-dasharray", [0, step / 10]);
 5. **Phase 3e (애니메이션/minimap)** — polish
 6. **Phase 3f (편집/타임라인)** — 후순위
 
+---
+
+## 8. 후속 수정 이력
+
+### 8.1 불균형 엣지 색상 trunk/vertical 전파 (2026-04-18)
+
+**문제:** 실시간 계통도에서 부모→자식 엣지가 "절반 파랑 / 절반 빨강"으로 분절되어 렌더됨. 예) 석문→석문1·석문2 는 +87% 불균형인데 석문 쪽(trunk·vertical)은 파랑, 자식 쪽(drop)만 빨강.
+
+**원인:**
+- bracket 레이아웃용으로 `/flow-diagram/edges` 는 각 연결을 3개 feature 로 분할:
+  1. `edge_type="trunk"`: 부모→bus_x (수평)
+  2. `edge_type="vertical"`: bus_x 세로 트렁크
+  3. `edge_type="drop"`: bus_x→자식 (수평)
+- `trunk`·`vertical` feature의 downstream 은 `_trunk_`/`_vertical_` 가상 노드
+- 프런트 `enrichedEdges` 의 `edgeImbalance[${upKey}|${dnKey}]` 조회 시 가상 dn은 매칭 실패 → 기본 `"정상"`(파랑) 고정, 실제 `drop` 만 불균형 색
+
+**해결 (`FlowDiagramMap.tsx` `enrichedEdges`):**
+- 부모별(`upKey`) 자식 `drop` 들의 최악 grade 를 사전 집계 (`worstByParent: Map<string, string>`)
+- `trunk`/`vertical` feature 색상을 `worstByParent.get(upKey)` 로 전파
+- GRADE_RANK(정상<관심<주의<경고)로 가장 심각한 자식 등급 선택 → 동일 부모 공유 세그먼트 통일
+- 뱃지(`imbalanceBadges`)는 기존 `edgeImbalance[imbKey]` 필터로 trunk/vertical 가상 dn 자동 제외 → 중복 없음
+
+**영향 범위:** FlowDiagramMap(다이어그램 모드)만. FlowMonitoringGraph(Sankey 실시간 그래프)는 링크당 단일 cubic bezier path 라 분절 문제 없음 → 변경 불필요.
+
 3a~3c만 해도 "현장 운영자가 쓰는 실시간 다이어그램"으로 충분히 기능.

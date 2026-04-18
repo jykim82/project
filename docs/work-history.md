@@ -2,6 +2,20 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-18 — 실시간 계통도 불균형 엣지 색상 분절 수정)
+
+**문제:** bracket 레이아웃의 trunk/vertical/drop 3분할 엣지 중 drop 만 불균형 색 반영 → 부모→자식 라인이 "절반 파랑/절반 빨강"으로 렌더
+
+**해결 (`slm-dashboard@7e1e237`):**
+- `FlowDiagramMap.tsx` `enrichedEdges` 에서 부모별 자식 drop 들의 최악 grade 사전 집계(`worstByParent`)
+- `edge_type==="trunk"` · `"vertical"` feature 색상을 해당 최악 grade 로 전파
+- GRADE_RANK: 정상<관심<주의<경고 → 공유 세그먼트 통일
+- 뱃지 중복은 `edgeImbalance[imbKey]` 필터로 자동 방지 (trunk/vertical 가상 dn 자연 제외)
+
+**범위:** FlowMonitoringGraph(Sankey)는 링크당 단일 cubic path 라 무관 → 변경 없음
+
+사양: `docs/flow-diagram-mode-enhancement.md` §8.1
+
 ### 완료 (2026-04-18 — Tweaks 패널 + 레이아웃 분기 + 사이드바 UX 개선)
 
 **Tweaks 패널** (`slm-dashboard@bca37cc`, `2ca47f6`)
