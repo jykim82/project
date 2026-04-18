@@ -1126,6 +1126,18 @@ POST /vision/manual-search {equipment_type:"PLC", brand:"LS ELECTRIC", query:"XG
 
 이로써 북극성 루프가 **정방향(사진→진단→조치) + 역방향(알람→현장확인)** 양쪽 진입점이 모두 완성됨.
 
+##### [E-025] P11 보정 — 경보 목록 카메라 버튼 제거 (2026-04-18, slm-dashboard@b804a06)
+
+**계기:** 사용자 피드백 — "매번 태그 알람을 사진확인을 통해 정리할수는 없음". 경보 목록은 일일 수십~수백 건의 태그 알람이 쌓이는 뷰인데, 행별 사진확인 버튼은 "해제하려면 사진을 찍어야 한다"는 잘못된 기본값을 유도함.
+
+**변경:** `AlarmReportTable` "작업" 컬럼의 Camera(`handleVisionCheck`→`/chat` 딥링크) 버튼 제거. ClipboardList(작업 등록)만 잔류. `useRouter`/`handleVisionCheck` 삭제. `Camera` import는 "비전 점검 해제" 뱃지(`isVisionResolved` 행)에서 계속 사용.
+
+**유지되는 기능:**
+- `/chat` 딥링크 자체(+P11 구현 — siteContext prefill, URL 정리)는 존속 — 다른 진입점(예: VisionAdviceCard, 설비 상세, 수동 navigate)에서 재사용 가능
+- "비전 점검 해제" 뱃지는 유지 — 이미 처리된 이력 표시
+
+**정책 기록:** `feedback_no_photo_per_alarm.md` — 경보 목록 행별 사진확인 버튼 배치 금지. 사진 기반 진단은 AI 채팅/설비 상세 등 선별 맥락에만 제공.
+
 #### [E-025] P12: 명판/계기판 OCR 자동 등록 (slm@61737bb + slm-dashboard@b23c70d)
 
 유량계 계기판이나 PLC 명판을 찍어 등록할 때 제조사·모델·S/N·용량·설치년도를 VLM OCR로 자동 판독하여 `EquipmentPhotoRegisterDialog`에 미리 채운다. 기존 P7은 VLM diagnose의 equipment_guess만 사용했는데, 그건 참고 의견 텍스트일 뿐 구조화된 필드가 아니었다. 이번에는 `/vision/register-parse` 전용 프롬프트를 활용해 JSON 스키마로 파싱된 값을 받아온다.

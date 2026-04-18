@@ -201,6 +201,13 @@
 - 정방향(사진→진단→조치) + 역방향(알람→현장확인) 북극성 루프 완성
 - `slm-dashboard@f9e51b8`
 
+##### P11 보정 (2026-04-18): 경보 목록 카메라 버튼 제거
+- 사용자 피드백 "매번 태그 알람을 사진확인을 통해 정리할수는 없음" → 행별 사진확인 버튼이 "해제=사진 필수" 오해를 유도
+- `AlarmReportTable` "작업" 컬럼에서 Camera 버튼 삭제, ClipboardList(작업 등록)만 유지. `useRouter`/`handleVisionCheck` 정리
+- `/chat` 딥링크 로직 자체는 존속 — VisionAdviceCard·설비 상세 등 다른 진입점에서 재사용 가능. "비전 점검 해제" 뱃지(P10) 유지
+- 정책 memory: `feedback_no_photo_per_alarm.md` (경보 목록 행별 사진확인 버튼 배치 금지)
+- `slm-dashboard@b804a06`
+
 #### P10 경보 목록 비전 해제 배지 + 5회 회귀 테스트 (2026-04-15)
 - `AlarmReportTable` — `isVisionResolved()` + "상태" 컬럼에 보라 `<Badge>카메라 비전</Badge>` (user_cause_description에 '[비전 점검 해제]' prefix 있으면). title attribute로 hover시 전체 note 노출
 - 감사 추적: 해제된 알람 중 현장 비전 점검으로 해제된 건을 즉시 식별
