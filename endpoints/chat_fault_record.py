@@ -22,18 +22,18 @@ router = APIRouter(prefix="/chat/fault", tags=["chat-fault-record"])
 
 _get_db_connection = None
 
-# 허용 설비유형 (UI select와 일치)
-ALLOWED_EQUIPMENT_TYPES = {"PLC", "가압펌프", "유량계", "밸브", "모뎀", "UPS", "센서", "전원"}
-
-# 허용 분류
+# 허용 분류 (UI select와 일치)
 ALLOWED_FAULT_CATEGORIES = {"고장", "이상", "교체", "점검"}
 
 # 허용 심각도
 ALLOWED_SEVERITY = {"경고", "주의", "정보"}
 
-# 키워드 매핑 (자연어 → fault_category)
+# 키워드 매핑 (자연어 → fault_category). 순서 중요 (긴 것 먼저)
 FAULT_KEYWORDS = [
     ("고장", "고장"),
+    ("전원이상", "이상"),
+    ("통신이상", "이상"),
+    ("교차검증이상", "이상"),
     ("이상", "이상"),
     ("오류", "이상"),
     ("교체", "교체"),
@@ -42,6 +42,28 @@ FAULT_KEYWORDS = [
 
 # 시설유형 키워드
 FACILITY_KEYWORDS = ["배수지", "가압장", "감압시설", "감압설비", "정수장", "취수장", "소블록", "소소블록", "블록", "댐"]
+
+# 설비유형 힌트 (자유 입력 허용, 이 목록은 우선 매칭)
+COMMON_EQUIPMENT_HINTS = [
+    "PLC", "가압펌프", "유량계", "밸브", "LTE 모뎀", "LTE모뎀", "모뎀",
+    "UPS", "센서", "전원", "판넬", "판넬전원", "배전반", "분전반",
+    "L2 스위치", "L3 스위치", "UTM", "서버",
+]
+
+_equipment_types_cache: list[str] | None = None
+
+
+def _load_equipment_types(cur) -> list[str]:
+    """DB에서 실제 운영 중인 equipmenttype 목록 (1분 캐시)."""
+    global _equipment_types_cache
+    if _equipment_types_cache is not None:
+        return _equipment_types_cache
+    try:
+        cur.execute("SELECT DISTINCT equipmenttype FROM tb_equipment_info WHERE equipmenttype IS NOT NULL")
+        _equipment_types_cache = [r[0] for r in cur.fetchall()]
+    except Exception:
+        _equipment_types_cache = []
+    return _equipment_types_cache
 
 
 def init(get_db_connection_fn):
@@ -60,11 +82,13 @@ def _get_conn():
 # 파싱 유틸
 # ============================================================================
 
-def parse_fault_text(text: str) -> dict[str, Any]:
-    """자연어에서 시설/시설유형/설비유형/분류 추출.
+def parse_fault_text(text: str, cur=None) -> dict[str, Any]:
+    """자연어에서 시설/시설유형/설비유형/분류 추출 (자유 입력 허용).
 
-    예: "신평 배수지 PLC 고장 기록해줘" →
-        {sitename: "신평", facilitytype: "배수지", equipmenttype: "PLC", fault_category: "고장"}
+    예1: "신평 배수지 PLC 고장 기록해줘" → PLC/고장
+    예2: "신평 배수지 판넬 전원이상" → 판넬 또는 전원/이상
+    예3: "신평 배수지 UPS 이상" → UPS/이상
+    예4: "신평 배수지 가압펌프 고장" → 가압펌프/고장
     """
     result: dict[str, Any] = {
         "sitename": None,
@@ -75,10 +99,12 @@ def parse_fault_text(text: str) -> dict[str, Any]:
     }
     t = text.strip()
 
-    # 1) fault_category (키워드 순서 중요)
+    # 1) fault_category (키워드 순서 중요, 복합어 먼저)
+    fault_kw_found: str | None = None
     for kw, cat in FAULT_KEYWORDS:
         if kw in t:
             result["fault_category"] = cat
+            fault_kw_found = kw
             break
 
     # 2) facilitytype
@@ -87,12 +113,38 @@ def parse_fault_text(text: str) -> dict[str, Any]:
             result["facilitytype"] = ft
             break
 
-    # 3) equipmenttype (대소문자 무시)
+    # 3) equipmenttype:
+    #    (a) DB의 실제 equipmenttype 우선 매칭
+    #    (b) COMMON_EQUIPMENT_HINTS 매칭
+    #    (c) 실패 시 fault 키워드 앞의 명사 추출 (2~10자 한글/영문/숫자)
     t_upper = t.upper()
-    for eq in ALLOWED_EQUIPMENT_TYPES:
-        if eq.upper() in t_upper:
+
+    # DB 로드 (cur 제공된 경우)
+    db_types = _load_equipment_types(cur) if cur else []
+    # 긴 것부터 매칭 (예: "LTE 모뎀" > "모뎀")
+    for eq in sorted(db_types, key=lambda s: -len(s)):
+        if eq and eq.upper() in t_upper:
             result["equipmenttype"] = eq
             break
+
+    if not result["equipmenttype"]:
+        for eq in sorted(COMMON_EQUIPMENT_HINTS, key=lambda s: -len(s)):
+            if eq.upper() in t_upper:
+                result["equipmenttype"] = eq
+                break
+
+    # (c) fallback: fault 키워드 앞 2~10자 명사 추출
+    if not result["equipmenttype"] and fault_kw_found:
+        pattern = r"([가-힣A-Za-z0-9][가-힣A-Za-z0-9\s]{0,8}?[가-힣A-Za-z0-9])\s*" + re.escape(fault_kw_found)
+        m = re.search(pattern, t)
+        if m:
+            candidate = m.group(1).strip()
+            # 시설유형이 포함돼 있으면 그 뒤 부분만
+            if result["facilitytype"] and result["facilitytype"] in candidate:
+                idx = candidate.rfind(result["facilitytype"]) + len(result["facilitytype"])
+                candidate = candidate[idx:].strip()
+            if candidate and len(candidate) >= 2:
+                result["equipmenttype"] = candidate
 
     # 4) sitename: facilitytype 앞에 오는 단어 추출 (2~15자)
     if result["facilitytype"]:
@@ -168,7 +220,7 @@ def create_draft(req: DraftRequest):
     conn = _get_conn()
     try:
         cur = conn.cursor()
-        parsed = parse_fault_text(req.text)
+        parsed = parse_fault_text(req.text, cur=cur)
 
         # 발생시각
         occurred_at = datetime.now()
