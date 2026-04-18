@@ -91,11 +91,20 @@ interface AlarmCategorySummaryProps {
 
 기존 테이블 + 페이징(`PAGE_SIZE=8`) 유지. 이번 개편 대상 아님.
 
-## 6. 후속 작업 (TODO)
+## 6. 백엔드 연결 (2026-04-18 완료)
 
-- **백엔드 확장:** `AlarmDashboardSummary`에 `hourlyByCategory` (최근 8시간 / 일 24h / 주 7d 버킷), `yesterdayDelta` 추가
-- **시간 범위 필터:** `onRangeChange` → `refreshDashboard({ range })` 연결 → 백엔드 SQL 쿼리 변경
+- `GET /crisis/alarm-dashboard?range={1h|6h|today|week}` — range 쿼리 파라미터 수용
+- 응답 확장: `range` / `rangeStart` / `rangeEnd` / `rangeCategorySummary` / `rangeStats` / `hourlyByCategory` / `yesterdayDelta`
+- 기존 `totalOngoing` 등 '진행중 전체' 필드는 하위호환 유지 (top `AlarmDashboardCards`에서 사용)
+- `_resolve_range_window(range)`: 1h/6h는 trailing, today는 00:00~지금, week는 7일 trailing. 어제 대비는 동일 폭을 1일(주: 7일) shift
+- `_bucket_category_counts`: `FLOOR(EXTRACT(EPOCH FROM (alarm_start_time - start)) / bucket_secs)` + `LEAST/GREATEST`로 [0, 7] clip하여 8개 버킷으로 강제 정규화
+- 프런트: `refreshDashboard(nextRange?)`에 range 인자 추가, AlarmCategorySummary는 controlled prop + summary에서 rangeCategorySummary/rangeStats/hourlyByCategory/yesterdayDelta 직접 참조
+- 검증: 1h/6h/today/week 모두 count + hourly 버킷 8개 + delta 정상 반환 확인
+
+## 7. 후속 작업 (TODO)
+
 - **카테고리 행 클릭:** 해당 카테고리로 이력 탭 필터링 딥링크
+- **연관 시설 하이라이트:** 행 hover 시 시설별 경보 현황 테이블에 해당 카테고리 관련 현장 강조
 
 ## 7. 관련 파일
 
@@ -105,4 +114,7 @@ interface AlarmCategorySummaryProps {
 
 ## 8. 커밋
 
-- `slm-dashboard@e804be7` — 수평 막대 + 스파크라인 + KPI 개편
+- `slm-dashboard@e804be7` — 수평 막대 + 스파크라인 + KPI 개편 (UI)
+- `slm-dashboard@db3e11d` — Turbopack 파싱 캐시 회피 (멀티라인 template literal 제거)
+- `slm@437d10b` — 백엔드 range/hourly/delta 구현
+- `slm-dashboard@d81c82c` — 프런트 range 상태·api·store·page·컴포넌트 연결
