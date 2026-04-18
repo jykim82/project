@@ -67,6 +67,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+      # vision_agent는 호스트에서 별도 프로세스로 실행 (포트 8100)
+      VISION_AGENT_URL: ${VISION_AGENT_URL:-http://host.docker.internal:8100}
       FILES_BASE: /data/files
       PYTHONUNBUFFERED: "1"
     depends_on:
