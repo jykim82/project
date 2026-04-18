@@ -140,12 +140,37 @@ value 렌더 실패(placeholder 누락) 시 해당 KPI 자동 스킵.
 5. `reference.title` → "근거 자료", `recommend_questions.title` → "계속 물어보기"로 통일 (권장)
 6. 검증: curl `/ask` 호출 후 응답 JSON 확인, 브라우저 채팅에서 실제 렌더 확인
 
-## 9. 후속 Phase 3 (TODO)
+## 9. Phase 3 — 메타 + 아이콘 + 인라인 pill (2026-04-18 완료)
 
-- `answer.confidence?: number (0~1)` — 신뢰도 게이지 (푸터 프로그레스 바)
-- `answer.render_time_ms?: number` — 응답시간 표시 ("응답 1.4s")
-- `answer.reference_count?: number` — 참조 건수 (이미 reference.length로 계산 가능)
-- Footer 메타 스트립: 타임스탬프 행에 추가 정보 통합
+**확장 필드:**
+- `DetailItem.icon?: string` — lucide 아이콘 이름 (target/users/home/truck/ban/shield/droplet/gauge/zap/wrench/clock/alert/info/map-pin/activity)
+- `DetailItem.pill?: { text, tone? }` — leader 행 값 뒤 알약 뱃지 (OK 녹색 / NO 빨강 등)
+- `answer.meta?: { confidence?, response_time_ms? }` — 푸터 신뢰도 바 + 응답시간
+- `parseStatusMarkers`: 숫자+단위 (24h/12,000명/92%/4.5건/km/㎥ 등) 자동 cyan 하이라이트
+
+**렌더 변경:**
+- `DetailLeaderRow`: 점선 제거 → 아이콘(size-4) + 라벨(w-20 고정폭) + 값(숫자 하이라이트) + 인라인 pill. tone별 뱃지 색상
+- `FooterMeta`: 신뢰도 게이지(50/80/100 색상 단계) · 응답 N.Ns · N건 참조 · 복사/👍/👎 아이콘
+- 기존 타임스탬프 아래 "원하는 답이 아닌가요?" 텍스트 → 푸터 ThumbsDown 아이콘으로 통합
+
+**백엔드 template 예:**
+```json
+{
+  "detail": [
+    { "prefix": "•", "icon": "truck", "text": "원차 진입 · {label}",
+      "pill": { "text": "{pill_text}", "tone": "{pill_tone}" } }
+  ],
+  "meta": { "confidence": 92 }
+}
+```
+
+SQL에서 boolean → label/pill/tone short column 3개를 미리 준비하여 pill을 placeholder로 주입.
+
+## 10. 후속 작업 (TODO)
+
+- `response_time_ms` 동적 측정 — 프런트에서 ask_at↔bot_at 차이로 계산해 props로 주입 (현재 template의 정적 값만 표시)
+- 다른 intent로 점진 확산 (운영현황/설비현황/초동대응 매뉴얼 등)
+- User 메시지 bubble 디자인 통일 (우측 cyan accent)
 
 ## 10. 관련 파일
 
@@ -158,3 +183,5 @@ value 렌더 실패(placeholder 누락) 시 해당 KPI 자동 스킵.
 
 - `slm@c2ffdf7` — backend kpis 필드 + RESERVOIR_OVERVIEW 템플릿 개편
 - `slm-dashboard@65940f6` — BotMessage 리라이트 (KPI/leader/citations/followup)
+- `slm@7cf1d4d` — detail icon/pill pass-through + meta.confidence + SQL 확장
+- `slm-dashboard@0001d7e` — 아이콘/인라인pill/숫자 하이라이트/FooterMeta 추가
