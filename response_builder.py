@@ -471,6 +471,28 @@ def render_answer_template(template: dict, data: dict) -> dict:
         if detail_lines:
             result["detail"] = detail_lines
 
+    # kpis 렌더링 (AFTER 컨셉 상단 KPI 스트립)
+    # template["kpis"] = [{"label": "공급가능", "value": "{total_supply_time}", "unit": "h", "tone": "warn"}, ...]
+    if "kpis" in template:
+        rendered_kpis = []
+        for kpi in template["kpis"]:
+            if not isinstance(kpi, dict):
+                continue
+            value_raw = kpi.get("value", "")
+            value_rendered = _render_text(value_raw, data) if isinstance(value_raw, str) else value_raw
+            # value 렌더 실패(placeholder 누락)면 해당 KPI는 건너뜀
+            if value_rendered is None:
+                continue
+            rendered_kpis.append({
+                "label": kpi.get("label", ""),
+                "value": str(value_rendered),
+                "unit": kpi.get("unit", "") or "",
+                "tone": kpi.get("tone", "neutral"),
+                "pill": bool(kpi.get("pill", False)),
+            })
+        if rendered_kpis:
+            result["kpis"] = rendered_kpis
+
     # reference 렌더링
     if "reference" in template:
         ref = template["reference"]
