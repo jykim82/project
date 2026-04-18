@@ -23,7 +23,7 @@
      (품질) > 통계 경계(값이탈)
 
 응답 형태:
-  [가장 위급] {LLM 1문장 — 시설·태그·수치·카테고리 라벨}
+  [중요 알람] {LLM 1문장 — 시설·태그·수치·카테고리 라벨}
 
   [유형별 현황] 설비장애 N건 · 교차검증 M건 · 데이터품질 K건 · 값이탈 L건
                 (총 T건 중)
@@ -198,7 +198,7 @@ def _assemble_summary(
     )
 
     sections = [
-        f"[가장 위급] {scope_prefix}{urgent_sentence}",
+        f"[중요 알람] {scope_prefix}{urgent_sentence}",
         f"[유형별 현황] {counts_line}",
     ]
     if meaning_line:
