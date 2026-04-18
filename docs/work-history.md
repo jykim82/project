@@ -2,6 +2,32 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-18 — 설비 장애 이력 관리 P1 구현)
+
+채팅 자연어로 설비 장애 기록 (E-025 비전 진단 확장, 태그 단위 X → 설비 단위 O)
+
+**DB (migration 0045):**
+- `tb_task_master` 확장 11컬럼 (equipment_id/equipmenttype/fault_category/severity/
+  linked_alarm_start+tagsn/photo_urls/recorded_by/resolved_by/resolved_at/resolution_note/status)
+- task_category에 "고장보고" 추가
+- tb_chat_pending_action (채팅 멀티턴 초안, TTL 5분)
+- 통계 뷰 4개: v_equipment_fault_stats / v_equipment_fault_monthly /
+  v_equipment_mtbf / v_site_fault_ranking (`web@09b395d`)
+
+**백엔드:**
+- `/chat/fault/draft` + `/confirm`: 키워드 매칭 파싱 → pending_action → INSERT (`slm@eb5e185`)
+- `/crisis/tasks` CRUD 확장: 고장보고 필드 INSERT/UPDATE/SELECT (`slm@346c762`)
+- `/monitoring/equipment-health/*`: KPI/monthly/stats/mtbf/ranking (`slm@22a636b`)
+
+**프런트:**
+- FaultRecordConfirmCard + 채팅 통합 (키워드 감지 → 카드 → 예/취소) (`slm-dashboard@968b17b`, `5034fee`)
+- /crisis/tasks 고장보고 카테고리 지원: TaskFormDialog 조건부 필드, TaskTable Badge (`slm-dashboard@93d8027`)
+- /monitoring/equipment-health 설비 건강성 대시보드 (KPI + 월별바 + 시설Top + MTBF) (`slm-dashboard@d199f14`)
+
+**E2E 검증:** "신평 배수지 PLC 고장 기록해줘" → task_id 14, 15 INSERT 성공
+
+사양: `docs/equipment-fault-tracking-spec.md`
+
 ### 완료 (2026-04-17 — 다이어그램 상단 패널 + KPI 연동 + 라이트모드 완성)
 
 **상단 요약 패널 + 필터 동작 (생키 UX 동기화):**
