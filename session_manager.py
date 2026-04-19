@@ -116,6 +116,26 @@ class SessionManager:
             return False
         return True
 
+    def is_short_followup(self, session: SessionState, question: str) -> bool:
+        """
+        [review-items §멀티턴 (a)] 성공 턴 직후의 짧은 follow-up 을 직전
+        인텐트로 상속하기 위한 조건.
+
+        - 이전 상태가 OK (정상 응답 성공)
+        - last_intent 가 존재
+        - 입력이 짧음 (10자 미만)
+        - correction 경로가 아닌 경우만 (is_correction_turn 과 배타)
+
+        예: "석문정수장 유량 보여줘" → OK → "오늘 것도" (7자) → TAG_TREND 상속
+        """
+        if session.last_status != "OK":
+            return False
+        if not session.last_intent:
+            return False
+        if len(question.strip()) >= 10:
+            return False
+        return True
+
     def is_max_turns(self, session: SessionState) -> bool:
         """최대 턴 수 초과 여부를 확인한다."""
         return session.turn_count >= SESSION_MAX_TURNS

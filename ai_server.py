@@ -3000,8 +3000,9 @@ async def _ask_inner(request: AskRequest):
             correction_hints=["새 질문을 입력해 주세요."],
         )
 
-    # 2. 정정 턴 단축 체크
+    # 2. 정정 턴 단축 체크 + [multiturn-a] 성공 턴 직후 짧은 follow-up 감지
     is_correction = session_manager.is_correction_turn(session, user_question)
+    is_followup = (not is_correction) and session_manager.is_short_followup(session, user_question)
 
     # 3. SLM Intent 분류
     intent_candidates = []
@@ -3019,6 +3020,13 @@ async def _ask_inner(request: AskRequest):
         category = "정정"
         classify_method = "correction_reuse"
         logger.info(f"정정 턴 단축: intent={intent_name}")
+    elif is_followup and session.last_intent:
+        # [multiturn-a] 성공 턴 직후 짧은 follow-up → 직전 인텐트 상속
+        intent_name = session.last_intent
+        intent_def = intent_index.get_definition(intent_name)
+        category = intent_classifier._get_category_for_intent(intent_name) or "기타"
+        classify_method = "followup_inherit"
+        logger.info(f"짧은 follow-up 상속: intent={intent_name} q={user_question!r}")
     else:
         # 신규 분류 (SLM 호출 가능 → 별도 스레드에서 실행)
         classification = await asyncio.to_thread(
@@ -4526,8 +4534,9 @@ async def ask_stream(request: AskRequest):
             ))
             return
 
-        # 2. 정정 턴 단축 체크
+        # 2. 정정 턴 단축 체크 + [multiturn-a] 성공 턴 직후 짧은 follow-up
         is_correction = session_manager.is_correction_turn(session, user_question)
+        is_followup = (not is_correction) and session_manager.is_short_followup(session, user_question)
 
         # 3. SLM Intent 분류
         intent_candidates = []
@@ -4544,6 +4553,13 @@ async def ask_stream(request: AskRequest):
             category = "정정"
             classify_method = "correction_reuse"
             logger.info(f"[SSE] 정정 턴 단축: intent={intent_name}")
+        elif is_followup and session.last_intent:
+            # [multiturn-a] 성공 턴 직후 짧은 follow-up → 직전 인텐트 상속
+            intent_name = session.last_intent
+            intent_def = intent_index.get_definition(intent_name)
+            category = intent_classifier._get_category_for_intent(intent_name) or "기타"
+            classify_method = "followup_inherit"
+            logger.info(f"[SSE] 짧은 follow-up 상속: intent={intent_name} q={user_question!r}")
         else:
             # 신규 분류 (SLM 호출 가능 → 별도 스레드에서 실행)
             classification = await asyncio.to_thread(
