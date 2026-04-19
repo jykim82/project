@@ -309,6 +309,8 @@ async def ask_multimodal_stream(
 
     # [Scenario 2] 사진 + FAULT 키워드 감지 — 진단 대신 장애 등록 분기
     is_fault_intent = _detect_fault_intent(user_question)
+    # [Scenario 1-a] 사진만 — 텍스트 비어있거나 너무 짧으면 용도 재질의
+    is_photo_only = not (user_question or "").strip() or len((user_question or "").strip()) < 2
 
     async def event_stream():
         t_start = time.perf_counter()
@@ -317,6 +319,29 @@ async def ask_multimodal_stream(
         if is_fault_intent:
             async for ev in _fault_branch(user_question, user_id, saved_urls, session_id, t_start):
                 yield ev
+            return
+
+        # ── 시나리오 1-a: 사진만 — 용도 재질의 (IntentClarifyCard)
+        if is_photo_only:
+            yield _sse("progress", {
+                "stage": "classify",
+                "intent": "PHOTO_CLARIFY",
+                "message": "사진 업로드 감지 — 용도 확인",
+            })
+            elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+            yield _sse("result", {
+                "intent": "PHOTO_CLARIFY",
+                "session_id": session_id,
+                "photo_clarify": {
+                    "photo_urls": saved_urls,
+                    "message": "사진은 어떤 용도로 업로드 하신 건가요?",
+                },
+                "answer_text": None,
+                "graph_type": "none",
+                "elapsed_ms": elapsed_ms,
+                "stage": "render",
+            })
+            logger.info(f"/ask/multimodal/stream PHOTO_CLARIFY: photos={len(saved_urls)} elapsed={elapsed_ms}ms")
             return
 
         # ── 기존 VISION_DIAGNOSE 플로우 (시나리오 1-b / 사진+일반 질의)
@@ -413,6 +438,115 @@ async def ask_multimodal_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# [P2 시나리오 1-a] URL 기반 후속 액션 — IntentClarifyCard 버튼 클릭 시 호출.
+# 이미 업로드된 photo_urls 를 재사용하므로 multipart 재전송 불필요.
+# ─────────────────────────────────────────────────────────────────────
+
+@router.post("/chat/photo-action")
+async def photo_action(request: dict):
+    """PHOTO_CLARIFY 응답 후 사용자가 선택한 액션 실행.
+
+    Body:
+      - action: "fault" | "diagnose" | "reference"
+      - photo_urls: list[str] — /api/files/chat_attachments/...
+      - user_text: str (옵셔널) — 장애 설명 or 진단 질의
+      - user_id, region, sitename, facilitytype: 컨텍스트
+    Response:
+      - fault: {"intent":"FAULT_RECORD_DRAFT", "fault_draft": {...}}
+      - diagnose: {"intent":"VISION_DIAGNOSE", "vision_advice": {...}}
+      - reference: {"intent":"PHOTO_REFERENCE", "message":"사진을 참고용으로 저장했습니다."}
+    """
+    action = str(request.get("action") or "").lower()
+    photo_urls = request.get("photo_urls") or []
+    user_text = str(request.get("user_text") or "").strip()
+    user_id = request.get("user_id")
+    region = request.get("region")
+    sitename = request.get("sitename")
+    facilitytype = request.get("facilitytype")
+
+    if not photo_urls:
+        raise HTTPException(400, "photo_urls 필수")
+    if action not in ("fault", "diagnose", "reference"):
+        raise HTTPException(400, f"지원하지 않는 action: {action}")
+
+    # ── fault: 사용자 텍스트 + photo_urls → /chat/fault/draft
+    if action == "fault":
+        if not user_id:
+            raise HTTPException(400, "user_id 필수")
+        if _get_db_connection is None:
+            raise HTTPException(500, "DB 커넥션 미초기화")
+        effective_text = user_text or "장애 기록"
+        conn = None
+        try:
+            conn = _get_db_connection()
+            cur = conn.cursor()
+            result = build_fault_draft(
+                cur, user_id=user_id, text=effective_text,
+                occurred_at_str=None, photo_urls=photo_urls,
+            )
+            conn.commit()
+            cur.close()
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.exception("photo-action fault 실패")
+            raise HTTPException(500, f"fault draft 실패: {e}")
+        finally:
+            if conn:
+                conn.close()
+        return {
+            "intent": "FAULT_RECORD_DRAFT",
+            "fault_draft": result,
+            "photo_urls": photo_urls,
+        }
+
+    # ── diagnose: photo_urls[0] 로 vision_agent 직접 호출
+    if action == "diagnose":
+        # sitename/facilitytype 미지정 시 user_text 에서 추론
+        effective_site = sitename
+        effective_ft = facilitytype
+        if not effective_site or not effective_ft:
+            inferred_site, inferred_ft = _infer_site_from_text(user_text)
+            effective_site = effective_site or inferred_site
+            effective_ft = effective_ft or inferred_ft
+        try:
+            agent_resp = await _call_vision_agent("/vision/diagnose", {
+                "image_url": photo_urls[0],
+                "user_text": user_text or "이 장비 상태 진단해줘",
+                "sitename": effective_site,
+                "facilitytype": effective_ft,
+            })
+        except httpx.TimeoutException:
+            raise HTTPException(504, "비전 에이전트 응답 타임아웃")
+        except httpx.HTTPError as e:
+            logger.warning(f"photo-action diagnose 실패: {e}")
+            raise HTTPException(502, f"비전 에이전트 호출 실패: {str(e)[:120]}")
+
+        vision_session_id = _insert_vision_session(
+            user_id=user_id, region=region,
+            image_url=photo_urls[0], image_kind="chat_attachment",
+            agent_response=agent_resp, sitename=effective_site, facilitytype=effective_ft,
+        )
+        return {
+            "intent": "VISION_DIAGNOSE",
+            "vision_advice": {
+                **agent_resp,
+                "vision_session_id": vision_session_id,
+                "image_url": photo_urls[0],
+            },
+            "vision_session_id": vision_session_id,
+            "photo_urls": photo_urls,
+        }
+
+    # ── reference: 확정 메시지만
+    return {
+        "intent": "PHOTO_REFERENCE",
+        "message": "사진을 참고용으로 저장했습니다. 필요 시 채팅창에 다시 참조할 수 있습니다.",
+        "photo_urls": photo_urls,
+    }
 
 
 # [E-025 P13] 시설물 사진 등록 — chat_attachment → tb_file_storage + tb_facility_file
