@@ -24,7 +24,7 @@
 - `attachFaultPhotos()` API + `FaultRecordConfirmCard` 썸네일 그리드 +
   "사진 추가" 버튼 (최대 3장)
 
-인프라 (`web@TBD`)
+인프라 (`web@a2cc44c`)
 - `docker-compose.dev.yml` frontend 에 `./files:/data/files` 바인드 +
   `FILE_STORAGE_PATH=/data/files` env (썸네일 서빙)
 
