@@ -137,9 +137,9 @@ web/
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성
 - `docs/claude-code-setup-guide.md` — 스킬/에이전트/셋업
-- `docs/migration-to-mac.md` — Windows → Mac 이전 기록
+- `docs/migration-to-mac.md` — Windows → Mac 이전 기록 (구조 다이어그램은 이관 시점 스냅샷 — **폴더 구조 정본은 본 CLAUDE.md 의 "📂 디렉토리 구조" 섹션**)
 - `docs/deploy-secrets.md` — 시크릿 관리
-- `docs/START.md` — 빠른 시작
+- `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
 - `docs/error-management.md` — E-NNN 번호 체계 (현재 E-029)
