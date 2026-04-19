@@ -136,6 +136,8 @@ services:
       - ./certs:/certs:ro                          # HTTPS 인증서 마운트
       - frontend-node-modules:/app/node_modules   # node_modules 보호
       - frontend-next-cache:/app/.next             # .next 캐시 보호
+      # [P1-C] /api/files/... 라우트가 읽을 파일 저장소 (backend와 동일 경로)
+      - ./files:/data/files
     environment:
       TZ: Asia/Seoul
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
@@ -145,6 +147,7 @@ services:
       # 반드시 .env 또는 deploy secret으로 오버라이드 — 여기 default는 dev 편의용 약한 값
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-dev-secret-change-in-prod}
       DATABASE_URL: ${DATABASE_URL:-postgresql://slm_dev:slm_dev_1234@timescaledb:5432/slm}
+      FILE_STORAGE_PATH: /data/files
     depends_on:
       - backend
     restart: unless-stopped

@@ -2,6 +2,37 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 사진+고장 등록 시나리오 P1) [채팅 통합 플로우]
+
+**배경:** 채팅 사진 업로드 시 4가지 시나리오 정의 (사진만/사진+등록/등록만/멀티턴).
+기존엔 사진이 있으면 무조건 `VISION_DIAGNOSE` 로 라우팅돼 "사진+등록" 플로우가 없었음.
+
+**사양 정의:** `docs/chat-photo-upload-scenario-spec.md` 신규. D1~D5 결정 기록.
+
+**P1 범위 (시나리오 2·3):**
+
+백엔드 (`slm@e344be0`)
+- `chat_fault_record.py` — `build_fault_draft()` 공용 헬퍼, `photo_urls[]` 필드,
+  `/confirm` 의 `tb_task_master.photo_urls` 컬럼 매핑 (migration 0045 기존),
+  신규 `POST /chat/fault/attach-photo` (multipart) — 기존 pending 에 사진 추가
+- `vision_proxy.py` — `_detect_fault_intent()` + `_fault_branch()` 로
+  `/ask/multimodal/stream` 첫단에 FAULT 의도 판정 → VLM 대신 fault_draft emit
+
+프런트 (`slm-dashboard@5517ca9`)
+- `AiServerResponse.fault_draft` + `FaultDraft.draft.photo_urls[]`
+- `chat-response-mapper` 에 fault_draft 전달
+- `attachFaultPhotos()` API + `FaultRecordConfirmCard` 썸네일 그리드 +
+  "사진 추가" 버튼 (최대 3장)
+
+인프라 (`web@TBD`)
+- `docker-compose.dev.yml` frontend 에 `./files:/data/files` 바인드 +
+  `FILE_STORAGE_PATH=/data/files` env (썸네일 서빙)
+
+**검증 (E2E 5회):** PLC 고장 / 판넬 전원이상 / UPS 교체 / 가압펌프 이상 모두
+FAULT_RECORD_DRAFT 정상 라우팅. "정상이야?" 진단 회귀 VISION_DIAGNOSE OK.
+
+**다음:** P2(시나리오 1-a 재질의) → P3(1-b RAG 확장, D1 결정 필요) → P4(수질계/압력계 매뉴얼).
+
 ### 완료 (2026-04-19 — 비전 에이전트 사진 업로드 404 수정) [E-029]
 
 **증상:** 채팅에서 사진 업로드 시 SSE `error` 이벤트 + "비전 에이전트 호출 실패" (HTTP 404).
