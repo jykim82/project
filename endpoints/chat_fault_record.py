@@ -50,6 +50,40 @@ FAULT_KEYWORDS = [
     ("점검", "점검"),
 ]
 
+# [policy] 통신·네트워크 계열 키워드 — 이 단어가 등장하면 기본 분류는 "이상".
+# 알람만으로 실제 장애 확정 불가 (False Positive 가능성 높음).
+# 단, 사용자가 "현장 확인"/"직접 확인" 같은 단서를 함께 기재하면 "고장" 유지.
+# 사양: docs/fault-category-policy.md
+COMM_NETWORK_PATTERN = re.compile(r"(통신|네트워크|LTE|모뎀|SIM)")
+SITE_VERIFIED_PATTERN = re.compile(r"(현장\s*확인|직접\s*확인|현장\s*갔|현장\s*방문)")
+
+
+# [P7] 교체 메타 자연어 추출 — "제조사 LS", "모델 XGB-XBCH", "S/N 12345"
+_REPL_MANUF_PATTERN = re.compile(r"(?:제조사|제작사|제조|브랜드)\s*[:：]?\s*([A-Za-z가-힣0-9&.\- ]{1,40}?)(?=\s*(?:,|$|\s제품|\s모델|\s일련|\s시리얼|\sS/?N))", re.IGNORECASE)
+_REPL_MODEL_PATTERN = re.compile(r"(?:모델|제품(?:명)?|품명)\s*[:：]?\s*([A-Za-z0-9가-힣\-_./]{2,60})", re.IGNORECASE)
+_REPL_SERIAL_PATTERN = re.compile(r"(?:S/?N|일련번호|시리얼)\s*[:：]?\s*([A-Za-z0-9\-]{3,40})", re.IGNORECASE)
+
+
+def _extract_replacement_info(text: str) -> dict:
+    """자연어에서 교체 메타(제조사/모델/시리얼)를 간단 regex 로 추출.
+
+    UI 에서 사용자가 직접 입력하는 경우가 대부분이므로 best-effort.
+    누락 필드는 UI 에서 보완 입력받는 것이 원칙.
+    """
+    info: dict = {}
+    if not text:
+        return info
+    m = _REPL_MANUF_PATTERN.search(text)
+    if m:
+        info["manufacturer"] = m.group(1).strip().rstrip(",. ")
+    m = _REPL_MODEL_PATTERN.search(text)
+    if m:
+        info["model"] = m.group(1).strip().rstrip(",. ")
+    m = _REPL_SERIAL_PATTERN.search(text)
+    if m:
+        info["serial"] = m.group(1).strip()
+    return info
+
 # [P6] 조치 완료 키워드 — FAULT 키워드와 동시 등장 시 RESOLVE 우선
 RESOLVE_KEYWORDS = [
     "조치완료", "조치 완료", "조치했", "수리완료", "수리 완료", "수리했",
@@ -123,6 +157,15 @@ def parse_fault_text(text: str, cur=None) -> dict[str, Any]:
             result["fault_category"] = cat
             fault_kw_found = kw
             break
+
+    # [policy] 통신·네트워크 키워드 → 고장을 이상으로 강제
+    # (현장 확인 단서가 있으면 사용자 명시 의도 존중해 "고장" 유지)
+    if (
+        result["fault_category"] == "고장"
+        and COMM_NETWORK_PATTERN.search(t)
+        and not SITE_VERIFIED_PATTERN.search(t)
+    ):
+        result["fault_category"] = "이상"
 
     # 2) facilitytype
     for ft in FACILITY_KEYWORDS:
@@ -244,6 +287,9 @@ class DraftRequest(BaseModel):
     photo_urls: Optional[list[str]] = Field(
         None, description="첨부 사진 URL 배열 (ex: /api/files/chat_attachments/<uuid>.jpg)"
     )
+    replacement_info: Optional[dict] = Field(
+        None, description="[P7] 교체 메타 (fault_category=교체 일 때) manufacturer/model/serial/..."
+    )
 
 
 class DraftResponse(BaseModel):
@@ -283,6 +329,7 @@ def build_fault_draft(
     text: str,
     occurred_at_str: Optional[str] = None,
     photo_urls: Optional[list[str]] = None,
+    replacement_info: Optional[dict] = None,
 ) -> dict[str, Any]:
     """핵심 로직 — 자연어 파싱 + pending_action 저장 + 확인 응답 dict 반환.
 
@@ -306,12 +353,20 @@ def build_fault_draft(
             cur, parsed["sitename"], parsed["facilitytype"], parsed["equipmenttype"],
         )
 
+    # [P7] fault_category=교체 시 replacement_info 병합 (파라미터 우선, 자연어 추출 보완)
+    merged_replacement: dict = {}
+    if parsed.get("fault_category") == "교체":
+        merged_replacement.update(_extract_replacement_info(text))  # 자연어 best-effort
+    if replacement_info:
+        merged_replacement.update({k: v for k, v in replacement_info.items() if v})  # 명시 입력 우선
+
     draft: dict[str, Any] = {
         **parsed,
         "equipment_id": equipment_id,
         "occurred_at": occurred_at.isoformat(),
         "original_text": text,
         "photo_urls": list(photo_urls or []),
+        "replacement_info": merged_replacement or None,
     }
 
     required = ["sitename", "facilitytype", "equipmenttype", "fault_category"]
@@ -343,6 +398,14 @@ def build_fault_draft(
         )
         if draft["photo_urls"]:
             msg += f"\n• 첨부사진: {len(draft['photo_urls'])}장"
+        if draft.get("replacement_info"):
+            ri = draft["replacement_info"]
+            parts = []
+            if ri.get("manufacturer"): parts.append(f"제조사 {ri['manufacturer']}")
+            if ri.get("model"):        parts.append(f"모델 {ri['model']}")
+            if ri.get("serial"):       parts.append(f"S/N {ri['serial']}")
+            if parts:
+                msg += f"\n• 교체정보: {' · '.join(parts)}"
         msg += "\n이대로 기록할까요?"
         if suggested:
             msg += f"\n\n※ 관련 진행중 알람 {len(suggested)}건 발견 — 함께 해제할지 선택할 수 있습니다."
@@ -371,6 +434,7 @@ def create_draft(req: DraftRequest):
             text=req.text,
             occurred_at_str=req.occurred_at,
             photo_urls=req.photo_urls,
+            replacement_info=req.replacement_info,
         )
         conn.commit()
         cur.close()
@@ -450,6 +514,8 @@ def confirm_draft(req: ConfirmRequest):
 
         photo_urls = draft.get("photo_urls") or []
         photo_urls_json = json.dumps(photo_urls, ensure_ascii=False) if photo_urls else None
+        replacement_info = draft.get("replacement_info")
+        replacement_json = json.dumps(replacement_info, ensure_ascii=False) if replacement_info else None
 
         cur.execute(
             """
@@ -457,11 +523,11 @@ def confirm_draft(req: ConfirmRequest):
               (sitename, facilitytype, task_category, task_start_time,
                equipment_id, equipmenttype, fault_category, severity,
                linked_alarm_start, linked_alarm_tagsn,
-               task_content, recorded_by, status, photo_urls)
+               task_content, recorded_by, status, photo_urls, replacement_info)
             VALUES (%s, %s, '고장보고', %s,
                     %s, %s, %s, %s,
                     %s, %s,
-                    %s, %s, '진행중', %s::jsonb)
+                    %s, %s, '진행중', %s::jsonb, %s::jsonb)
             RETURNING task_id
             """,
             (
@@ -470,7 +536,7 @@ def confirm_draft(req: ConfirmRequest):
                 draft["fault_category"], draft.get("severity"),
                 first_alarm_start, first_alarm_tagsn,
                 draft.get("original_text"), req.user_id,
-                photo_urls_json,
+                photo_urls_json, replacement_json,
             ),
         )
         task_id = cur.fetchone()[0]

@@ -306,7 +306,7 @@ def equipment_timeline(
         cur.execute(f"""
             SELECT task_id, task_start_time, resolved_at, resolved_by,
                    fault_category, severity, task_content, resolution_note,
-                   recorded_by, status, photo_urls
+                   recorded_by, status, photo_urls, replacement_info
             FROM tb_task_master
             WHERE task_category='고장보고'
               AND sitename=%s AND facilitytype=%s AND equipmenttype=%s
@@ -333,7 +333,7 @@ def equipment_timeline(
 
         ongoing = 0
         for r in fault_rows:
-            task_id, tst, rat, rby, fc, sev, content, note, recorded_by, status, photo_urls = r
+            task_id, tst, rat, rby, fc, sev, content, note, recorded_by, status, photo_urls, replacement_info = r
             if status != "완료":
                 ongoing += 1
             events.append(TimelineEvent(
@@ -349,6 +349,7 @@ def equipment_timeline(
                     "resolved_at": rat.isoformat() if rat else None,
                     "resolved_by": rby,
                     "resolution_note": note,
+                    "replacement_info": replacement_info,
                 },
             ))
             if rat is not None:

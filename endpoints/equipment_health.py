@@ -167,7 +167,8 @@ def tasks(
         "SELECT task_id, sitename, facilitytype, equipmenttype, fault_category, severity, "
         "TO_CHAR(task_start_time, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS task_start_time, "
         "TO_CHAR(resolved_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS resolved_at, "
-        "resolved_by, status, task_content, resolution_note, recorded_by, photo_urls "
+        "resolved_by, status, task_content, resolution_note, recorded_by, photo_urls, "
+        "replacement_info "
         f"FROM tb_task_master WHERE {' AND '.join(where)} "
         "ORDER BY task_start_time DESC LIMIT %s"
     )
