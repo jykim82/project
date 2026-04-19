@@ -127,7 +127,15 @@ AI   : [FaultRecordConfirmCard — "사진 첨부" 버튼 노출]
   - 사진만 업로드 → PHOTO_CLARIFY 즉시 응답 (0ms, VLM 스킵)
   - IntentClarifyCard: 썸네일 + 고장등록/진단/참고 버튼 + 자유 텍스트
   - 버튼 선택 시 `/chat/photo-action` → 결과를 카드 내부에서 후속 카드로 치환
-- ⏳ **P3** (시나리오 1-b RAG 확장) — D1 결정 후
+- ✅ **P3** (시나리오 1-b RAG — 고장 케이스 DB + 엑셀 IMPORT/EXPORT + 관리자 UI + vision_agent 통합) 완료
+  — `slm@8b8cf8e` + `slm-dashboard@f29520e` + migration `0048_fault_case.sql`
+  - `tb_fault_case` 테이블 (증상/원인/조치/severity/참고URL/notes)
+  - CRUD + snowflake-arctic-embed2 임베딩 (`data/fault_case_embeddings/*.npz`)
+  - 엑셀 IMPORT/EXPORT + 템플릿 (`docs/examples/fault_case_template.xlsx`, 5건 샘플)
+  - 관리자 UI `/setup/fault-cases` (테이블 + 필터 + 등록/수정/삭제 + 엑셀 버튼)
+  - vision_agent `_FaultCaseIndex` + `/vision/fault-cases/reload` + DiagnoseResponse.fault_cases
+  - E2E: "PLC ERR LED 빨강 점등" 쿼리 → 3 cases 매칭 (#1 PLC 0.571 최우선)
+  - A안(매뉴얼 섹션 재청킹)은 별도 작업으로 분리 (운영 시 필요성 평가 후)
 - ⏳ **P4** (수질계/압력계 매뉴얼 추가) — D2 결정 후
 
 ## 기존 사양 위배 여부

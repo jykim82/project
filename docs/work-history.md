@@ -2,6 +2,51 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 고장 진단 케이스 DB + RAG 통합 P3) [B+C 병행]
+
+**배경:** 사용자 추천 결정 "A+B 병행 + C 엑셀 IMPORT/EXPORT 포함". 진단 품질의
+본질은 **데이터** 이므로 구조화된 케이스 DB + 관리자 UI + 엑셀 업로드로 축적
+경로 확보. A안(매뉴얼 고장 섹션 재청킹)은 운영 중 필요 판단 후 진행으로 분리.
+
+**구현:**
+
+Migration (`web@TBD` / `0048_fault_case.sql`)
+- `tb_fault_case` — case_id/equipment_type/brand/model/symptom/cause/action/
+  severity/reference_url/notes/is_active/created_by/created_at/updated_at +
+  embedding_key. 화이트리스트/심각도 CHECK + UNIQUE(equipment_type, brand, model,
+  symptom). updated_at 자동 갱신 트리거.
+
+백엔드 (`slm@8b8cf8e`)
+- `endpoints/fault_case.py` 신규 — CRUD + 임베딩 + 엑셀 IMPORT/EXPORT
+  - snowflake-arctic-embed2 (Ollama) — symptom+cause+action 결합 텍스트 →
+    NPZ 저장 (`data/fault_case_embeddings/fault_case_<id>.npz`)
+  - `/fault-cases/template` + `/fault-cases/export` + `/fault-cases/import`
+    (openpyxl, 헤더 검증 + 중복 skip/overwrite + 행별 에러 리포트)
+- `vision_agent.py` — `_FaultCaseIndex` + `_retrieve_fault_cases()` +
+  `POST /vision/fault-cases/reload` (CRUD 후 즉시 반영)
+- `DiagnoseResponse.fault_cases[]` — 매뉴얼 RAG 와 별개 top_k=3
+- requirements.txt: +openpyxl
+
+프런트 (`slm-dashboard@f29520e`)
+- `api/fault-case-api.ts` — CRUD + importFaultCases (multipart) +
+  exportFaultCasesUrl + templateFaultCasesUrl
+- `/setup/fault-cases/page.tsx` — 테이블 + equipment_type 필터 + 키워드 검색 +
+  신규/수정 다이얼로그 + 엑셀 업로드·다운로드·템플릿 버튼 3개
+- sidebar-menus.ts: "고장 진단 케이스" 메뉴 추가
+
+예제 (`docs/examples/fault_case_template.xlsx`) — 5건 샘플 (PLC/인버터/RTU/모뎀/UPS)
+
+**검증:**
+- IMPORT 5건 (PLC 1건은 수동 create 했으므로 중복 skipped) → 총 5건
+- EXPORT OK (xlsx 유효)
+- 진단 테스트: "PLC ERR LED 빨강 점등" 쿼리 → 3 cases hit
+  (#1 PLC/LS/XGB-XBCH score=0.571 / #3 RTU 0.468 / #4 모뎀 0.445)
+- 관리자 UI 렌더 OK (5건 테이블 + 액션 버튼 + equipment_type Badge 통계)
+
+**남은 것:**
+- A안 (매뉴얼 고장 섹션 재청킹) — 운영 중 RAG 품질 평가 후 필요 시 진행
+- P4 (수질계/압력계 매뉴얼 PDF 추가) — 매뉴얼 확보 경로 결정 필요
+
 ### 완료 (2026-04-19 — 사진만 업로드 시 용도 재질의 P2) [시나리오 1-a]
 
 **배경:** 사진만 첨부 (텍스트 없음) 시 기존엔 무조건 VLM(46s) 호출 → 낭비.
