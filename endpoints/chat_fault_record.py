@@ -50,6 +50,13 @@ FAULT_KEYWORDS = [
     ("점검", "점검"),
 ]
 
+# [P6] 조치 완료 키워드 — FAULT 키워드와 동시 등장 시 RESOLVE 우선
+RESOLVE_KEYWORDS = [
+    "조치완료", "조치 완료", "조치했", "수리완료", "수리 완료", "수리했",
+    "복구완료", "복구 완료", "해결완료", "해결 완료", "해결했",
+    "완료했", "완료 했", "끝났", "끝냈",
+]
+
 # 시설유형 키워드
 FACILITY_KEYWORDS = ["배수지", "가압장", "감압시설", "감압설비", "정수장", "취수장", "소블록", "소소블록", "블록", "댐"]
 
@@ -595,5 +602,233 @@ def cleanup_expired():
         conn.commit()
         cur.close()
         return {"deleted": deleted}
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# [P6] 조치 완료 보고 — 채팅 자연어 + 설비 건강성 Dialog 공유
+# ============================================================================
+
+class ResolveDraftRequest(BaseModel):
+    user_id: str
+    text: str = Field(..., description="자연어. 예: '신평 배수지 PLC 조치 완료했어'")
+
+
+class ResolveDraftResponse(BaseModel):
+    session_id: str
+    candidate_task_id: Optional[int]    # 매칭된 진행중 task
+    candidate_task: Optional[dict]      # 원본 task 정보
+    parsed: dict                        # 파싱된 sitename/facilitytype/equipmenttype
+    ready: bool
+    confirm_message: str
+
+
+class ResolveConfirmRequest(BaseModel):
+    session_id: str
+    user_id: str
+    action: str = Field(..., description="yes | cancel")
+    resolution_note: Optional[str] = None
+
+
+class ResolveConfirmResponse(BaseModel):
+    status: str                         # resolved | cancelled | error
+    task_id: Optional[int] = None
+    message: str
+
+
+@router.post("/resolve/draft", response_model=ResolveDraftResponse)
+def create_resolve_draft(req: ResolveDraftRequest):
+    """자연어 → 대상 진행중 task 자동 탐색 → pending_action 저장."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        parsed = parse_fault_text(req.text, cur=cur)
+        # 가장 최근 진행중 task 탐색 (해당 시설+설비 기준)
+        sitename = parsed.get("sitename")
+        facilitytype = parsed.get("facilitytype")
+        equipmenttype = parsed.get("equipmenttype")
+        candidate = None
+        candidate_id: Optional[int] = None
+        if sitename or facilitytype or equipmenttype:
+            cur.execute(
+                """
+                SELECT task_id, sitename, facilitytype, equipmenttype,
+                       fault_category, severity, task_start_time, task_content, recorded_by
+                FROM tb_task_master
+                WHERE task_category = '고장보고'
+                  AND status = '진행중'
+                  AND resolved_at IS NULL
+                  AND (%s IS NULL OR sitename = %s)
+                  AND (%s IS NULL OR facilitytype = %s)
+                  AND (%s IS NULL OR equipmenttype = %s)
+                ORDER BY task_start_time DESC
+                LIMIT 1
+                """,
+                (sitename, sitename, facilitytype, facilitytype, equipmenttype, equipmenttype),
+            )
+            row = cur.fetchone()
+            if row:
+                cols = [d[0] for d in cur.description]
+                candidate = dict(zip(cols, row))
+                candidate_id = int(row[0])
+                if candidate.get("task_start_time"):
+                    candidate["task_start_time"] = candidate["task_start_time"].isoformat()
+
+        session_id = uuid.uuid4().hex
+        draft = {
+            "parsed": parsed,
+            "candidate_task_id": candidate_id,
+            "candidate_task": candidate,
+            "resolution_note": req.text,
+        }
+        cur.execute(
+            """
+            INSERT INTO tb_chat_pending_action (session_id, user_id, intent, draft)
+            VALUES (%s, %s, %s, %s::jsonb)
+            """,
+            (session_id, req.user_id, "RESOLVE_FAULT_DRAFT",
+             json.dumps(draft, ensure_ascii=False, default=str)),
+        )
+        conn.commit()
+        cur.close()
+
+        if candidate_id is None:
+            if not (sitename or facilitytype or equipmenttype):
+                msg = "어떤 설비의 조치 완료인지 시설/설비 정보를 말씀해 주세요. 예: '신평 배수지 PLC 조치 완료'"
+            else:
+                parts = " ".join(filter(None, [sitename, facilitytype, equipmenttype]))
+                msg = f"{parts} 의 진행중 장애 기록이 없습니다. 먼저 고장 보고를 해 주세요."
+        else:
+            msg = (
+                f"진행중 장애 #{candidate_id} 를 조치 완료 처리할까요?\n"
+                f"• 시설: {candidate.get('sitename')} ({candidate.get('facilitytype')})\n"
+                f"• 설비: {candidate.get('equipmenttype')}\n"
+                f"• 분류: {candidate.get('fault_category')}\n"
+                f"• 보고 시각: {candidate.get('task_start_time', '')[:16].replace('T', ' ')}\n"
+                f"• 보고 내용: {candidate.get('task_content') or '(없음)'}"
+            )
+
+        return ResolveDraftResponse(
+            session_id=session_id,
+            candidate_task_id=candidate_id,
+            candidate_task=candidate,
+            parsed=parsed,
+            ready=candidate_id is not None,
+            confirm_message=msg,
+        )
+    except Exception as e:
+        conn.rollback()
+        logger.exception("resolve draft 실패")
+        raise HTTPException(500, f"resolve draft 실패: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/resolve/confirm", response_model=ResolveConfirmResponse)
+def confirm_resolve(req: ResolveConfirmRequest):
+    """조치 완료 확정 — tb_task_master UPDATE resolved_at/resolved_by/status."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT draft FROM tb_chat_pending_action
+            WHERE session_id = %s AND user_id = %s AND expires_at > now()
+            """,
+            (req.session_id, req.user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "pending 세션 없음 또는 만료 (5분)")
+        draft = row[0]
+        task_id = draft.get("candidate_task_id")
+        if req.action == "cancel":
+            cur.execute("DELETE FROM tb_chat_pending_action WHERE session_id = %s", (req.session_id,))
+            conn.commit()
+            cur.close()
+            return ResolveConfirmResponse(status="cancelled", message="조치 완료 처리를 취소했습니다.")
+        if req.action != "yes":
+            raise HTTPException(400, f"unknown action: {req.action}")
+        if not task_id:
+            raise HTTPException(400, "대상 task 없음")
+
+        note = req.resolution_note or draft.get("resolution_note") or ""
+        cur.execute(
+            """
+            UPDATE tb_task_master
+            SET resolved_at = NOW(), resolved_by = %s,
+                resolution_note = COALESCE(NULLIF(resolution_note, ''), '') ||
+                                  CASE WHEN COALESCE(resolution_note,'')='' THEN '' ELSE E'\n' END ||
+                                  %s,
+                status = '완료'
+            WHERE task_id = %s
+            """,
+            (req.user_id, note, task_id),
+        )
+        cur.execute("DELETE FROM tb_chat_pending_action WHERE session_id = %s", (req.session_id,))
+        conn.commit()
+        cur.close()
+        logger.info(f"resolve 완료: task_id={task_id} user={req.user_id}")
+        return ResolveConfirmResponse(
+            status="resolved", task_id=task_id,
+            message=f"장애 #{task_id} 조치 완료로 기록했습니다.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception("resolve confirm 실패")
+        raise HTTPException(500, f"resolve confirm 실패: {e}")
+    finally:
+        conn.close()
+
+
+class DirectResolveRequest(BaseModel):
+    task_id: int
+    user_id: str
+    resolution_note: str = ""
+
+
+@router.post("/resolve/direct", response_model=ResolveConfirmResponse)
+def direct_resolve(req: DirectResolveRequest):
+    """task_id 지정 직접 조치 완료 — 설비 건강성 Dialog 의 "조치 완료" 버튼용."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT status, resolved_at FROM tb_task_master WHERE task_id=%s",
+            (req.task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "task_id not found")
+        if row[0] == "완료" and row[1] is not None:
+            raise HTTPException(400, "이미 완료된 장애입니다")
+
+        cur.execute(
+            """
+            UPDATE tb_task_master
+            SET resolved_at = NOW(), resolved_by = %s,
+                resolution_note = COALESCE(NULLIF(resolution_note, ''), '') ||
+                                  CASE WHEN COALESCE(resolution_note,'')='' THEN '' ELSE E'\n' END ||
+                                  %s,
+                status = '완료'
+            WHERE task_id = %s
+            """,
+            (req.user_id, req.resolution_note or "(메모 없음)", req.task_id),
+        )
+        conn.commit()
+        cur.close()
+        return ResolveConfirmResponse(
+            status="resolved", task_id=req.task_id,
+            message=f"장애 #{req.task_id} 조치 완료로 기록했습니다.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception("direct resolve 실패")
+        raise HTTPException(500, f"direct resolve 실패: {e}")
     finally:
         conn.close()

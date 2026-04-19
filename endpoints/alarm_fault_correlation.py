@@ -239,3 +239,142 @@ def equipment_status(
         summary=summary,
         rows=rows,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /equipment-timeline — 특정 설비 통합 이력 (알람 + 고장/조치)
+# ─────────────────────────────────────────────────────────────────────
+
+class TimelineEvent(BaseModel):
+    kind: str                 # alarm | fault_report | fault_resolved
+    time: str                 # ISO
+    title: str                # 요약 한 줄
+    detail: dict              # 상세 필드 (kind별 상이)
+
+
+class TimelineResponse(BaseModel):
+    sitename: str
+    facilitytype: str
+    equipmenttype: str
+    period_days: int
+    alarm_count: int
+    fault_count: int
+    ongoing_count: int
+    events: list[TimelineEvent]  # 최신 → 과거 순
+
+
+@router.get("/equipment-timeline", response_model=TimelineResponse)
+def equipment_timeline(
+    sitename: str = Query(...),
+    facilitytype: str = Query(...),
+    equipmenttype: str = Query(...),
+    days: int = Query(_DEFAULT_DAYS, ge=1, le=_MAX_DAYS),
+    limit_alarm: int = Query(50, ge=1, le=500),
+):
+    """해당 (sitename, facilitytype, equipmenttype) 의 알람 + 고장 보고 +
+    조치 완료 이벤트를 시계열로 통합. 최신순 정렬.
+    """
+    from_sql = f"now() - interval '{days} days'"
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+
+        # 알람 (최근 limit_alarm 건)
+        cur.execute(f"""
+            SELECT alarm_start_time, alarm_end_time, tagsn,
+                   alarm_category, alarm_severity, alarm_msg, diagnosed_cause,
+                   CASE WHEN alarm_end_time IS NOT NULL
+                        THEN EXTRACT(EPOCH FROM (alarm_end_time - alarm_start_time))/3600.0
+                        ELSE NULL END AS duration_h
+            FROM tb_equipment_alarm_report
+            WHERE sitename = %s AND facilitytype = %s AND equipmenttype = %s
+              AND alarm_start_time >= {from_sql}
+            ORDER BY alarm_start_time DESC
+            LIMIT %s
+        """, (sitename, facilitytype, equipmenttype, limit_alarm))
+        alarm_rows = cur.fetchall()
+
+        # 전체 알람 카운트
+        cur.execute(f"""
+            SELECT COUNT(*) FROM tb_equipment_alarm_report
+            WHERE sitename=%s AND facilitytype=%s AND equipmenttype=%s
+              AND alarm_start_time >= {from_sql}
+        """, (sitename, facilitytype, equipmenttype))
+        alarm_total = int(cur.fetchone()[0] or 0)
+
+        # 고장 보고 + 조치 이벤트
+        cur.execute(f"""
+            SELECT task_id, task_start_time, resolved_at, resolved_by,
+                   fault_category, severity, task_content, resolution_note,
+                   recorded_by, status, photo_urls
+            FROM tb_task_master
+            WHERE task_category='고장보고'
+              AND sitename=%s AND facilitytype=%s AND equipmenttype=%s
+              AND task_start_time >= {from_sql}
+            ORDER BY task_start_time DESC
+        """, (sitename, facilitytype, equipmenttype))
+        fault_rows = cur.fetchall()
+        cur.close()
+
+        events: list[TimelineEvent] = []
+        for r in alarm_rows:
+            events.append(TimelineEvent(
+                kind="alarm",
+                time=r[0].isoformat(),
+                title=f"[알람] {r[3] or ''} · {r[5] or r[2]}",
+                detail={
+                    "tagsn": r[2], "alarm_category": r[3],
+                    "alarm_severity": r[4], "alarm_msg": r[5],
+                    "diagnosed_cause": r[6],
+                    "alarm_end_time": r[1].isoformat() if r[1] else None,
+                    "duration_hours": round(float(r[7]), 2) if r[7] is not None else None,
+                },
+            ))
+
+        ongoing = 0
+        for r in fault_rows:
+            task_id, tst, rat, rby, fc, sev, content, note, recorded_by, status, photo_urls = r
+            if status != "완료":
+                ongoing += 1
+            events.append(TimelineEvent(
+                kind="fault_report",
+                time=tst.isoformat() if tst else "",
+                title=f"[고장 보고 #{task_id}] {fc or ''}{(' · ' + sev) if sev else ''}",
+                detail={
+                    "task_id": int(task_id),
+                    "fault_category": fc, "severity": sev,
+                    "content": content, "recorded_by": recorded_by,
+                    "status": status,
+                    "photo_urls": photo_urls or [],
+                    "resolved_at": rat.isoformat() if rat else None,
+                    "resolved_by": rby,
+                    "resolution_note": note,
+                },
+            ))
+            if rat is not None:
+                events.append(TimelineEvent(
+                    kind="fault_resolved",
+                    time=rat.isoformat(),
+                    title=f"[조치 완료 #{task_id}] {rby or ''}",
+                    detail={
+                        "task_id": int(task_id),
+                        "resolution_note": note,
+                        "resolved_by": rby,
+                    },
+                ))
+
+        # 최신 → 과거
+        events.sort(key=lambda e: e.time, reverse=True)
+
+        return TimelineResponse(
+            sitename=sitename,
+            facilitytype=facilitytype,
+            equipmenttype=equipmenttype,
+            period_days=days,
+            alarm_count=alarm_total,
+            fault_count=len(fault_rows),
+            ongoing_count=ongoing,
+            events=events,
+        )
+    finally:
+        conn.close()
