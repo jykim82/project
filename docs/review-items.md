@@ -75,6 +75,36 @@
 
 ---
 
+## [Chat] 멀티턴 / Follow-up 지원 강화
+
+### 1. Follow-up 인텐트 상속 경로 확장 (계획)
+**현상:**
+- `session_manager.is_correction_turn()` (`session_manager.py:104-117`)이 10자 미만 질문을 직전 인텐트로 상속시킴 — **단, correction 상태(last_status == NEED_CORRECTION)일 때만**
+- 정상 응답 직후 "오늘 것도" / "수압은?" 같은 짧은 follow-up은 **정상 분류 경로**로 흘러감
+- Stage1/2 프롬프트(`intent_classifier.py:46-60`)에 follow-up few-shot 0개 → 범위외(out-of-scope) 오분류 가능성 높음
+
+**원인:**
+- 파라미터 누적 방식은 UX 보강용이라 **같은 인텐트 계열 내 slot-filling**에만 최적화됨
+- 멀티턴 본격 지원이 아니라, 사용자가 전체 문장을 재입력하는 것을 전제로 설계됨
+- 실제 최근 로그(`dev-logs/ask_debug.txt`)에 짧은 follow-up 사례 거의 없음 → 사용자가 "이미 학습하여" 전체 문장으로 재입력 중인 것으로 추정
+
+**선택지:**
+- (a) `is_correction_turn` 조건 확장: "**최근 성공 턴 존재 + 질문 10자 미만**"까지 포괄. correction 상태 아니어도 인텐트 상속
+- (b) Stage1 프롬프트에 follow-up few-shot 2~3개 추가 (예: "오늘 것도" → tag_trend / "왜?" → 범위외 유지)
+- (c) 프런트에서 짧은 follow-up 감지 시 직전 질문과 **concat**하여 전송 (예: "오늘 것도" → "석문정수장 오늘 유량")
+- (d) 본격 멀티턴화: 이전 턴 `(question, answer)` 쌍을 프롬프트에 주입 (품질·지연 비용 큼)
+
+**결정:**
+- ✅ **(a) 2026-04-19 구현 완료** (`slm@29420a9`) — `is_short_followup` 신규.
+  last_status='OK' + last_intent 존재 + 10자 미만 시 직전 인텐트 상속.
+  ai_server /ask/stream non-SSE + SSE 양쪽 분기. E2E: 1턴 FACILITY_TREND →
+  2턴 "오늘 것도" (6자) → **followup_inherit 14ms** (기존 SLM 27s 대비 약
+  2000배 가속, 오분류 "범위외" 제거)
+- (b) 운영 평가 후 필요시 진행 (F2 태스크 등록). (c)/(d) ROI 낮음으로 보류
+- 관련 memory: `p28_upstream_fault_explain.md`, `a1_feedback_progress.md`
+
+---
+
 ## 히스토리
 
 - 2026-04-15: E-025 P3 매뉴얼 RAG 실구현 직후 7개 항목 등록 (쿼리 튜닝 / master-k OCR / XGR-CPU vs XGK / catalog vs manual / 업로드 UI / is_registered 매칭 / 샘플 이미지 경로)
@@ -85,4 +115,6 @@
 - 2026-04-15: **#6 is_registered 매칭 완전 해결** (`slm@decb86c`) — 글로벌 fallback 제거, site-scoped only
 - 2026-04-15: **#7 canonical 경로** — docs/매뉴얼/plc 사진/ 지정 + docs/test-image-samples.md 신규
 - 2026-04-15: **#5 매뉴얼 업로드 UI** (`slm@decb86c` + `slm-dashboard@a81ae5e`) — `index_single_pdf` 헬퍼 + `/admin/equipment-manuals` CRUD 엔드포인트 + `/admin/equipment-manuals/page.tsx` 관리자 페이지 + 업로드 Dialog
-- **✅ review-items 7건 전부 해결** (1,2,3,4,5,6,7)
+- **✅ review-items E-025 7건 전부 해결** (1,2,3,4,5,6,7)
+- 2026-04-19: **[Chat] 멀티턴/Follow-up 지원** 1건 신규 등록 — 파라미터 누적은 same-intent slot-filling만 지원, 짧은 follow-up은 correction 경로 외에서 오분류 가능성 조사 완료. 개선안 (a)~(d) 중 선택 대기
+- 2026-04-19: **(a) is_correction_turn 조건 확장** 완료 (`slm@29420a9`) — `is_short_followup` 신규 메서드. 성공 턴 + 10자 미만 질문 → 직전 인텐트 상속. E2E 14ms 상속 확인. (b) few-shot 은 운영 평가 후 조건부 진행
