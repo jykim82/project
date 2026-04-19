@@ -2,6 +2,22 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 비전 에이전트 사진 업로드 404 수정) [E-029]
+
+**증상:** 채팅에서 사진 업로드 시 SSE `error` 이벤트 + "비전 에이전트 호출 실패" (HTTP 404).
+
+**원인:** backend(Docker)가 저장한 파일의 **컨테이너 내부 절대경로**(`/web/files/chat_attachments/<uuid>`)를 그대로 vision_agent(호스트 프로세스)에 전달. 호스트에선 해당 경로가 없어 `_load_image_base64` 404. 추가로 docker-compose.dev.yml에 `chat_attachments`/`facility` 호스트 바인드 마운트 자체가 없었음.
+
+**수정:**
+- `docker-compose.dev.yml` backend — volumes `./files:/data/files` 추가, env `CHAT_ATTACHMENT_DIR=/data/files/chat_attachments`, `FACILITY_FILE_BASE_DIR=/data/files/facility`
+- `endpoints/vision_proxy.py` — `_save_upload`가 `(path, url)` 반환, vision_agent엔 URL 형식(`/api/files/chat_attachments/<name>`)만 전달
+- `vision_agent.py` — `CHAT_ATTACHMENT_DIR` 추가, `_resolve_image_path`에 chat_attachments prefix 핸들러, 기본 경로 1레벨 오차 수정
+- 호스트 `/Users/jykim/web/files/chat_attachments` 디렉터리 신규 생성
+
+**검증:** 실제 이미지로 `/ask/multimodal/stream` 재호출 → vision_session_id=36, VLM 46.9s 응답 정상. 호스트·컨테이너 양쪽에서 동일 파일 가시.
+
+사양: `docs/error-management.md [E-029]`
+
 ### 완료 (2026-04-18 — Q/H/P 트렌드 패널 공용 컴포넌트 도입)
 
 **목적:** `trend_panels.html` 레퍼런스 기반으로 용수흐름 / GIS 관망도 우측 인스펙터의 **유량(Q)·수위(H)·압력(P)** 표출을 동일한 시각 언어로 통일

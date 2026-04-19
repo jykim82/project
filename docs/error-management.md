@@ -8,6 +8,25 @@
 
 ---
 
+### [E-029] 채팅 사진 업로드 → 비전 에이전트 404 (파일 경로 컨테이너/호스트 불일치)
+
+- **날짜:** 2026-04-19
+- **증상:** 채팅에서 사진 업로드 시 "비전 에이전트 오류가 발생했습니다" 또는 SSE `error` 이벤트. backend 로그:
+  `chat attachment saved: /web/files/chat_attachments/<uuid>.jpg` → `POST http://host.docker.internal:8100/vision/diagnose "HTTP/1.1 404 Not Found"`
+- **원인:**
+  1. `endpoints/vision_proxy.py`가 Docker 컨테이너 내부 절대경로(`/web/files/chat_attachments/<uuid>.jpg`)를 `image_url` 필드로 vision_agent(호스트 프로세스)에 전달
+  2. 호스트에서 실행되는 `vision_agent.py`는 같은 경로를 로컬 FS에서 찾지 못해 `_load_image_base64`가 HTTPException(404)
+  3. docker-compose.dev.yml backend 서비스에 `chat_attachments`·`facility` 호스트 바인드 마운트 자체가 없어서 저장 파일이 컨테이너 레이어에만 존재 (호스트에서도 접근 불가)
+- **해결:**
+  1. `docker-compose.dev.yml` backend volumes에 `./files:/data/files` 추가, env `CHAT_ATTACHMENT_DIR=/data/files/chat_attachments`, `FACILITY_FILE_BASE_DIR=/data/files/facility` 주입
+  2. `vision_proxy._save_upload` → `(local_path, url)` 튜플 반환, vision_agent 호출 시 `image_url`을 URL 형식 `/api/files/chat_attachments/<name>` 으로 전달 (절대경로 금지)
+  3. `vision_agent._resolve_image_path`에 `/api/files/chat_attachments/` prefix 핸들러 추가
+  4. `vision_agent.py` 기본 경로 1레벨 오차 수정 (`../../web` → `../web`, vision_agent.py는 `/Users/jykim/slm/` 기준)
+- **재발 방지:** Docker-컨테이너-내-로컬경로를 호스트 프로세스에 넘기지 말 것. 파일 공유가 필요하면 **양쪽이 해석 가능한 URL 형식**(`/api/files/...`)으로 경계를 넘겨, 각자 env로 local path 해석. 컨테이너·호스트가 동일 파일을 보려면 **호스트 디렉터리를 바인드 마운트** 필수.
+- **커밋:** `slm@6093733 + web@TBD`
+
+---
+
 ### [E-028] DashboardShell SSR/client 렌더 트리 불일치로 hydration 실패
 
 - **날짜:** 2026-04-18

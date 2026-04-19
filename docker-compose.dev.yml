@@ -58,6 +58,9 @@ services:
     volumes:
       - ../slm:/app
       - backend-venv:/app/venv          # venv 제외 (컨테이너 자체 pip)
+      # [E-025] 비전 에이전트 사진 공유 — backend(컨테이너)와 host vision_agent가
+      # 동일 파일을 읽어야 하므로 host ../web/files 를 /data/files 로 바인드.
+      - ./files:/data/files
     environment:
       TZ: Asia/Seoul
       DB_HOST: timescaledb
@@ -70,6 +73,10 @@ services:
       # vision_agent는 호스트에서 별도 프로세스로 실행 (포트 8100)
       VISION_AGENT_URL: ${VISION_AGENT_URL:-http://host.docker.internal:8100}
       FILES_BASE: /data/files
+      # [E-025] 컨테이너 측 파일 경로 — host vision_agent는 기본값(../web/files/...)을 사용.
+      # 둘 다 /api/files/... URL 형식을 각자 env로 local path 해석.
+      CHAT_ATTACHMENT_DIR: /data/files/chat_attachments
+      FACILITY_FILE_BASE_DIR: /data/files/facility
       PYTHONUNBUFFERED: "1"
     depends_on:
       timescaledb:
