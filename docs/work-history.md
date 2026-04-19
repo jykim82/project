@@ -2,6 +2,29 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 설비 교체 후보 분석 P5-rev) [관점 전환]
+
+**배경:** 사용자 피드백 — 네트워크 LTE 모뎀은 한 설비에서 짧은 발생/해제
+알람이 수천 번 반복. linked_alarm 1:1 매칭 지표는 의미 없음. 실제 의사결정
+지표는 "**설비별 알람 빈도 + 조치 전후 재발률 → 교체 후보**".
+
+**변경:**
+- backend `slm@b8d47f2` — 기존 4 엔드포인트 폐기, `/equipment-status` 단일
+  엔드포인트로 교체. 설비 그룹(sitename+facilitytype+equipmenttype) 단위
+  집계 + 4상태 분류(needs_action/in_progress/replacement_candidate/resolved).
+  파라미터: days/min_alarm/recurrence_cnt/recurrence_rate.
+- frontend `slm-dashboard@88e4f87` — AlarmFaultCorrelationSection 전면
+  재작성. KPI 5개(교체 후보·조치 필요 색상 링 강조) + 설비 상세 테이블
+  (상태/시설·설비/알람/지속/보고/최근조치/조치후재발/재발률/최근알람) +
+  필터(기간/최소알람/상태/키워드).
+
+**실데이터 (90d, min_alarm=10):**
+- 13 설비 모두 `needs_action` (현장이 linked_alarm 미사용 사실이 명확히 드러남)
+- 죽동 배수지 네트워크 3,806건 / 134d 지속 최다 — 실제 교체/점검 1순위
+
+**원칙 유지:** 리포트 전용. 자동 해제·상태 변경 없음
+(`memory/feedback_no_auto_alarm_link.md`).
+
 ### 완료 (2026-04-19 — 알람 ↔ 장애 매칭 분석 P5) [설비 건강성 확장]
 
 **배경:** 시스템 자동 알람(tb_equipment_alarm_report)과 현장 수동 장애 기록
