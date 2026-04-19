@@ -18,6 +18,22 @@ from slm_config import SESSION_TTL, SESSION_MAX_TURNS
 
 logger = logging.getLogger(__name__)
 
+# [review-items §멀티턴 (a)] 이어말 표지 — 이전 인텐트를 이어가는 자연어 신호.
+# 앞 턴 결과를 기반으로 조건(시간/대상/값)만 바꾸는 표현.
+#
+# "도" 조사("압력도", "시설도")는 의미상 강한 신호지만, 수도 도메인 용어
+# ("상수도", "수도", "도수관")와 형태가 겹쳐 오탐 위험이 크기 때문에 제외한다.
+# 짧은 follow-up 은 10자 미만 규칙으로 대부분 커버되므로 본 마커는 중간 길이
+# (10~19자) follow-up 만 보조 분류한다.
+FOLLOWUP_MARKERS = (
+    "그럼", "그러면", "같은", "다른",
+    "어제", "오늘", "내일", "이번", "지난", "최근",
+)
+
+
+def _has_followup_signal(q: str) -> bool:
+    return any(m in q for m in FOLLOWUP_MARKERS)
+
 
 @dataclass
 class SessionState:
@@ -118,23 +134,34 @@ class SessionManager:
 
     def is_short_followup(self, session: SessionState, question: str) -> bool:
         """
-        [review-items §멀티턴 (a)] 성공 턴 직후의 짧은 follow-up 을 직전
+        [review-items §멀티턴 (a)] 성공 턴 직후의 follow-up 을 직전
         인텐트로 상속하기 위한 조건.
 
-        - 이전 상태가 OK (정상 응답 성공)
-        - last_intent 가 존재
-        - 입력이 짧음 (10자 미만)
-        - correction 경로가 아닌 경우만 (is_correction_turn 과 배타)
+        조건 (OR):
+        - (a) 매우 짧음: 10자 미만
+        - (b) 이어말 표지 포함 + 20자 미만
 
-        예: "석문정수장 유량 보여줘" → OK → "오늘 것도" (7자) → TAG_TREND 상속
+        표지만 있어도 긴 새 질문(예: "다른 시설의 유량 트렌드를 완전히 새로
+        보여줘")은 상속하면 오답이므로 20자 상한 유지.
+
+        예:
+          "오늘 것도" (5자)            → (a) 상속
+          "그럼 어제 유입량은?" (11자)   → (b) 상속
+          "신평 배수지 압력 보여줘" (12자) → 표지 없음, 새 인텐트
         """
         if session.last_status != "OK":
             return False
         if not session.last_intent:
             return False
-        if len(question.strip()) >= 10:
+
+        q = question.strip()
+        if not q:
             return False
-        return True
+        if len(q) < 10:
+            return True
+        if len(q) < 20 and _has_followup_signal(q):
+            return True
+        return False
 
     def is_max_turns(self, session: SessionState) -> bool:
         """최대 턴 수 초과 여부를 확인한다."""
