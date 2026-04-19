@@ -2,6 +2,39 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 설비 타임라인·KPI 드릴다운·채팅 조치완료 P6) [조치 이력 경로]
+
+**배경:** 장애 기록 후 **조치 이력 확인**과 **조치 완료 등록** 경로가 공백.
+설비 단위 타임라인 Dialog + KPI 드릴다운 + 채팅 자연어 조치완료 3 경로 도입.
+
+**백엔드 (`slm@bf9884b`)**
+- `chat_fault_record.py` — `RESOLVE_KEYWORDS` 상수, `/chat/fault/resolve/draft`
+  (자연어→진행중 task 자동 탐색), `/confirm` (UPDATE resolved_at/resolved_by/
+  status='완료'/resolution_note), `/direct` (task_id 지정 버튼용)
+- `alarm_fault_correlation.py` — `/equipment-timeline?sitename=&...` 알람+
+  고장+조치 이벤트 최신순 병합
+- `equipment_health.py` — `/tasks?status=&fault_category=` KPI 드릴다운 목록
+
+**프런트 (`slm-dashboard@db0efbb`)**
+- `EquipmentTimelineDialog` — 교체 후보 분석 행 클릭 → 알람/보고/조치 시계열
+  병합. 진행중 task 인라인 "조치 완료" 입력창+버튼 (`/resolve/direct`)
+- `TaskListDialog` — equipment-health 상단 KPI 6개(총 장애/진행중/완료/고장/
+  이상/교체) 클릭 드릴다운. 각 행 인라인 완료 처리
+- `FaultResolveConfirmCard` + `isResolveIntent` + `use-chat-submit` 분기 —
+  "신평 배수지 PLC 조치 완료했어" 같은 자연어 → 최근 진행중 task 자동
+  매칭 + 조치 내용 입력 + 확정
+- API: `fetchEquipmentTimeline`, `fetchHealthTasks`, `createResolveDraft`,
+  `confirmResolveDraft`, `resolveTaskDirect`
+
+**E2E 검증 (3 스크린샷):**
+- `p6-task-list-dialog.png` — "진행중" KPI 클릭 → 14건 Dialog
+- `p6-equipment-timeline.png` — 죽동 배수지 네트워크 행 → 알람 3,812건 시계열
+- `p6-chat-resolve.png` — "신평 배수지 PLC 조치 완료했어" → task #28 확인 카드 →
+  DB 반영 확인 (status=완료, resolved_at, resolution_note)
+
+**원칙 유지:** 자동 연계·해제 없음. 조치 완료는 사용자 명시 등록만
+(`memory/feedback_no_auto_alarm_link.md`).
+
 ### 완료 (2026-04-19 — 설비 교체 후보 분석 P5-rev) [관점 전환]
 
 **배경:** 사용자 피드백 — 네트워크 LTE 모뎀은 한 설비에서 짧은 발생/해제
