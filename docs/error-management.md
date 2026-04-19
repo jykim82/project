@@ -23,7 +23,7 @@
   3. `vision_agent._resolve_image_path`에 `/api/files/chat_attachments/` prefix 핸들러 추가
   4. `vision_agent.py` 기본 경로 1레벨 오차 수정 (`../../web` → `../web`, vision_agent.py는 `/Users/jykim/slm/` 기준)
 - **재발 방지:** Docker-컨테이너-내-로컬경로를 호스트 프로세스에 넘기지 말 것. 파일 공유가 필요하면 **양쪽이 해석 가능한 URL 형식**(`/api/files/...`)으로 경계를 넘겨, 각자 env로 local path 해석. 컨테이너·호스트가 동일 파일을 보려면 **호스트 디렉터리를 바인드 마운트** 필수.
-- **커밋:** `slm@6093733 + web@TBD`
+- **커밋:** `slm@6093733 + web@704d699`
 
 ---
 
