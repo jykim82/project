@@ -56,7 +56,13 @@ def init(get_db_connection_fn):
     logger.info(f"vision_proxy init: agent={VISION_AGENT_URL} dir={CHAT_ATTACHMENT_DIR}")
 
 
-async def _save_upload(upload: UploadFile) -> str:
+async def _save_upload(upload: UploadFile) -> tuple[str, str]:
+    """업로드를 저장하고 (로컬 절대경로, API URL) 쌍을 반환.
+
+    vision_agent는 호스트 프로세스라 backend 컨테이너의 로컬경로를 직접 열 수 없다.
+    따라서 vision_agent에 전달할 땐 **URL 형식(/api/files/chat_attachments/<name>)**
+    을 사용하고, 양쪽이 각자의 CHAT_ATTACHMENT_DIR env로 해석한다.
+    """
     content = await upload.read()
     if not content:
         raise HTTPException(400, "빈 파일")
@@ -69,8 +75,9 @@ async def _save_upload(upload: UploadFile) -> str:
     path = os.path.join(CHAT_ATTACHMENT_DIR, stored_name)
     with open(path, "wb") as f:
         f.write(content)
-    logger.info(f"chat attachment saved: {path} ({len(content)} bytes)")
-    return path
+    image_url = f"/api/files/chat_attachments/{stored_name}"
+    logger.info(f"chat attachment saved: {path} url={image_url} ({len(content)} bytes)")
+    return path, image_url
 
 
 async def _call_vision_agent(endpoint: str, payload: dict) -> dict:
@@ -189,8 +196,11 @@ async def ask_multimodal_stream(
         raise HTTPException(400, "이미지는 최대 3장까지 업로드 가능합니다")
 
     saved_paths: list[str] = []
+    saved_urls: list[str] = []
     for upload in images:
-        saved_paths.append(await _save_upload(upload))
+        p, u = await _save_upload(upload)
+        saved_paths.append(p)
+        saved_urls.append(u)
 
     async def event_stream():
         t_start = time.perf_counter()
@@ -212,6 +222,7 @@ async def ask_multimodal_stream(
             "message": "비전 에이전트 분석 중 (15~45초 소요)",
         })
 
+        primary_image_url = saved_urls[0]
         primary_image_path = saved_paths[0]
 
         # [E-025 P9] sitename/facilitytype 미지정 시 질의 텍스트에서 추론
@@ -231,7 +242,7 @@ async def ask_multimodal_stream(
 
         try:
             agent_resp = await _call_vision_agent("/vision/diagnose", {
-                "image_url": primary_image_path,
+                "image_url": primary_image_url,
                 "user_text": user_question,
                 "sitename": effective_site,
                 "facilitytype": effective_ft,
@@ -253,7 +264,7 @@ async def ask_multimodal_stream(
         vision_session_id = _insert_vision_session(
             user_id=user_id,
             region=region,
-            image_url=primary_image_path,
+            image_url=primary_image_url,
             image_kind="chat_attachment",
             agent_response=agent_resp,
             sitename=effective_site,
@@ -268,7 +279,7 @@ async def ask_multimodal_stream(
             "vision_advice": {
                 **agent_resp,
                 "vision_session_id": vision_session_id,
-                "image_url": primary_image_path,
+                "image_url": primary_image_url,
             },
             # Zero-Hallucination — DB 사실 필드는 명시적으로 null
             "answer_text": None,

@@ -49,12 +49,21 @@ VISION_KEEP_ALIVE = os.environ.get("VISION_KEEP_ALIVE", "24h")
 # 비전 호출은 이미지 처리로 cold-start 60~90s 발생 가능 → 텍스트 pipeline보다 여유
 VISION_TIMEOUT_S = int(os.environ.get("VISION_TIMEOUT_S", "120"))
 
-# facility-files 저장소 — ai_server와 공유
-# docker-compose.dev.yml에서 ../slm:/app 마운트되므로 endpoints/admin.py의
-# FACILITY_FILE_BASE_DIR 와 동일 경로를 기본값으로 사용.
+# facility-files / chat-attachments 저장소 — backend(컨테이너)와 host의
+# vision_agent가 **같은 파일**을 읽어야 하므로 env로 각자 경로 주입.
+# - backend 컨테이너: docker-compose.dev.yml에서 /data/files/... 로 설정
+# - host vision_agent: 기본값 ../web/files/... (/Users/jykim/slm 기준)
+# vision_agent.py는 /Users/jykim/slm/ 에 위치 → ".." + "web/files" = /Users/jykim/web/files
+_DEFAULT_FILES_ROOT = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "files")
+)
 FACILITY_FILE_BASE_DIR = os.environ.get(
     "FACILITY_FILE_BASE_DIR",
-    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "web", "files", "facility")),
+    os.path.join(_DEFAULT_FILES_ROOT, "facility"),
+)
+CHAT_ATTACHMENT_DIR = os.environ.get(
+    "CHAT_ATTACHMENT_DIR",
+    os.path.join(_DEFAULT_FILES_ROOT, "chat_attachments"),
 )
 # 레거시 환경변수명 하위호환
 FILES_BASE = os.environ.get("FILES_BASE", FACILITY_FILE_BASE_DIR)
@@ -205,6 +214,9 @@ def _resolve_image_path(image_url: str) -> str:
     # 실제 API 경로
     if image_url.startswith("/api/files/facility/"):
         return os.path.join(FACILITY_FILE_BASE_DIR, image_url[len("/api/files/facility/"):])
+    # 채팅 첨부 (vision_proxy 업로드)
+    if image_url.startswith("/api/files/chat_attachments/"):
+        return os.path.join(CHAT_ATTACHMENT_DIR, image_url[len("/api/files/chat_attachments/"):])
     # 레거시 /files/ 경로
     if image_url.startswith("/files/"):
         return os.path.join(FILES_BASE, image_url[len("/files/"):])
