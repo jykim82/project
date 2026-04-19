@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>GIS 포커싱 효과 — 실제 화면 데모</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #111; color: #e0e0e0; font-family: 'Pretendard', sans-serif; padding: 20px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 20px; color: #22d3ee; }
+  .sub { text-align: center; margin-bottom: 30px; font-size: 12px; color: #71717a; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; max-width: 1200px; margin: 0 auto; }
+  .demo { text-align: center; }
+  .demo h3 { margin-bottom: 6px; font-size: 13px; color: #a1a1aa; }
+  .demo p { margin-top: 6px; font-size: 11px; color: #71717a; line-height: 1.4; }
+
+  .stage {
+    position: relative; width: 100%; aspect-ratio: 16/10; margin: 0 auto;
+    border-radius: 10px; overflow: hidden; cursor: pointer;
+    background: #16213e;
+  }
+  .stage img.wide { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transition: all 1.4s cubic-bezier(0.25, 0.46, 0.45, 0.94); }
+  .stage img.close { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.6s 0.8s ease; }
+
+  .replay { display: inline-block; margin-top: 8px; padding: 4px 14px; background: #22d3ee18; border: 1px solid #22d3ee40; border-radius: 6px; color: #22d3ee; font-size: 11px; cursor: pointer; }
+  .replay:hover { background: #22d3ee30; }
+
+  /* ── 1. 줌 + 스포트라이트 + 페이드업 ── */
+  .fx1 .spotlight {
+    position: absolute; top: 45%; left: 55%; transform: translate(-50%,-50%) scale(0);
+    width: 200px; height: 200px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,211,238,0.35) 0%, transparent 65%);
+    z-index: 5; opacity: 0; transition: none;
+  }
+  .fx1.active img.wide { transform: scale(2.8) translate(-12%, -8%); opacity: 0; transition: all 1.4s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.5s 1s; }
+  .fx1.active img.close { opacity: 1; }
+  .fx1.active .spotlight { animation: spot1 1.6s 0.3s ease-out forwards; }
+  @keyframes spot1 {
+    0% { opacity: 0; transform: translate(-50%,-50%) scale(0.2); }
+    50% { opacity: 1; transform: translate(-50%,-50%) scale(1.2); }
+    100% { opacity: 0.6; transform: translate(-50%,-50%) scale(1); }
+  }
+
+  /* ── 2. 터널 비네팅 ── */
+  .fx2 .vignette {
+    position: absolute; inset: 0; z-index: 5;
+    background: radial-gradient(ellipse at 55% 45%, transparent 15%, rgba(0,0,0,0) 20%, rgba(0,0,0,0.75) 55%);
+    opacity: 0; transition: opacity 0.8s 0.5s ease;
+  }
+  .fx2.active img.wide { transform: scale(2.8) translate(-12%, -8%); opacity: 0; transition: all 1.4s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.5s 1s; }
+  .fx2.active img.close { opacity: 1; }
+  .fx2.active .vignette { opacity: 1; }
+
+  /* ── 3. 블러 포커스 ── */
+  .fx3 .blur-layer {
+    position: absolute; inset: 0; z-index: 5;
+    backdrop-filter: blur(0px); transition: backdrop-filter 0.8s 0.8s ease;
+  }
+  .fx3 .focus-hole {
+    position: absolute; z-index: 6; top: 30%; left: 35%; width: 220px; height: 140px;
+    border-radius: 14px; box-shadow: 0 0 0 2000px rgba(0,0,0,0.5);
+    opacity: 0; transition: opacity 0.6s 1s ease;
+  }
+  .fx3.active img.wide { transform: scale(2.8) translate(-12%, -8%); opacity: 0; transition: all 1.4s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.5s 1s; }
+  .fx3.active img.close { opacity: 1; }
+  .fx3.active .blur-layer { backdrop-filter: blur(4px); }
+  .fx3.active .focus-hole { opacity: 1; }
+
+  /* ── 4. 시네마틱 레터박스 ── */
+  .fx4 .bar-top, .fx4 .bar-bottom {
+    position: absolute; left: 0; right: 0; height: 0; background: #000; z-index: 10;
+    transition: height 0.5s 0.2s ease;
+  }
+  .fx4 .bar-top { top: 0; }
+  .fx4 .bar-bottom { bottom: 0; }
+  .fx4 .spotlight {
+    position: absolute; top: 45%; left: 55%; transform: translate(-50%,-50%) scale(0);
+    width: 180px; height: 180px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,211,238,0.3) 0%, transparent 65%);
+    z-index: 5; opacity: 0;
+  }
+  .fx4.active .bar-top, .fx4.active .bar-bottom { height: 30px; }
+  .fx4.active img.wide { transform: scale(2.8) translate(-12%, -8%); opacity: 0; transition: all 1.4s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.5s 1s; }
+  .fx4.active img.close { opacity: 1; }
+  .fx4.active .spotlight { animation: spot1 1.6s 0.3s ease-out forwards; }
+</style>
+</head>
+<body>
+  <h1>GIS 포커싱 전환 효과 — 실제 화면</h1>
+  <p class="sub">각 화면을 클릭하면 "넓은 지도 → 시설 포커싱" 전환이 재생됩니다</p>
+
+  <div class="grid">
+    <!-- 1 -->
+    <div class="demo">
+      <h3>1. 줌 + 스포트라이트 <span style="color:#22d3ee">★ 추천</span></h3>
+      <div class="stage fx1" onclick="play(this)">
+        <img class="wide" src="gis-bg.png">
+        <img class="close" src="gis-zoomed.png">
+        <div class="spotlight"></div>
+      </div>
+      <p>자연스러운 줌인 → 스포트라이트 빛 → 상세 카드 등장</p>
+      <button class="replay" onclick="replay(event)">다시 재생</button>
+    </div>
+
+    <!-- 2 -->
+    <div class="demo">
+      <h3>2. 터널 비네팅</h3>
+      <div class="stage fx2" onclick="play(this)">
+        <img class="wide" src="gis-bg.png">
+        <img class="close" src="gis-zoomed.png">
+        <div class="vignette"></div>
+      </div>
+      <p>줌인 + 주변 어둡게 → 타겟만 밝게 집중</p>
+      <button class="replay" onclick="replay(event)">다시 재생</button>
+    </div>
+
+    <!-- 3 -->
+    <div class="demo">
+      <h3>3. 블러 포커스</h3>
+      <div class="stage fx3" onclick="play(this)">
+        <img class="wide" src="gis-bg.png">
+        <img class="close" src="gis-zoomed.png">
+        <div class="blur-layer"></div>
+        <div class="focus-hole"></div>
+      </div>
+      <p>배경 블러 → 타겟 영역만 선명하게 보임</p>
+      <button class="replay" onclick="replay(event)">다시 재생</button>
+    </div>
+
+    <!-- 4 -->
+    <div class="demo">
+      <h3>4. 시네마틱 레터박스</h3>
+      <div class="stage fx4" onclick="play(this)">
+        <img class="wide" src="gis-bg.png">
+        <img class="close" src="gis-zoomed.png">
+        <div class="bar-top"></div>
+        <div class="bar-bottom"></div>
+        <div class="spotlight"></div>
+      </div>
+      <p>상하 검은 바 등장 + 줌인 + 스포트라이트</p>
+      <button class="replay" onclick="replay(event)">다시 재생</button>
+    </div>
+  </div>
+
+<script>
+function play(el) {
+  el.classList.remove('active');
+  void el.offsetHeight;
+  el.classList.add('active');
+}
+function replay(e) {
+  e.stopPropagation();
+  const stage = e.target.closest('.demo').querySelector('.stage');
+  stage.classList.remove('active');
+  void stage.offsetHeight;
+  stage.classList.add('active');
+}
+</script>
+</body>
+</html>

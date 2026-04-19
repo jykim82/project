@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>용수 흐름 실시간 모니터링 — 전체 계통</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0f1a;color:#e2e8f0;font-family:'Pretendard','Segoe UI',sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+
+/* ── 헤더 ── */
+.header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:linear-gradient(180deg,#131a2e,#0e1525);border-bottom:1px solid #1e293b}
+.header h1{font-size:16px;font-weight:700;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.legend{display:flex;gap:14px;font-size:11px;color:#64748b}
+.legend-item{display:flex;align-items:center;gap:5px}
+.legend-dot{width:8px;height:8px;border-radius:50%}
+
+/* ── KPI 바 ── */
+.kpi-bar{display:flex;gap:8px;padding:8px 20px;background:#0e1525}
+.kpi-card{flex:1;padding:8px 12px;background:linear-gradient(135deg,#131a2e,#0f172a);border:1px solid #1e293b;border-radius:8px;cursor:pointer;transition:all .25s}
+.kpi-card:hover{border-color:#3b82f680;transform:translateY(-1px)}
+.kpi-card.active{border-color:#3b82f6;background:linear-gradient(135deg,#1e3a5f,#172554);box-shadow:0 0 16px rgba(59,130,246,0.15)}
+.kpi-label{font-size:10px;color:#64748b;letter-spacing:.5px;text-transform:uppercase}
+.kpi-val{font-size:20px;font-weight:800;margin-top:2px}
+.c-blue{color:#3b82f6}.c-green{color:#10b981}.c-amber{color:#f59e0b}.c-red{color:#ef4444}.c-cyan{color:#22d3ee}.c-gray{color:#64748b}
+
+/* ── 메인 ── */
+.main-wrap{flex:1;display:flex;flex-direction:column;min-height:0}
+.diagram-area{flex:1;position:relative;overflow:hidden;min-height:0;background:radial-gradient(ellipse at 30% 40%,#0c1629 0%,#080d17 100%);cursor:grab}
+.diagram-area.dragging{cursor:grabbing}
+.zoom-ctrl{position:absolute;right:16px;top:16px;display:flex;flex-direction:column;gap:4px;z-index:10}
+.zoom-btn{width:32px;height:32px;border:1px solid #334155;border-radius:6px;background:#131a2e;color:#94a3b8;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.zoom-btn:hover{background:#1e293b;color:#f1f5f9;border-color:#475569}
+.zoom-info{font-size:10px;color:#475569;text-align:center;margin-top:2px}
+.trend-area{height:170px;border-top:1px solid #1e293b;background:#0e1525;padding:10px 20px;flex-shrink:0}
+
+/* ── 그리드 배경 ── */
+.grid-bg{position:absolute;inset:0;pointer-events:none;opacity:.08;
+  background-image:linear-gradient(#334155 1px,transparent 1px),linear-gradient(90deg,#334155 1px,transparent 1px);
+  background-size:60px 60px}
+
+/* ── SVG ── */
+svg.flow-svg{width:100%;height:100%}
+
+/* ── 노드 ── */
+.nd{cursor:pointer;transition:all .3s}
+.nd:hover .nd-box{filter:brightness(1.4) drop-shadow(0 0 10px var(--nc))}
+.nd-box{rx:6;ry:6;stroke-width:1.5;transition:all .3s}
+.nd-name{font-size:10px;fill:#f1f5f9;font-weight:600;text-anchor:middle;pointer-events:none}
+.nd-sub{font-size:8px;fill:#94a3b8;text-anchor:middle;pointer-events:none}
+
+/* 상태 */
+.st-ok .nd-box{fill:rgba(16,185,129,0.08);stroke:rgba(16,185,129,0.5)}
+.st-ok{--nc:#10b981}
+.st-warn .nd-box{fill:rgba(245,158,11,0.1);stroke:rgba(245,158,11,0.55)}
+.st-warn{--nc:#f59e0b}
+.st-err .nd-box{fill:rgba(239,68,68,0.1);stroke:rgba(239,68,68,0.55)}
+.st-err{--nc:#ef4444}
+.st-off .nd-box{fill:rgba(100,116,139,0.06);stroke:rgba(100,116,139,0.3)}
+.st-off{--nc:#475569}
+
+/* 점멸 */
+.st-err .nd-box{animation:blink-err 1.5s ease-in-out infinite}
+@keyframes blink-err{0%,100%{stroke-opacity:.55;filter:none}50%{stroke-opacity:1;filter:drop-shadow(0 0 14px rgba(239,68,68,.5))}}
+.st-warn .nd-box{animation:blink-warn 2s ease-in-out infinite}
+@keyframes blink-warn{0%,100%{stroke-opacity:.55;filter:none}50%{stroke-opacity:1;filter:drop-shadow(0 0 10px rgba(245,158,11,.3))}}
+
+/* 호버 메트릭 */
+.nd-metrics{opacity:0;transition:opacity .2s;pointer-events:none}
+.nd:hover .nd-metrics{opacity:1}
+.m-bg{fill:#131a2e;stroke:#334155;stroke-width:1;rx:4}
+.m-txt{font-size:9px;fill:#94a3b8}
+.m-val{font-weight:700}
+.m-ok{fill:#10b981}.m-warn{fill:#f59e0b}.m-err{fill:#ef4444}
+
+/* ── 엣지 ── */
+.edge{fill:none;stroke-linecap:round;transition:all .3s}
+.edge-ok{stroke:rgba(16,185,129,0.3)}
+.edge-warn{stroke:rgba(245,158,11,0.35)}
+.edge-err{stroke:rgba(239,68,68,0.35)}
+.edge-off{stroke:rgba(100,116,139,0.15)}
+
+/* 파티클 애니메이션 */
+.particle{r:2;opacity:.7;fill:#10b981}
+.particle.warn{fill:#f59e0b}
+.particle.err{fill:#ef4444}
+
+/* 누수 분기 */
+.leak-line{fill:none;stroke:#ef4444;stroke-width:2;stroke-dasharray:5 3;opacity:.6}
+.leak-drop{font-size:10px;animation:drip 2s ease-in infinite}
+@keyframes drip{0%{opacity:.8;transform:translateY(0)}100%{opacity:0;transform:translateY(12px)}}
+.leak-badge{font-size:10px;fill:#ef4444;font-weight:700}
+
+/* 물수지 뱃지 */
+.bal-bg{rx:6;ry:6}.bal-txt{font-size:9px;font-weight:700;text-anchor:middle}
+
+/* ── dim / highlight ── */
+.dimmed{opacity:.08!important;transition:opacity .3s}
+.glow .nd-box{filter:brightness(1.5) drop-shadow(0 0 14px var(--nc))!important}
+
+/* ── 레이어 라벨 ── */
+.layer-label{font-size:11px;fill:#334155;font-weight:700;text-anchor:middle;letter-spacing:1px}
+
+/* ── 상세 팝업 ── */
+.popup-mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;backdrop-filter:blur(4px)}
+.popup-mask.show{display:flex;align-items:center;justify-content:center}
+.popup{background:linear-gradient(135deg,#1e293b,#131a2e);border:1px solid #334155;border-radius:14px;padding:20px;min-width:340px;box-shadow:0 24px 80px rgba(0,0,0,.6)}
+.popup-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.popup-hdr h3{font-size:15px;font-weight:700}
+.popup-hdr .st-badge{font-size:10px;padding:3px 8px;border-radius:6px;font-weight:600}
+.popup-hdr .st-badge.ok{background:rgba(16,185,129,.12);color:#34d399;border:1px solid rgba(16,185,129,.3)}
+.popup-hdr .st-badge.warn{background:rgba(245,158,11,.12);color:#fbbf24;border:1px solid rgba(245,158,11,.3)}
+.popup-hdr .st-badge.err{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+.popup-cls{background:none;border:none;color:#64748b;font-size:22px;cursor:pointer;line-height:1}
+.popup-cls:hover{color:#f1f5f9}
+.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.popup-cell{background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:10px}
+.popup-cell .pc-label{font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+.popup-cell .pc-val{font-size:20px;font-weight:800;margin-top:2px}
+.popup-cell .pc-unit{font-size:10px;color:#475569;margin-left:2px}
+.popup-note{margin-top:12px;padding:8px 12px;border-radius:8px;font-size:11px;display:flex;align-items:center;gap:8px}
+.popup-note.warn{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);color:#fbbf24}
+.popup-note.err{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);color:#f87171}
+
+/* ── 하단 차트 ── */
+.trend-area h3{font-size:12px;font-weight:600;color:#475569;margin-bottom:6px}
+.trend-row{display:flex;gap:10px;height:calc(100% - 22px)}
+.tc{flex:1;background:#0a0f1a;border:1px solid #1e293b;border-radius:8px;padding:6px 8px;position:relative;overflow:hidden}
+.tc-title{font-size:9px;color:#475569;margin-bottom:2px}
+.tc canvas{width:100%;height:calc(100% - 14px)}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>용수 흐름 실시간 모니터링</h1>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>정상</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>주의</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>이상/누수</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#64748b"></div>유량없음</div>
+  </div>
+</div>
+
+<div class="kpi-bar" id="kpiBar"></div>
+
+<div class="main-wrap">
+  <div class="diagram-area" id="diagramArea">
+    <div class="grid-bg"></div>
+    <svg class="flow-svg" id="svgMain"></svg>
+    <div class="zoom-ctrl">
+      <button class="zoom-btn" onclick="zoomBy(1.25)" title="확대">+</button>
+      <button class="zoom-btn" onclick="zoomBy(0.8)" title="축소">−</button>
+      <button class="zoom-btn" onclick="zoomFit()" title="전체보기" style="font-size:12px">⊡</button>
+      <div class="zoom-info" id="zoomInfo">100%</div>
+    </div>
+  </div>
+  <div class="trend-area">
+    <h3>주요 지점별 압력/유량 추이 (최근 24시간)</h3>
+    <div class="trend-row" id="trendRow"></div>
+  </div>
+</div>
+
+<div class="popup-mask" id="popupMask" onclick="closePopup(event)">
+  <div class="popup" onclick="event.stopPropagation()">
+    <div class="popup-hdr"><h3 id="popT"></h3><button class="popup-cls" onclick="closePopup()">&times;</button></div>
+    <div class="popup-grid" id="popG"></div>
+    <div class="popup-note" id="popN" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+// 전체 계통 데이터 (95 엣지, 원격 DB 기준)
+// ══════════════════════════════════════════════
+const EDGES=[
+["보령댐","정수장","석문","배수지"],["보령댐","정수장","행정","가압장"],
+["아산","정수장","남산","배수지"],["아산","정수장","순성","가압장"],["아산","정수장","신평","배수지"],
+["아산","정수장","신평공업","가압장"],["아산","정수장","신평생활","가압장"],
+["아산","정수장","송악1","배수지"],["아산","정수장","송악2","배수지"],
+["아산","정수장","송산2산단공업","배수지"],["아산","정수장","송산2산단생활","배수지"],
+["석문","배수지","석문","가압장"],["석문","배수지","석문1","소블록"],["석문","배수지","석문2","소블록"],
+["석문2","소블록","삼봉","가압장"],["삼봉","가압장","대호","가압장"],["대호","가압장","난지","가압장"],
+["난지","가압장","도비도","소블록"],["난지","가압장","난지관광","배수지"],["난지","가압장","난지마을","배수지"],["난지","가압장","소난지도","소블록"],
+["행정","가압장","행정","배수지"],
+["행정","배수지","매방리","가압장"],["행정","배수지","행정1수청","소소블록"],["행정","배수지","성북1리 제1차","가압장"],
+["행정","배수지","행정1-1","소블록"],["행정","배수지","행정1-2","소블록"],
+["행정","배수지","수청2지구1","소블록"],["행정","배수지","행정2-1","소블록"],
+["행정","배수지","수청2지구2","소블록"],["행정","배수지","행정2-2","소블록"],
+["행정","배수지","수청2지구3","소블록"],["행정","배수지","행정2-3","소블록"],
+["행정1수청","소소블록","수청1-1","소소블록"],
+["성북1리 제1차","가압장","성북1리","배수지"],["성북1리 제1차","가압장","성북1리 제2차","가압장"],
+["행정2-3","소블록","죽동","가압장"],["죽동","가압장","죽동","배수지"],["죽동","가압장","죽동2","배수지"],
+["죽동","배수지","율사","가압장"],
+["남산","배수지","남산1","소블록"],["남산","배수지","남산2","소블록"],["남산","배수지","남산3","소블록"],
+["남산","배수지","남산4","소블록"],["남산","배수지","남산7","소블록"],["남산","배수지","남산8","소블록"],
+["남산","배수지","남산9","소블록"],["남산","배수지","남산10","소블록"],["남산","배수지","남산11","소블록"],
+["남산","배수지","죽동2","가압장"],["남산","배수지","용연2통","가압장"],
+["남산8","소블록","남산5","소블록"],["남산8","소블록","남산6","소블록"],
+["남산3","소블록","갈산","가압장"],["갈산","가압장","성북","가압장"],["성북","가압장","성북2","배수지"],
+["남산4","소블록","삼화","가압장"],
+["순성","가압장","양유","가압장"],["순성","가압장","성하리","가압장"],["순성","가압장","성상1","가압장"],["순성","가압장","성상2","가압장"],
+["성하리","가압장","성하리","배수지"],
+["신평","배수지","신평1","소블록"],["신평","배수지","신평2","소블록"],
+["신평1","소블록","신평3","소블록"],["신평3","소블록","봉소","가압장"],["신평3","소블록","순성","가압장"],
+["신평공업","가압장","우강","가압장"],["신평생활","가압장","우강","가압장"],
+["우강","가압장","합덕","배수지"],["우강","가압장","합덕일반","배수지"],["우강","가압장","합덕인더스","배수지"],["우강","가압장","합덕일반산단","배수지"],
+["합덕","배수지","석우","가압장"],["합덕","배수지","합덕1","소블록"],["합덕","배수지","합덕2","소블록"],["합덕","배수지","합덕4","소블록"],
+["합덕2","소블록","합덕3","소블록"],
+["송악1","배수지","복운","가압장"],["송악1","배수지","송악1-1","소블록"],["송악1","배수지","송악1-2","소블록"],
+["송악2","배수지","송악2-1","소블록"],["송악2","배수지","송악2-2","소블록"],["송악2","배수지","송악2-3","소블록"],
+["송악2","배수지","송악2-4","소블록"],["송악2","배수지","송악2-5","소블록"],
+["송악2-1","소블록","기지시","가압장"],
+["송산2산단공업","배수지","송산1","소블록"],["송산2산단공업","배수지","송산2산단공업","가압장"],
+["송산2산단생활","배수지","송산2","소블록"],["송산2산단생활","배수지","송산2산단생활","가압장"],
+["송산1","소블록","가곡","가압장"],["가곡","가압장","가곡","배수지"],
+["고대리","가압장","고대리","배수지"],["천의리","가압장","천의리","배수지"],
+["매방리","가압장","고대리","가압장"],["매방리","가압장","천의리","가압장"],
+];
+
+// 시설유형 색상 (기본)
+const FT_C={"정수장":"#38bdf8","배수지":"#34d399","가압장":"#fbbf24","소블록":"#a78bfa","소소블록":"#c4b5fd","감압시설":"#22d3ee"};
+
+// ── 노드/엣지 빌드 ──
+const nodeMap=new Map(); // id → {sn,ft,children:[],parents:[],depth:0}
+const edgeList=[];
+function nid(sn,ft){return sn+"__"+ft}
+
+EDGES.forEach(([us,uf,ds,df])=>{
+  const uid=nid(us,uf), did=nid(ds,df);
+  if(!nodeMap.has(uid)) nodeMap.set(uid,{sn:us,ft:uf,children:[],parents:[],depth:0});
+  if(!nodeMap.has(did)) nodeMap.set(did,{sn:ds,ft:df,children:[],parents:[],depth:0});
+  nodeMap.get(uid).children.push(did);
+  nodeMap.get(did).parents.push(uid);
+  edgeList.push({src:uid,tgt:did});
+});
+
+// BFS depth
+const roots=[...nodeMap.entries()].filter(([,v])=>v.parents.length===0).map(([k])=>k);
+const q=[...roots]; roots.forEach(r=>nodeMap.get(r).depth=0);
+while(q.length){
+  const c=q.shift();
+  const d=nodeMap.get(c).depth;
+  nodeMap.get(c).children.forEach(kid=>{
+    if(nodeMap.get(kid).depth<d+1){nodeMap.get(kid).depth=d+1;q.push(kid)}
+  });
+}
+const maxDepth=Math.max(...[...nodeMap.values()].map(n=>n.depth));
+
+// 레이어 분류
+const layers=Array.from({length:maxDepth+1},()=>[]);
+nodeMap.forEach((v,k)=>layers[v.depth].push(k));
+layers.forEach(l=>l.sort((a,b)=>a.localeCompare(b,"ko")));
+
+// Sugiyama 간단 8라운드
+function idxMap(arr){const m=new Map();arr.forEach((v,i)=>m.set(v,i));return m}
+function median(n,nbIdx,dir){
+  const nd=nodeMap.get(n);
+  const nbrs=(dir==="down"?nd.parents:nd.children).map(x=>nbIdx.get(x)).filter(x=>x!=null);
+  nbrs.sort((a,b)=>a-b);
+  if(!nbrs.length)return null;
+  const m=Math.floor(nbrs.length/2);
+  return nbrs.length%2?nbrs[m]:(nbrs[m-1]+nbrs[m])/2;
+}
+for(let r=0;r<8;r++){
+  for(let li=1;li<layers.length;li++){
+    const nb=idxMap(layers[li-1]);
+    const scored=layers[li].map((n,i)=>({n,s:median(n,nb,"down")??(i+.5*layers[li].length)}));
+    scored.sort((a,b)=>a.s-b.s);
+    layers[li]=scored.map(x=>x.n);
+  }
+  for(let li=layers.length-2;li>=0;li--){
+    const nb=idxMap(layers[li+1]);
+    const scored=layers[li].map((n,i)=>({n,s:median(n,nb,"up")??(i+.5*layers[li].length)}));
+    scored.sort((a,b)=>a.s-b.s);
+    layers[li]=scored.map(x=>x.n);
+  }
+}
+
+// ── 시뮬레이트 상태 ──
+const STATUS={};
+const METRICS={};
+nodeMap.forEach((v,k)=>{
+  const rng=Math.random();
+  let st="ok";
+  if(k.includes("합덕일반__")) st="err";
+  else if(k.includes("합덕인더스__")||k.includes("남산11__")) st="warn";
+  else if(k.includes("신평1__소블록")||k.includes("남산10__")) st="off";
+  else if(rng<.05) st="err";
+  else if(rng<.12) st="warn";
+  else if(rng<.18) st="off";
+  STATUS[k]=st;
+  const q=st==="off"?0:Math.round(20+Math.random()*180);
+  const p=+(1+Math.random()*5).toFixed(1);
+  const h=+(1+Math.random()*8).toFixed(1);
+  const t=Math.round(4+Math.random()*30);
+  METRICS[k]={q,p,h,t};
+});
+// 특정 시나리오
+METRICS[nid("합덕일반","배수지")]={q:18,p:0.8,h:1.2,t:3};
+METRICS[nid("합덕인더스","배수지")]={q:45,p:2.1,h:2.8,t:8};
+METRICS[nid("우강","가압장")]={q:133,p:3.1,h:0,t:0};
+
+// ── 레이아웃 계산 ──
+const NW=110,NH=36,GAP=6,PAD_X=80,PAD_Y=30;
+const maxLayerSize=Math.max(...layers.map(l=>l.length));
+const SVG_H=Math.max(700,maxLayerSize*(NH+GAP)+PAD_Y*2);
+const SVG_W=Math.max(1600,(maxDepth+1)*220+PAD_X*2);
+
+const nodePos=new Map();
+const colW=(SVG_W-PAD_X*2)/(maxDepth||1);
+layers.forEach((layer,li)=>{
+  const totalH=layer.length*(NH+GAP)-GAP;
+  let y=(SVG_H-totalH)/2;
+  layer.forEach(id=>{
+    nodePos.set(id,{x:PAD_X+li*colW,y,w:NW,h:NH});
+    y+=NH+GAP;
+  });
+});
+
+// ── SVG 렌더 ──
+const svg=document.getElementById("svgMain");
+svg.setAttribute("viewBox",`0 0 ${SVG_W} ${SVG_H}`);
+
+let svgHTML=`<defs>
+  <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <marker id="dot" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="4" markerHeight="4"><circle cx="3" cy="3" r="2.5" fill="#10b981" opacity=".6"/></marker>
+</defs>`;
+
+// 레이어 라벨
+const layerNames=["정수장","배수지/가압장","배수지/소블록","가압장/소블록","소블록/배수지","가압장/배수지","소블록","소블록"];
+layers.forEach((_,i)=>{
+  const x=PAD_X+i*colW+NW/2;
+  svgHTML+=`<text class="layer-label" x="${x}" y="18">Layer ${i}</text>`;
+});
+
+// 엣지
+edgeList.forEach(({src,tgt})=>{
+  const sp=nodePos.get(src),ep=nodePos.get(tgt);
+  if(!sp||!ep)return;
+  const st=STATUS[tgt]||"ok";
+  const cls=st==="err"?"edge-err":st==="warn"?"edge-warn":st==="off"?"edge-off":"edge-ok";
+  const q=METRICS[tgt]?.q||0;
+  const sw=Math.max(1,Math.min(10,q/20));
+  const x0=sp.x+sp.w,y0=sp.y+sp.h/2;
+  const x1=ep.x,y1=ep.y+ep.h/2;
+  const cx=(x0+x1)/2;
+  svgHTML+=`<path class="edge ${cls}" d="M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1}" stroke-width="${sw}" data-src="${src}" data-tgt="${tgt}"/>`;
+});
+
+// 누수 분기 (합덕일반)
+const uPos=nodePos.get(nid("우강","가압장"));
+const hPos=nodePos.get(nid("합덕일반","배수지"));
+if(uPos&&hPos){
+  const mx=(uPos.x+uPos.w+hPos.x)/2, my=(uPos.y+uPos.h/2+hPos.y+hPos.h/2)/2;
+  svgHTML+=`<path class="leak-line" d="M${mx},${my} C${mx},${my+40} ${mx+10},${my+70} ${mx+5},${my+100}"/>`;
+  svgHTML+=`<text class="leak-badge" x="${mx+14}" y="${my+60}">유실 추정</text>`;
+  svgHTML+=`<text class="leak-badge" x="${mx+14}" y="${my+74}" font-size="12">-18 m³/h</text>`;
+  svgHTML+=`<text x="${mx+2}" y="${my+92}" font-size="14" class="leak-drop">💧</text>`;
+}
+
+// 물수지 뱃지
+function balBadge(srcId,tgtId,pct,grade){
+  const sp=nodePos.get(srcId),ep=nodePos.get(tgtId);
+  if(!sp||!ep)return"";
+  const mx=(sp.x+sp.w+ep.x)/2, my=(sp.y+sp.h/2+ep.y+ep.h/2)/2;
+  const fc=grade==="err"?"#ef4444":grade==="warn"?"#f59e0b":"#fbbf24";
+  const bg=grade==="err"?"rgba(239,68,68,.15)":"rgba(245,158,11,.12)";
+  return`<g><rect class="bal-bg" x="${mx-18}" y="${my-9}" width="36" height="18" fill="${bg}" stroke="${fc}" stroke-width=".8"/>
+    <text class="bal-txt" x="${mx}" y="${my+4}" fill="${fc}">${pct}</text></g>`;
+}
+svgHTML+=balBadge(nid("우강","가압장"),nid("합덕일반","배수지"),"-28%","err");
+svgHTML+=balBadge(nid("우강","가압장"),nid("합덕인더스","배수지"),"-12%","warn");
+
+// 노드
+nodeMap.forEach((v,k)=>{
+  const p=nodePos.get(k);if(!p)return;
+  const st=STATUS[k]||"ok";
+  const m=METRICS[k]||{q:0,p:0,h:0,t:0};
+  const ftc=FT_C[v.ft]||"#94a3b8";
+  const stCls="st-"+st;
+  const subText=v.ft==="배수지"?`H:${m.h}m`:v.ft==="가압장"?`Q:${m.q}`:`Q:${m.q}`;
+
+  svgHTML+=`<g class="nd ${stCls}" data-id="${k}" onclick="openPopup('${v.sn}','${v.ft}','${st}',${JSON.stringify(m).replace(/"/g,"'")})">
+    <rect class="nd-box" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}"/>
+    <text class="nd-name" x="${p.x+p.w/2}" y="${p.y+15}">${v.sn}</text>
+    <text class="nd-sub" x="${p.x+p.w/2}" y="${p.y+27}" fill="${ftc}">${subText}</text>
+    <g class="nd-metrics" transform="translate(${p.x},${p.y+p.h+4})">
+      <rect class="m-bg" width="${p.w}" height="42"/>
+      <text class="m-txt" x="6" y="13">Q <tspan class="m-val ${m.q>30?"m-ok":"m-err"}">${m.q}</tspan> m³/h</text>
+      <text class="m-txt" x="6" y="26">P <tspan class="m-val ${m.p>2?"m-ok":"m-warn"}">${m.p}</tspan> kgf</text>
+      <text class="m-txt" x="6" y="39">${v.ft==="배수지"?"H":"T"} <tspan class="m-val ${(v.ft==="배수지"?m.h:m.t)>3?"m-ok":"m-err"}">${v.ft==="배수지"?m.h:m.t}</tspan> ${v.ft==="배수지"?"m":"h"}</text>
+    </g>
+  </g>`;
+});
+
+// 파티클 경로 (주요 엣지 3~5개에 파티클 애니메이션)
+const particleEdges=[
+  {s:nid("아산","정수장"),t:nid("남산","배수지"),cls:""},
+  {s:nid("아산","정수장"),t:nid("신평","배수지"),cls:""},
+  {s:nid("보령댐","정수장"),t:nid("석문","배수지"),cls:""},
+  {s:nid("신평공업","가압장"),t:nid("우강","가압장"),cls:""},
+  {s:nid("우강","가압장"),t:nid("합덕일반","배수지"),cls:"err"},
+];
+particleEdges.forEach(({s,t,cls})=>{
+  const sp=nodePos.get(s),ep=nodePos.get(t);
+  if(!sp||!ep)return;
+  const x0=sp.x+sp.w,y0=sp.y+sp.h/2,x1=ep.x,y1=ep.y+ep.h/2,cx=(x0+x1)/2;
+  const pid=`p_${s}_${t}`.replace(/[^a-zA-Z0-9]/g,"_");
+  svgHTML+=`<path id="${pid}" d="M${x0},${y0} C${cx},${y0} ${cx},${y1} ${x1},${y1}" fill="none" stroke="none"/>`;
+  for(let i=0;i<3;i++){
+    const delay=i*1.2;
+    svgHTML+=`<circle class="particle ${cls}" r="${cls?"2.5":"2"}" opacity=".8">
+      <animateMotion dur="3.5s" begin="${delay}s" repeatCount="indefinite"><mpath href="#${pid}"/></animateMotion>
+    </circle>`;
+  }
+});
+
+svg.innerHTML=svgHTML;
+
+// ── KPI ──
+let counts={total:nodeMap.size,ok:0,warn:0,err:0,off:0,leak:0};
+Object.values(STATUS).forEach(s=>{counts[s]=(counts[s]||0)+1});
+counts.leak=1; // 합덕일반
+
+const kpiDefs=[
+  {label:"전체 시설",val:counts.total,cls:"c-cyan",filter:"all"},
+  {label:"정상 공급",val:counts.ok,cls:"c-green",filter:"ok"},
+  {label:"주의",val:counts.warn,cls:"c-amber",filter:"warn"},
+  {label:"이상 감지",val:counts.err,cls:"c-red",filter:"err"},
+  {label:"유량 없음",val:counts.off,cls:"c-gray",filter:"off"},
+  {label:"유량 불균형",val:counts.leak,cls:"c-red",filter:"leak"},
+];
+document.getElementById("kpiBar").innerHTML=kpiDefs.map(k=>
+  `<div class="kpi-card" data-f="${k.filter}" onclick="toggleKpi('${k.filter}')">
+    <div class="kpi-label">${k.label}</div><div class="kpi-val ${k.cls}">${k.val}</div>
+  </div>`
+).join("");
+
+let activeKpi=null;
+function toggleKpi(f){
+  const cards=document.querySelectorAll(".kpi-card");
+  if(activeKpi===f){activeKpi=null;cards.forEach(c=>c.classList.remove("active"));resetDim();return}
+  activeKpi=f;
+  cards.forEach(c=>c.classList.toggle("active",c.dataset.f===f));
+  if(f==="all"){resetDim();return}
+  document.querySelectorAll(".nd").forEach(nd=>{
+    const id=nd.dataset.id;
+    const match=f==="leak"?id.includes("합덕일반"):STATUS[id]===f;
+    nd.classList.toggle("dimmed",!match);
+    nd.classList.toggle("glow",match);
+  });
+  document.querySelectorAll(".edge").forEach(e=>e.style.opacity=".08");
+}
+function resetDim(){
+  document.querySelectorAll(".nd").forEach(n=>{n.classList.remove("dimmed","glow")});
+  document.querySelectorAll(".edge").forEach(e=>e.style.opacity="");
+}
+
+// ── 팝업 ──
+function openPopup(sn,ft,st,m){
+  document.getElementById("popT").textContent=`${sn} ${ft}`;
+  const stMap={ok:"정상",warn:"주의",err:"이상",off:"유량없음"};
+  document.getElementById("popT").innerHTML+=` <span class="st-badge ${st}">${stMap[st]}</span>`;
+  const items=[];
+  if(m.q!==undefined) items.push({l:"유량 (Q)",v:m.q,u:"m³/h",th:[60,20]});
+  if(m.p!==undefined) items.push({l:"압력 (P)",v:m.p,u:"kgf/cm²",th:[2.5,1.5]});
+  if(ft==="배수지"&&m.h!==undefined) items.push({l:"수위 (H)",v:m.h,u:"m",th:[3,2]});
+  if(m.t!==undefined) items.push({l:"공급시간 (T)",v:m.t,u:"h",th:[12,6]});
+  const g=document.getElementById("popG");
+  g.innerHTML=items.map(i=>{
+    const c=i.v>=i.th[0]?"c-green":i.v>=i.th[1]?"c-amber":"c-red";
+    return`<div class="popup-cell"><div class="pc-label">${i.l}</div><div class="pc-val ${c}">${i.v}<span class="pc-unit">${i.u}</span></div></div>`;
+  }).join("");
+  const note=document.getElementById("popN");
+  if(st==="err"||st==="warn"){
+    note.style.display="flex";
+    note.className=`popup-note ${st}`;
+    const msg=st==="err"?(sn.includes("합덕일반")?"유량 급감, 누수 의심 구간":"이상 감지됨"):sn.includes("합덕인더스")?"수위 하락 추세":"주의 상태";
+    note.innerHTML=`<span>${st==="err"?"✕":"⚠"}</span>${msg}`;
+  }else{note.style.display="none"}
+  document.getElementById("popupMask").classList.add("show");
+}
+function closePopup(e){
+  if(e&&e.target!==e.currentTarget)return;
+  document.getElementById("popupMask").classList.remove("show");
+}
+
+// ── 미니 차트 ──
+function drawChart(canvas,data,color,thresh){
+  const ctx=canvas.getContext("2d");
+  const dpr=devicePixelRatio||1;
+  const r=canvas.getBoundingClientRect();
+  canvas.width=r.width*dpr;canvas.height=r.height*dpr;
+  ctx.scale(dpr,dpr);
+  const W=r.width,H=r.height;
+  const max=Math.max(...data)*1.15,min=Math.min(...data)*.85,rng=max-min||1;
+  if(thresh!=null){
+    const ty=H-((thresh-min)/rng)*H;
+    ctx.strokeStyle="rgba(239,68,68,.25)";ctx.setLineDash([3,2]);
+    ctx.beginPath();ctx.moveTo(0,ty);ctx.lineTo(W,ty);ctx.stroke();ctx.setLineDash([]);
+  }
+  // 면적
+  ctx.beginPath();
+  data.forEach((v,i)=>{const x=i/(data.length-1)*W,y=H-((v-min)/rng)*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+  ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();
+  ctx.fillStyle=color.replace("1)","0.06)").replace("rgb","rgba");ctx.fill();
+  // 선
+  ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.beginPath();
+  data.forEach((v,i)=>{const x=i/(data.length-1)*W,y=H-((v-min)/rng)*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+  ctx.stroke();
+  // 마지막 점
+  const lastX=W,lastY=H-((data[data.length-1]-min)/rng)*H;
+  ctx.beginPath();ctx.arc(lastX,lastY,3,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+}
+
+const charts=[
+  {title:"우강 가압장 — 유량 (m³/h)",color:"rgba(59,130,246,1)",data:Array.from({length:48},(_,i)=>130+Math.sin(i*.3)*15+(Math.random()-.5)*8),thresh:80},
+  {title:"합덕일반 배수지 — 수위 (m)",color:"rgba(239,68,68,1)",data:Array.from({length:48},(_,i)=>3.5-i*.04+(Math.random()-.5)*.3),thresh:2},
+  {title:"합덕인더스 배수지 — 압력 (kgf)",color:"rgba(245,158,11,1)",data:Array.from({length:48},(_,i)=>2.8+Math.sin(i*.2)*.4+(Math.random()-.5)*.2),thresh:2.5},
+  {title:"우강→합덕일반 — 유량차이 (m³/h)",color:"rgba(239,68,68,1)",data:Array.from({length:48},(_,i)=>12+Math.sin(i*.15)*4+(i>30?10:0)+(Math.random()-.5)*3),thresh:20},
+];
+const trendRow=document.getElementById("trendRow");
+charts.forEach((c,i)=>{
+  const div=document.createElement("div");div.className="tc";
+  div.innerHTML=`<div class="tc-title">${c.title}</div><canvas id="tc${i}"></canvas>`;
+  trendRow.appendChild(div);
+});
+setTimeout(()=>charts.forEach((c,i)=>drawChart(document.getElementById("tc"+i),c.data,c.color,c.thresh)),100);
+
+// ══════════════════════════════════════════════
+// 줌 / 패닝
+// ══════════════════════════════════════════════
+const area=document.getElementById("diagramArea");
+const svgEl=document.getElementById("svgMain");
+let scale=1, panX=0, panY=0, dragging=false, lastX=0, lastY=0;
+const ZOOM_MIN=0.3, ZOOM_MAX=4;
+
+function applyTransform(){
+  svgEl.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;
+  svgEl.style.transformOrigin="0 0";
+  document.getElementById("zoomInfo").textContent=Math.round(scale*100)+"%";
+}
+
+// 마우스 휠 줌
+area.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const rect=area.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const factor=e.deltaY<0?1.12:1/1.12;
+  const ns=Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,scale*factor));
+  const ratio=ns/scale;
+  panX=mx-(mx-panX)*ratio;
+  panY=my-(my-panY)*ratio;
+  scale=ns;
+  applyTransform();
+},{passive:false});
+
+// 마우스 드래그 패닝
+area.addEventListener("mousedown",e=>{
+  if(e.button!==0)return;
+  dragging=true;lastX=e.clientX;lastY=e.clientY;
+  area.classList.add("dragging");
+});
+window.addEventListener("mousemove",e=>{
+  if(!dragging)return;
+  panX+=e.clientX-lastX;panY+=e.clientY-lastY;
+  lastX=e.clientX;lastY=e.clientY;
+  applyTransform();
+});
+window.addEventListener("mouseup",()=>{
+  dragging=false;area.classList.remove("dragging");
+});
+
+// 터치 줌/패닝
+let touchDist=0,touchMid={x:0,y:0},touchPanStart={x:0,y:0},touchScaleStart=1;
+area.addEventListener("touchstart",e=>{
+  if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    touchDist=Math.sqrt(dx*dx+dy*dy);
+    touchMid={x:(e.touches[0].clientX+e.touches[1].clientX)/2,y:(e.touches[0].clientY+e.touches[1].clientY)/2};
+    touchPanStart={x:panX,y:panY};touchScaleStart=scale;
+  }else if(e.touches.length===1){
+    dragging=true;lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;
+  }
+},{passive:true});
+area.addEventListener("touchmove",e=>{
+  if(e.touches.length===2){
+    e.preventDefault();
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    const ns=Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,touchScaleStart*(dist/touchDist)));
+    const rect=area.getBoundingClientRect();
+    const mx=touchMid.x-rect.left,my=touchMid.y-rect.top;
+    const ratio=ns/touchScaleStart;
+    panX=mx-(mx-touchPanStart.x)*ratio;
+    panY=my-(my-touchPanStart.y)*ratio;
+    scale=ns;applyTransform();
+  }else if(e.touches.length===1&&dragging){
+    panX+=e.touches[0].clientX-lastX;panY+=e.touches[0].clientY-lastY;
+    lastX=e.touches[0].clientX;lastY=e.touches[0].clientY;
+    applyTransform();
+  }
+},{passive:false});
+area.addEventListener("touchend",()=>{dragging=false});
+
+// 버튼
+function zoomBy(factor){
+  const rect=area.getBoundingClientRect();
+  const cx=rect.width/2,cy=rect.height/2;
+  const ns=Math.min(ZOOM_MAX,Math.max(ZOOM_MIN,scale*factor));
+  const ratio=ns/scale;
+  panX=cx-(cx-panX)*ratio;panY=cy-(cy-panY)*ratio;
+  scale=ns;applyTransform();
+}
+function zoomFit(){
+  scale=1;panX=0;panY=0;applyTransform();
+}
+
+// 초기 뷰: 전체에 맞춤
+setTimeout(()=>{
+  const rect=area.getBoundingClientRect();
+  const fitScale=Math.min(rect.width/SVG_W,rect.height/SVG_H)*0.95;
+  scale=fitScale;
+  panX=(rect.width-SVG_W*fitScale)/2;
+  panY=(rect.height-SVG_H*fitScale)/2;
+  applyTransform();
+},150);
+</script>
+</body>
+</html>

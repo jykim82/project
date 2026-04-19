@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>용수 공급계통도 — 박스 선형 다이어그램</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b1120; color: #e2e8f0; font-family: 'Pretendard','Noto Sans KR',-apple-system,sans-serif; overflow: hidden; }
+
+  .header {
+    padding: 10px 24px; height: 44px;
+    background: linear-gradient(180deg, #0f1729 0%, #0b1120 100%);
+    border-bottom: 1px solid rgba(56,189,248,0.08);
+    display: flex; align-items: center; gap: 16px;
+  }
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .header select {
+    background: #131b2e; color: #cbd5e1;
+    border: 1px solid rgba(56,189,248,0.2); border-radius: 6px;
+    padding: 5px 28px 5px 12px; font-size: 13px;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    cursor: pointer;
+  }
+  .header .stats { margin-left: auto; font-size: 11px; color: #64748b; display: flex; gap: 14px; }
+  .header .stat-item { display: flex; align-items: center; gap: 6px; }
+  .header .stat-badge {
+    background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.15);
+    border-radius: 4px; padding: 1px 8px; color: #38bdf8; font-weight: 600; font-size: 12px;
+  }
+
+  .legend-bar {
+    padding: 5px 24px; height: 30px;
+    display: flex; align-items: center; gap: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04); background: rgba(15,23,41,0.5);
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #94a3b8; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; }
+
+  #canvas-wrap {
+    width: 100%; height: calc(100vh - 74px);
+    overflow: hidden; position: relative; cursor: grab;
+  }
+  #canvas-wrap:active { cursor: grabbing; }
+
+  #diagram {
+    position: absolute; top: 0; left: 0;
+    transform-origin: 0 0;
+  }
+
+  /* 노드 박스 */
+  .node-box {
+    position: absolute;
+    width: 120px; height: 42px;
+    border-radius: 6px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    cursor: pointer; transition: box-shadow 0.2s, border-color 0.2s;
+    user-select: none;
+  }
+  .node-box:hover {
+    z-index: 10;
+    box-shadow: 0 0 20px var(--glow);
+    border-color: var(--color) !important;
+  }
+  .node-box.highlighted {
+    box-shadow: 0 0 16px var(--glow), 0 0 4px var(--glow);
+    border-color: var(--color) !important;
+    z-index: 5;
+  }
+  .node-box .ft { font-size: 8px; font-weight: 500; line-height: 1; margin-bottom: 1px; }
+  .node-box .nm { font-size: 11px; font-weight: 600; color: #f1f5f9; line-height: 1.2; }
+
+  /* SVG 선 레이어 */
+  #lines-svg {
+    position: absolute; top: 0; left: 0;
+    pointer-events: none;
+  }
+  #lines-svg line {
+    stroke: rgba(56,189,248,0.30);
+    stroke-width: 1.4;
+  }
+  #lines-svg polygon {
+    fill: rgba(56,189,248,0.40);
+  }
+
+  /* 줌 컨트롤 */
+  .zoom-ctrl {
+    position: absolute; bottom: 16px; right: 16px;
+    display: flex; flex-direction: column; gap: 4px; z-index: 20;
+  }
+  .zoom-btn {
+    width: 32px; height: 32px; border: 1px solid rgba(56,189,248,0.2);
+    background: rgba(15,23,41,0.9); color: #94a3b8; border-radius: 6px;
+    font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .zoom-btn:hover { background: rgba(56,189,248,0.1); color: #e2e8f0; }
+  .zoom-label {
+    text-align: center; font-size: 10px; color: #64748b; padding: 2px 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>용수 공급계통도</h1>
+  <select id="rootSelect"><option value="all">전체 보기</option></select>
+  <div class="stats">
+    <div class="stat-item">노드 <span class="stat-badge" id="nodeCount">0</span></div>
+    <div class="stat-item">연결 <span class="stat-badge" id="linkCount">0</span></div>
+  </div>
+</div>
+<div class="legend-bar" id="legendBar"></div>
+
+<div id="canvas-wrap">
+  <div id="diagram">
+    <svg id="lines-svg"></svg>
+  </div>
+  <div class="zoom-ctrl">
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <div class="zoom-label" id="zoomLabel">100%</div>
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <button class="zoom-btn" id="zoomFit" style="font-size:12px;margin-top:4px">⊡</button>
+  </div>
+</div>
+
+<script>
+// ── 데이터 ──
+const FLOWS = [
+  {us:"아산",uf:"정수장",ds:"신평",df:"가압장"},
+  {us:"아산",uf:"정수장",ds:"송악1",df:"가압장"},
+  {us:"아산",uf:"정수장",ds:"남산1",df:"가압장"},
+  {us:"아산",uf:"정수장",ds:"송산",df:"가압장"},
+  {us:"아산",uf:"정수장",ds:"고대리",df:"배수지"},
+  {us:"아산",uf:"정수장",ds:"석문",df:"감압시설"},
+  {us:"보령댐",uf:"정수장",ds:"행정",df:"가압장"},
+  {us:"보령댐",uf:"정수장",ds:"석문",df:"배수지"},
+  {us:"신평",uf:"가압장",ds:"신평",df:"배수지"},
+  {us:"신평",uf:"가압장",ds:"우강",df:"가압장"},
+  {us:"송악1",uf:"가압장",ds:"송악1",df:"배수지"},
+  {us:"송악1",uf:"가압장",ds:"송악2",df:"가압장"},
+  {us:"송악2",uf:"가압장",ds:"송악2",df:"배수지"},
+  {us:"남산1",uf:"가압장",ds:"남산1",df:"배수지"},
+  {us:"남산1",uf:"가압장",ds:"순성",df:"가압장"},
+  {us:"순성",uf:"가압장",ds:"순성",df:"배수지"},
+  {us:"우강",uf:"가압장",ds:"우강",df:"배수지"},
+  {us:"우강",uf:"가압장",ds:"합덕",df:"가압장"},
+  {us:"합덕",uf:"가압장",ds:"합덕",df:"배수지"},
+  {us:"합덕",uf:"가압장",ds:"합덕3",df:"배수지"},
+  {us:"행정",uf:"가압장",ds:"행정",df:"배수지"},
+  {us:"행정",uf:"가압장",ds:"행정1-1",df:"가압장"},
+  {us:"행정1-1",uf:"가압장",ds:"행정1-1",df:"배수지"},
+  {us:"행정1-1",uf:"가압장",ds:"행정1-2",df:"가압장"},
+  {us:"행정1-2",uf:"가압장",ds:"행정1-2",df:"배수지"},
+  {us:"송산",uf:"가압장",ds:"송산",df:"배수지"},
+  {us:"송산",uf:"가압장",ds:"삼봉",df:"가압장"},
+  {us:"삼봉",uf:"가압장",ds:"삼봉",df:"배수지"},
+  {us:"삼봉",uf:"가압장",ds:"천의리",df:"가압장"},
+  {us:"신평",uf:"배수지",ds:"신평1",df:"소블록"},
+  {us:"신평",uf:"배수지",ds:"신평2",df:"소블록"},
+  {us:"송악1",uf:"배수지",ds:"송악1-1",df:"소블록"},
+  {us:"송악1",uf:"배수지",ds:"송악1-2",df:"소블록"},
+  {us:"송악2",uf:"배수지",ds:"송악2-1",df:"소블록"},
+  {us:"남산1",uf:"배수지",ds:"남산1-1",df:"소블록"},
+  {us:"남산1",uf:"배수지",ds:"남산1-2",df:"소블록"},
+  {us:"순성",uf:"배수지",ds:"순성1",df:"소블록"},
+  {us:"순성",uf:"배수지",ds:"순성2",df:"소블록"},
+  {us:"우강",uf:"배수지",ds:"우강1",df:"소블록"},
+  {us:"우강",uf:"배수지",ds:"우강2",df:"소블록"},
+  {us:"합덕",uf:"배수지",ds:"합덕1",df:"소블록"},
+  {us:"합덕",uf:"배수지",ds:"합덕2",df:"소블록"},
+  {us:"합덕3",uf:"배수지",ds:"합덕3-1",df:"소블록"},
+  {us:"행정",uf:"배수지",ds:"행정1",df:"소블록"},
+  {us:"행정",uf:"배수지",ds:"행정2",df:"소블록"},
+  {us:"행정1-1",uf:"배수지",ds:"행정1-1-1",df:"소블록"},
+  {us:"행정1-2",uf:"배수지",ds:"행정1-2-1",df:"소블록"},
+  {us:"송산",uf:"배수지",ds:"송산1",df:"소블록"},
+  {us:"삼봉",uf:"배수지",ds:"삼봉1",df:"소블록"},
+  {us:"삼봉",uf:"배수지",ds:"삼봉2",df:"소블록"},
+  {us:"석문",uf:"배수지",ds:"석문1",df:"소블록"},
+  {us:"석문",uf:"배수지",ds:"석문2",df:"소블록"},
+  {us:"고대리",uf:"배수지",ds:"고대리1",df:"소블록"},
+  {us:"고대리",uf:"배수지",ds:"고대리2",df:"소블록"},
+  {us:"합덕2",uf:"소블록",ds:"합덕2-1",df:"소소블록"},
+  {us:"합덕2",uf:"소블록",ds:"합덕2-2",df:"소소블록"},
+  {us:"신평1",uf:"소블록",ds:"신평1-1",df:"소소블록"},
+  {us:"신평2",uf:"소블록",ds:"신평2-1",df:"소소블록"},
+  {us:"송악1-1",uf:"소블록",ds:"송악1-1-1",df:"소소블록"},
+  {us:"남산1-1",uf:"소블록",ds:"남산1-1-1",df:"소소블록"},
+  {us:"우강1",uf:"소블록",ds:"우강1-1",df:"소소블록"},
+  {us:"행정1",uf:"소블록",ds:"행정1-1가압",df:"가압장"},
+  {us:"석문1",uf:"소블록",ds:"석문1-1",df:"소소블록"},
+  {us:"석문2",uf:"소블록",ds:"석문2-1",df:"소소블록"},
+  {us:"고대리1",uf:"소블록",ds:"고대리1-1",df:"소소블록"},
+  {us:"고대리2",uf:"소블록",ds:"고대리2-1",df:"소소블록"},
+  {us:"송산1",uf:"소블록",ds:"송산1-1",df:"소소블록"},
+  {us:"삼봉1",uf:"소블록",ds:"삼봉1-1",df:"소소블록"},
+];
+
+// ── 스타일 ──
+const LAYER_ORDER = ["정수장","가압장","배수지","감압시설","소블록","소소블록"];
+const FS = {
+  "정수장":   { c:"#38bdf8", bg:"rgba(56,189,248,0.12)",  bd:"rgba(56,189,248,0.55)", glow:"rgba(56,189,248,0.25)" },
+  "가압장":   { c:"#fbbf24", bg:"rgba(251,191,36,0.10)",  bd:"rgba(251,191,36,0.50)", glow:"rgba(251,191,36,0.20)" },
+  "배수지":   { c:"#34d399", bg:"rgba(52,211,153,0.10)",  bd:"rgba(52,211,153,0.50)", glow:"rgba(52,211,153,0.20)" },
+  "감압시설": { c:"#22d3ee", bg:"rgba(34,211,238,0.10)",  bd:"rgba(34,211,238,0.50)", glow:"rgba(34,211,238,0.20)" },
+  "소블록":   { c:"#a78bfa", bg:"rgba(167,139,250,0.10)", bd:"rgba(167,139,250,0.45)", glow:"rgba(167,139,250,0.20)" },
+  "소소블록": { c:"#c4b5fd", bg:"rgba(196,181,253,0.08)", bd:"rgba(196,181,253,0.35)", glow:"rgba(196,181,253,0.15)" },
+};
+
+const BOX_W = 120, BOX_H = 42, LAYER_GAP = 156, NODE_GAP = 52, PAD = 30;
+
+function nid(s, f) { return s + "__" + f; }
+function pid(id) { const p = id.split("__"); return { s: p[0], f: p[1] }; }
+
+// ── 그래프 ──
+function mkGraph(flows) {
+  const ch = new Map(), pa = new Map(), all = new Set();
+  for (const f of flows) {
+    const u = nid(f.us, f.uf), d = nid(f.ds, f.df);
+    all.add(u); all.add(d);
+    if (!ch.has(u)) ch.set(u, []); ch.get(u).push(d);
+    if (!pa.has(d)) pa.set(d, []); pa.get(d).push(u);
+  }
+  return { ch, pa, all, roots: [...all].filter(id => !pa.has(id) || pa.get(id).length === 0) };
+}
+
+// ── 레이아웃 (트리 기반 — 교차 없음 보장) ──
+function layout(flows) {
+  const { ch, pa, all, roots } = mkGraph(flows);
+
+  // BFS depth (X 좌표용)
+  const dep = new Map();
+  const q = [...roots]; for (const r of roots) dep.set(r, 0);
+  while (q.length > 0) {
+    const c = q.shift(); const d = dep.get(c);
+    for (const kid of (ch.get(c) || [])) {
+      if (!dep.has(kid) || dep.get(kid) < d + 1) { dep.set(kid, d + 1); q.push(kid); }
+    }
+  }
+  for (const id of all) if (!dep.has(id)) dep.set(id, 0);
+
+  // 자식 정렬 (한글 가나다순)
+  for (const [, kids] of ch) {
+    kids.sort((a, b) => a.localeCompare(b, "ko"));
+  }
+
+  // 트리 Y 배치: 리프부터 쌓고 부모를 자식 중앙에 배치
+  // → 서브트리 연속 보장 → 교차 원천 제거
+  // → 1:1 체인 자동 직선 정렬 (자식 1개면 부모=자식 Y)
+  const yPos = new Map();
+  let yCursor = 0;
+  const visited = new Set();
+
+  function assignY(id) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const kids = (ch.get(id) || []).filter(k => !visited.has(k));
+    if (kids.length === 0) {
+      // 리프: 현재 커서 위치에 배치
+      yPos.set(id, yCursor);
+      yCursor += NODE_GAP;
+      return;
+    }
+    // 자식 먼저 재귀 배치
+    for (const kid of kids) assignY(kid);
+    // 부모는 자식들의 Y 중앙
+    const childYs = kids.filter(k => yPos.has(k)).map(k => yPos.get(k));
+    if (childYs.length > 0) {
+      yPos.set(id, (Math.min(...childYs) + Math.max(...childYs)) / 2);
+    } else {
+      yPos.set(id, yCursor);
+      yCursor += NODE_GAP;
+    }
+  }
+
+  roots.sort((a, b) => a.localeCompare(b, "ko"));
+  for (const root of roots) {
+    assignY(root);
+    yCursor += NODE_GAP * 0.5;
+  }
+  // 미방문 노드 처리
+  for (const id of all) {
+    if (!visited.has(id)) { yPos.set(id, yCursor); yCursor += NODE_GAP; }
+  }
+
+  // Y 정규화 (0 기준)
+  const minY = Math.min(...yPos.values());
+  for (const [id, y] of yPos) yPos.set(id, y - minY);
+
+  return { dep, yPos, all, roots, ch };
+}
+
+// ── 필터 ──
+function filterFlows(flows, rid) {
+  if (!rid || rid === "all") return flows;
+  const { ch } = mkGraph(flows);
+  const reach = new Set(); const q = [rid]; reach.add(rid);
+  while (q.length > 0) { const c = q.shift(); for (const k of (ch.get(c)||[])) if (!reach.has(k)) { reach.add(k); q.push(k); } }
+  return flows.filter(f => reach.has(nid(f.us,f.uf)) && reach.has(nid(f.ds,f.df)));
+}
+
+// ── 렌더링 (HTML + SVG) ──
+const diagram = document.getElementById("diagram");
+const linesSvg = document.getElementById("lines-svg");
+let currentHighlight = null; // 현재 강조 노드 ID
+let currentGraph = null;     // 현재 그래프 참조
+
+// BFS 하류 탐색
+function getDownstream(startId, chMap) {
+  const set = new Set([startId]);
+  const q = [startId];
+  while (q.length > 0) {
+    const c = q.shift();
+    for (const k of (chMap.get(c) || [])) {
+      if (!set.has(k)) { set.add(k); q.push(k); }
+    }
+  }
+  return set;
+}
+
+// 강조 적용/해제
+function applyHighlight(highlightSet) {
+  const hasHL = highlightSet !== null;
+
+  // 노드 박스
+  diagram.querySelectorAll(".node-box").forEach(box => {
+    const id = box.dataset.nodeId;
+    if (!hasHL) {
+      box.style.opacity = ""; box.style.filter = "";
+      box.classList.remove("highlighted");
+    } else if (highlightSet.has(id)) {
+      box.style.opacity = "1"; box.style.filter = "";
+      box.classList.add("highlighted");
+    } else {
+      box.style.opacity = "0.15"; box.style.filter = "grayscale(0.8)";
+      box.classList.remove("highlighted");
+    }
+  });
+
+  // SVG 선 + 화살표
+  linesSvg.querySelectorAll("g.edge").forEach(g => {
+    const src = g.dataset.src, tgt = g.dataset.tgt;
+    if (!hasHL) {
+      g.style.opacity = "";
+    } else if (highlightSet.has(src) && highlightSet.has(tgt)) {
+      g.style.opacity = "1";
+      g.querySelector("line").style.stroke = "rgba(56,189,248,0.7)";
+      g.querySelector("line").style.strokeWidth = "2";
+      g.querySelector("polygon").style.fill = "rgba(56,189,248,0.8)";
+    } else {
+      g.style.opacity = "0.06";
+      g.querySelector("line").style.stroke = "";
+      g.querySelector("line").style.strokeWidth = "";
+      g.querySelector("polygon").style.fill = "";
+    }
+  });
+}
+
+function render(rootFilter) {
+  const filtered = filterFlows(FLOWS, rootFilter);
+  const { dep, yPos, all, ch } = layout(filtered);
+  currentGraph = ch;
+  currentHighlight = null;
+
+  // 크기 계산
+  const maxDep = Math.max(...[...dep.values()], 0);
+  const maxY = Math.max(...[...yPos.values()], 0);
+  const totalW = PAD * 2 + maxDep * LAYER_GAP + BOX_W;
+  const totalH = PAD * 2 + maxY + BOX_H;
+
+  diagram.style.width = totalW + "px";
+  diagram.style.height = totalH + "px";
+  linesSvg.setAttribute("width", totalW);
+  linesSvg.setAttribute("height", totalH);
+
+  // 노드 위치 맵
+  const pos = new Map();
+  for (const id of all) {
+    pos.set(id, {
+      x: PAD + (dep.get(id) || 0) * LAYER_GAP,
+      y: PAD + (yPos.get(id) || 0),
+    });
+  }
+
+  // SVG 선 그리기 (각 엣지를 <g>로 래핑 — 하이라이트 제어용)
+  let svgContent = "";
+  for (const f of filtered) {
+    const uid = nid(f.us, f.uf), did = nid(f.ds, f.df);
+    const sp = pos.get(uid), ep = pos.get(did);
+    if (!sp || !ep) continue;
+    const x1 = sp.x + BOX_W, y1 = sp.y + BOX_H / 2;
+    const x2 = ep.x, y2 = ep.y + BOX_H / 2;
+    const ax = x2 - 2, ay = y2;
+    svgContent += `<g class="edge" data-src="${uid}" data-tgt="${did}">`;
+    svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2-6}" y2="${y2}"/>`;
+    svgContent += `<polygon points="${ax-7},${ay-4} ${ax},${ay} ${ax-7},${ay+4}"/>`;
+    svgContent += `</g>`;
+  }
+  linesSvg.innerHTML = svgContent;
+
+  // HTML 노드 박스
+  const existingBoxes = diagram.querySelectorAll(".node-box");
+  existingBoxes.forEach(el => el.remove());
+
+  for (const id of all) {
+    const { s, f } = pid(id);
+    const st = FS[f] || { c:"#94a3b8", bg:"rgba(148,163,184,0.08)", bd:"rgba(148,163,184,0.3)", glow:"rgba(148,163,184,0.15)" };
+    const p = pos.get(id);
+
+    const box = document.createElement("div");
+    box.className = "node-box";
+    box.dataset.nodeId = id;
+    box.style.cssText = `left:${p.x}px; top:${p.y}px; background:${st.bg}; border:1.2px solid ${st.bd}; --color:${st.c}; --glow:${st.glow};`;
+    box.innerHTML = `<span class="ft" style="color:${st.c}">${f}</span><span class="nm">${s}</span>`;
+    box.title = `${s} ${f}`;
+
+    // 클릭 → 하류 계통 강조
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (currentHighlight === id) {
+        // 같은 노드 재클릭 → 해제
+        currentHighlight = null;
+        applyHighlight(null);
+      } else {
+        currentHighlight = id;
+        const downstream = getDownstream(id, currentGraph);
+        applyHighlight(downstream);
+      }
+    });
+
+    diagram.appendChild(box);
+  }
+
+  document.getElementById("nodeCount").textContent = all.size;
+  document.getElementById("linkCount").textContent = filtered.length;
+
+  // 범례
+  const used = new Set([...all].map(id => pid(id).f));
+  document.getElementById("legendBar").innerHTML = LAYER_ORDER.filter(ft => used.has(ft))
+    .map(ft => `<div class="legend-item"><div class="legend-dot" style="background:${(FS[ft]||{c:"#94a3b8"}).c}"></div>${ft}</div>`).join("");
+
+  // 자동 줌 (fit to view)
+  fitToView();
+}
+
+// 배경 클릭 → 강조 해제
+document.getElementById("canvas-wrap").addEventListener("click", (e) => {
+  if (e.target.closest(".node-box") || e.target.closest(".zoom-ctrl")) return;
+  if (currentHighlight !== null) {
+    currentHighlight = null;
+    applyHighlight(null);
+  }
+});
+
+// ── 줌/패닝 ──
+const wrap = document.getElementById("canvas-wrap");
+let zoom = 1, panX = 0, panY = 0;
+let dragging = false, lastX = 0, lastY = 0;
+
+function applyTransform() {
+  diagram.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  document.getElementById("zoomLabel").textContent = Math.round(zoom * 100) + "%";
+}
+
+function fitToView() {
+  const dw = parseInt(diagram.style.width) || 1;
+  const dh = parseInt(diagram.style.height) || 1;
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  zoom = Math.min(ww / dw, wh / dh, 1.5) * 0.95;
+  panX = (ww - dw * zoom) / 2;
+  panY = (wh - dh * zoom) / 2;
+  applyTransform();
+}
+
+wrap.addEventListener("mousedown", e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener("mousemove", e => {
+  if (!dragging) return;
+  panX += e.clientX - lastX; panY += e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  applyTransform();
+});
+window.addEventListener("mouseup", () => { dragging = false; });
+
+wrap.addEventListener("wheel", e => {
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const oldZ = zoom;
+  zoom *= e.deltaY < 0 ? 1.12 : 0.89;
+  zoom = Math.max(0.15, Math.min(4, zoom));
+  panX = mx - (mx - panX) * zoom / oldZ;
+  panY = my - (my - panY) * zoom / oldZ;
+  applyTransform();
+}, { passive: false });
+
+document.getElementById("zoomIn").onclick = () => { zoom = Math.min(4, zoom * 1.25); applyTransform(); };
+document.getElementById("zoomOut").onclick = () => { zoom = Math.max(0.15, zoom * 0.8); applyTransform(); };
+document.getElementById("zoomFit").onclick = fitToView;
+window.addEventListener("resize", fitToView);
+
+// ── 초기화 ──
+const { roots } = mkGraph(FLOWS);
+const sel = document.getElementById("rootSelect");
+roots.sort((a,b) => a.localeCompare(b,"ko"));
+for (const r of roots) { const {s,f}=pid(r); const o=document.createElement("option"); o.value=r; o.textContent=`${s} ${f}`; sel.appendChild(o); }
+sel.addEventListener("change", () => render(sel.value));
+
+render("all");
+</script>
+</body>
+</html>

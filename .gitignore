@@ -6,3 +6,8 @@
 # 로그·임시
 *.log
 .DS_Store
+
+# dev artifacts (스크린샷·로그·덤프) — 커밋 제외, 로컬 참고용
+/screenshots/
+/dev-logs/
+/dev-data/

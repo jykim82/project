@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>용수 흐름 — 박스 계층형 뷰</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0f1a;color:#e2e8f0;font-family:'Pretendard','Segoe UI',sans-serif;min-height:100vh;overflow-x:hidden}
+
+.header{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;background:linear-gradient(180deg,#131a2e,#0e1525);border-bottom:1px solid #1e293b;position:sticky;top:0;z-index:100}
+.header h1{font-size:16px;font-weight:700;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-right{display:flex;align-items:center;gap:12px}
+.legend{display:flex;gap:10px;font-size:10px;color:#64748b}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-dot{width:8px;height:8px;border-radius:50%}
+
+/* KPI */
+.kpi-bar{display:flex;gap:6px;padding:8px 24px;background:#0e1525;border-bottom:1px solid #1e293b}
+.kpi{flex:1;padding:8px 12px;background:linear-gradient(135deg,#131a2e,#0f172a);border:1px solid #1e293b;border-radius:8px;text-align:center}
+.kpi-label{font-size:9px;color:#64748b;letter-spacing:.5px;text-transform:uppercase}
+.kpi-val{font-size:22px;font-weight:800;margin-top:2px}
+
+/* 계통 컨테이너 */
+.systems{padding:16px 24px;display:flex;flex-direction:column;gap:16px}
+
+/* 루트 계통 박스 */
+.system-box{border:1.5px solid #1e293b;border-radius:12px;overflow:hidden;background:#0c1222;transition:border-color .3s}
+.system-box:hover{border-color:#334155}
+.system-header{padding:10px 16px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.system-header:hover{background:#131a2e}
+.sh-left{display:flex;align-items:center;gap:10px}
+.sh-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#0a0f1a}
+.sh-title{font-size:14px;font-weight:700}
+.sh-stats{font-size:10px;color:#64748b;margin-top:2px}
+.sh-right{display:flex;align-items:center;gap:8px}
+.sh-badge{font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600}
+.sh-toggle{color:#475569;font-size:12px;transition:transform .3s}
+.sh-toggle.open{transform:rotate(180deg)}
+
+/* 레이어 (depth) */
+.system-body{padding:8px 12px 12px;display:none}
+.system-body.open{display:block}
+.layer{margin-bottom:8px}
+.layer-label{font-size:9px;color:#475569;padding:2px 8px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.layer-label::after{content:'';flex:1;height:1px;background:#1e293b}
+.layer-nodes{display:flex;flex-wrap:wrap;gap:6px}
+
+/* 노드 카드 */
+.node{width:160px;padding:8px 10px;border-radius:8px;border:1px solid #1e293b;background:#111827;cursor:pointer;transition:all .25s;position:relative;overflow:hidden}
+.node:hover{border-color:#3b82f680;transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.node::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
+.node.ft-정수장::before{background:#38bdf8}
+.node.ft-배수지::before{background:#34d399}
+.node.ft-가압장::before{background:#fbbf24}
+.node.ft-소블록::before{background:#a78bfa}
+.node.ft-소소블록::before{background:#c4b5fd}
+.node.ft-감압시설::before{background:#22d3ee}
+.node.ft-블록::before{background:#8b5cf6}
+
+.node-name{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node-ft{font-size:9px;color:#64748b;margin-top:1px}
+.node-metrics{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap}
+.metric{font-size:9px;padding:1px 5px;border-radius:4px;background:#1e293b;color:#94a3b8}
+.metric b{color:#e2e8f0;font-weight:600}
+.metric.q{border-left:2px solid #3b82f6}
+.metric.h{border-left:2px solid #34d399}
+.metric.p{border-left:2px solid #f59e0b}
+.metric.t{border-left:2px solid #22d3ee}
+
+/* 상태 */
+.node.st-ok{border-color:#10b98140}
+.node.st-ok .node-name{color:#34d399}
+.node.st-warn{border-color:#f59e0b60;background:#1c1507}
+.node.st-warn .node-name{color:#fbbf24}
+.node.st-err{border-color:#ef444460;background:#1c0707;animation:pulse-err 2s infinite}
+.node.st-err .node-name{color:#f87171}
+.node.st-off{border-color:#33415560;opacity:.5}
+.node.st-off .node-name{color:#64748b}
+
+@keyframes pulse-err{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.0)}50%{box-shadow:0 0 8px 2px rgba(239,68,68,.15)}}
+
+/* 하위 그룹 */
+.sub-group{margin:6px 0 6px 12px;border:1px dashed #1e293b;border-radius:8px;overflow:hidden}
+.sub-header{padding:6px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;background:#0a0f1a}
+.sub-header:hover{background:#131a2e}
+.sub-title{font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px}
+.sub-dot{width:6px;height:6px;border-radius:50%}
+.sub-stats{font-size:9px;color:#475569}
+.sub-body{padding:6px 10px 10px;display:none}
+.sub-body.open{display:block}
+.sub-toggle{color:#475569;font-size:11px;transition:transform .3s}
+.sub-toggle.open{transform:rotate(180deg)}
+
+/* 연결 표시 */
+.flow-arrow{display:flex;align-items:center;gap:4px;font-size:9px;color:#475569;padding:0 8px;margin:4px 0}
+.flow-arrow svg{width:16px;height:10px}
+
+/* 상태 뱃지 */
+.status-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:3px}
+.status-dot.ok{background:#10b981}
+.status-dot.warn{background:#f59e0b}
+.status-dot.err{background:#ef4444}
+.status-dot.off{background:#475569}
+
+/* 노드 상세 팝업 */
+.popup-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;align-items:center;justify-content:center}
+.popup-overlay.show{display:flex}
+.popup{background:#131a2e;border:1px solid #334155;border-radius:12px;width:380px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.popup-hdr{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1e293b}
+.popup-title{font-size:14px;font-weight:700}
+.popup-close{width:24px;height:24px;border:none;background:none;color:#64748b;font-size:16px;cursor:pointer;border-radius:4px}
+.popup-close:hover{background:#1e293b;color:#e2e8f0}
+.popup-body{padding:14px 16px}
+.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.popup-cell{padding:10px;background:#0f172a;border-radius:8px;text-align:center}
+.popup-cell .pc-label{font-size:9px;color:#64748b}
+.popup-cell .pc-val{font-size:20px;font-weight:700;margin-top:4px}
+.popup-section{margin-top:12px}
+.popup-section h4{font-size:11px;color:#64748b;margin-bottom:6px;font-weight:500}
+.popup-conn{font-size:10px;color:#94a3b8;display:flex;align-items:center;gap:4px;padding:3px 0}
+.popup-conn .conn-dir{font-size:8px;color:#475569;padding:1px 4px;border-radius:3px;background:#1e293b}
+
+/* 검색 */
+.search-wrap{position:relative}
+.search-input{background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px 6px 28px;color:#e2e8f0;font-size:11px;width:200px;outline:none;transition:border .2s}
+.search-input:focus{border-color:#3b82f6}
+.search-icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:12px;color:#64748b}
+.search-results{position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #334155;border-radius:0 0 6px 6px;max-height:240px;overflow-y:auto;z-index:150;display:none}
+.search-results.show{display:block}
+.sr-item{padding:6px 10px;font-size:11px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #0f172a}
+.sr-item:hover{background:#334155}
+.sr-ft{font-size:9px;padding:1px 5px;border-radius:3px;background:#0f172a;color:#64748b}
+
+/* 전체 펼치기/접기 */
+.ctrl-btn{padding:5px 12px;font-size:10px;border:1px solid #334155;border-radius:6px;background:#131a2e;color:#94a3b8;cursor:pointer;transition:all .2s}
+.ctrl-btn:hover{background:#1e293b;color:#f1f5f9;border-color:#3b82f680}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>💧 용수 흐름 모니터링 — 박스 계층형 뷰</h1>
+  <div class="hdr-right">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input class="search-input" placeholder="시설명 검색..." id="searchInput">
+      <div class="search-results" id="searchResults"></div>
+    </div>
+    <button class="ctrl-btn" onclick="toggleAll(true)">▼ 전체 펼치기</button>
+    <button class="ctrl-btn" onclick="toggleAll(false)">▲ 전체 접기</button>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>정수장</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div>배수지</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fbbf24"></div>가압장</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>소블록</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#c4b5fd"></div>소소블록</div>
+    </div>
+  </div>
+</div>
+
+<div class="kpi-bar" id="kpiBar"></div>
+<div class="systems" id="systemsContainer"></div>
+
+<!-- 팝업 -->
+<div class="popup-overlay" id="popup" onclick="if(event.target===this)closePopup()">
+  <div class="popup">
+    <div class="popup-hdr">
+      <span class="popup-title" id="popupTitle"></span>
+      <button class="popup-close" onclick="closePopup()">✕</button>
+    </div>
+    <div class="popup-body" id="popupBody"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// 데이터
+// ═══════════════════════════════════════
+const EDGES=[
+["보령댐","정수장","석문","배수지"],["보령댐","정수장","행정","가압장"],
+["아산","정수장","남산","배수지"],["아산","정수장","순성","가압장"],["아산","정수장","신평","배수지"],
+["아산","정수장","신평공업","가압장"],["아산","정수장","신평생활","가압장"],
+["아산","정수장","송악1","배수지"],["아산","정수장","송악2","배수지"],
+["아산","정수장","송산2산단공업","배수지"],["아산","정수장","송산2산단생활","배수지"],
+["석문","배수지","석문","가압장"],["석문","배수지","석문1","소블록"],["석문","배수지","석문2","소블록"],
+["석문2","소블록","삼봉","가압장"],["삼봉","가압장","대호","가압장"],["대호","가압장","난지","가압장"],
+["난지","가압장","도비도","소블록"],["난지","가압장","난지관광","배수지"],["난지","가압장","난지마을","배수지"],["난지","가압장","소난지도","소블록"],
+["행정","가압장","행정","배수지"],
+["행정","배수지","매방리","가압장"],["행정","배수지","행정1수청","소소블록"],["행정","배수지","성북1리 제1차","가압장"],
+["행정","배수지","행정1-1","소블록"],["행정","배수지","행정1-2","소블록"],
+["행정","배수지","수청2지구1","소블록"],["행정","배수지","행정2-1","소블록"],
+["행정","배수지","수청2지구2","소블록"],["행정","배수지","행정2-2","소블록"],
+["행정","배수지","수청2지구3","소블록"],["행정","배수지","행정2-3","소블록"],
+["행정1수청","소소블록","수청1-1","소소블록"],
+["성북1리 제1차","가압장","성북1리","배수지"],["성북1리 제1차","가압장","성북1리 제2차","가압장"],
+["행정2-3","소블록","죽동","가압장"],["죽동","가압장","죽동","배수지"],["죽동","가압장","죽동2","배수지"],
+["죽동","배수지","율사","가압장"],
+["남산","배수지","남산1","소블록"],["남산","배수지","남산2","소블록"],["남산","배수지","남산3","소블록"],
+["남산","배수지","남산4","소블록"],["남산","배수지","남산7","소블록"],["남산","배수지","남산8","소블록"],
+["남산","배수지","남산9","소블록"],["남산","배수지","남산10","소블록"],["남산","배수지","남산11","소블록"],
+["남산","배수지","죽동2","가압장"],["남산","배수지","용연2통","가압장"],
+["남산8","소블록","남산5","소블록"],["남산8","소블록","남산6","소블록"],
+["남산3","소블록","갈산","가압장"],["갈산","가압장","성북","가압장"],["성북","가압장","성북2","배수지"],
+["남산4","소블록","삼화","가압장"],
+["순성","가압장","양유","가압장"],["순성","가압장","성하리","가압장"],["순성","가압장","성상1","가압장"],["순성","가압장","성상2","가압장"],
+["성하리","가압장","성하리","배수지"],
+["신평","배수지","신평1","소블록"],["신평","배수지","신평2","소블록"],
+["신평1","소블록","신평3","소블록"],["신평3","소블록","봉소","가압장"],["신평3","소블록","순성","가압장"],
+["신평공업","가압장","우강","가압장"],["신평생활","가압장","우강","가압장"],
+["우강","가압장","합덕","배수지"],["우강","가압장","합덕일반","배수지"],["우강","가압장","합덕인더스","배수지"],["우강","가압장","합덕일반산단","배수지"],
+["합덕","배수지","석우","가압장"],["합덕","배수지","합덕1","소블록"],["합덕","배수지","합덕2","소블록"],["합덕","배수지","합덕4","소블록"],
+["합덕2","소블록","합덕3","소블록"],
+["송악1","배수지","복운","가압장"],["송악1","배수지","송악1-1","소블록"],["송악1","배수지","송악1-2","소블록"],
+["송악2","배수지","송악2-1","소블록"],["송악2","배수지","송악2-2","소블록"],["송악2","배수지","송악2-3","소블록"],
+["송악2","배수지","송악2-4","소블록"],["송악2","배수지","송악2-5","소블록"],
+["송악2-1","소블록","기지시","가압장"],
+["송산2산단공업","배수지","송산1","소블록"],["송산2산단공업","배수지","송산2산단공업","가압장"],
+["송산2산단생활","배수지","송산2","소블록"],["송산2산단생활","배수지","송산2산단생활","가압장"],
+["송산1","소블록","가곡","가압장"],["가곡","가압장","가곡","배수지"],
+["고대리","가압장","고대리","배수지"],["천의리","가압장","천의리","배수지"],
+["매방리","가압장","고대리","가압장"],["매방리","가압장","천의리","가압장"],
+];
+
+const FT_COLORS={"정수장":"#38bdf8","취수장":"#60a5fa","배수지":"#34d399","가압장":"#fbbf24","소블록":"#a78bfa","소소블록":"#c4b5fd","감압시설":"#22d3ee","블록":"#8b5cf6"};
+function nid(s,f){return s+"__"+f}
+
+// ── 그래프 빌드 ──
+const NM=new Map();
+EDGES.forEach(([us,uf,ds,df])=>{
+  const u=nid(us,uf),d=nid(ds,df);
+  if(!NM.has(u))NM.set(u,{sn:us,ft:uf,ch:[],pa:[],dep:0});
+  if(!NM.has(d))NM.set(d,{sn:ds,ft:df,ch:[],pa:[],dep:0});
+  NM.get(u).ch.push(d);NM.get(d).pa.push(u);
+});
+
+// BFS depth
+const roots=[...NM.entries()].filter(([,v])=>!v.pa.length).map(([k])=>k);
+const bq=[...roots];roots.forEach(r=>NM.get(r).dep=0);
+while(bq.length){const c=bq.shift();const nd=NM.get(c);nd.ch.forEach(k=>{if(NM.get(k).dep<nd.dep+1){NM.get(k).dep=nd.dep+1;bq.push(k)}})}
+
+// 시뮬레이션 상태
+const ST={},MET={};
+NM.forEach((v,k)=>{
+  const r=Math.random();
+  let s="ok";
+  if(k.includes("합덕일반__배수지"))s="err";
+  else if(k.includes("합덕인더스__")||k.includes("남산11__"))s="warn";
+  else if(k.includes("신평1__소블록")||k.includes("남산10__"))s="off";
+  else if(r<.04)s="err";else if(r<.1)s="warn";else if(r<.16)s="off";
+  ST[k]=s;
+  const isRes=v.ft==="배수지";
+  MET[k]={
+    q:s==="off"?0:Math.round(20+Math.random()*180),
+    p:+(1+Math.random()*5).toFixed(1),
+    h:isRes?+(1+Math.random()*8).toFixed(1):null,
+    t:isRes?Math.round(4+Math.random()*30):null
+  };
+});
+MET[nid("합덕일반","배수지")]={q:18,p:0.8,h:1.2,t:3};
+MET[nid("합덕인더스","배수지")]={q:45,p:2.1,h:2.8,t:8};
+
+// ── BFS 서브트리 ──
+function bfsSubtree(rootId){
+  const set=new Set([rootId]),q=[rootId];
+  while(q.length){const c=q.shift();(NM.get(c)?.ch||[]).forEach(k=>{if(!set.has(k)){set.add(k);q.push(k)}})}
+  return set;
+}
+
+// ── 계통 구조 정의 ──
+const SYSTEMS=[
+  {
+    name:"보령댐 계통",root:nid("보령댐","정수장"),color:"#38bdf8",icon:"💧",
+    subGroups:[
+      {name:"석문 계통",hub:nid("석문","배수지"),color:"#34d399"},
+      {name:"행정 계통",hub:nid("행정","가압장"),color:"#fbbf24"},
+    ]
+  },
+  {
+    name:"아산 계통",root:nid("아산","정수장"),color:"#818cf8",icon:"🏭",
+    subGroups:[
+      {name:"남산 계통",hub:nid("남산","배수지"),color:"#34d399"},
+      {name:"신평·우강·합덕",hub:nid("신평","배수지"),color:"#fbbf24",also:[nid("신평공업","가압장"),nid("신평생활","가압장")]},
+      {name:"순성 계통",hub:nid("순성","가압장"),color:"#22d3ee"},
+      {name:"송악 계통",hub:nid("송악1","배수지"),color:"#a78bfa",also:[nid("송악2","배수지")]},
+      {name:"송산 계통",hub:nid("송산2산단공업","배수지"),color:"#fb923c",also:[nid("송산2산단생활","배수지")]},
+    ]
+  }
+];
+
+// 각 서브그룹 멤버 계산
+SYSTEMS.forEach(sys=>{
+  sys.members=bfsSubtree(sys.root);
+  sys.subGroups.forEach(sg=>{
+    sg.members=new Set();
+    const hubs=[sg.hub,...(sg.also||[])];
+    hubs.forEach(h=>{bfsSubtree(h).forEach(m=>sg.members.add(m))});
+  });
+});
+
+// ── KPI ──
+function renderKPI(){
+  const all=[...NM.keys()];
+  const counts={total:all.length,ok:0,warn:0,err:0,off:0};
+  all.forEach(k=>{counts[ST[k]]=(counts[ST[k]]||0)+1});
+  document.getElementById("kpiBar").innerHTML=`
+    <div class="kpi"><div class="kpi-label">전체 시설</div><div class="kpi-val" style="color:#3b82f6">${counts.total}</div></div>
+    <div class="kpi"><div class="kpi-label">정상</div><div class="kpi-val" style="color:#10b981">${counts.ok}</div></div>
+    <div class="kpi"><div class="kpi-label">주의</div><div class="kpi-val" style="color:#f59e0b">${counts.warn}</div></div>
+    <div class="kpi"><div class="kpi-label">이상</div><div class="kpi-val" style="color:#ef4444">${counts.err}</div></div>
+    <div class="kpi"><div class="kpi-label">유량없음</div><div class="kpi-val" style="color:#64748b">${counts.off}</div></div>
+  `;
+}
+
+// ── 노드 카드 HTML ──
+function nodeCard(id){
+  const n=NM.get(id);if(!n)return '';
+  const st=ST[id]||'ok';
+  const m=MET[id]||{};
+  let metrics='';
+  if(m.q!=null)metrics+=`<span class="metric q">Q <b>${m.q}</b></span>`;
+  if(m.p!=null)metrics+=`<span class="metric p">P <b>${m.p}</b></span>`;
+  if(m.h!=null)metrics+=`<span class="metric h">H <b>${m.h}</b></span>`;
+  if(m.t!=null)metrics+=`<span class="metric t">T <b>${m.t}h</b></span>`;
+  return `<div class="node ft-${n.ft} st-${st}" data-id="${id}" onclick="showPopup('${id}')">
+    <div class="node-name">${n.sn}</div>
+    <div class="node-ft">${n.ft} ${n.ch.length?'→'+n.ch.length:''}</div>
+    <div class="node-metrics">${metrics}</div>
+  </div>`;
+}
+
+// ── 서브그룹 멤버를 depth별로 분류 ──
+function layerNodes(members){
+  const layers={};
+  members.forEach(id=>{
+    const n=NM.get(id);if(!n)return;
+    const d=n.dep;
+    if(!layers[d])layers[d]=[];
+    layers[d].push(id);
+  });
+  return Object.entries(layers).sort((a,b)=>a[0]-b[0]);
+}
+
+// ── 서브그룹 상태 요약 ──
+function groupStats(members){
+  let ok=0,warn=0,err=0,off=0;
+  members.forEach(id=>{const s=ST[id];if(s==='ok')ok++;else if(s==='warn')warn++;else if(s==='err')err++;else off++});
+  return {total:members.size,ok,warn,err,off};
+}
+
+function statsBadges(stats){
+  let html='';
+  if(stats.err)html+=`<span class="sh-badge" style="background:#7f1d1d;color:#fca5a5">${stats.err} 이상</span>`;
+  if(stats.warn)html+=`<span class="sh-badge" style="background:#78350f;color:#fde68a">${stats.warn} 주의</span>`;
+  if(stats.off)html+=`<span class="sh-badge" style="background:#1e293b;color:#64748b">${stats.off} 없음</span>`;
+  return html;
+}
+
+// ── 메인 렌더 ──
+function render(){
+  renderKPI();
+  const container=document.getElementById("systemsContainer");
+  let html='';
+
+  SYSTEMS.forEach((sys,si)=>{
+    const stats=groupStats(sys.members);
+    // 루트 노드 (정수장)
+    const rootNode=NM.get(sys.root);
+
+    html+=`<div class="system-box" style="border-color:${sys.color}30">
+      <div class="system-header" onclick="toggleSystem(${si})" id="sysHdr${si}">
+        <div class="sh-left">
+          <div class="sh-icon" style="background:${sys.color}">${sys.icon}</div>
+          <div>
+            <div class="sh-title" style="color:${sys.color}">${sys.name}</div>
+            <div class="sh-stats">${stats.total}개 시설 · 정상 ${stats.ok} · 주의 ${stats.warn} · 이상 ${stats.err}</div>
+          </div>
+        </div>
+        <div class="sh-right">
+          ${statsBadges(stats)}
+          <span class="sh-toggle" id="sysToggle${si}">▼</span>
+        </div>
+      </div>
+      <div class="system-body" id="sysBody${si}">`;
+
+    // 루트 노드 표시
+    html+=`<div class="layer">
+      <div class="layer-label">Layer 0 — 원수</div>
+      <div class="layer-nodes">${nodeCard(sys.root)}</div>
+    </div>`;
+
+    // 직접 하위 (서브그룹에 속하지 않는)
+    const subMemberIds=new Set();
+    sys.subGroups.forEach(sg=>sg.members.forEach(m=>subMemberIds.add(m)));
+    const directChildren=rootNode.ch.filter(c=>!subMemberIds.has(c));
+    if(directChildren.length>0){
+      html+=`<div class="flow-arrow"><svg viewBox="0 0 16 10"><path d="M0 5h12M10 2l4 3-4 3" stroke="#475569" fill="none" stroke-width="1.5"/></svg> 직접 연결</div>`;
+      html+=`<div class="layer"><div class="layer-nodes">${directChildren.map(id=>nodeCard(id)).join('')}</div></div>`;
+    }
+
+    // 서브그룹
+    sys.subGroups.forEach((sg,gi)=>{
+      const sgStats=groupStats(sg.members);
+      html+=`<div class="sub-group" style="border-color:${sg.color}40">
+        <div class="sub-header" onclick="toggleSub(${si},${gi})" style="border-left:3px solid ${sg.color}">
+          <div class="sub-title"><span class="sub-dot" style="background:${sg.color}"></span>${sg.name} <span class="sub-stats">(${sgStats.total}개 시설)</span></div>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${statsBadges(sgStats)}
+            <span class="sub-toggle" id="subToggle${si}_${gi}">▼</span>
+          </div>
+        </div>
+        <div class="sub-body" id="subBody${si}_${gi}">`;
+
+      // depth별 레이어
+      const layers=layerNodes(sg.members);
+      const DEPTH_LABELS=["원수","1차 배분","2차 배분","3차 배분","4차 배분","5차 배분","6차 배분","7차 배분","말단"];
+      layers.forEach(([dep,nodes])=>{
+        const label=DEPTH_LABELS[dep]||`Layer ${dep}`;
+        html+=`<div class="layer">
+          <div class="layer-label">Depth ${dep} — ${label}</div>
+          <div class="layer-nodes">${nodes.map(id=>nodeCard(id)).join('')}</div>
+        </div>`;
+      });
+
+      html+=`</div></div>`;
+    });
+
+    html+=`</div></div>`;
+  });
+
+  container.innerHTML=html;
+}
+
+// ── 토글 ──
+function toggleSystem(i){
+  const body=document.getElementById(`sysBody${i}`);
+  const toggle=document.getElementById(`sysToggle${i}`);
+  body.classList.toggle("open");
+  toggle.classList.toggle("open");
+}
+function toggleSub(si,gi){
+  const body=document.getElementById(`subBody${si}_${gi}`);
+  const toggle=document.getElementById(`subToggle${si}_${gi}`);
+  body.classList.toggle("open");
+  toggle.classList.toggle("open");
+}
+function toggleAll(open){
+  document.querySelectorAll(".system-body").forEach(el=>{open?el.classList.add("open"):el.classList.remove("open")});
+  document.querySelectorAll(".sub-body").forEach(el=>{open?el.classList.add("open"):el.classList.remove("open")});
+  document.querySelectorAll(".sh-toggle,.sub-toggle").forEach(el=>{open?el.classList.add("open"):el.classList.remove("open")});
+}
+
+// ── 팝업 ──
+function showPopup(id){
+  const n=NM.get(id);if(!n)return;
+  const m=MET[id]||{};
+  const st=ST[id];
+  const stLabel={ok:'정상',warn:'주의',err:'이상',off:'유량없음'}[st];
+  const stColor={ok:'#10b981',warn:'#f59e0b',err:'#ef4444',off:'#64748b'}[st];
+
+  document.getElementById("popupTitle").innerHTML=`
+    <span class="status-dot ${st}"></span> ${n.sn} <span style="color:#64748b;font-size:11px;margin-left:4px">${n.ft}</span>
+    <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${stColor}20;color:${stColor};margin-left:8px">${stLabel}</span>
+  `;
+
+  let body=`<div class="popup-grid">
+    <div class="popup-cell"><div class="pc-label">유량 (Q)</div><div class="pc-val" style="color:#3b82f6">${m.q??'-'} <small style="font-size:11px">m³/h</small></div></div>
+    <div class="popup-cell"><div class="pc-label">압력 (P)</div><div class="pc-val" style="color:#f59e0b">${m.p??'-'} <small style="font-size:11px">kgf</small></div></div>
+    <div class="popup-cell"><div class="pc-label">수위 (H)</div><div class="pc-val" style="color:#34d399">${m.h??'-'} <small style="font-size:11px">m</small></div></div>
+    <div class="popup-cell"><div class="pc-label">공급시간 (T)</div><div class="pc-val" style="color:#22d3ee">${m.t??'-'} <small style="font-size:11px">h</small></div></div>
+  </div>`;
+
+  // 연결 정보
+  if(n.pa.length){
+    body+=`<div class="popup-section"><h4>▲ 상류 시설 (${n.pa.length})</h4>`;
+    n.pa.forEach(pid=>{const pn=NM.get(pid);if(pn)body+=`<div class="popup-conn"><span class="status-dot ${ST[pid]}"></span><span class="conn-dir">상류</span> ${pn.sn} (${pn.ft})</div>`});
+    body+=`</div>`;
+  }
+  if(n.ch.length){
+    body+=`<div class="popup-section"><h4>▼ 하류 시설 (${n.ch.length})</h4>`;
+    n.ch.forEach(cid=>{const cn=NM.get(cid);if(cn)body+=`<div class="popup-conn"><span class="status-dot ${ST[cid]}"></span><span class="conn-dir">하류</span> ${cn.sn} (${cn.ft})</div>`});
+    body+=`</div>`;
+  }
+
+  document.getElementById("popupBody").innerHTML=body;
+  document.getElementById("popup").classList.add("show");
+}
+function closePopup(){document.getElementById("popup").classList.remove("show")}
+
+// ── 검색 ──
+const searchInput=document.getElementById("searchInput");
+const searchResults=document.getElementById("searchResults");
+searchInput.addEventListener("input",()=>{
+  const q=searchInput.value.trim().toLowerCase();
+  if(!q){searchResults.classList.remove("show");return}
+  const matches=[];
+  NM.forEach((v,k)=>{
+    if(v.sn.toLowerCase().includes(q)||v.ft.toLowerCase().includes(q))matches.push({id:k,...v});
+  });
+  if(!matches.length){searchResults.classList.remove("show");return}
+  searchResults.innerHTML=matches.slice(0,15).map(m=>
+    `<div class="sr-item" onclick="focusNode('${m.id}')">
+      <span><span class="status-dot ${ST[m.id]}"></span>${m.sn}</span>
+      <span class="sr-ft">${m.ft}</span>
+    </div>`
+  ).join('');
+  searchResults.classList.add("show");
+});
+searchInput.addEventListener("keydown",e=>{
+  if(e.key==="Enter"){
+    const first=searchResults.querySelector(".sr-item");
+    if(first)first.click();
+  }
+});
+document.addEventListener("click",e=>{
+  if(!e.target.closest(".search-wrap"))searchResults.classList.remove("show");
+});
+
+function focusNode(id){
+  searchResults.classList.remove("show");searchInput.value='';
+  // 부모 그룹 열기
+  SYSTEMS.forEach((sys,si)=>{
+    if(sys.members.has(id)){
+      document.getElementById(`sysBody${si}`).classList.add("open");
+      document.getElementById(`sysToggle${si}`).classList.add("open");
+      sys.subGroups.forEach((sg,gi)=>{
+        if(sg.members.has(id)){
+          document.getElementById(`subBody${si}_${gi}`).classList.add("open");
+          document.getElementById(`subToggle${si}_${gi}`).classList.add("open");
+        }
+      });
+    }
+  });
+  // 스크롤 + 하이라이트
+  setTimeout(()=>{
+    const el=document.querySelector(`.node[data-id="${id}"]`);
+    if(el){
+      el.scrollIntoView({behavior:'smooth',block:'center'});
+      el.style.boxShadow='0 0 20px rgba(59,130,246,.5)';
+      el.style.transform='scale(1.05)';
+      setTimeout(()=>{el.style.boxShadow='';el.style.transform=''},2000);
+    }
+  },100);
+}
+
+// ── 키보드 ──
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape")closePopup();
+});
+
+// ── 초기화 ──
+render();
+// 기본 전체 펼침
+toggleAll(true);
+</script>
+</body>
+</html>

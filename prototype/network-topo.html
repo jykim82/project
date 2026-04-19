@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>수도시설 네트워크 토폴로지</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#060e1c;--bg2:#080f1e;
+  --ok:#22c55e;--warn:#f59e0b;--err:#ef4444;
+  --blue:#38bdf8;--yellow:#fbbf24;--green:#34d399;--purple:#a78bfa;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:#e2e8f0;font-family:'Noto Sans KR',sans-serif;}
+
+/* 헤더 */
+.hdr{
+  height:46px;padding:0 18px;
+  display:flex;align-items:center;gap:14px;
+  background:rgba(6,14,28,.97);
+  border-bottom:1px solid rgba(14,165,233,.15);
+  position:relative;z-index:10;
+}
+.hdr-title{font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:700;color:#f0f9ff;letter-spacing:.07em;}
+.hdr-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--blue);letter-spacing:.1em;}
+.hdr-sep{width:1px;height:22px;background:rgba(14,165,233,.15);}
+.pill{display:flex;align-items:center;gap:5px;padding:2px 9px;
+  border:1px solid rgba(255,255,255,.07);border-radius:3px;
+  font-family:'Share Tech Mono',monospace;font-size:10px;}
+.pill .d{width:6px;height:6px;border-radius:50%;}
+.hdr-clock{margin-left:auto;font-family:'Share Tech Mono',monospace;font-size:11px;color:#334155;}
+
+/* 레이아웃 */
+.body{display:flex;height:calc(100vh - 46px);}
+
+/* 사이드바 */
+.sb{width:200px;flex-shrink:0;background:var(--bg2);border-right:1px solid rgba(14,165,233,.12);
+  overflow-y:auto;padding:10px 0;display:flex;flex-direction:column;}
+.sb::-webkit-scrollbar{width:3px;}
+.sb::-webkit-scrollbar-thumb{background:rgba(14,165,233,.15);}
+.sb-lbl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#334155;letter-spacing:.1em;
+  padding:6px 12px 4px;text-transform:uppercase;}
+.sb-row{display:flex;justify-content:space-between;padding:4px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px;}
+.sb-row .k{color:#475569;}
+.sb-row .v{font-family:'Share Tech Mono',monospace;font-weight:700;font-size:12px;}
+.sb-div{height:1px;background:rgba(14,165,233,.1);margin:8px 0;}
+.sb-cat{padding:5px 12px;border-bottom:1px solid rgba(255,255,255,.03);display:flex;align-items:center;gap:8px;cursor:pointer;}
+.sb-cat:hover{background:rgba(255,255,255,.02);}
+.sb-cat .dot{width:8px;height:8px;border-radius:2px;flex-shrink:0;}
+.sb-cat .name{font-size:10px;flex:1;}
+.sb-cat .cnt{font-family:'Share Tech Mono',monospace;font-size:10px;color:#475569;}
+.sb-err{padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.03);cursor:pointer;}
+.sb-err:hover{background:rgba(255,255,255,.02);}
+.sb-err .site{font-size:10px;font-weight:700;color:var(--err);}
+.sb-err .msg{font-size:9px;color:#475569;margin-top:1px;}
+.sb-err .time{font-family:'Share Tech Mono',monospace;font-size:9px;color:#1e3a5f;}
+.sb-scroll{flex:1;overflow-y:auto;}
+.sb-scroll::-webkit-scrollbar{width:3px;}
+.sb-scroll::-webkit-scrollbar-thumb{background:rgba(14,165,233,.15);}
+
+/* 캔버스 */
+#wrap{flex:1;position:relative;overflow:hidden;cursor:grab;}
+#wrap.dragging{cursor:grabbing;}
+#topo{position:absolute;top:0;left:0;transform-origin:0 0;}
+
+/* 줌 컨트롤 */
+.zc{position:absolute;bottom:14px;right:14px;z-index:20;display:flex;flex-direction:column;gap:4px;}
+.zb{width:30px;height:30px;background:rgba(8,15,30,.92);border:1px solid rgba(14,165,233,.15);
+  border-radius:5px;color:#64748b;font-size:15px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:.15s;}
+.zb:hover{background:rgba(14,165,233,.1);color:#e2e8f0;}
+.zl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#334155;text-align:center;}
+
+/* 범례 */
+.legend{position:absolute;bottom:14px;left:14px;z-index:20;
+  background:rgba(8,15,30,.92);border:1px solid rgba(14,165,233,.12);
+  border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:4px;}
+.lg-r{display:flex;align-items:center;gap:7px;font-size:10px;color:#64748b;}
+.lg-d{width:8px;height:8px;border-radius:2px;flex-shrink:0;}
+.lg-l{width:22px;height:2px;border-radius:1px;flex-shrink:0;}
+.lg-sec{font-family:'Share Tech Mono',monospace;font-size:8px;color:#1e3a5f;letter-spacing:.08em;margin-top:3px;}
+
+/* 상세 패널 */
+.dp{position:absolute;top:10px;right:10px;z-index:30;width:260px;
+  background:rgba(8,15,30,.97);border:1px solid rgba(14,165,233,.2);
+  border-radius:8px;padding:14px;
+  transform:translateX(280px);transition:transform .25s ease;
+  max-height:calc(100% - 20px);overflow-y:auto;}
+.dp.open{transform:translateX(0);}
+.dp::-webkit-scrollbar{width:3px;}
+.dp::-webkit-scrollbar-thumb{background:rgba(14,165,233,.15);}
+.dp-x{position:absolute;top:8px;right:10px;background:none;border:none;color:#334155;cursor:pointer;font-size:13px;transition:.15s;}
+.dp-x:hover{color:#e2e8f0;}
+.dp-name{font-size:13px;font-weight:700;color:#f0f9ff;padding-right:20px;}
+.dp-type{font-size:10px;margin-bottom:8px;}
+.dp-sl{font-family:'Share Tech Mono',monospace;font-size:9px;color:#334155;letter-spacing:.1em;margin:8px 0 4px;text-transform:uppercase;}
+.dp-r{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03);font-size:10px;}
+.dp-r .k{color:#475569;}
+.dp-r .v{font-family:'Share Tech Mono',monospace;color:#94a3b8;}
+.v-ok{color:var(--ok)!important;}
+.v-warn{color:var(--warn)!important;}
+.v-err{color:var(--err)!important;}
+.dp-equip{padding:3px 6px;margin:2px 0;border-radius:4px;font-size:9px;display:flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);}
+.dp-equip .edot{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
+.dp-equip .eid{font-family:'Share Tech Mono',monospace;color:#475569;font-size:8px;}
+
+/* 로딩 */
+.loading{display:flex;align-items:center;justify-content:center;height:100%;color:#334155;
+  font-family:'Share Tech Mono',monospace;font-size:13px;letter-spacing:.1em;}
+
+/* SVG 인터랙션 */
+.node-g{cursor:pointer;}
+.node-g:hover .node-rect{filter:brightness(1.35);}
+.node-g.dimmed{opacity:.06;pointer-events:none;}
+.node-g.highlight .node-rect{filter:brightness(1.3);}
+.link-g{pointer-events:stroke;}
+.link-g.dimmed{opacity:.03;}
+.link-g.highlight{opacity:1;}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes flow{to{stroke-dashoffset:-18}}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-title">NET TOPOLOGY</div>
+    <div class="hdr-sub">충남 수도시설 · 통신 현황</div>
+  </div>
+  <div class="hdr-sep"></div>
+  <div id="pills" style="display:flex;gap:6px;"></div>
+  <div class="hdr-clock" id="clk"></div>
+</div>
+
+<div class="body">
+  <div class="sb">
+    <div class="sb-lbl">전체 현황</div>
+    <div class="sb-row"><span class="k">전체</span><span class="v" id="s-total" style="color:var(--blue)">—</span></div>
+    <div class="sb-row"><span class="k">정상</span><span class="v" id="s-ok" style="color:var(--ok)">—</span></div>
+    <div class="sb-row"><span class="k">이상</span><span class="v" id="s-err" style="color:var(--err)">—</span></div>
+    <div class="sb-row"><span class="k">미모니터링</span><span class="v" id="s-na" style="color:#475569">—</span></div>
+    <div class="sb-div"></div>
+    <div class="sb-lbl">시설 유형</div>
+    <div id="sb-cats"></div>
+    <div class="sb-div"></div>
+    <div class="sb-lbl">이상 장비</div>
+    <div class="sb-scroll" id="sb-errs"></div>
+  </div>
+
+  <div id="wrap">
+    <div class="loading" id="loading">LOADING TOPOLOGY DATA...</div>
+    <svg id="topo" style="display:none"></svg>
+
+    <div class="zc">
+      <button class="zb" id="zi">+</button>
+      <div class="zl" id="zl">100%</div>
+      <button class="zb" id="zo">−</button>
+      <button class="zb" id="zf" style="font-size:11px;margin-top:3px">⊡</button>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <!-- 호버 툴팁 -->
+    <div id="tooltip" style="position:fixed;pointer-events:none;background:rgba(10,20,40,.95);
+      border:1px solid rgba(14,165,233,.3);border-radius:6px;padding:6px 10px;font-size:11px;
+      color:#e2e8f0;z-index:50;opacity:0;transition:opacity .12s;white-space:nowrap;"></div>
+
+    <div class="dp" id="dp">
+      <button class="dp-x" id="dpx">✕</button>
+      <div class="dp-name" id="dpN">—</div>
+      <div class="dp-type" id="dpT">—</div>
+      <div class="dp-sl">통신 상태</div>
+      <div class="dp-r"><span class="k">상태</span><span class="v" id="dpSt">—</span></div>
+      <div class="dp-r"><span class="k">장비유형</span><span class="v" id="dpEt">—</span></div>
+      <div class="dp-r"><span class="k">IP</span><span class="v" id="dpIp">—</span></div>
+      <div class="dp-r"><span class="k">응답시간</span><span class="v" id="dpRtt">—</span></div>
+      <div class="dp-r"><span class="k">점검시각</span><span class="v" id="dpTm">—</span></div>
+      <div class="dp-sl">연결 장비</div>
+      <div id="dpLinks"></div>
+      <div class="dp-sl">동일 현장 장비</div>
+      <div id="dpSite"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════
+const API_BASE = 'http://localhost:8000';
+const NW = 72, NH = 28;
+const SITE_PAD = 12, SITE_GAP = 24;
+const LAYER_GAP = 140, NODE_GAP_X = 6, NODE_GAP_Y = 6;
+const PAD = 60;
+
+// 시설유형 계층 순서 + 색상
+const LAYER_CONFIG = [
+  { types: ['제어망','업무망'], label: 'CORE · 제어/업무망', c: '56,189,248' },
+  { types: ['가압장'],         label: '가압장',              c: '251,191,36' },
+  { types: ['배수지'],         label: '배수지',              c: '52,211,153' },
+  { types: ['소블록','소소블록'], label: '소블록 · 소소블록', c: '167,139,250' },
+  { types: ['수압계실','유량계실'], label: '수압계실 · 유량계실', c: '6,182,212' },
+];
+
+const FTYPE_COLOR = {
+  '제어망':'#3b82f6','업무망':'#6366f1','가압장':'#f59e0b','배수지':'#14b8a6',
+  '소블록':'#8b5cf6','소소블록':'#a78bfa','수압계실':'#06b6d4','유량계실':'#10b981',
+};
+const PROTO_STYLE = {
+  sslvpn:          { c:'#3b82f6', w:2,   dash:'' },
+  xgt_glofa_enet:  { c:'#14b8a6', w:1.5, dash:'' },
+  modbus_rtu:      { c:'#475569', w:1,   dash:'4 3' },
+  oneway_diode:    { c:'#ef4444', w:2.5, dash:'' },
+  unknown:         { c:'#334155', w:1,   dash:'2 2' },
+};
+const ST_C = { '정상':'#22c55e', '이상':'#ef4444' };
+const NS = 'http://www.w3.org/2000/svg';
+
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let nodes = [], edges = [], nodeMap = {};
+let nodePos = {};  // id → {x, y, w, h}
+let svgW = 0, svgH = 0;
+let selectedId = null;
+let zoom = 1, px = 0, py = 0, dragging = false, lx = 0, ly = 0;
+
+// ═══════════════════════════════════════════════
+// SVG UTILS
+// ═══════════════════════════════════════════════
+function el(tag, attrs = {}) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+  return e;
+}
+function hexRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `${r},${g},${b}`;
+}
+function stColor(n) { return n.has_ip ? (ST_C[n.status] || '#475569') : '#1e3a5f'; }
+function ftColor(n) { return FTYPE_COLOR[n.category] || '#6b7280'; }
+
+// ═══════════════════════════════════════════════
+// FETCH DATA
+// ═══════════════════════════════════════════════
+async function fetchData() {
+  try {
+    const [topoRes, summRes] = await Promise.all([
+      fetch(`${API_BASE}/network/topology`),
+      fetch(`${API_BASE}/network/status/summary`),
+    ]);
+    const topo = await topoRes.json();
+    const summ = await summRes.json();
+    nodes = topo.data.nodes;
+    edges = topo.data.edges;
+    nodeMap = {};
+    for (const n of nodes) nodeMap[n.id] = n;
+    return summ.data;
+  } catch (e) {
+    console.error('API fetch failed:', e);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════
+// LAYOUT (hierarchical, grouped by site, wrap rows)
+// ═══════════════════════════════════════════════
+function computeLayout() {
+  // Target width (viewport-ish, allows horizontal scrolling)
+  const TARGET_W = 1800;
+
+  // 1. Group nodes by layer → site
+  const layerSites = LAYER_CONFIG.map(lc => {
+    const layerNodes = nodes.filter(n => lc.types.includes(n.category));
+    const siteMap = new Map();
+    for (const n of layerNodes) {
+      if (!siteMap.has(n.sitename)) siteMap.set(n.sitename, []);
+      siteMap.get(n.sitename).push(n);
+    }
+    // Sort: error sites first, then alphabetical
+    const siteEntries = [...siteMap.entries()].sort((a, b) => {
+      const aErr = a[1].some(n => n.has_ip && n.status === '이상');
+      const bErr = b[1].some(n => n.has_ip && n.status === '이상');
+      if (aErr !== bErr) return aErr ? -1 : 1;
+      return a[0].localeCompare(b[0], 'ko');
+    });
+    return { config: lc, sites: siteEntries };
+  }).filter(l => l.sites.length > 0);
+
+  // 2. Compute cluster sizes first
+  const MAX_COLS = 3;
+  const clusterSizes = new Map(); // sitename → {w, h}
+  for (const layer of layerSites) {
+    for (const [sitename, siteNodes] of layer.sites) {
+      const cols = Math.min(MAX_COLS, siteNodes.length);
+      const rows = Math.ceil(siteNodes.length / cols);
+      const w = cols * NW + (cols - 1) * NODE_GAP_X + SITE_PAD * 2;
+      const h = rows * NH + (rows - 1) * NODE_GAP_Y + SITE_PAD * 2 + 16;
+      clusterSizes.set(sitename + '|' + layer.config.label, { w, h });
+    }
+  }
+
+  // 3. Position: wrap sites into rows within each layer
+  let curY = PAD;
+
+  for (const layer of layerSites) {
+    const bandY = curY;
+    let rowX = PAD;
+    let rowY = curY;
+    let rowMaxH = 0;
+    let maxW = 0;
+
+    for (const [sitename, siteNodes] of layer.sites) {
+      const key = sitename + '|' + layer.config.label;
+      const cs = clusterSizes.get(key);
+
+      // Wrap to next row if exceeds target width
+      if (rowX + cs.w > TARGET_W && rowX > PAD) {
+        rowY += rowMaxH + SITE_GAP;
+        rowX = PAD;
+        rowMaxH = 0;
+      }
+
+      // Position nodes within cluster
+      const cols = Math.min(MAX_COLS, siteNodes.length);
+      for (let i = 0; i < siteNodes.length; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const nx = rowX + SITE_PAD + col * (NW + NODE_GAP_X);
+        const ny = rowY + 16 + SITE_PAD + row * (NH + NODE_GAP_Y);
+        nodePos[siteNodes[i].id] = {
+          x: nx, y: ny, w: NW, h: NH,
+          clusterX: rowX, clusterY: rowY, clusterW: cs.w, clusterH: cs.h,
+          sitename,
+        };
+      }
+
+      rowMaxH = Math.max(rowMaxH, cs.h);
+      maxW = Math.max(maxW, rowX + cs.w + PAD);
+      rowX += cs.w + SITE_GAP;
+    }
+
+    const totalH = (rowY - bandY) + rowMaxH + 30;
+    layer._bandY = bandY;
+    layer._bandH = totalH;
+    layer._width = maxW;
+    curY = bandY + totalH + LAYER_GAP * 0.6;
+  }
+
+  svgW = Math.max(...layerSites.map(l => l._width), 800);
+  svgH = curY + PAD;
+
+  return layerSites;
+}
+
+// ═══════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════
+function render(layerSites) {
+  const svg = document.getElementById('topo');
+  svg.innerHTML = '';
+  svg.setAttribute('width', svgW);
+  svg.setAttribute('height', svgH);
+
+  // Defs
+  const defs = el('defs');
+  const f = el('filter', { id: 'glow', x: '-30%', y: '-30%', width: '160%', height: '160%' });
+  f.innerHTML = '<feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>';
+  defs.appendChild(f);
+  svg.appendChild(defs);
+
+  const bgG = el('g', { id: 'bg-group' });
+  const clG = el('g', { id: 'cluster-group' });
+  const lkG = el('g', { id: 'link-group' });
+  const ndG = el('g', { id: 'node-group' });
+  svg.appendChild(bgG);
+  svg.appendChild(clG);
+  svg.appendChild(lkG);
+  svg.appendChild(ndG);
+
+  // Layer bands
+  for (const layer of layerSites) {
+    const { c, label } = layer.config;
+    bgG.appendChild(el('rect', { x: 0, y: layer._bandY - 10, width: svgW, height: layer._bandH, fill: `rgba(${c},.025)` }));
+    bgG.appendChild(el('line', { x1: 0, y1: layer._bandY - 10, x2: svgW, y2: layer._bandY - 10, stroke: `rgba(${c},.08)`, 'stroke-width': '1' }));
+    const t = el('text', { x: 10, y: layer._bandY + 6, fill: `rgba(${c},.4)`,
+      'font-family': 'Share Tech Mono, monospace', 'font-size': '10', 'font-weight': '700', 'letter-spacing': '0.1em' });
+    t.textContent = label;
+    bgG.appendChild(t);
+  }
+
+  // Site clusters (border + label)
+  const drawnClusters = new Set();
+  for (const n of nodes) {
+    const p = nodePos[n.id];
+    if (!p) continue;
+    const key = `${p.clusterX},${p.clusterY}`;
+    if (drawnClusters.has(key)) continue;
+    drawnClusters.add(key);
+
+    const fc = ftColor(n);
+    // Cluster border
+    clG.appendChild(el('rect', {
+      x: p.clusterX, y: p.clusterY, width: p.clusterW, height: p.clusterH,
+      rx: '6', fill: `rgba(${hexRgb(fc)},.03)`, stroke: `rgba(${hexRgb(fc)},.12)`, 'stroke-width': '1',
+    }));
+    // Site label
+    const lbl = el('text', {
+      x: p.clusterX + 8, y: p.clusterY + 11,
+      fill: `rgba(${hexRgb(fc)},.6)`, 'font-size': '9', 'font-weight': '700',
+      'font-family': 'Noto Sans KR, sans-serif',
+    });
+    lbl.textContent = p.sitename;
+    clG.appendChild(lbl);
+  }
+
+  // Links — aggregate inter-site, show intra-site selectively
+  // Build aggregated inter-site links (one per site-pair + protocol)
+  const sitePairLinks = new Map(); // "siteA|siteB|proto" → { count, hasErr, sourceIds, targetIds }
+  const intraSiteLinks = []; // keep intra-site xgt/sslvpn
+
+  for (const e of edges) {
+    const sp = nodePos[e.source], tp = nodePos[e.target];
+    if (!sp || !tp) continue;
+    const sn = nodeMap[e.source], tn = nodeMap[e.target];
+    const sameSite = sp.sitename === tp.sitename;
+
+    if (sameSite) {
+      // Keep non-modbus intra-site links
+      if (e.link_protocol !== 'modbus_rtu') {
+        intraSiteLinks.push(e);
+      }
+      continue;
+    }
+
+    // Aggregate inter-site by site pair + protocol
+    const key = [sp.sitename, tp.sitename, e.link_protocol].sort().join('|') + '|' + e.link_protocol;
+    const pairKey = `${sp.sitename}|${tp.sitename}|${e.link_protocol}`;
+    if (!sitePairLinks.has(pairKey)) {
+      sitePairLinks.set(pairKey, {
+        sSite: sp.sitename, tSite: tp.sitename, proto: e.link_protocol,
+        count: 0, hasErr: false, sourceIds: new Set(), targetIds: new Set(),
+      });
+    }
+    const agg = sitePairLinks.get(pairKey);
+    agg.count++;
+    agg.sourceIds.add(e.source);
+    agg.targetIds.add(e.target);
+    if ((sn?.has_ip && sn?.status === '이상') || (tn?.has_ip && tn?.status === '이상')) agg.hasErr = true;
+  }
+
+  // Render aggregated inter-site links (site-center to site-center)
+  for (const [, agg] of sitePairLinks) {
+    // Find cluster centers for source and target sites
+    const sNodes = nodes.filter(n => n.sitename === agg.sSite && nodePos[n.id]);
+    const tNodes = nodes.filter(n => n.sitename === agg.tSite && nodePos[n.id]);
+    if (!sNodes.length || !tNodes.length) continue;
+
+    const sp0 = nodePos[sNodes[0].id];
+    const tp0 = nodePos[tNodes[0].id];
+    const x1 = sp0.clusterX + sp0.clusterW / 2;
+    const y1 = sp0.clusterY + sp0.clusterH / 2;
+    const x2 = tp0.clusterX + tp0.clusterW / 2;
+    const y2 = tp0.clusterY + tp0.clusterH / 2;
+
+    const ps = PROTO_STYLE[agg.proto] || PROTO_STYLE.unknown;
+    const lc = agg.hasErr ? '#ef4444' : ps.c;
+    const g = el('g', { class: 'link-g' });
+    // Store all source/target IDs for highlight
+    g.dataset.s = [...agg.sourceIds].join(',');
+    g.dataset.t = [...agg.targetIds].join(',');
+    g.dataset.sSite = agg.sSite;
+    g.dataset.tSite = agg.tSite;
+
+    const dy = Math.abs(y2 - y1);
+    const dx = x2 - x1;
+    let pathD;
+    if (dy > 40) {
+      const cy1 = y1 + dy * 0.35;
+      const cy2 = y2 - dy * 0.35;
+      pathD = `M${x1},${y1} C${x1},${cy1} ${x2},${cy2} ${x2},${y2}`;
+    } else {
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2 - Math.min(Math.abs(dx) * 0.12, 30);
+      pathD = `M${x1},${y1} Q${midX},${midY} ${x2},${y2}`;
+    }
+
+    const lineW = Math.min(ps.w + Math.log2(agg.count + 1) * 0.5, 4);
+
+    // Glow
+    g.appendChild(el('path', { d: pathD, fill: 'none', stroke: lc, 'stroke-width': String(lineW + 3), opacity: '.03' }));
+
+    // Main
+    const mainAttrs = { d: pathD, fill: 'none', stroke: lc, 'stroke-width': String(lineW), opacity: '.35' };
+    if (ps.dash) mainAttrs['stroke-dasharray'] = ps.dash;
+    if (agg.hasErr) {
+      const fl = el('path', { ...mainAttrs, 'stroke-dasharray': '6 4', opacity: '.6' });
+      fl.style.animation = 'flow 0.8s linear infinite';
+      g.appendChild(fl);
+    } else {
+      g.appendChild(el('path', mainAttrs));
+    }
+
+    // Count label at midpoint for multi-link bundles
+    if (agg.count > 2) {
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 5;
+      const label = el('text', { x: mx, y: my, fill: lc, opacity: '.4', 'font-size': '7',
+        'font-family': 'Share Tech Mono, monospace', 'text-anchor': 'middle' });
+      label.textContent = `×${agg.count}`;
+      g.appendChild(label);
+    }
+
+    lkG.appendChild(g);
+  }
+
+  // Render intra-site non-modbus links
+  for (const e of intraSiteLinks) {
+    const sp = nodePos[e.source], tp = nodePos[e.target];
+    if (!sp || !tp) continue;
+    const sn = nodeMap[e.source], tn = nodeMap[e.target];
+    const x1 = sp.x + sp.w / 2, y1 = sp.y + sp.h / 2;
+    const x2 = tp.x + tp.w / 2, y2 = tp.y + tp.h / 2;
+    const ps = PROTO_STYLE[e.link_protocol] || PROTO_STYLE.unknown;
+    const worstErr = (sn?.has_ip && sn?.status === '이상') || (tn?.has_ip && tn?.status === '이상');
+    const lc = worstErr ? '#ef4444' : ps.c;
+    const g = el('g', { class: 'link-g' });
+    g.dataset.s = e.source;
+    g.dataset.t = e.target;
+    const pathD = `M${x1},${y1} L${x2},${y2}`;
+    g.appendChild(el('path', { d: pathD, fill: 'none', stroke: lc, 'stroke-width': String(ps.w * 0.7), opacity: '.2' }));
+    lkG.appendChild(g);
+  }
+
+  // Nodes
+  for (const n of nodes) {
+    const p = nodePos[n.id];
+    if (!p) continue;
+    const nc = ftColor(n), sc = stColor(n);
+    const isSerial = !n.has_ip;
+    const isErr = n.has_ip && n.status === '이상';
+
+    const g = el('g', { class: 'node-g' });
+    g.dataset.id = n.id;
+
+    if (isErr) {
+      // Error glow
+      const glow = el('rect', { x: p.x - 3, y: p.y - 3, width: NW + 6, height: NH + 6, rx: '7', fill: '#ef4444', opacity: '.1' });
+      glow.style.animation = 'blink .8s ease-in-out infinite';
+      g.appendChild(glow);
+    }
+
+    // Main rect
+    g.appendChild(el('rect', {
+      x: p.x, y: p.y, width: NW, height: NH, rx: '4',
+      fill: `rgba(${hexRgb(nc)},${isSerial ? '.05' : '.12'})`,
+      stroke: nc, 'stroke-width': isSerial ? '0.5' : '1', 'stroke-opacity': isSerial ? '.2' : '.5',
+      class: 'node-rect',
+    }));
+
+    // Top color stripe
+    g.appendChild(el('rect', { x: p.x + 1, y: p.y + 1, width: NW - 2, height: 2, rx: '4', fill: nc, opacity: isSerial ? '.2' : '.6' }));
+
+    // Equipment type (short)
+    const shortType = n.equipmenttype.length > 10 ? n.equipmenttype.slice(0, 9) + '…' : n.equipmenttype;
+    const nameTxt = el('text', {
+      x: p.x + 5, y: p.y + 12, 'font-size': '8', fill: isSerial ? '#2d4a6e' : '#cbd5e1',
+      'font-weight': '600', 'font-family': 'Noto Sans KR, sans-serif',
+    });
+    nameTxt.textContent = shortType;
+    g.appendChild(nameTxt);
+
+    // IP or serial label
+    const ipTxt = el('text', {
+      x: p.x + 5, y: p.y + 22, 'font-size': '7', fill: '#2d4a6e',
+      'font-family': 'Share Tech Mono, monospace',
+    });
+    ipTxt.textContent = n.ip_address ? (n.ip_address.length > 15 ? n.ip_address.slice(0, 14) + '…' : n.ip_address) : 'serial';
+    g.appendChild(ipTxt);
+
+    // Status dot
+    if (n.has_ip) {
+      const dot = el('circle', { cx: p.x + NW - 6, cy: p.y + 7, r: '3', fill: sc, filter: 'url(#glow)' });
+      if (isErr) dot.style.animation = 'blink .6s ease-in-out infinite';
+      g.appendChild(dot);
+    }
+
+    g.addEventListener('click', e => { e.stopPropagation(); selectNode(n.id); });
+    ndG.appendChild(g);
+  }
+
+  svg.style.display = 'block';
+  document.getElementById('loading').style.display = 'none';
+
+  // Hover tooltip
+  const tooltip = document.getElementById('tooltip');
+  svg.addEventListener('mousemove', e => {
+    if (dragging) { tooltip.style.opacity = '0'; return; }
+    const nodeG = (e.target).closest('.node-g');
+    if (nodeG) {
+      const n = nodeMap[nodeG.dataset.id];
+      if (!n) { tooltip.style.opacity = '0'; return; }
+      const sc = n.has_ip ? (n.status === '이상' ? 'var(--err)' : 'var(--ok)') : '#475569';
+      tooltip.innerHTML = `<div style="font-weight:700;color:${ftColor(n)}">${n.sitename} ${n.category}</div>` +
+        `<div style="color:#94a3b8">${n.equipmenttype} · <span style="color:${sc}">${n.has_ip ? (n.status || '—') : '시리얼'}</span></div>` +
+        (n.ip_address ? `<div style="font-family:'Share Tech Mono',monospace;font-size:9px;color:#475569">${n.ip_address}</div>` : '');
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10) + 'px';
+      tooltip.style.opacity = '1';
+    } else {
+      tooltip.style.opacity = '0';
+    }
+  });
+  svg.addEventListener('mouseleave', () => { tooltip.style.opacity = '0'; });
+}
+
+// ═══════════════════════════════════════════════
+// SIDEBAR
+// ═══════════════════════════════════════════════
+function renderSidebar(summary) {
+  const ipNodes = nodes.filter(n => n.has_ip);
+  const okCnt = ipNodes.filter(n => n.status === '정상').length;
+  const errCnt = ipNodes.filter(n => n.status === '이상').length;
+  const naCnt = nodes.filter(n => !n.has_ip).length;
+
+  document.getElementById('s-total').textContent = ipNodes.length;
+  document.getElementById('s-ok').textContent = okCnt;
+  document.getElementById('s-err').textContent = errCnt;
+  document.getElementById('s-na').textContent = naCnt;
+
+  // Pills
+  document.getElementById('pills').innerHTML = `
+    <div class="pill"><div class="d" style="background:var(--ok);animation:blink 2s ease-in-out infinite"></div><span style="color:var(--ok)">${okCnt}</span></div>
+    <div class="pill"><div class="d" style="background:var(--err);animation:blink .7s ease-in-out infinite"></div><span style="color:var(--err)">${errCnt}</span></div>
+    <div class="pill"><div class="d" style="background:#475569"></div><span style="color:#475569">${naCnt}</span></div>
+  `;
+
+  // Category breakdown
+  const catCounts = {};
+  for (const n of nodes) {
+    if (!catCounts[n.category]) catCounts[n.category] = { total: 0, err: 0 };
+    catCounts[n.category].total++;
+    if (n.has_ip && n.status === '이상') catCounts[n.category].err++;
+  }
+  const catsHtml = Object.entries(FTYPE_COLOR).map(([ft, c]) => {
+    const cc = catCounts[ft];
+    if (!cc) return '';
+    return `<div class="sb-cat" data-ft="${ft}">
+      <div class="dot" style="background:${c}"></div>
+      <span class="name">${ft}</span>
+      <span class="cnt">${cc.err > 0 ? `<span style="color:var(--err)">${cc.err}</span>/` : ''}${cc.total}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('sb-cats').innerHTML = catsHtml;
+
+  // Error devices
+  const errNodes = nodes.filter(n => n.has_ip && n.status === '이상');
+  const errsHtml = errNodes.length === 0
+    ? '<div style="padding:8px 12px;font-size:10px;color:#1e3a5f">이상 장비 없음</div>'
+    : errNodes.map(n => `
+    <div class="sb-err" data-id="${n.id}">
+      <div class="site">${n.sitename} ${n.category}</div>
+      <div class="msg">${n.equipmenttype} — ${n.ip_address || 'N/A'}</div>
+      <div class="time">${n.check_time || '—'}</div>
+    </div>`).join('');
+  document.getElementById('sb-errs').innerHTML = errsHtml;
+
+  // Click handlers
+  document.querySelectorAll('.sb-err').forEach(el => {
+    el.addEventListener('click', () => selectNode(el.dataset.id));
+  });
+}
+
+// ═══════════════════════════════════════════════
+// LEGEND
+// ═══════════════════════════════════════════════
+function renderLegend() {
+  const usedTypes = new Set(nodes.map(n => n.category));
+  let html = '<div class="lg-sec">시설 유형</div>';
+  for (const [ft, c] of Object.entries(FTYPE_COLOR)) {
+    if (!usedTypes.has(ft)) continue;
+    html += `<div class="lg-r"><div class="lg-d" style="background:${c}"></div>${ft}</div>`;
+  }
+  html += '<div class="lg-sec" style="margin-top:6px">연결 프로토콜</div>';
+  const protoLabels = { sslvpn: 'SSL VPN', xgt_glofa_enet: 'Ethernet', modbus_rtu: 'Modbus RTU', oneway_diode: '일방향 다이오드' };
+  const usedProtos = new Set(edges.map(e => e.link_protocol));
+  for (const [proto, style] of Object.entries(PROTO_STYLE)) {
+    if (!usedProtos.has(proto) || proto === 'unknown') continue;
+    const dashStyle = style.dash ? `border-top:2px dashed ${style.c}; height:0` : `background:${style.c}`;
+    html += `<div class="lg-r"><div class="lg-l" style="${dashStyle}"></div>${protoLabels[proto] || proto}</div>`;
+  }
+  html += '<div class="lg-sec" style="margin-top:6px">상태</div>';
+  html += '<div class="lg-r"><div class="lg-d" style="background:var(--ok);border-radius:50%"></div>정상</div>';
+  html += '<div class="lg-r"><div class="lg-d" style="background:var(--err);border-radius:50%"></div>이상</div>';
+  document.getElementById('legend').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════
+// DETAIL PANEL
+// ═══════════════════════════════════════════════
+function selectNode(id) {
+  if (selectedId === id) { clearSelection(); return; }
+  selectedId = id;
+  const n = nodeMap[id];
+  if (!n) return;
+
+  // Detail panel
+  const g = x => document.getElementById(x);
+  g('dpN').textContent = `${n.sitename} ${n.category}`;
+  g('dpT').textContent = n.equipmenttype;
+  g('dpT').style.color = ftColor(n);
+  g('dpSt').textContent = n.has_ip ? (n.status || '—') : '시리얼 (미모니터링)';
+  g('dpSt').className = `v${n.has_ip && n.status === '이상' ? ' v-err' : n.has_ip && n.status === '정상' ? ' v-ok' : ''}`;
+  g('dpEt').textContent = n.equipmenttype;
+  g('dpIp').textContent = n.ip_address || '없음 (시리얼)';
+  g('dpRtt').textContent = n.rtt_ms != null ? n.rtt_ms + 'ms' : '—';
+  g('dpRtt').className = `v${n.rtt_ms > 200 ? ' v-err' : n.rtt_ms > 80 ? ' v-warn' : ''}`;
+  g('dpTm').textContent = n.check_time || '—';
+
+  // Connected devices
+  const connected = [];
+  for (const e of edges) {
+    if (e.source === id) connected.push({ id: e.target, proto: e.link_protocol, dir: '→' });
+    if (e.target === id) connected.push({ id: e.source, proto: e.link_protocol, dir: '←' });
+  }
+  g('dpLinks').innerHTML = connected.length === 0
+    ? '<div style="font-size:9px;color:#1e3a5f;padding:2px 0">연결 없음</div>'
+    : connected.map(c => {
+      const cn = nodeMap[c.id];
+      if (!cn) return '';
+      const sc = cn.has_ip ? (ST_C[cn.status] || '#475569') : '#1e3a5f';
+      return `<div class="dp-equip" style="cursor:pointer" data-link-id="${c.id}">
+        <div class="edot" style="background:${sc}"></div>
+        <span>${c.dir} ${cn.sitename} ${cn.equipmenttype}</span>
+        <span class="eid">${c.proto}</span>
+      </div>`;
+    }).join('');
+
+  // Same site equipment
+  const samesite = nodes.filter(nd => nd.sitename === n.sitename && nd.id !== id);
+  g('dpSite').innerHTML = samesite.length === 0
+    ? '<div style="font-size:9px;color:#1e3a5f;padding:2px 0">없음</div>'
+    : samesite.map(sn => {
+      const sc = sn.has_ip ? (ST_C[sn.status] || '#475569') : '#1e3a5f';
+      return `<div class="dp-equip" style="cursor:pointer" data-link-id="${sn.id}">
+        <div class="edot" style="background:${sc}"></div>
+        <span>${sn.equipmenttype}</span>
+        <span class="eid">${sn.ip_address || 'serial'}</span>
+      </div>`;
+    }).join('');
+
+  document.getElementById('dp').classList.add('open');
+
+  // Click handlers for connected devices
+  document.querySelectorAll('[data-link-id]').forEach(el => {
+    el.addEventListener('click', () => selectNode(el.dataset.linkId));
+  });
+
+  // Highlight connected nodes/links
+  applyHighlight(id);
+}
+
+function clearSelection() {
+  selectedId = null;
+  document.getElementById('dp').classList.remove('open');
+  clearHighlight();
+}
+
+function applyHighlight(id) {
+  const n = nodeMap[id];
+  if (!n) return;
+
+  // Find adjacent nodes (direct edges)
+  const adj = new Set([id]);
+  for (const e of edges) {
+    if (e.source === id) adj.add(e.target);
+    if (e.target === id) adj.add(e.source);
+  }
+  // Also include all same-site nodes
+  for (const nd of nodes) {
+    if (nd.sitename === n.sitename) adj.add(nd.id);
+  }
+
+  // Dim non-adjacent nodes
+  document.querySelectorAll('.node-g').forEach(g => {
+    const nid = g.dataset.id;
+    if (adj.has(nid)) {
+      g.classList.remove('dimmed');
+      g.classList.add('highlight');
+    } else {
+      g.classList.add('dimmed');
+      g.classList.remove('highlight');
+    }
+  });
+
+  // Dim non-adjacent links (check aggregated source/target ID lists)
+  document.querySelectorAll('.link-g').forEach(g => {
+    const sIds = (g.dataset.s || '').split(',');
+    const tIds = (g.dataset.t || '').split(',');
+    const sSite = g.dataset.sSite || '';
+    const tSite = g.dataset.tSite || '';
+    const connected =
+      sIds.some(sid => adj.has(sid)) || tIds.some(tid => adj.has(tid)) ||
+      sSite === n.sitename || tSite === n.sitename;
+    if (connected) {
+      g.classList.remove('dimmed');
+      g.classList.add('highlight');
+    } else {
+      g.classList.add('dimmed');
+      g.classList.remove('highlight');
+    }
+  });
+
+  // Pan to selected node
+  panToNode(id);
+}
+
+function clearHighlight() {
+  document.querySelectorAll('.node-g').forEach(g => {
+    g.classList.remove('dimmed', 'highlight');
+  });
+  document.querySelectorAll('.link-g').forEach(g => {
+    g.classList.remove('dimmed', 'highlight');
+  });
+}
+
+// ═══════════════════════════════════════════════
+// PAN TO NODE (smooth)
+// ═══════════════════════════════════════════════
+function panToNode(id) {
+  const p = nodePos[id];
+  if (!p) return;
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+  // Target: node center → viewport center (accounting for detail panel width)
+  const vpCenterX = (ww - 260) / 2; // offset for detail panel
+  const vpCenterY = wh / 2;
+  const targetPx = vpCenterX - cx * zoom;
+  const targetPy = vpCenterY - cy * zoom;
+
+  // Smooth animate
+  const startPx = px, startPy = py;
+  const startZoom = zoom;
+  const targetZoom = Math.max(zoom, 0.6); // ensure readable zoom
+  const dur = 300;
+  const start = performance.now();
+  function step(t) {
+    const p = Math.min((t - start) / dur, 1);
+    const ease = 1 - Math.pow(1 - p, 3); // easeOutCubic
+    px = startPx + (targetPx - startPx) * ease;
+    py = startPy + (targetPy - startPy) * ease;
+    zoom = startZoom + (targetZoom - startZoom) * ease;
+    applyT();
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// ═══════════════════════════════════════════════
+// ZOOM / PAN
+// ═══════════════════════════════════════════════
+const wrap = document.getElementById('wrap');
+const svg = document.getElementById('topo');
+
+function applyT() {
+  svg.style.transform = `translate(${px}px,${py}px) scale(${zoom})`;
+  document.getElementById('zl').textContent = Math.round(zoom * 100) + '%';
+}
+
+function fitView() {
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  zoom = Math.min((ww - 20) / svgW, (wh - 20) / svgH, 1.5) * 0.95;
+  px = (ww - svgW * zoom) / 2;
+  py = (wh - svgH * zoom) / 2;
+  applyT();
+}
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.node-g,.dp,.zc,.legend')) return;
+  dragging = true; lx = e.clientX; ly = e.clientY;
+  wrap.classList.add('dragging');
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  px += e.clientX - lx; py += e.clientY - ly;
+  lx = e.clientX; ly = e.clientY;
+  applyT();
+});
+window.addEventListener('mouseup', () => { dragging = false; wrap.classList.remove('dragging'); });
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = wrap.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const oz = zoom;
+  zoom *= e.deltaY < 0 ? 1.12 : 0.89;
+  zoom = Math.max(0.1, Math.min(5, zoom));
+  px = mx - (mx - px) * zoom / oz;
+  py = my - (my - py) * zoom / oz;
+  applyT();
+}, { passive: false });
+
+document.getElementById('zi').onclick = () => { zoom = Math.min(5, zoom * 1.2); applyT(); };
+document.getElementById('zo').onclick = () => { zoom = Math.max(0.1, zoom * 0.83); applyT(); };
+document.getElementById('zf').onclick = fitView;
+document.getElementById('dpx').onclick = clearSelection;
+wrap.addEventListener('click', e => {
+  if (!e.target.closest('.node-g,.dp,.zc,.legend')) clearSelection();
+});
+
+// ═══════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════
+function tick() {
+  const n = new Date(), p = x => String(x).padStart(2, '0');
+  document.getElementById('clk').textContent =
+    `${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
+}
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+async function init() {
+  tick();
+  setInterval(tick, 1000);
+
+  const summary = await fetchData();
+  if (!nodes.length) {
+    document.getElementById('loading').textContent = 'API 연결 실패 — http://localhost:8000 확인';
+    return;
+  }
+
+  const layerSites = computeLayout();
+  render(layerSites);
+  renderSidebar(summary);
+  renderLegend();
+
+  requestAnimationFrame(() => requestAnimationFrame(fitView));
+}
+
+init();
+</script>
+</body>
+</html>

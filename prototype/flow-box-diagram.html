@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>용수 흐름 — 박스 다이어그램</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0f1a;color:#e2e8f0;font-family:'Pretendard','Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+.header{display:flex;align-items:center;justify-content:space-between;padding:8px 20px;background:linear-gradient(180deg,#131a2e,#0e1525);border-bottom:1px solid #1e293b;flex-shrink:0}
+.header h1{font-size:15px;font-weight:700;background:linear-gradient(90deg,#38bdf8,#818cf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-right{display:flex;align-items:center;gap:10px}
+
+.legend{display:flex;gap:10px;font-size:10px;color:#64748b}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-dot{width:7px;height:7px;border-radius:50%}
+
+/* 컨트롤 */
+.ctrl-bar{display:flex;align-items:center;gap:6px;padding:6px 20px;background:#0e1525;border-bottom:1px solid #1e293b;flex-shrink:0}
+.ctrl-btn{padding:4px 10px;font-size:10px;border:1px solid #334155;border-radius:5px;background:#131a2e;color:#94a3b8;cursor:pointer;transition:all .2s}
+.ctrl-btn:hover{background:#1e293b;color:#f1f5f9}
+.ctrl-btn.active{background:#1e3a5f;border-color:#3b82f6;color:#60a5fa}
+.ctrl-sep{width:1px;height:20px;background:#1e293b}
+.zoom-label{font-size:10px;color:#475569;min-width:40px;text-align:center}
+
+/* 검색 */
+.search-wrap{position:relative}
+.search-input{background:#0f172a;border:1px solid #334155;border-radius:5px;padding:4px 8px 4px 24px;color:#e2e8f0;font-size:10px;width:160px;outline:none}
+.search-input:focus{border-color:#3b82f6}
+.search-icon{position:absolute;left:7px;top:50%;transform:translateY(-50%);font-size:11px;color:#64748b}
+.search-results{position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #334155;border-radius:0 0 5px 5px;max-height:200px;overflow-y:auto;z-index:50;display:none}
+.search-results.show{display:block}
+.sr-item{padding:5px 8px;font-size:10px;cursor:pointer;display:flex;justify-content:space-between;border-bottom:1px solid #0f172a}
+.sr-item:hover{background:#334155}
+.sr-ft{font-size:8px;color:#64748b}
+
+/* 캔버스 영역 */
+.canvas{flex:1;position:relative;overflow:hidden;background:radial-gradient(ellipse at 30% 40%,#0c1629,#080d17);cursor:grab}
+.canvas.dragging{cursor:grabbing}
+.canvas-inner{position:absolute;transform-origin:0 0;transition:none}
+
+/* 그리드 */
+.grid-bg{position:absolute;inset:0;pointer-events:none;opacity:.04;background-image:linear-gradient(#334155 1px,transparent 1px),linear-gradient(90deg,#334155 1px,transparent 1px);background-size:60px 60px}
+
+/* 레이어 라벨 */
+.layer-label{position:absolute;font-size:9px;color:#334155;font-weight:600;letter-spacing:1px;text-transform:uppercase;writing-mode:vertical-rl;transform:rotate(180deg)}
+
+/* 노드 박스 */
+.nd{position:absolute;width:140px;height:52px;border-radius:8px;border:1.5px solid #1e293b;background:#111827;cursor:pointer;transition:border-color .2s,box-shadow .2s,filter .2s;display:flex;flex-direction:column;justify-content:center;padding:0 10px;overflow:hidden}
+.nd::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
+.nd:hover{border-color:#3b82f680;box-shadow:0 0 16px rgba(59,130,246,.15);z-index:10}
+.nd.highlight{border-color:#3b82f6;box-shadow:0 0 20px rgba(59,130,246,.3);z-index:20;filter:brightness(1.2)}
+.nd.dim{opacity:.2;pointer-events:none}
+
+.nd .nd-name{font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.nd .nd-ft{font-size:8px;color:#64748b;line-height:1.2}
+.nd .nd-metrics{display:flex;gap:4px;margin-top:2px;font-size:8px;color:#94a3b8}
+.nd .nd-metrics b{font-weight:600;color:#cbd5e1}
+
+/* 시설유형 색 */
+.ft-정수장::before{background:#38bdf8} .ft-정수장 .nd-name{color:#38bdf8}
+.ft-배수지::before{background:#34d399} .ft-배수지 .nd-name{color:#34d399}
+.ft-가압장::before{background:#fbbf24} .ft-가압장 .nd-name{color:#fbbf24}
+.ft-소블록::before{background:#a78bfa} .ft-소블록 .nd-name{color:#a78bfa}
+.ft-소소블록::before{background:#c4b5fd} .ft-소소블록 .nd-name{color:#c4b5fd}
+.ft-감압시설::before{background:#22d3ee} .ft-감압시설 .nd-name{color:#22d3ee}
+
+/* 상태 */
+.st-ok{border-color:#10b98130}
+.st-warn{border-color:#f59e0b50;background:#1c1507}
+.st-warn .nd-name{color:#fbbf24 !important}
+.st-err{border-color:#ef444460;background:#1c0707;animation:pulse-err 2s infinite}
+.st-err .nd-name{color:#f87171 !important}
+.st-off{opacity:.45;border-color:#33415540}
+.st-off .nd-name{color:#64748b !important}
+
+@keyframes pulse-err{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 10px 2px rgba(239,68,68,.12)}}
+
+/* 엣지 SVG */
+svg.edges{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
+.edge{fill:none;stroke:#1e293b;stroke-width:1.5;transition:stroke .3s,opacity .3s,stroke-width .3s}
+.edge.hl{stroke:#3b82f6;stroke-width:2.5;opacity:1}
+.edge.dim{opacity:.08}
+.flow-particle{opacity:.85}
+.flow-particle.dim{opacity:.04}
+
+/* 팝업 */
+.popup-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center}
+.popup-overlay.show{display:flex}
+.popup{background:#131a2e;border:1px solid #334155;border-radius:10px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.popup-hdr{padding:12px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1e293b}
+.popup-title{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
+.popup-close{background:none;border:none;color:#64748b;font-size:14px;cursor:pointer;padding:2px 6px;border-radius:4px}
+.popup-close:hover{background:#1e293b;color:#e2e8f0}
+.popup-body{padding:12px 14px}
+.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.popup-cell{padding:8px;background:#0f172a;border-radius:6px;text-align:center}
+.pc-label{font-size:8px;color:#64748b}
+.pc-val{font-size:18px;font-weight:700;margin-top:2px}
+.popup-conn-section{margin-top:10px}
+.popup-conn-section h4{font-size:10px;color:#64748b;margin-bottom:4px}
+.popup-conn{font-size:9px;color:#94a3b8;padding:2px 0;display:flex;align-items:center;gap:4px}
+.conn-badge{font-size:7px;padding:1px 4px;border-radius:3px;background:#1e293b;color:#475569}
+.status-dot{width:5px;height:5px;border-radius:50%;display:inline-block}
+.status-dot.ok{background:#10b981}.status-dot.warn{background:#f59e0b}.status-dot.err{background:#ef4444}.status-dot.off{background:#475569}
+
+/* 미니맵 */
+.minimap{position:absolute;right:12px;bottom:12px;width:180px;height:120px;background:#0f172a;border:1px solid #334155;border-radius:6px;overflow:hidden;z-index:30;cursor:crosshair}
+.minimap canvas{width:100%;height:100%}
+.mm-viewport{position:absolute;border:1.5px solid #3b82f6;border-radius:2px;pointer-events:none;opacity:.6}
+
+/* 계통 선택 */
+.system-tabs{display:flex;gap:4px}
+.sys-tab{padding:4px 10px;font-size:10px;border:1px solid #334155;border-radius:5px;background:#131a2e;color:#94a3b8;cursor:pointer;transition:all .2s}
+.sys-tab:hover{background:#1e293b}
+.sys-tab.active{background:#1e3a5f;border-color:#3b82f6;color:#60a5fa}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>💧 용수 흐름 — 박스 다이어그램</h1>
+  <div class="hdr-right">
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#38bdf8"></div>정수장</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div>배수지</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fbbf24"></div>가압장</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>소블록</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#c4b5fd"></div>소소블록</div>
+    </div>
+  </div>
+</div>
+
+<div class="ctrl-bar">
+  <div class="system-tabs" id="systemTabs"></div>
+  <div class="ctrl-sep"></div>
+  <div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input class="search-input" placeholder="시설명 검색..." id="searchInput">
+    <div class="search-results" id="searchResults"></div>
+  </div>
+  <div class="ctrl-sep"></div>
+  <button class="ctrl-btn" onclick="zoomBy(1.2)">＋</button>
+  <button class="ctrl-btn" onclick="zoomBy(1/1.2)">－</button>
+  <button class="ctrl-btn" onclick="fitView()">맞춤</button>
+  <span class="zoom-label" id="zoomLabel">100%</span>
+</div>
+
+<div class="canvas" id="canvas">
+  <div class="grid-bg"></div>
+  <div class="canvas-inner" id="canvasInner">
+    <svg class="edges" id="edgesSvg"></svg>
+  </div>
+  <div class="minimap" id="minimap">
+    <canvas id="mmCanvas" width="360" height="240"></canvas>
+    <div class="mm-viewport" id="mmViewport"></div>
+  </div>
+</div>
+
+<!-- 팝업 -->
+<div class="popup-overlay" id="popup" onclick="if(event.target===this)closePopup()">
+  <div class="popup">
+    <div class="popup-hdr">
+      <span class="popup-title" id="popupTitle"></span>
+      <button class="popup-close" onclick="closePopup()">✕</button>
+    </div>
+    <div class="popup-body" id="popupBody"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════
+// 데이터
+// ═══════════════════════════════════════
+const EDGES=[
+["보령댐","정수장","석문","배수지"],["보령댐","정수장","행정","가압장"],
+["아산","정수장","남산","배수지"],["아산","정수장","순성","가압장"],["아산","정수장","신평","배수지"],
+["아산","정수장","신평공업","가압장"],["아산","정수장","신평생활","가압장"],
+["아산","정수장","송악1","배수지"],["아산","정수장","송악2","배수지"],
+["아산","정수장","송산2산단공업","배수지"],["아산","정수장","송산2산단생활","배수지"],
+["석문","배수지","석문","가압장"],["석문","배수지","석문1","소블록"],["석문","배수지","석문2","소블록"],
+["석문2","소블록","삼봉","가압장"],["삼봉","가압장","대호","가압장"],["대호","가압장","난지","가압장"],
+["난지","가압장","도비도","소블록"],["난지","가압장","난지관광","배수지"],["난지","가압장","난지마을","배수지"],["난지","가압장","소난지도","소블록"],
+["행정","가압장","행정","배수지"],
+["행정","배수지","매방리","가압장"],["행정","배수지","행정1수청","소소블록"],["행정","배수지","성북1리 제1차","가압장"],
+["행정","배수지","행정1-1","소블록"],["행정","배수지","행정1-2","소블록"],
+["행정","배수지","수청2지구1","소블록"],["행정","배수지","행정2-1","소블록"],
+["행정","배수지","수청2지구2","소블록"],["행정","배수지","행정2-2","소블록"],
+["행정","배수지","수청2지구3","소블록"],["행정","배수지","행정2-3","소블록"],
+["행정1수청","소소블록","수청1-1","소소블록"],
+["성북1리 제1차","가압장","성북1리","배수지"],["성북1리 제1차","가압장","성북1리 제2차","가압장"],
+["행정2-3","소블록","죽동","가압장"],["죽동","가압장","죽동","배수지"],["죽동","가압장","죽동2","배수지"],
+["죽동","배수지","율사","가압장"],
+["남산","배수지","남산1","소블록"],["남산","배수지","남산2","소블록"],["남산","배수지","남산3","소블록"],
+["남산","배수지","남산4","소블록"],["남산","배수지","남산7","소블록"],["남산","배수지","남산8","소블록"],
+["남산","배수지","남산9","소블록"],["남산","배수지","남산10","소블록"],["남산","배수지","남산11","소블록"],
+["남산","배수지","죽동2","가압장"],["남산","배수지","용연2통","가압장"],
+["남산8","소블록","남산5","소블록"],["남산8","소블록","남산6","소블록"],
+["남산3","소블록","갈산","가압장"],["갈산","가압장","성북","가압장"],["성북","가압장","성북2","배수지"],
+["남산4","소블록","삼화","가압장"],
+["순성","가압장","양유","가압장"],["순성","가압장","성하리","가압장"],["순성","가압장","성상1","가압장"],["순성","가압장","성상2","가압장"],
+["성하리","가압장","성하리","배수지"],
+["신평","배수지","신평1","소블록"],["신평","배수지","신평2","소블록"],
+["신평1","소블록","신평3","소블록"],["신평3","소블록","봉소","가압장"],["신평3","소블록","순성","가압장"],
+["신평공업","가압장","우강","가압장"],["신평생활","가압장","우강","가압장"],
+["우강","가압장","합덕","배수지"],["우강","가압장","합덕일반","배수지"],["우강","가압장","합덕인더스","배수지"],["우강","가압장","합덕일반산단","배수지"],
+["합덕","배수지","석우","가압장"],["합덕","배수지","합덕1","소블록"],["합덕","배수지","합덕2","소블록"],["합덕","배수지","합덕4","소블록"],
+["합덕2","소블록","합덕3","소블록"],
+["송악1","배수지","복운","가압장"],["송악1","배수지","송악1-1","소블록"],["송악1","배수지","송악1-2","소블록"],
+["송악2","배수지","송악2-1","소블록"],["송악2","배수지","송악2-2","소블록"],["송악2","배수지","송악2-3","소블록"],
+["송악2","배수지","송악2-4","소블록"],["송악2","배수지","송악2-5","소블록"],
+["송악2-1","소블록","기지시","가압장"],
+["송산2산단공업","배수지","송산1","소블록"],["송산2산단공업","배수지","송산2산단공업","가압장"],
+["송산2산단생활","배수지","송산2","소블록"],["송산2산단생활","배수지","송산2산단생활","가압장"],
+["송산1","소블록","가곡","가압장"],["가곡","가압장","가곡","배수지"],
+["고대리","가압장","고대리","배수지"],["천의리","가압장","천의리","배수지"],
+["매방리","가압장","고대리","가압장"],["매방리","가압장","천의리","가압장"],
+];
+
+const FTC={"정수장":"#38bdf8","배수지":"#34d399","가압장":"#fbbf24","소블록":"#a78bfa","소소블록":"#c4b5fd","감압시설":"#22d3ee"};
+function nid(s,f){return s+"__"+f}
+
+// ── 그래프 빌드 ──
+const NM=new Map();
+EDGES.forEach(([us,uf,ds,df])=>{
+  const u=nid(us,uf),d=nid(ds,df);
+  if(!NM.has(u))NM.set(u,{sn:us,ft:uf,ch:new Set(),pa:new Set(),dep:0});
+  if(!NM.has(d))NM.set(d,{sn:ds,ft:df,ch:new Set(),pa:new Set(),dep:0});
+  NM.get(u).ch.add(d);NM.get(d).pa.add(u);
+});
+
+// BFS depth
+const roots=[...NM.entries()].filter(([,v])=>!v.pa.size).map(([k])=>k);
+{const q=[...roots];roots.forEach(r=>NM.get(r).dep=0);
+while(q.length){const c=q.shift();const nd=NM.get(c);nd.ch.forEach(k=>{const cn=NM.get(k);if(cn.dep<nd.dep+1){cn.dep=nd.dep+1;q.push(k)}})}}
+const maxDep=Math.max(...[...NM.values()].map(n=>n.dep));
+
+// 시뮬레이션 상태
+const ST={},MET={};
+NM.forEach((v,k)=>{
+  const r=Math.random();let s="ok";
+  if(k.includes("합덕일반__배수지"))s="err";
+  else if(k.includes("합덕인더스__")||k.includes("남산11__"))s="warn";
+  else if(k.includes("신평1__소블록")||k.includes("남산10__"))s="off";
+  else if(r<.04)s="err";else if(r<.1)s="warn";else if(r<.16)s="off";
+  ST[k]=s;
+  MET[k]={q:s==="off"?0:Math.round(20+Math.random()*180),p:+(1+Math.random()*5).toFixed(1),h:v.ft==="배수지"?+(1+Math.random()*8).toFixed(1):null};
+});
+MET[nid("합덕일반","배수지")]={q:18,p:0.8,h:1.2};
+MET[nid("합덕인더스","배수지")]={q:45,p:2.1,h:2.8};
+
+// BFS 서브트리
+function bfsSub(root){const s=new Set([root]),q=[root];while(q.length){const c=q.shift();NM.get(c)?.ch.forEach(k=>{if(!s.has(k)){s.add(k);q.push(k)}})};return s}
+const SYS=[
+  {name:"전체",filter:null},
+  {name:"보령댐 계통",filter:bfsSub(nid("보령댐","정수장"))},
+  {name:"아산 계통",filter:bfsSub(nid("아산","정수장"))},
+];
+
+// ═══════════════════════════════════════
+// 레이아웃: Sugiyama (BFS depth → 열, 그룹 정렬)
+// ═══════════════════════════════════════
+const NW=140,NH=52,COL_GAP=200,ROW_GAP=12,GROUP_GAP=20,PAD_L=60,PAD_T=30;
+
+function layoutNodes(filterSet){
+  const nodes=filterSet?[...filterSet]:[...NM.keys()];
+  // 레이어 분류
+  const layers=new Map();
+  nodes.forEach(id=>{const d=NM.get(id).dep;if(!layers.has(d))layers.set(d,[]);layers.get(d).push(id)});
+
+  // 부모 기준 그룹 정렬 (Sugiyama median heuristic)
+  const pos=new Map(); // id→{x,y}
+  const sortedLayers=[...layers.entries()].sort((a,b)=>a[0]-b[0]);
+
+  // 초기: 레이어 내 순서대로
+  sortedLayers.forEach(([dep,ids])=>{
+    ids.forEach((id,i)=>pos.set(id,{x:PAD_L+dep*COL_GAP,y:PAD_T+i*(NH+ROW_GAP)}));
+  });
+
+  // 4 라운드 median heuristic (forward + backward)
+  for(let round=0;round<4;round++){
+    // Forward: 부모 median 기준 정렬
+    sortedLayers.forEach(([dep,ids])=>{
+      if(dep===0)return;
+      ids.sort((a,b)=>{
+        const medA=median([...NM.get(a).pa].filter(p=>pos.has(p)).map(p=>pos.get(p).y));
+        const medB=median([...NM.get(b).pa].filter(p=>pos.has(p)).map(p=>pos.get(p).y));
+        return medA-medB;
+      });
+      // 그룹핑: 같은 primaryParent 인접 + GROUP_GAP
+      let prevParent=null,cy=PAD_T;
+      ids.forEach(id=>{
+        const parents=[...NM.get(id).pa].filter(p=>pos.has(p));
+        const primary=parents.length?parents.reduce((a,b)=>pos.get(a).y<pos.get(b).y?a:b):null;
+        if(prevParent!==null&&primary!==prevParent)cy+=GROUP_GAP;
+        pos.set(id,{x:PAD_L+dep*COL_GAP,y:cy});
+        cy+=NH+ROW_GAP;
+        prevParent=primary;
+      });
+    });
+    // Backward: 자식 median 기준
+    for(let li=sortedLayers.length-1;li>=0;li--){
+      const [dep,ids]=sortedLayers[li];
+      ids.sort((a,b)=>{
+        const chA=[...NM.get(a).ch].filter(c=>pos.has(c));
+        const chB=[...NM.get(b).ch].filter(c=>pos.has(c));
+        return median(chA.map(c=>pos.get(c).y))-median(chB.map(c=>pos.get(c).y));
+      });
+      let prevParent=null,cy=PAD_T;
+      ids.forEach(id=>{
+        const parents=[...NM.get(id).pa].filter(p=>pos.has(p));
+        const primary=parents.length?parents.reduce((a,b)=>pos.get(a).y<pos.get(b).y?a:b):null;
+        if(prevParent!==null&&primary!==prevParent)cy+=GROUP_GAP;
+        pos.set(id,{x:PAD_L+dep*COL_GAP,y:cy});
+        cy+=NH+ROW_GAP;
+        prevParent=primary;
+      });
+    }
+  }
+
+  // 부모 → 자식 중앙 정렬
+  sortedLayers.forEach(([dep,ids])=>{
+    if(dep===0)return;
+    // 각 부모 그룹의 자식들을 부모 중심에 정렬
+    const groups=new Map();
+    ids.forEach(id=>{
+      const parents=[...NM.get(id).pa].filter(p=>pos.has(p));
+      const primary=parents.length?parents.reduce((a,b)=>pos.get(a).y<pos.get(b).y?a:b):'_none';
+      if(!groups.has(primary))groups.set(primary,[]);
+      groups.get(primary).push(id);
+    });
+    groups.forEach((children,parentId)=>{
+      if(parentId==='_none')return;
+      const parentY=pos.get(parentId).y+NH/2;
+      const totalH=children.length*(NH+ROW_GAP)-ROW_GAP+
+        (children.length>1?(children.length-1)*0:0);
+      let startY=parentY-totalH/2;
+      // 겹침 방지: 최소 y 보장
+      const minY=PAD_T;
+      if(startY<minY)startY=minY;
+      children.forEach((id,i)=>{
+        const p=pos.get(id);
+        p.y=startY+i*(NH+ROW_GAP);
+      });
+    });
+  });
+
+  // 겹침 해소: 각 레이어에서 위→아래 순서 보장
+  sortedLayers.forEach(([dep,ids])=>{
+    ids.sort((a,b)=>pos.get(a).y-pos.get(b).y);
+    for(let i=1;i<ids.length;i++){
+      const prev=pos.get(ids[i-1]);
+      const cur=pos.get(ids[i]);
+      const minY=prev.y+NH+ROW_GAP;
+      if(cur.y<minY)cur.y=minY;
+    }
+  });
+
+  return {pos,nodes,edges:EDGES.filter(([us,uf,ds,df])=>{
+    const u=nid(us,uf),d=nid(ds,df);
+    return pos.has(u)&&pos.has(d);
+  })};
+}
+
+function median(arr){
+  if(!arr.length)return 0;
+  const s=[...arr].sort((a,b)=>a-b);
+  const m=Math.floor(s.length/2);
+  return s.length%2?s[m]:(s[m-1]+s[m])/2;
+}
+
+// ═══════════════════════════════════════
+// 렌더
+// ═══════════════════════════════════════
+let currentLayout=null;
+let zoom=1,panX=0,panY=0;
+let selectedNode=null;
+let currentSys=0;
+
+function render(){
+  const filter=SYS[currentSys].filter;
+  currentLayout=layoutNodes(filter);
+  const {pos,nodes,edges}=currentLayout;
+  const inner=document.getElementById("canvasInner");
+
+  // 캔버스 크기
+  let maxX=0,maxY=0;
+  pos.forEach(p=>{if(p.x+NW>maxX)maxX=p.x+NW;if(p.y+NH>maxY)maxY=p.y+NH});
+  maxX+=60;maxY+=60;
+  inner.style.width=maxX+"px";inner.style.height=maxY+"px";
+
+  // 노드
+  inner.querySelectorAll(".nd").forEach(e=>e.remove());
+  nodes.forEach(id=>{
+    const n=NM.get(id),p=pos.get(id),st=ST[id],m=MET[id]||{};
+    const div=document.createElement("div");
+    div.className=`nd ft-${n.ft} st-${st}`;
+    div.dataset.id=id;
+    div.style.left=p.x+"px";div.style.top=p.y+"px";
+    let metrics='';
+    if(m.q!=null)metrics+=`Q:<b>${m.q}</b> `;
+    if(m.p!=null)metrics+=`P:<b>${m.p}</b> `;
+    if(m.h!=null)metrics+=`H:<b>${m.h}</b>`;
+    div.innerHTML=`<div class="nd-name">${n.sn}</div><div class="nd-ft">${n.ft}</div><div class="nd-metrics">${metrics}</div>`;
+    div.onclick=()=>onNodeClick(id);
+    inner.appendChild(div);
+  });
+
+  // 엣지 SVG
+  const svg=document.getElementById("edgesSvg");
+  svg.setAttribute("width",maxX);svg.setAttribute("height",maxY);
+  svg.innerHTML='';
+  edges.forEach(([us,uf,ds,df])=>{
+    const uid=nid(us,uf),did=nid(ds,df);
+    const sp=pos.get(uid),dp=pos.get(did);
+    if(!sp||!dp)return;
+    const x1=sp.x+NW,y1=sp.y+NH/2,x2=dp.x,y2=dp.y+NH/2;
+    const cx=(x1+x2)/2;
+    const d=`M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+    const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+    path.setAttribute("d",d);
+    path.setAttribute("class","edge");
+    path.dataset.from=uid;path.dataset.to=did;
+    // 유량 비례 굵기 (Q: 0→1.5px, 200→10px)
+    const upQ=MET[uid]?.q??0;
+    const sw=upQ>0?Math.max(1.5,Math.min(10,1.5+upQ/25)):1;
+    path.style.strokeWidth=sw+"px";
+    // 상태 색
+    const stFrom=ST[uid],stTo=ST[did];
+    let edgeColor='#1e3a5f';
+    if(stTo==='err'){edgeColor='#ef4444';}
+    else if(stTo==='warn'){edgeColor='#f59e0b60';}
+    else if(stTo==='off'){edgeColor='#1e293b40';}
+    path.style.stroke=edgeColor;
+    svg.appendChild(path);
+    // 물흐름 파티클 (유량>0인 엣지만)
+    if(upQ>0){
+      const pColor=stTo==='err'?'#f87171':'#34d399';
+      const dur=Math.max(1.5,4-upQ/80)+'s';
+      for(let pi=0;pi<3;pi++){
+        const g=document.createElementNS("http://www.w3.org/2000/svg","circle");
+        g.setAttribute("r",Math.max(1.5,sw/2.5));
+        g.setAttribute("fill",pColor);
+        g.setAttribute("class","flow-particle");
+        g.dataset.from=uid;g.dataset.to=did;
+        const am=document.createElementNS("http://www.w3.org/2000/svg","animateMotion");
+        am.setAttribute("dur",dur);
+        am.setAttribute("repeatCount","indefinite");
+        am.setAttribute("begin",(pi*1.15)+'s');
+        am.setAttribute("path",d);
+        g.appendChild(am);
+        svg.appendChild(g);
+      }
+    }
+  });
+
+  // 레이어 라벨
+  inner.querySelectorAll(".layer-label").forEach(e=>e.remove());
+  const depLabels=["원수","1차","2차","3차","4차","5차","6차","7차"];
+  const usedDeps=new Set(nodes.map(id=>NM.get(id).dep));
+  usedDeps.forEach(dep=>{
+    const lbl=document.createElement("div");
+    lbl.className="layer-label";
+    lbl.textContent=depLabels[dep]||`D${dep}`;
+    lbl.style.left=(PAD_L+dep*COL_GAP+NW/2-6)+"px";
+    lbl.style.top="4px";
+    inner.appendChild(lbl);
+  });
+
+  applyTransform();
+  renderMinimap();
+}
+
+// ── 줌/팬 ──
+function applyTransform(){
+  document.getElementById("canvasInner").style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+  document.getElementById("zoomLabel").textContent=Math.round(zoom*100)+"%";
+  updateMmViewport();
+}
+function zoomBy(factor){
+  const cv=document.getElementById("canvas");
+  const cx=cv.clientWidth/2,cy=cv.clientHeight/2;
+  const newZ=Math.max(.15,Math.min(3,zoom*factor));
+  panX=cx-(cx-panX)*(newZ/zoom);
+  panY=cy-(cy-panY)*(newZ/zoom);
+  zoom=newZ;
+  applyTransform();
+}
+function fitView(){
+  if(!currentLayout)return;
+  const cv=document.getElementById("canvas");
+  let maxX=0,maxY=0;
+  currentLayout.pos.forEach(p=>{if(p.x+NW>maxX)maxX=p.x+NW;if(p.y+NH>maxY)maxY=p.y+NH});
+  maxX+=80;maxY+=80;
+  const sx=cv.clientWidth/maxX,sy=cv.clientHeight/maxY;
+  zoom=Math.min(sx,sy,.95);
+  panX=(cv.clientWidth-maxX*zoom)/2;
+  panY=(cv.clientHeight-maxY*zoom)/2;
+  applyTransform();
+}
+
+// 마우스 드래그
+{let dragging=false,sx,sy,spx,spy;
+const cv=document.getElementById("canvas");
+cv.addEventListener("mousedown",e=>{if(e.target.closest(".nd,.minimap"))return;dragging=true;sx=e.clientX;sy=e.clientY;spx=panX;spy=panY;cv.classList.add("dragging")});
+window.addEventListener("mousemove",e=>{if(!dragging)return;panX=spx+(e.clientX-sx);panY=spy+(e.clientY-sy);applyTransform()});
+window.addEventListener("mouseup",()=>{dragging=false;cv.classList.remove("dragging")});
+cv.addEventListener("wheel",e=>{e.preventDefault();const f=e.deltaY<0?1.1:1/1.1;
+  const rect=cv.getBoundingClientRect();const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+  const newZ=Math.max(.15,Math.min(3,zoom*f));
+  panX=mx-(mx-panX)*(newZ/zoom);panY=my-(my-panY)*(newZ/zoom);
+  zoom=newZ;applyTransform()},{passive:false});
+}
+
+// ── 노드 클릭 → 하이라이트 + 팝업 ──
+function onNodeClick(id){
+  if(selectedNode===id){selectedNode=null;clearHighlight();return}
+  selectedNode=id;
+  // BFS 상류+하류 경로
+  const connected=new Set([id]);
+  // 상류
+  const uq=[id];while(uq.length){const c=uq.shift();NM.get(c)?.pa.forEach(p=>{if(currentLayout.pos.has(p)&&!connected.has(p)){connected.add(p);uq.push(p)}})}
+  // 하류
+  const dq=[id];while(dq.length){const c=dq.shift();NM.get(c)?.ch.forEach(k=>{if(currentLayout.pos.has(k)&&!connected.has(k)){connected.add(k);dq.push(k)}})}
+
+  document.querySelectorAll(".nd").forEach(el=>{
+    el.classList.toggle("highlight",el.dataset.id===id);
+    el.classList.toggle("dim",!connected.has(el.dataset.id));
+  });
+  document.querySelectorAll(".edge").forEach(el=>{
+    const from=el.dataset.from,to=el.dataset.to;
+    const isConn=connected.has(from)&&connected.has(to);
+    el.classList.toggle("hl",isConn);
+    el.classList.toggle("dim",!isConn);
+  });
+  document.querySelectorAll(".flow-particle").forEach(el=>{
+    const from=el.dataset.from,to=el.dataset.to;
+    el.classList.toggle("dim",!(connected.has(from)&&connected.has(to)));
+  });
+
+  showPopup(id);
+}
+function clearHighlight(){
+  document.querySelectorAll(".nd").forEach(el=>{el.classList.remove("highlight","dim")});
+  document.querySelectorAll(".edge").forEach(el=>{el.classList.remove("hl","dim")});
+  document.querySelectorAll(".flow-particle").forEach(el=>{el.classList.remove("dim")});
+}
+
+// ── 팝업 ──
+function showPopup(id){
+  const n=NM.get(id);if(!n)return;
+  const m=MET[id]||{};
+  const st=ST[id];
+  const stLabel={ok:'정상',warn:'주의',err:'이상',off:'없음'}[st];
+  const stColor={ok:'#10b981',warn:'#f59e0b',err:'#ef4444',off:'#64748b'}[st];
+
+  document.getElementById("popupTitle").innerHTML=`<span class="status-dot ${st}"></span> ${n.sn} <span style="color:#64748b;font-size:10px">${n.ft}</span> <span style="font-size:9px;padding:1px 6px;border-radius:8px;background:${stColor}20;color:${stColor}">${stLabel}</span>`;
+
+  let body=`<div class="popup-grid">
+    <div class="popup-cell"><div class="pc-label">유량 Q</div><div class="pc-val" style="color:#3b82f6">${m.q??'-'}</div></div>
+    <div class="popup-cell"><div class="pc-label">압력 P</div><div class="pc-val" style="color:#f59e0b">${m.p??'-'}</div></div>
+    <div class="popup-cell"><div class="pc-label">수위 H</div><div class="pc-val" style="color:#34d399">${m.h??'-'}</div></div>
+    <div class="popup-cell"><div class="pc-label">Depth</div><div class="pc-val" style="color:#94a3b8">${n.dep}</div></div>
+  </div>`;
+  const parents=[...n.pa].filter(p=>currentLayout?.pos.has(p));
+  const children=[...n.ch].filter(c=>currentLayout?.pos.has(c));
+  if(parents.length){
+    body+=`<div class="popup-conn-section"><h4>▲ 상류 (${parents.length})</h4>`;
+    parents.forEach(pid=>{const pn=NM.get(pid);body+=`<div class="popup-conn"><span class="status-dot ${ST[pid]}"></span><span class="conn-badge">상류</span>${pn.sn} (${pn.ft})</div>`});
+    body+=`</div>`;
+  }
+  if(children.length){
+    body+=`<div class="popup-conn-section"><h4>▼ 하류 (${children.length})</h4>`;
+    children.forEach(cid=>{const cn=NM.get(cid);body+=`<div class="popup-conn"><span class="status-dot ${ST[cid]}"></span><span class="conn-badge">하류</span>${cn.sn} (${cn.ft})</div>`});
+    body+=`</div>`;
+  }
+  document.getElementById("popupBody").innerHTML=body;
+  document.getElementById("popup").classList.add("show");
+}
+function closePopup(){document.getElementById("popup").classList.remove("show");selectedNode=null;clearHighlight()}
+
+// ── 미니맵 ──
+function renderMinimap(){
+  if(!currentLayout)return;
+  const canvas=document.getElementById("mmCanvas");
+  const ctx=canvas.getContext("2d");
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+
+  let maxX=0,maxY=0;
+  currentLayout.pos.forEach(p=>{if(p.x+NW>maxX)maxX=p.x+NW;if(p.y+NH>maxY)maxY=p.y+NH});
+  maxX+=80;maxY+=80;
+  const sx=w/maxX,sy=h/maxY,s=Math.min(sx,sy);
+  const ox=(w-maxX*s)/2,oy=(h-maxY*s)/2;
+
+  // 엣지
+  ctx.strokeStyle='#1e293b';ctx.lineWidth=.5;
+  currentLayout.edges.forEach(([us,uf,ds,df])=>{
+    const sp=currentLayout.pos.get(nid(us,uf)),dp=currentLayout.pos.get(nid(ds,df));
+    if(!sp||!dp)return;
+    ctx.beginPath();
+    ctx.moveTo(ox+(sp.x+NW)*s,oy+(sp.y+NH/2)*s);
+    ctx.lineTo(ox+dp.x*s,oy+(dp.y+NH/2)*s);
+    ctx.stroke();
+  });
+  // 노드
+  currentLayout.nodes.forEach(id=>{
+    const p=currentLayout.pos.get(id),n=NM.get(id),st=ST[id];
+    const c={ok:'#10b981',warn:'#f59e0b',err:'#ef4444',off:'#334155'}[st]||'#334155';
+    ctx.fillStyle=c;
+    ctx.fillRect(ox+p.x*s,oy+p.y*s,Math.max(NW*s,3),Math.max(NH*s,2));
+  });
+
+  // 뷰포트 데이터 저장
+  canvas._mmScale=s;canvas._mmOx=ox;canvas._mmOy=oy;canvas._contentW=maxX;canvas._contentH=maxY;
+  updateMmViewport();
+}
+function updateMmViewport(){
+  const canvas=document.getElementById("mmCanvas");
+  const vp=document.getElementById("mmViewport");
+  if(!canvas._mmScale)return;
+  const cv=document.getElementById("canvas");
+  const s=canvas._mmScale;
+  const ox=canvas._mmOx,oy=canvas._mmOy;
+  const vx=(-panX/zoom),vy=(-panY/zoom);
+  const vw=cv.clientWidth/zoom,vh=cv.clientHeight/zoom;
+  vp.style.left=(ox+vx*s)+"px";vp.style.top=(oy+vy*s)+"px";
+  vp.style.width=(vw*s)+"px";vp.style.height=(vh*s)+"px";
+}
+
+// 미니맵 클릭
+document.getElementById("minimap").addEventListener("click",e=>{
+  const canvas=document.getElementById("mmCanvas");
+  if(!canvas._mmScale)return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+  const my=(e.clientY-rect.top)*(canvas.height/rect.height);
+  const s=canvas._mmScale,ox=canvas._mmOx,oy=canvas._mmOy;
+  const cv=document.getElementById("canvas");
+  const cx=(mx-ox)/s,cy=(my-oy)/s;
+  panX=-(cx-cv.clientWidth/(2*zoom))*zoom;
+  panY=-(cy-cv.clientHeight/(2*zoom))*zoom;
+  applyTransform();
+});
+
+// ── 검색 ──
+const searchInput=document.getElementById("searchInput");
+const searchResultsEl=document.getElementById("searchResults");
+searchInput.addEventListener("input",()=>{
+  const q=searchInput.value.trim().toLowerCase();
+  if(!q){searchResultsEl.classList.remove("show");return}
+  const matches=[];
+  NM.forEach((v,k)=>{if(v.sn.toLowerCase().includes(q)||v.ft.includes(q))matches.push({id:k,...v})});
+  if(!matches.length){searchResultsEl.classList.remove("show");return}
+  searchResultsEl.innerHTML=matches.slice(0,12).map(m=>`<div class="sr-item" onclick="focusNode('${m.id}')"><span>${m.sn}</span><span class="sr-ft">${m.ft}</span></div>`).join('');
+  searchResultsEl.classList.add("show");
+});
+searchInput.addEventListener("keydown",e=>{if(e.key==="Enter"){const f=searchResultsEl.querySelector(".sr-item");if(f)f.click()}});
+document.addEventListener("click",e=>{if(!e.target.closest(".search-wrap"))searchResultsEl.classList.remove("show")});
+
+function focusNode(id){
+  searchResultsEl.classList.remove("show");searchInput.value='';
+  if(!currentLayout?.pos.has(id))return;
+  const p=currentLayout.pos.get(id);
+  const cv=document.getElementById("canvas");
+  panX=cv.clientWidth/2-(p.x+NW/2)*zoom;
+  panY=cv.clientHeight/2-(p.y+NH/2)*zoom;
+  applyTransform();
+  // 하이라이트
+  selectedNode=id;onNodeClick(id);
+}
+
+// ── 계통 탭 ──
+function renderTabs(){
+  const el=document.getElementById("systemTabs");
+  el.innerHTML=SYS.map((s,i)=>`<button class="sys-tab${i===currentSys?' active':''}" onclick="switchSys(${i})">${s.name}</button>`).join('');
+}
+function switchSys(i){currentSys=i;renderTabs();selectedNode=null;clearHighlight();render();setTimeout(fitView,50)}
+
+// ── 키보드 ──
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closePopup()}});
+
+// ── 초기화 ──
+renderTabs();
+render();
+setTimeout(fitView,100);
+</script>
+</body>
+</html>

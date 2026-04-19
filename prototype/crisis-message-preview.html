@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>위기대응 메시지 미리보기 (개선 후)</title>
+<style>
+  body { font-family: "Pretendard", -apple-system, system-ui, sans-serif; background: #e8eaf0; padding: 20px; margin: 0; }
+  .case-label { background: #334155; color: #fff; display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 10px; margin-top: 24px; }
+  .divider { border: none; border-top: 2px dashed #cbd5e1; margin: 28px 0 0; }
+  :root{--black:#111;--red:#e53935;--blue:#1e88e5;--green:#43a047;--orange:#f57c00;--gray:#6b7280;--border:#e5e7eb;}
+  *{box-sizing:border-box}
+  .card{max-width:900px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:0 6px 16px rgba(17,24,39,.06);overflow:hidden;}
+  .header{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--black);color:#fff;}
+  .pill{display:inline-block;background:#333;color:#fff;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:-0.5px;}
+  .title{flex:1;font-size:18px;font-weight:700;}
+  .sub{font-size:14px;opacity:.8;}
+  .section{padding:20px;border-top:1px dashed var(--border);}
+  .label{display:inline-block;font-weight:800;color:#fff;padding:6px 12px;border-radius:10px;margin-bottom:12px;}
+  .label.red{background:var(--red)}
+  .label.blue{background:var(--blue)}
+  .info{background:#fafafa;border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .badge-경고{display:inline-block;background:#e53935;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;}
+  .badge-주의{display:inline-block;background:#f57c00;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;}
+  .badge-정상{display:inline-block;background:#43a047;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;}
+  .change-note{background:#fffde7;border:1px solid #ffe082;border-radius:6px;padding:6px 12px;font-size:12px;color:#795548;margin-bottom:8px;}
+</style>
+</head>
+<body>
+
+<div class="change-note">
+  ✅ <strong>개선 후</strong> — (경보등급)이 DB의 실제 <code>alarm_severity</code> 값으로 동적 표시 / <code>alarm_severity = '정상'</code> 알람은 쿼리에서 제외
+</div>
+
+<!-- 케이스 1: 경고 등급 -->
+<span class="case-label">케이스 1 — UPS 통신이상 (alarm_severity = '경고')</span>
+<article class="card">
+  <div class="header">
+    <span class="pill">경보</span>
+    <div class="title">UPS 통신이상 FLT</div>
+    <div class="sub">UPS</div>
+  </div>
+  <section class="section">
+    <span class="label red">1. 경보 경과</span>
+    <ul>
+      <li><b>알람 발생시각</b>은 2026-04-05 09:42:00 입니다.</li>
+      <li><b>알람상태</b>는 현재 진행중 입니다.</li>
+    </ul>
+  </section>
+  <section class="section">
+    <span class="label blue">2. 경보내용</span>
+    <div class="info">
+      <p><strong>(경보등급)</strong>&nbsp;<span class="badge-경고">경고</span>등급.</p>
+      <p><strong>(발생원인)</strong>&nbsp;UPS 통신 모듈 또는 소프트웨어 오류</p>
+      <p><strong>(대응방안)</strong>&nbsp;UPS 통신모듈 및 PLC 통신카드 간 통신상태 점검<br>※ 계장 설비 점검 관리 업체: 동양산전(010-5457-3368), 제우씨엔아이(010-3774-4226), 오라테크(010-7228-5369)</p>
+    </div>
+  </section>
+</article>
+
+<hr class="divider">
+
+<!-- 케이스 2: 주의 등급 -->
+<span class="case-label">케이스 2 — 펌프 고장 (alarm_severity = '주의')</span>
+<article class="card">
+  <div class="header">
+    <span class="pill">경보</span>
+    <div class="title">갈산(가) 1호 펌프 FLT</div>
+    <div class="sub">가압펌프</div>
+  </div>
+  <section class="section">
+    <span class="label red">1. 경보 경과</span>
+    <ul>
+      <li><b>알람 발생시각</b>은 2026-04-05 11:15:00 입니다.</li>
+      <li><b>알람상태</b>는 현재 진행중 입니다.</li>
+    </ul>
+  </section>
+  <section class="section">
+    <span class="label blue">2. 경보내용</span>
+    <div class="info">
+      <p><strong>(경보등급)</strong>&nbsp;<span class="badge-주의">주의</span>등급.</p>
+      <p><strong>(발생원인)</strong>&nbsp;펌프 또는 모터 구동부에서 이상 부하 또는 장비 장애 발생</p>
+      <p><strong>(대응방안)</strong>&nbsp;전동기 부하, 모터 온도, 회전체 상태, 윤활 상태 등을 점검</p>
+    </div>
+  </section>
+</article>
+
+<hr class="divider">
+
+<!-- 케이스 3: 알람해제 -->
+<span class="case-label">케이스 3 — 통신이상 해제 (alarm_severity = '주의', alarm_status = '알람해제')</span>
+<article class="card">
+  <div class="header">
+    <span class="pill">경보</span>
+    <div class="title">죽동(배) 1지 통신이상</div>
+    <div class="sub">네트워크</div>
+  </div>
+  <section class="section">
+    <span class="label red">1. 경보 경과</span>
+    <ul>
+      <li><b>알람 발생시각</b>은 2026-04-05 14:03:00 입니다.</li>
+      <li><b>알람상태</b>는 현재 알람해제 입니다.</li>
+    </ul>
+  </section>
+  <section class="section">
+    <span class="label blue">2. 경보내용</span>
+    <div class="info">
+      <p><strong>(경보등급)</strong>&nbsp;<span class="badge-주의">주의</span>등급.</p>
+      <p><strong>(발생원인)</strong>&nbsp;모뎀 장비 또는 통신사 통신 장애 발생</p>
+      <p><strong>(대응방안)</strong>&nbsp;모뎀 전원 및 작동 상태 점검 후 통신사 통신 상태 점검<br>※ 통신 설비 점검 업체: JS정보통신(010-3944-0643), KT콜센터(02-500-6000)</p>
+    </div>
+  </section>
+</article>
+
+<hr class="divider">
+
+<!-- 케이스 4: 정상 판정 → 위기대응 HTML 미표출 -->
+<span class="case-label">케이스 4 — 헌팅→정상 판정됨 (alarm_severity = '정상') → 위기대응 HTML 미표출</span>
+<article class="card" style="opacity:0.45; pointer-events:none;">
+  <div class="header" style="background:#6b7280;">
+    <span class="pill" style="background:#43a047;">필터됨</span>
+    <div class="title">죽동(배) 1지 수위 HH 알람 상태</div>
+    <div class="sub">수위계</div>
+  </div>
+  <section class="section">
+    <span class="label red">1. 경보 경과</span>
+    <ul>
+      <li><b>알람 발생시각</b>은 2026-04-05 03:10:00 입니다.</li>
+      <li><b>알람상태</b>는 현재 진행중 입니다.</li>
+    </ul>
+  </section>
+  <section class="section">
+    <span class="label blue">2. 경보내용</span>
+    <div class="info">
+      <p><strong>(경보등급)</strong>&nbsp;<span class="badge-정상">정상</span>등급.</p>
+      <p><strong>(발생원인)</strong>&nbsp;—</p>
+      <p><strong>(대응방안)</strong>&nbsp;—</p>
+    </div>
+  </section>
+  <div style="padding:10px 20px;background:#f0fdf4;border-top:1px solid #bbf7d0;font-size:12px;color:#166534;">
+    ✅ 필터링기능 탭에서 <code>alarm_severity = '정상'</code>으로 판정 → 위기대응 HTML 쿼리에서 제외됨 (<code>AND alarm_severity != '정상'</code>)
+  </div>
+</article>
+
+</body>
+</html>

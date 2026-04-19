@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>경보 발생원인 진단 순위 — 파이 차트 프로토타입</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --sub: #94a3b8;
+    --accent: #3b82f6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Pretendard', 'Noto Sans KR', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 32px;
+    min-height: 100vh;
+  }
+  .header {
+    margin-bottom: 24px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .header-text h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .header-text p {
+    font-size: 13px;
+    color: var(--sub);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn svg { width: 14px; height: 14px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    max-width: 1200px;
+  }
+  @media (max-width: 768px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .card-sub {
+    font-size: 11px;
+    color: var(--sub);
+    margin-bottom: 16px;
+  }
+  .chart-container {
+    width: 100%;
+    height: 320px;
+  }
+  .summary-card {
+    grid-column: 1 / -1;
+  }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .stat-box {
+    background: rgba(59,130,246,0.08);
+    border: 1px solid rgba(59,130,246,0.2);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .stat-box .value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .stat-box .label {
+    font-size: 11px;
+    color: var(--sub);
+    margin-top: 2px;
+  }
+  .stat-box.error { border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.08); }
+  .stat-box.error .value { color: #ef4444; }
+  .stat-box.warn { border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.08); }
+  .stat-box.warn .value { color: #f59e0b; }
+  .stat-box.ok { border-color: rgba(34,197,94,0.3); background: rgba(34,197,94,0.08); }
+  .stat-box.ok .value { color: #22c55e; }
+
+  /* ── 순위 리스트 (접기/펼치기) ── */
+  .rank-card { grid-column: 1 / -1; }
+  .rank-card .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .rank-list { margin-top: 0; }
+  .rank-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .rank-item:hover { border-color: rgba(59,130,246,0.4); }
+  .rank-item-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+  }
+  .rank-num {
+    width: 26px; height: 26px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .rank-num.r1 { background: rgba(239,68,68,0.15); color: #ef4444; }
+  .rank-num.r2 { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .rank-num.r3 { background: rgba(59,130,246,0.15); color: #3b82f6; }
+  .rank-num.r4 { background: rgba(148,163,184,0.15); color: #94a3b8; }
+  .rank-name { flex: 1; }
+  .rank-cause-brief {
+    font-size: 11px;
+    color: var(--sub);
+    margin-top: 2px;
+  }
+  .rank-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .rank-count {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+  }
+  .rank-pct {
+    font-size: 11px;
+    color: var(--sub);
+    width: 42px;
+    text-align: right;
+  }
+  .rank-bar {
+    width: 80px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .rank-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease;
+  }
+  .rank-chevron {
+    width: 18px; height: 18px;
+    transition: transform 0.2s;
+    color: var(--sub);
+    flex-shrink: 0;
+  }
+  .rank-item.open .rank-chevron { transform: rotate(180deg); }
+  .rank-detail {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .rank-item.open .rank-detail { max-height: 600px; }
+  .rank-detail-inner {
+    padding: 0 14px 14px 50px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 20px;
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 4px 0;
+    border-bottom: 1px dashed rgba(51,65,85,0.5);
+  }
+  .detail-label { color: var(--sub); }
+  .detail-value { font-weight: 500; text-align: right; }
+  .detail-full {
+    grid-column: 1 / -1;
+    font-size: 12px;
+    color: var(--sub);
+    padding: 6px 0 2px;
+    line-height: 1.5;
+  }
+  .severity-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .severity-badge.critical { background: rgba(239,68,68,0.15); color: #ef4444; }
+  .severity-badge.warning { background: rgba(245,158,11,0.15); color: #f59e0b; }
+  .severity-badge.info { background: rgba(59,130,246,0.15); color: #3b82f6; }
+  .severity-badge.low { background: rgba(148,163,184,0.15); color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-text">
+    <h1>죽동 배수지 — 경보 발생원인 진단 순위</h1>
+    <p>최근 90일간 경보 발생 데이터를 기반으로 원인별 분포를 분석합니다.</p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn" id="btn-expand-all">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 8l5 5 5-5"/><path d="M7 13l5 5 5-5"/></svg>
+      전체 펼치기
+    </button>
+    <button class="btn" id="btn-csv">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      CSV 다운로드
+    </button>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- 요약 통계 -->
+  <div class="card summary-card">
+    <div class="card-title"><span class="dot"></span>경보 요약</div>
+    <div class="summary-grid">
+      <div class="stat-box">
+        <div class="value">644</div>
+        <div class="label">전체 경보</div>
+      </div>
+      <div class="stat-box error">
+        <div class="value">340</div>
+        <div class="label">통신이상</div>
+      </div>
+      <div class="stat-box warn">
+        <div class="value">302</div>
+        <div class="label">수위 알람</div>
+      </div>
+      <div class="stat-box ok">
+        <div class="value">2</div>
+        <div class="label">LL 알람</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 파이 차트: 경보 유형별 분포 -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span>경보 유형별 분포</div>
+    <div class="card-sub">alarm_msg 기준 비율</div>
+    <div id="pie-type" class="chart-container"></div>
+  </div>
+
+  <!-- 도넛 차트: 진단 원인별 분포 -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span>진단 원인별 분포</div>
+    <div class="card-sub">diagnosed_cause 기준 비율</div>
+    <div id="pie-cause" class="chart-container"></div>
+  </div>
+
+  <!-- 나이팅게일 로즈: 심각도별 경보 -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span>경보 심각도별 분포</div>
+    <div class="card-sub">Rose 차트 — 면적이 건수 비례</div>
+    <div id="pie-rose" class="chart-container"></div>
+  </div>
+
+  <!-- 순위 리스트 (펼치기/접기) -->
+  <div class="card rank-card">
+    <div class="card-header">
+      <div>
+        <div class="card-title"><span class="dot"></span>발생원인 진단 순위</div>
+        <div class="card-sub" style="margin-bottom:0">항목을 클릭하면 상세 정보를 볼 수 있습니다.</div>
+      </div>
+    </div>
+    <div class="rank-list" id="rank-list"></div>
+  </div>
+</div>
+
+<script>
+// ── 샘플 데이터 (죽동 배수지 실제 결과 기반) ──
+const alarmData = [
+  {
+    name: '죽동(배) 탁도계 통신이상', count: 340,
+    cause: '현장 설비 알람 발생',
+    severity: 'critical', severityLabel: '심각',
+    equipment: '탁도계 (TU-001)',
+    firstOccurrence: '2025-12-03 02:14:00',
+    lastOccurrence: '2026-02-26 09:31:00',
+    avgDuration: '약 4시간 32분',
+    recommendation: '탁도계 통신 모듈 점검 및 교체 권장. 현장 전원 공급 안정성 확인.',
+    color: '#ef4444'
+  },
+  {
+    name: '죽동(배) 수위#1 HH 알람', count: 214,
+    cause: '유출량 감소추세, 유입량 > 유출량',
+    severity: 'warning', severityLabel: '경고',
+    equipment: '수위계 #1 (LI-101A)',
+    firstOccurrence: '2025-12-08 18:45:00',
+    lastOccurrence: '2026-02-26 11:12:00',
+    avgDuration: '약 1시간 15분',
+    recommendation: '전단 가압장 펌프 가동 스케줄 검토. 배수지 유출밸브 개도율 조정 필요.',
+    color: '#f59e0b'
+  },
+  {
+    name: '죽동(배) 수위#2 HH 알람', count: 88,
+    cause: '유출량 감소추세, 유입량 > 유출량',
+    severity: 'warning', severityLabel: '경고',
+    equipment: '수위계 #2 (LI-101B)',
+    firstOccurrence: '2025-12-15 21:03:00',
+    lastOccurrence: '2026-02-26 08:43:00',
+    avgDuration: '약 52분',
+    recommendation: '수위계 #1과 교차 비교하여 센서 이상 여부 확인. 유출 밸브 상태 점검.',
+    color: '#3b82f6'
+  },
+  {
+    name: '죽동(배) 수위#2 LL 알람', count: 1,
+    cause: '유출량 증가추세, 유출량 > 유입량',
+    severity: 'info', severityLabel: '주의',
+    equipment: '수위계 #2 (LI-101B)',
+    firstOccurrence: '2026-01-22 03:17:00',
+    lastOccurrence: '2026-01-22 03:17:00',
+    avgDuration: '약 28분',
+    recommendation: '야간 시간대 급수량 변동 확인. 비상급수 대응 매뉴얼 참고.',
+    color: '#22c55e'
+  },
+  {
+    name: '죽동(배) 수위#1 LL 알람', count: 1,
+    cause: '유출량 증가추세, 유출량 > 유입량',
+    severity: 'low', severityLabel: '정보',
+    equipment: '수위계 #1 (LI-101A)',
+    firstOccurrence: '2026-02-10 04:51:00',
+    lastOccurrence: '2026-02-10 04:51:00',
+    avgDuration: '약 15분',
+    recommendation: '일회성 이벤트. 재발 시 유출 배관 누수 여부 확인.',
+    color: '#06b6d4'
+  },
+];
+
+const causeData = [
+  { name: '현장 설비 알람 발생', count: 340 },
+  { name: '유입량 > 유출량 (감소추세)', count: 302 },
+  { name: '유출량 > 유입량 (증가추세)', count: 2 },
+];
+
+const total = alarmData.reduce((s, d) => s + d.count, 0);
+
+// ── 1. 경보 유형별 파이 차트 ──
+const chart1 = echarts.init(document.getElementById('pie-type'));
+chart1.setOption({
+  tooltip: {
+    trigger: 'item',
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+    textStyle: { color: '#e2e8f0', fontSize: 12 },
+    formatter: (p) => `<b>${p.name}</b><br/>${p.value}건 (${p.percent}%)`
+  },
+  legend: {
+    orient: 'vertical',
+    right: 10,
+    top: 'center',
+    textStyle: { color: '#94a3b8', fontSize: 11 },
+    itemWidth: 10,
+    itemHeight: 10,
+    itemGap: 8,
+  },
+  series: [{
+    type: 'pie',
+    radius: ['42%', '72%'],
+    center: ['38%', '50%'],
+    avoidLabelOverlap: true,
+    itemStyle: { borderRadius: 6, borderColor: '#1e293b', borderWidth: 2 },
+    label: {
+      show: true,
+      position: 'inner',
+      fontSize: 11,
+      fontWeight: 600,
+      color: '#fff',
+      formatter: (p) => p.percent > 5 ? `${p.percent}%` : '',
+    },
+    emphasis: {
+      label: { show: true, fontSize: 14, fontWeight: 'bold' },
+      itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' }
+    },
+    data: alarmData.map(d => ({
+      name: d.name,
+      value: d.count,
+      itemStyle: { color: d.color }
+    }))
+  }]
+});
+
+// ── 2. 진단 원인별 도넛 차트 ──
+const chart2 = echarts.init(document.getElementById('pie-cause'));
+const causeColors = ['#ef4444', '#f59e0b', '#22c55e', '#8b5cf6'];
+chart2.setOption({
+  tooltip: {
+    trigger: 'item',
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+    textStyle: { color: '#e2e8f0', fontSize: 12 },
+    formatter: (p) => `<b>${p.name}</b><br/>${p.value}건 (${p.percent}%)`
+  },
+  legend: {
+    orient: 'vertical',
+    right: 10,
+    top: 'center',
+    textStyle: { color: '#94a3b8', fontSize: 11 },
+    itemWidth: 10,
+    itemHeight: 10,
+  },
+  graphic: [{
+    type: 'text',
+    left: '28%',
+    top: '42%',
+    style: {
+      text: total.toString(),
+      fontSize: 28,
+      fontWeight: 700,
+      fill: '#e2e8f0',
+      textAlign: 'center',
+    }
+  }, {
+    type: 'text',
+    left: '28%',
+    top: '55%',
+    style: {
+      text: '총 건수',
+      fontSize: 11,
+      fill: '#94a3b8',
+      textAlign: 'center',
+    }
+  }],
+  series: [{
+    type: 'pie',
+    radius: ['48%', '72%'],
+    center: ['32%', '50%'],
+    label: { show: false },
+    itemStyle: { borderRadius: 4, borderColor: '#1e293b', borderWidth: 2 },
+    emphasis: {
+      itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' }
+    },
+    data: causeData.map((d, i) => ({
+      name: d.name,
+      value: d.count,
+      itemStyle: { color: causeColors[i] }
+    }))
+  }]
+});
+
+// ── 3. 나이팅게일 로즈 차트 ──
+const chart3 = echarts.init(document.getElementById('pie-rose'));
+chart3.setOption({
+  tooltip: {
+    trigger: 'item',
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+    textStyle: { color: '#e2e8f0', fontSize: 12 },
+    formatter: (p) => `<b>${p.name}</b><br/>${p.value}건`
+  },
+  legend: {
+    bottom: 0,
+    textStyle: { color: '#94a3b8', fontSize: 11 },
+    itemWidth: 10,
+    itemHeight: 10,
+  },
+  series: [{
+    type: 'pie',
+    radius: ['20%', '70%'],
+    center: ['50%', '45%'],
+    roseType: 'area',
+    itemStyle: { borderRadius: 6, borderColor: '#1e293b', borderWidth: 2 },
+    label: {
+      color: '#94a3b8',
+      fontSize: 11,
+      formatter: '{b}\n{c}건',
+    },
+    data: alarmData.map(d => ({
+      name: d.name.replace('죽동(배) ', ''),
+      value: d.count,
+      itemStyle: { color: d.color }
+    }))
+  }]
+});
+
+// ── 4. 순위 리스트 (아코디언) ──
+const rankEl = document.getElementById('rank-list');
+
+alarmData.forEach((d, i) => {
+  const pct = ((d.count / total) * 100).toFixed(1);
+  const rankClass = i === 0 ? 'r1' : i === 1 ? 'r2' : i === 2 ? 'r3' : 'r4';
+
+  const item = document.createElement('div');
+  item.className = 'rank-item';
+  item.innerHTML = `
+    <div class="rank-item-header">
+      <div class="rank-num ${rankClass}">${i + 1}</div>
+      <div class="rank-name">
+        <div>${d.name}</div>
+        <div class="rank-cause-brief">${d.cause}</div>
+      </div>
+      <div class="rank-right">
+        <div class="rank-count">${d.count}건</div>
+        <div class="rank-pct">${pct}%</div>
+        <div class="rank-bar">
+          <div class="rank-bar-fill" style="width:${pct}%;background:${d.color}"></div>
+        </div>
+        <svg class="rank-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+    </div>
+    <div class="rank-detail">
+      <div class="rank-detail-inner">
+        <div class="detail-row">
+          <span class="detail-label">심각도</span>
+          <span class="detail-value"><span class="severity-badge ${d.severity}">${d.severityLabel}</span></span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">대상 설비</span>
+          <span class="detail-value">${d.equipment}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">최초 발생</span>
+          <span class="detail-value">${d.firstOccurrence}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">최근 발생</span>
+          <span class="detail-value">${d.lastOccurrence}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">발생 건수</span>
+          <span class="detail-value">${d.count}건 (전체 대비 ${pct}%)</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">평균 지속</span>
+          <span class="detail-value">${d.avgDuration}</span>
+        </div>
+        <div class="detail-full">
+          <strong style="color:var(--text)">조치 권고:</strong> ${d.recommendation}
+        </div>
+      </div>
+    </div>
+  `;
+
+  item.querySelector('.rank-item-header').addEventListener('click', () => {
+    item.classList.toggle('open');
+  });
+
+  rankEl.appendChild(item);
+});
+
+// ── 전체 펼치기/접기 토글 ──
+let allExpanded = false;
+document.getElementById('btn-expand-all').addEventListener('click', function() {
+  allExpanded = !allExpanded;
+  document.querySelectorAll('.rank-item').forEach(el => {
+    el.classList.toggle('open', allExpanded);
+  });
+  this.innerHTML = allExpanded
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 16l5-5 5 5"/><path d="M7 11l5-5 5 5"/></svg>전체 접기`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 8l5 5 5-5"/><path d="M7 13l5 5 5-5"/></svg>전체 펼치기`;
+});
+
+// ── CSV 다운로드 ──
+document.getElementById('btn-csv').addEventListener('click', () => {
+  const BOM = '\uFEFF';
+  const header = '순위,경보명,발생건수,비율(%),진단원인,심각도,대상설비,최초발생,최근발생,평균지속시간,조치권고';
+  const rows = alarmData.map((d, i) => {
+    const pct = ((d.count / total) * 100).toFixed(1);
+    return [
+      i + 1,
+      `"${d.name}"`,
+      d.count,
+      pct,
+      `"${d.cause}"`,
+      d.severityLabel,
+      `"${d.equipment}"`,
+      d.firstOccurrence,
+      d.lastOccurrence,
+      `"${d.avgDuration}"`,
+      `"${d.recommendation}"`,
+    ].join(',');
+  });
+
+  // 요약 행 추가
+  rows.push('');
+  rows.push(`"[요약]",전체 경보 합계,${total},,,,,,,,`);
+  causeData.forEach(c => {
+    const cp = ((c.count / total) * 100).toFixed(1);
+    rows.push(`"[진단원인별]","${c.name}",${c.count},${cp}%,,,,,,,`);
+  });
+
+  const csv = BOM + header + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `경보_발생원인_진단순위_죽동배수지.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// 리사이즈
+window.addEventListener('resize', () => {
+  chart1.resize();
+  chart2.resize();
+  chart3.resize();
+});
+</script>
+</body>
+</html>

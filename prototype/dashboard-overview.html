@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLM 대시보드 — 종합 현황판 프로토타입</title>
+<style>
+  :root {
+    --bg: #0b1120; --card: #111827; --border: #1e293b;
+    --text: #e2e8f0; --muted: #64748b; --accent: #38bdf8;
+    --red: #ef4444; --orange: #f59e0b; --emerald: #10b981;
+    --purple: #a78bfa; --cyan: #06b6d4; --pink: #ec4899;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Pretendard','Inter',system-ui,sans-serif; background:var(--bg); color:var(--text); padding:24px; }
+  h1 { font-size:20px; font-weight:700; margin-bottom:6px; }
+  .subtitle { font-size:12px; color:var(--muted); margin-bottom:20px; }
+  .subtitle span { color:var(--emerald); }
+
+  /* KPI 그리드 */
+  .kpi-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:20px; }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; cursor:pointer; transition:all .2s; position:relative; overflow:hidden; }
+  .kpi:hover { border-color:var(--accent); transform:translateY(-2px); box-shadow:0 4px 20px rgba(56,189,248,.1); }
+  .kpi-label { font-size:11px; color:var(--muted); margin-bottom:4px; display:flex; align-items:center; gap:5px; }
+  .kpi-value { font-size:28px; font-weight:800; letter-spacing:-1px; }
+  .kpi-sub { font-size:10px; color:var(--muted); margin-top:2px; }
+  .kpi-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .kpi--alert .kpi-value { color:var(--red); }
+  .kpi--warn .kpi-value { color:var(--orange); }
+  .kpi--ok .kpi-value { color:var(--emerald); }
+  .kpi--info .kpi-value { color:var(--accent); }
+  .kpi--purple .kpi-value { color:var(--purple); }
+  .kpi--cyan .kpi-value { color:var(--cyan); }
+  .kpi .pulse { position:absolute; top:10px; right:10px; width:8px; height:8px; border-radius:50%; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.5)} }
+  .pulse--red { background:var(--red); animation:pulse 2s infinite; }
+  .pulse--orange { background:var(--orange); animation:pulse 2s infinite; }
+
+  /* 메인 레이아웃 */
+  .main { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+  .panel { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .panel-title { font-size:13px; font-weight:700; margin-bottom:12px; display:flex; align-items:center; gap:6px; }
+  .panel-title .icon { font-size:15px; }
+
+  /* 이상 시설 테이블 */
+  .anomaly-table { width:100%; border-collapse:collapse; font-size:11px; }
+  .anomaly-table th { text-align:left; color:var(--muted); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--border); font-size:10px; }
+  .anomaly-table td { padding:7px 8px; border-bottom:1px solid rgba(30,41,59,.5); }
+  .anomaly-table tr { cursor:pointer; transition:background .15s; }
+  .anomaly-table tr:hover { background:rgba(56,189,248,.05); }
+  .badge { display:inline-block; padding:2px 7px; border-radius:9999px; font-size:9px; font-weight:700; }
+  .badge--red { background:rgba(239,68,68,.15); color:var(--red); }
+  .badge--orange { background:rgba(245,158,11,.15); color:var(--orange); }
+  .badge--purple { background:rgba(167,139,250,.15); color:var(--purple); }
+  .badge--emerald { background:rgba(16,185,129,.15); color:var(--emerald); }
+  .badge--cyan { background:rgba(6,182,212,.15); color:var(--cyan); }
+  .badge--gray { background:rgba(100,116,139,.15); color:var(--muted); }
+
+  /* 유량 불균형 바 */
+  .balance-row { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:11px; }
+  .balance-label { width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .balance-bar-bg { flex:1; height:14px; background:rgba(30,41,59,.8); border-radius:7px; overflow:hidden; position:relative; }
+  .balance-bar { height:100%; border-radius:7px; transition:width .5s; }
+  .balance-pct { width:48px; text-align:right; font-weight:700; font-size:10px; }
+
+  /* 하단 3컬럼 */
+  .bottom { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+
+  /* 설비 장애 리스트 */
+  .equip-item { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid rgba(30,41,59,.4); font-size:11px; }
+  .equip-icon { width:22px; height:22px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; }
+
+  /* 데이터 품질 */
+  .dq-card { display:flex; align-items:center; gap:10px; padding:8px 10px; background:rgba(30,41,59,.4); border-radius:8px; margin-bottom:6px; }
+  .dq-count { font-size:22px; font-weight:800; width:36px; text-align:center; }
+  .dq-info { font-size:11px; }
+  .dq-info small { color:var(--muted); font-size:9px; }
+
+  /* 경보 타임라인 */
+  .alarm-item { display:flex; gap:10px; padding:7px 0; border-bottom:1px solid rgba(30,41,59,.4); font-size:11px; }
+  .alarm-time { color:var(--muted); font-size:10px; width:44px; flex-shrink:0; }
+  .alarm-severity { width:6px; border-radius:3px; flex-shrink:0; }
+
+  /* 클릭 힌트 */
+  .click-hint { font-size:9px; color:var(--muted); opacity:.7; margin-top:8px; text-align:center; }
+  .click-hint:before { content:'💬 '; }
+
+  /* 채팅 연결 토스트 */
+  .chat-toast { position:fixed; bottom:24px; right:24px; background:#1e40af; color:#fff; padding:12px 20px; border-radius:10px; font-size:12px; font-weight:600; box-shadow:0 8px 30px rgba(30,64,175,.4); display:none; z-index:100; animation:slideUp .3s ease-out; }
+  @keyframes slideUp { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+</style>
+</head>
+<body>
+
+<h1>📊 종합 현황판</h1>
+<p class="subtitle">마지막 갱신: 13:52:25 · 자동 갱신 <span>5분</span> 주기 · 데이터 기준: 이상감지 캐시 + 교차검증 + 물수지</p>
+
+<!-- KPI 카드 6종 -->
+<div class="kpi-grid">
+  <div class="kpi kpi--alert" onclick="goChat('전체 센서 이상 스캔해줘')">
+    <div class="pulse pulse--red"></div>
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--red)"></span> 이상 감지</div>
+    <div class="kpi-value">10</div>
+    <div class="kpi-sub">복합 2 · 이상 8</div>
+  </div>
+  <div class="kpi kpi--warn" onclick="goChat('교차 검증 결과 보여줘')">
+    <div class="pulse pulse--orange"></div>
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--orange)"></span> 교차검증 이상</div>
+    <div class="kpi-value">6</div>
+    <div class="kpi-sub">엣지 불일치 9건</div>
+  </div>
+  <div class="kpi kpi--purple" onclick="goChat('설비 장애 현황 알려줘')">
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--purple)"></span> 설비 장애</div>
+    <div class="kpi-value">18</div>
+    <div class="kpi-sub">NET 7 · COM 5 · FLT 3 · PWR 3</div>
+  </div>
+  <div class="kpi kpi--cyan" onclick="goChat('물 수지 검증해줘')">
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--cyan)"></span> 유량 불균형</div>
+    <div class="kpi-value">31</div>
+    <div class="kpi-sub">경고 13 · 관심 6</div>
+  </div>
+  <div class="kpi kpi--info" onclick="goChat('경보 발생 이력 보여줘')">
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--accent)"></span> 진행중 경보</div>
+    <div class="kpi-value">18</div>
+    <div class="kpi-sub">경고 14 · 주의 4</div>
+  </div>
+  <div class="kpi kpi--ok">
+    <div class="kpi-label"><span class="kpi-dot" style="background:var(--emerald)"></span> 정상 시설</div>
+    <div class="kpi-value">294</div>
+    <div class="kpi-sub">321건 중 91.6%</div>
+  </div>
+</div>
+
+<!-- 메인 2컬럼 -->
+<div class="main">
+  <!-- 좌: 이상 시설 TOP -->
+  <div class="panel">
+    <div class="panel-title"><span class="icon">⚠️</span> 이상 시설 TOP 10 <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:auto">클릭 → AI 채팅 진단</span></div>
+    <table class="anomaly-table">
+      <thead>
+        <tr><th>시설</th><th>유형</th><th>Z-Score</th><th>판정</th><th>그룹</th><th>상태</th></tr>
+      </thead>
+      <tbody>
+        <tr onclick="goChat('BE3 배수지 이상 진단해줘')">
+          <td><b>BE3 배수지</b></td><td style="color:var(--muted)">유출유량</td>
+          <td style="color:var(--red);font-weight:700">4.82</td>
+          <td><span class="badge badge--red">복합이상</span></td>
+          <td><span class="badge badge--gray">B</span></td>
+          <td>🔴 교차+Z</td>
+        </tr>
+        <tr onclick="goChat('GA5 가압장 이상 진단해줘')">
+          <td><b>GA5 가압장</b></td><td style="color:var(--muted)">토출압력</td>
+          <td style="color:var(--red);font-weight:700">3.91</td>
+          <td><span class="badge badge--red">복합이상</span></td>
+          <td><span class="badge badge--gray">A</span></td>
+          <td>🔴 교차+Z</td>
+        </tr>
+        <tr onclick="goChat('SB12 소블록 이상 진단해줘')">
+          <td><b>SB12 소블록</b></td><td style="color:var(--muted)">유량순시</td>
+          <td style="color:var(--orange);font-weight:700">2.74</td>
+          <td><span class="badge badge--orange">이상</span></td>
+          <td><span class="badge badge--gray">D</span></td>
+          <td>🟡 Z-Score</td>
+        </tr>
+        <tr onclick="goChat('BE21 배수지 이상 진단해줘')">
+          <td><b>BE21 배수지</b></td><td style="color:var(--muted)">수위</td>
+          <td style="color:var(--orange);font-weight:700">2.51</td>
+          <td><span class="badge badge--orange">이상</span></td>
+          <td><span class="badge badge--gray">C</span></td>
+          <td>🟡 Z-Score</td>
+        </tr>
+        <tr onclick="goChat('SB7 소블록 이상 진단해줘')">
+          <td><b>SB7 소블록</b></td><td style="color:var(--muted)">유량순시</td>
+          <td style="color:var(--muted)">0.82</td>
+          <td><span class="badge badge--purple">교차이상</span></td>
+          <td><span class="badge badge--gray">B</span></td>
+          <td>🟣 교차</td>
+        </tr>
+        <tr onclick="goChat('SB19 소블록 이상 진단해줘')">
+          <td><b>SB19 소블록</b></td><td style="color:var(--muted)">유량순시</td>
+          <td style="color:var(--muted)">0.44</td>
+          <td><span class="badge badge--purple">교차이상</span></td>
+          <td><span class="badge badge--gray">D</span></td>
+          <td>🟣 교차</td>
+        </tr>
+        <tr onclick="goChat('GA11 가압장 이상 진단해줘')">
+          <td><b>GA11 가압장</b></td><td style="color:var(--muted)">유출유량</td>
+          <td style="color:var(--orange);font-weight:700">2.15</td>
+          <td><span class="badge badge--orange">주의</span></td>
+          <td><span class="badge badge--gray">B</span></td>
+          <td>🟡</td>
+        </tr>
+        <tr onclick="goChat('BE15 배수지 이상 진단해줘')">
+          <td><b>BE15 배수지</b></td><td style="color:var(--muted)">잔류염소</td>
+          <td style="color:var(--orange);font-weight:700">2.08</td>
+          <td><span class="badge badge--orange">주의</span></td>
+          <td><span class="badge badge--gray">B</span></td>
+          <td>🟡 홀딩?</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="click-hint">행 클릭 시 AI 채팅에서 해당 시설 상세 진단</div>
+  </div>
+
+  <!-- 우: 유량 불균형 TOP -->
+  <div class="panel">
+    <div class="panel-title"><span class="icon">💧</span> 유량 불균형 TOP 7 <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:auto">상류→하류 유출/유입 비율</span></div>
+
+    <div class="balance-row" onclick="goChat('GA3 가압장 물 수지 검증해줘')">
+      <div class="balance-label">GA3→SB5</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:78%;background:var(--red)"></div></div>
+      <div class="balance-pct" style="color:var(--red)">-78.2%</div>
+    </div>
+    <div class="balance-row" onclick="goChat('GA8 가압장 물 수지 검증해줘')">
+      <div class="balance-label">GA8→SB15</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:62%;background:var(--red)"></div></div>
+      <div class="balance-pct" style="color:var(--red)">-62.1%</div>
+    </div>
+    <div class="balance-row" onclick="goChat('BE25 배수지 물 수지 검증해줘')">
+      <div class="balance-label">BE25→GA19</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:45%;background:var(--orange)"></div></div>
+      <div class="balance-pct" style="color:var(--orange)">-45.3%</div>
+    </div>
+    <div class="balance-row" onclick="goChat('GA12 가압장 물 수지 검증해줘')">
+      <div class="balance-label">GA12→SB22</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:38%;background:var(--orange)"></div></div>
+      <div class="balance-pct" style="color:var(--orange)">-38.7%</div>
+    </div>
+    <div class="balance-row">
+      <div class="balance-label">BE17→GA7</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:22%;background:var(--orange)"></div></div>
+      <div class="balance-pct" style="color:var(--orange)">-22.4%</div>
+    </div>
+    <div class="balance-row">
+      <div class="balance-label">GA19→SB31</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:14%;background:#facc15"></div></div>
+      <div class="balance-pct" style="color:#facc15">-14.1%</div>
+    </div>
+    <div class="balance-row">
+      <div class="balance-label">BE11→GA4</div>
+      <div class="balance-bar-bg"><div class="balance-bar" style="width:8%;background:var(--emerald)"></div></div>
+      <div class="balance-pct" style="color:var(--emerald)">-8.2%</div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <div class="panel-title" style="margin-bottom:8px"><span class="icon">📈</span> 시설유형별 이상 분포</div>
+      <div style="display:flex;gap:12px;font-size:11px">
+        <div style="flex:1;text-align:center;padding:10px;background:rgba(16,185,129,.08);border-radius:8px">
+          <div style="color:var(--emerald);font-size:20px;font-weight:800">140</div>
+          <div style="color:var(--muted);font-size:10px">배수지</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:10px;background:rgba(251,191,36,.08);border-radius:8px">
+          <div style="color:var(--orange);font-size:20px;font-weight:800">113</div>
+          <div style="color:var(--muted);font-size:10px">가압장</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:10px;background:rgba(167,139,250,.08);border-radius:8px">
+          <div style="color:var(--purple);font-size:20px;font-weight:800">67</div>
+          <div style="color:var(--muted);font-size:10px">소블록</div>
+        </div>
+        <div style="flex:1;text-align:center;padding:10px;background:rgba(56,189,248,.08);border-radius:8px">
+          <div style="color:var(--accent);font-size:20px;font-weight:800">1</div>
+          <div style="color:var(--muted);font-size:10px">소소블록</div>
+        </div>
+      </div>
+    </div>
+    <div class="click-hint">행 클릭 시 AI 채팅에서 물 수지 상세 분석</div>
+  </div>
+</div>
+
+<!-- 하단 3컬럼 -->
+<div class="bottom">
+  <!-- 설비 장애 -->
+  <div class="panel">
+    <div class="panel-title"><span class="icon">🔧</span> 설비 장애 현황</div>
+    <div class="equip-item" onclick="goChat('GA5 가압장 네트워크 상태 알려줘')">
+      <div class="equip-icon" style="background:rgba(239,68,68,.15);color:var(--red)">NET</div>
+      <div><b>GA5 가압장</b> — LTE 모뎀<br><small style="color:var(--muted)">네트워크 단절 · 2시간 전</small></div>
+    </div>
+    <div class="equip-item" onclick="goChat('SB12 소블록 통신 상태 알려줘')">
+      <div class="equip-icon" style="background:rgba(245,158,11,.15);color:var(--orange)">COM</div>
+      <div><b>SB12 소블록</b> — PLC<br><small style="color:var(--muted)">통신 이상 · 45분 전</small></div>
+    </div>
+    <div class="equip-item" onclick="goChat('GA11 가압장 설비 상태 알려줘')">
+      <div class="equip-icon" style="background:rgba(167,139,250,.15);color:var(--purple)">FLT</div>
+      <div><b>GA11 가압장</b> — 가압펌프2<br><small style="color:var(--muted)">설비 고장 · 3시간 전</small></div>
+    </div>
+    <div class="equip-item">
+      <div class="equip-icon" style="background:rgba(236,72,153,.15);color:var(--pink)">PWR</div>
+      <div><b>BE21 배수지</b> — UPS<br><small style="color:var(--muted)">전원 이상 · 1시간 전</small></div>
+    </div>
+    <div style="text-align:center;padding:8px;font-size:10px;color:var(--muted)">
+      + 14건 더보기
+    </div>
+    <div class="click-hint">클릭 시 AI 채팅에서 해당 설비 상세 진단</div>
+  </div>
+
+  <!-- 데이터 품질 -->
+  <div class="panel">
+    <div class="panel-title"><span class="icon">📡</span> 데이터 품질 이상</div>
+    <div class="dq-card">
+      <div class="dq-count" style="color:var(--red)">62</div>
+      <div class="dq-info">센서 무응답<br><small>7일간 값 ≈ 0 또는 무변화</small></div>
+    </div>
+    <div class="dq-card">
+      <div class="dq-count" style="color:var(--orange)">12</div>
+      <div class="dq-info">데이터 홀딩<br><small>80%+ 시간 동일값 유지</small></div>
+    </div>
+    <div class="dq-card">
+      <div class="dq-count" style="color:var(--muted)">2</div>
+      <div class="dq-info">데이터 없음<br><small>7일간 수신 데이터 0건</small></div>
+    </div>
+    <div class="dq-card">
+      <div class="dq-count" style="color:var(--orange)">23</div>
+      <div class="dq-info">홀딩 의심 (최근 1h)<br><small>현재 진행 중 의심 센서</small></div>
+    </div>
+    <div class="click-hint">데이터 품질은 이상감지 캐시에서 자동 추출</div>
+  </div>
+
+  <!-- 최근 경보 -->
+  <div class="panel">
+    <div class="panel-title"><span class="icon">🔔</span> 최근 경보</div>
+    <div class="alarm-item" onclick="goChat('BE3 배수지 최근 알람 보여줘')">
+      <div class="alarm-time">13:41</div>
+      <div class="alarm-severity" style="background:var(--red)"></div>
+      <div><b>BE3 배수지</b> 수위 HH 초과<br><small style="color:var(--muted)">경고 · 진행중</small></div>
+    </div>
+    <div class="alarm-item" onclick="goChat('GA5 가압장 최근 알람 보여줘')">
+      <div class="alarm-time">13:28</div>
+      <div class="alarm-severity" style="background:var(--red)"></div>
+      <div><b>GA5 가압장</b> 토출압력 LL<br><small style="color:var(--muted)">경고 · 진행중</small></div>
+    </div>
+    <div class="alarm-item">
+      <div class="alarm-time">12:55</div>
+      <div class="alarm-severity" style="background:var(--orange)"></div>
+      <div><b>SB12 소블록</b> 통신 이상<br><small style="color:var(--muted)">주의 · 진행중</small></div>
+    </div>
+    <div class="alarm-item">
+      <div class="alarm-time">12:30</div>
+      <div class="alarm-severity" style="background:var(--red)"></div>
+      <div><b>BE21 배수지</b> UPS 전원이상<br><small style="color:var(--muted)">경고 · 진행중</small></div>
+    </div>
+    <div class="alarm-item">
+      <div class="alarm-time">11:47</div>
+      <div class="alarm-severity" style="background:var(--emerald)"></div>
+      <div><b>GA8 가압장</b> 펌프 정상복귀<br><small style="color:var(--muted)">정상 · 알람해제</small></div>
+    </div>
+    <div class="alarm-item">
+      <div class="alarm-time">11:15</div>
+      <div class="alarm-severity" style="background:var(--orange)"></div>
+      <div><b>BE15 배수지</b> 잔류염소 저하<br><small style="color:var(--muted)">주의 · 진행중</small></div>
+    </div>
+    <div class="click-hint">클릭 시 AI 채팅에서 해당 시설 경보 분석</div>
+  </div>
+</div>
+
+<!-- 채팅 연결 토스트 -->
+<div class="chat-toast" id="chatToast"></div>
+
+<script>
+function goChat(query) {
+  const toast = document.getElementById('chatToast');
+  toast.textContent = '💬 AI 채팅으로 이동: "' + query + '"';
+  toast.style.display = 'block';
+  setTimeout(() => { toast.style.display = 'none'; }, 2500);
+  // 실제 구현: window.location.href = '/chat?q=' + encodeURIComponent(query);
+}
+</script>
+</body>
+</html>

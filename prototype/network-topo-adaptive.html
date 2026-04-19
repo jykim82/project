@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>네트워크 토폴로지 — 적응형 가로·세로 배치</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Share+Tech+Mono&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --bg:#060e1c;--bg2:#080f1e;
+  --ok:#22c55e;--warn:#f59e0b;--err:#ef4444;
+  --blue:#38bdf8;--yellow:#fbbf24;--green:#34d399;--purple:#a78bfa;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:#e2e8f0;font-family:'Noto Sans KR',sans-serif;}
+
+/* 헤더 */
+.hdr{
+  height:46px;padding:0 18px;display:flex;align-items:center;gap:14px;
+  background:rgba(6,14,28,.97);border-bottom:1px solid rgba(14,165,233,.15);
+  position:relative;z-index:10;
+}
+.hdr-title{font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:700;color:#f0f9ff;letter-spacing:.07em;}
+.hdr-sub{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--blue);letter-spacing:.1em;}
+.hdr-sep{width:1px;height:22px;background:rgba(14,165,233,.15);}
+.pill{display:flex;align-items:center;gap:5px;padding:2px 9px;
+  border:1px solid rgba(255,255,255,.07);border-radius:3px;
+  font-family:'Share Tech Mono',monospace;font-size:10px;}
+.pill .d{width:6px;height:6px;border-radius:50%;}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
+.mode-btn{padding:3px 10px;font-size:10px;border:1px solid rgba(255,255,255,.12);border-radius:4px;
+  background:transparent;color:#94a3b8;cursor:pointer;font-family:'Share Tech Mono',monospace;}
+.mode-btn.active{background:rgba(14,165,233,.15);color:var(--blue);border-color:var(--blue);}
+.mode-btn:hover{background:rgba(14,165,233,.1);}
+.hdr-clock{font-family:'Share Tech Mono',monospace;font-size:11px;color:#334155;}
+
+/* 캔버스 */
+.canvas-wrap{height:calc(100vh - 46px);overflow:hidden;cursor:grab;position:relative;}
+.canvas-wrap.dragging{cursor:grabbing;}
+svg{position:absolute;top:0;left:0;transform-origin:0 0;}
+
+/* SVG 내부 스타일 */
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes flow{to{stroke-dashoffset:-18}}
+.node-g{cursor:pointer;}
+.node-g:hover .node-rect{filter:brightness(1.35);}
+.node-g.dimmed{opacity:.06;pointer-events:none;}
+.node-g.highlight .node-rect{filter:brightness(1.3);}
+.link-g{pointer-events:stroke;}
+.link-g.dimmed{opacity:.03;}
+.link-g.highlight{opacity:1;}
+
+/* 줌 컨트롤 */
+.zoom-ctrl{position:absolute;bottom:12px;right:12px;z-index:20;display:flex;flex-direction:column;gap:3px;}
+.zoom-btn{width:28px;height:28px;border-radius:4px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(6,14,28,.85);color:#94a3b8;cursor:pointer;font-size:14px;
+  display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
+.zoom-btn:hover{background:rgba(14,165,233,.12);color:var(--blue);}
+.zoom-pct{text-align:center;font-family:'Share Tech Mono',monospace;font-size:9px;color:#334155;}
+
+/* 범례 */
+.legend{position:absolute;bottom:12px;left:12px;z-index:20;
+  background:rgba(6,14,28,.92);border:1px solid rgba(14,165,233,.1);border-radius:6px;
+  padding:8px 10px;backdrop-filter:blur(4px);display:flex;flex-direction:column;gap:1px;}
+.legend-lbl{font-family:'Share Tech Mono',monospace;font-size:8px;color:#334155;letter-spacing:.1em;
+  text-transform:uppercase;margin-bottom:2px;margin-top:4px;}
+.legend-lbl:first-child{margin-top:0;}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:9px;color:#475569;}
+.legend-dot{width:8px;height:8px;border-radius:2px;flex-shrink:0;}
+.legend-line{width:16px;height:0;flex-shrink:0;}
+
+/* 모드 설명 */
+.mode-desc{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:20;
+  font-family:'Share Tech Mono',monospace;font-size:10px;color:#1e3a5f;letter-spacing:.05em;}
+
+/* 툴팁 */
+.tooltip{position:fixed;pointer-events:none;z-index:50;border-radius:6px;border:1px solid rgba(14,165,233,.3);
+  background:rgba(10,20,40,.95);padding:6px 10px;font-size:10px;opacity:0;transition:opacity .1s;}
+</style>
+</head>
+<body>
+
+<!-- 헤더 -->
+<div class="hdr">
+  <div class="hdr-title">NETWORK TOPOLOGY</div>
+  <div class="hdr-sub">ADAPTIVE LAYOUT</div>
+  <div class="hdr-sep"></div>
+  <div class="pill"><div class="d" style="background:var(--ok)"></div><span id="p-ok">0</span></div>
+  <div class="pill"><div class="d" style="background:var(--err)"></div><span id="p-err">0</span></div>
+  <div class="pill"><div class="d" style="background:#475569"></div><span id="p-ser">0</span></div>
+  <div class="hdr-right">
+    <button class="mode-btn active" data-mode="adaptive">적응형</button>
+    <button class="mode-btn" data-mode="vertical">세로</button>
+    <button class="mode-btn" data-mode="horizontal">가로</button>
+    <div class="hdr-clock" id="clock">--:--:--</div>
+  </div>
+</div>
+
+<div class="canvas-wrap" id="canvasWrap">
+  <svg id="svg"></svg>
+  <div class="tooltip" id="tooltip"></div>
+
+  <div class="zoom-ctrl">
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <div class="zoom-pct" id="zoomPct">100%</div>
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <button class="zoom-btn" id="zoomFit" style="margin-top:4px;">⊡</button>
+  </div>
+
+  <div class="legend" id="legend"></div>
+  <div class="mode-desc" id="modeDesc"></div>
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────
+const LAYER_CONFIG = [
+  { types: ['제어망','업무망'], label:'CORE · 제어/업무망', c:'56,189,248' },
+  { types: ['가압장'],        label:'가압장',           c:'251,191,36' },
+  { types: ['배수지'],        label:'배수지',           c:'52,211,153' },
+  { types: ['소블록','소소블록'], label:'소블록·소소블록',   c:'167,139,250' },
+  { types: ['수압계실','유량계실'], label:'수압계실·유량계실', c:'6,182,212' },
+];
+
+const FTYPE_COLOR = {
+  '제어망':'#38bdf8','업무망':'#38bdf8','가압장':'#fbbf24','배수지':'#34d399',
+  '소블록':'#a78bfa','소소블록':'#a78bfa','수압계실':'#06b6d4','유량계실':'#06b6d4',
+};
+
+const PROTO_STYLE = {
+  sslvpn:         { c:'#3b82f6', w:2,   dash:'' },
+  xgt_glofa_enet: { c:'#14b8a6', w:1.5, dash:'' },
+  modbus_rtu:     { c:'#475569', w:1,   dash:'4 3' },
+  oneway_diode:   { c:'#ef4444', w:2.5, dash:'' },
+  unknown:        { c:'#334155', w:1,   dash:'2 2' },
+};
+
+const PROTO_LABEL = {
+  sslvpn:'SSL VPN', xgt_glofa_enet:'Ethernet', modbus_rtu:'Modbus RTU', oneway_diode:'일방향 다이오드',
+};
+
+const NS = 'http://www.w3.org/2000/svg';
+const NW = 72, NH = 28;
+const SITE_PAD = 12, SITE_GAP = 20, NODE_GAP_X = 6, NODE_GAP_Y = 6, PAD = 50;
+const MAX_COLS_CLUSTER = 3;
+
+// ─── State ────────────────────────────────────────────────────────
+let nodes = [], edges = [], nodeMap = new Map();
+let currentMode = 'adaptive';
+let zoom = 1, panX = 0, panY = 0;
+let dragActive = false, dragLX = 0, dragLY = 0;
+let selectedNodeId = null;
+
+// ─── DOM ──────────────────────────────────────────────────────────
+const svg = document.getElementById('svg');
+const wrap = document.getElementById('canvasWrap');
+const tooltip = document.getElementById('tooltip');
+
+// ─── SVG Utils ────────────────────────────────────────────────────
+function el(tag, attrs={}) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function hexRgb(hex) {
+  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)].join(',');
+}
+
+// ─── Data Loading ─────────────────────────────────────────────────
+async function loadData() {
+  try {
+    const res = await fetch('http://localhost:8000/network/topology');
+    const json = await res.json();
+    const data = json.data || json;
+    nodes = data.nodes || [];
+    edges = data.edges || [];
+    nodeMap = new Map(nodes.map(n => [n.id, n]));
+
+    // 통계
+    let ok=0, err=0, ser=0;
+    for (const n of nodes) {
+      if (!n.has_ip) ser++;
+      else if (n.status==='이상') err++;
+      else ok++;
+    }
+    document.getElementById('p-ok').textContent = ok;
+    document.getElementById('p-err').textContent = err;
+    document.getElementById('p-ser').textContent = ser;
+
+    render();
+  } catch (e) {
+    console.error('Failed to load topology:', e);
+  }
+}
+
+// ─── Cluster Size Calc ────────────────────────────────────────────
+function clusterSize(count) {
+  const cols = Math.min(MAX_COLS_CLUSTER, count);
+  const rows = Math.ceil(count / cols);
+  return {
+    w: cols * NW + (cols - 1) * NODE_GAP_X + SITE_PAD * 2,
+    h: rows * NH + (rows - 1) * NODE_GAP_Y + SITE_PAD * 2 + 16,
+    cols, rows,
+  };
+}
+
+// ─── 레이어별 사이트 그룹화 (공용) ────────────────────────────────
+function groupActiveLayers() {
+  const activeLayers = [];
+  for (const lc of LAYER_CONFIG) {
+    const layerNodes = nodes.filter(n => lc.types.includes(n.category));
+    if (!layerNodes.length) continue;
+    const siteMap = new Map();
+    for (const n of layerNodes) {
+      if (!siteMap.has(n.sitename)) siteMap.set(n.sitename, []);
+      siteMap.get(n.sitename).push(n);
+    }
+    const sorted = [...siteMap.entries()].sort((a,b) => {
+      const aE = a[1].some(n => n.has_ip && n.status==='이상');
+      const bE = b[1].some(n => n.has_ip && n.status==='이상');
+      if (aE !== bE) return aE ? -1 : 1;
+      return a[0].localeCompare(b[0], 'ko');
+    });
+    activeLayers.push({ config: lc, sites: sorted, nodeCount: layerNodes.length });
+  }
+  return activeLayers;
+}
+
+// ─── 레이어 내부 사이트 배치 (지정 폭 내 래핑) ────────────────────
+function layoutSitesInBand(layer, startX, startY, targetW, nodePos) {
+  let curX = startX;
+  let curY = startY + 20;
+  let rowMaxH = 0;
+  let maxW = 0;
+
+  for (const [sitename, siteNodes] of layer.sites) {
+    const cs = clusterSize(siteNodes.length);
+
+    if (curX + cs.w > startX + targetW && curX > startX) {
+      curY += rowMaxH + SITE_GAP * 0.6;
+      curX = startX;
+      rowMaxH = 0;
+    }
+
+    const cols = cs.cols;
+    for (let i = 0; i < siteNodes.length; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      nodePos.set(siteNodes[i].id, {
+        x: curX + SITE_PAD + col * (NW + NODE_GAP_X),
+        y: curY + 16 + SITE_PAD + row * (NH + NODE_GAP_Y),
+        w: NW, h: NH,
+        clusterX: curX, clusterY: curY, clusterW: cs.w, clusterH: cs.h,
+        sitename,
+      });
+    }
+
+    rowMaxH = Math.max(rowMaxH, cs.h);
+    maxW = Math.max(maxW, curX + cs.w - startX);
+    curX += cs.w + SITE_GAP * 0.7;
+  }
+
+  const totalH = curY - startY + rowMaxH + 24;
+  return { usedW: maxW, usedH: totalH };
+}
+
+// ─── Adaptive Layout (고정 3열 + 높이 균등) ─────────────────────
+// 컬럼 순서: 제어/업무망 → 가압장 → 소블록·소소블록 (좌→우)
+// 나머지 레이어(배수지, 수압계실)는 가장 짧은 컬럼 하단에 배치.
+// 모든 컬럼 높이를 최대 높이에 맞춰 균등화 (밴드 하단 정렬).
+function computeAdaptiveLayout() {
+  const vw = wrap.clientWidth;
+  const vh = wrap.clientHeight;
+  const activeLayers = groupActiveLayers();
+  if (!activeLayers.length) return { nodePos: new Map(), svgW: 800, svgH: 600, layerInfos: [] };
+
+  const COL_GAP = 24;
+  const ROW_GAP = 16;
+  const numCols = 3;
+
+  // 레이어 인덱스 매핑 (LAYER_CONFIG 순서 기준)
+  // 0: 제어/업무망, 1: 가압장, 2: 배수지, 3: 소블록·소소블록, 4: 수압계실·유량계실
+  const PRIMARY_COL = [0, 1, 3]; // 각 컬럼의 주요 레이어 인덱스
+  const columns = Array.from({ length: numCols }, () => ({ layerIdxs: [], totalH: 0 }));
+
+  // 1단계: 주요 레이어를 지정 컬럼에 배치
+  for (let c = 0; c < numCols; c++) {
+    const idx = PRIMARY_COL[c];
+    if (idx < activeLayers.length) {
+      columns[c].layerIdxs.push(idx);
+    }
+  }
+
+  // 2단계: 최적 컬럼 폭 탐색 (뷰포트 비율 매칭)
+  const vpAspect = vw / vh;
+  let bestColW = 800, bestScore = Infinity;
+
+  for (let colW = 500; colW <= 1200; colW += 50) {
+    // 주요 레이어 높이 측정
+    const colHeights = columns.map(col => {
+      let h = 0;
+      for (const idx of col.layerIdxs) {
+        const tempPos = new Map();
+        const { usedH } = layoutSitesInBand(activeLayers[idx], 0, 0, colW, tempPos);
+        h += usedH + ROW_GAP;
+      }
+      return h;
+    });
+
+    // 나머지 레이어를 가장 짧은 컬럼에 배분 (시뮬레이션)
+    const assigned = new Set(PRIMARY_COL.filter(i => i < activeLayers.length));
+    const simHeights = [...colHeights];
+    for (let i = 0; i < activeLayers.length; i++) {
+      if (assigned.has(i)) continue;
+      const tempPos = new Map();
+      const { usedH } = layoutSitesInBand(activeLayers[i], 0, 0, colW, tempPos);
+      let minCol = 0;
+      for (let c = 1; c < numCols; c++) {
+        if (simHeights[c] < simHeights[minCol]) minCol = c;
+      }
+      simHeights[minCol] += usedH + ROW_GAP;
+    }
+
+    const maxH = Math.max(...simHeights);
+    const totalW = numCols * colW + (numCols - 1) * COL_GAP + PAD * 2;
+    const svgH = maxH + PAD * 2;
+    const svgAspect = totalW / svgH;
+    const score = Math.abs(Math.log(svgAspect / vpAspect));
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestColW = colW;
+    }
+  }
+
+  const colW = bestColW;
+
+  // 3단계: 최적 폭에서 주요 레이어 높이 측정
+  for (const col of columns) {
+    col.totalH = 0;
+    for (const idx of col.layerIdxs) {
+      const tempPos = new Map();
+      const { usedH } = layoutSitesInBand(activeLayers[idx], 0, 0, colW, tempPos);
+      col.totalH += usedH + ROW_GAP;
+    }
+  }
+
+  // 4단계: 나머지 레이어를 가장 짧은 컬럼에 배분
+  const assigned = new Set(PRIMARY_COL.filter(i => i < activeLayers.length));
+  for (let i = 0; i < activeLayers.length; i++) {
+    if (assigned.has(i)) continue;
+    const tempPos = new Map();
+    const { usedH } = layoutSitesInBand(activeLayers[i], 0, 0, colW, tempPos);
+    let minCol = 0;
+    for (let c = 1; c < numCols; c++) {
+      if (columns[c].totalH < columns[minCol].totalH) minCol = c;
+    }
+    columns[minCol].layerIdxs.push(i);
+    columns[minCol].totalH += usedH + ROW_GAP;
+  }
+
+  // 5단계: 최대 높이 확인 → 균등화용 여백 계산
+  const maxColH = Math.max(...columns.map(c => c.totalH));
+
+  // 6단계: 실제 좌표 할당 (균등 높이)
+  const nodePos = new Map();
+  const layerInfos = [];
+  const totalW = numCols * colW + (numCols - 1) * COL_GAP + PAD * 2;
+
+  for (let c = 0; c < numCols; c++) {
+    const colX = PAD + c * (colW + COL_GAP);
+    const layerCount = columns[c].layerIdxs.length;
+    // 컬럼 내 레이어 간 균등 여백 배분
+    const contentH = columns[c].totalH - layerCount * ROW_GAP;
+    const extraSpace = maxColH - contentH;
+    const gapPerSlot = layerCount > 0 ? extraSpace / layerCount : 0;
+
+    let curY = PAD;
+
+    for (const idx of columns[c].layerIdxs) {
+      const layer = activeLayers[idx];
+      const { usedW, usedH } = layoutSitesInBand(layer, colX, curY, colW, nodePos);
+
+      layerInfos.push({
+        config: layer.config,
+        sites: layer.sites,
+        bandX: colX - 6,
+        bandY: curY - 10,
+        bandW: Math.max(usedW, colW) + 12,
+        bandH: usedH + gapPerSlot + 10,
+      });
+
+      curY += usedH + gapPerSlot;
+    }
+  }
+
+  const svgH = maxColH + PAD * 2;
+  return {
+    nodePos, svgW: totalW, svgH, layerInfos,
+    _numCols: numCols, _colW: colW,
+  };
+}
+
+// ─── Vertical Layout (기존 세로 스택) ─────────────────────────────
+function computeVerticalLayout() {
+  const TARGET_W = 1800;
+  const LAYER_GAP = 80;
+  const nodePos = new Map();
+  const layerInfos = [];
+  const activeLayers = groupActiveLayers();
+
+  let curY = PAD;
+  for (const layer of activeLayers) {
+    const { usedW, usedH } = layoutSitesInBand(layer, PAD, curY, TARGET_W, nodePos);
+    layerInfos.push({ config: layer.config, sites: layer.sites,
+      bandX: 0, bandY: curY - 10, bandW: usedW + PAD * 2, bandH: usedH + 10 });
+    curY += usedH + LAYER_GAP * 0.6;
+  }
+  const svgW = Math.max(...layerInfos.map(l => l.bandW + 20), 800);
+  const svgH = curY + PAD;
+  return { nodePos, svgW, svgH, layerInfos };
+}
+
+// ─── Horizontal Layout (가로 스택) ────────────────────────────────
+function computeHorizontalLayout() {
+  const LAYER_GAP = 40;
+  const nodePos = new Map();
+  const layerInfos = [];
+  const activeLayers = groupActiveLayers();
+
+  let curX = PAD;
+  for (const layer of activeLayers) {
+    const bandX = curX;
+    let colY = PAD + 20, maxW = 0;
+
+    for (const [sitename, siteNodes] of layer.sites) {
+      const cs = clusterSize(siteNodes.length);
+      const cols = cs.cols;
+      for (let i = 0; i < siteNodes.length; i++) {
+        const col = i % cols, row = Math.floor(i / cols);
+        nodePos.set(siteNodes[i].id, {
+          x: curX + SITE_PAD + col*(NW+NODE_GAP_X),
+          y: colY + 16 + SITE_PAD + row*(NH+NODE_GAP_Y),
+          w: NW, h: NH,
+          clusterX: curX, clusterY: colY, clusterW: cs.w, clusterH: cs.h,
+          sitename,
+        });
+      }
+      maxW = Math.max(maxW, cs.w);
+      colY += cs.h + SITE_GAP * 0.5;
+    }
+
+    const totalW = maxW + 20;
+    layerInfos.push({ config: layer.config, sites: layer.sites, bandX: bandX - 8, bandY: PAD - 10, bandW: totalW, bandH: colY - PAD + 20 });
+    curX += totalW + LAYER_GAP;
+  }
+
+  const svgW = curX + PAD;
+  const svgH = Math.max(...layerInfos.map(l => l.bandH + PAD * 2), 600);
+  return { nodePos, svgW, svgH, layerInfos };
+}
+
+// ─── Main Render ──────────────────────────────────────────────────
+function render() {
+  let layout;
+  if (currentMode === 'vertical') layout = computeVerticalLayout();
+  else if (currentMode === 'horizontal') layout = computeHorizontalLayout();
+  else layout = computeAdaptiveLayout();
+
+  const { nodePos, svgW, svgH, layerInfos } = layout;
+
+  svg.innerHTML = '';
+  svg.setAttribute('width', svgW);
+  svg.setAttribute('height', svgH);
+
+  // Defs
+  const defs = el('defs');
+  const f = el('filter', {id:'glow', x:'-30%', y:'-30%', width:'160%', height:'160%'});
+  f.innerHTML = '<feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>';
+  defs.appendChild(f);
+  svg.appendChild(defs);
+
+  const bgG = el('g', {id:'bg-group'});
+  const clG = el('g', {id:'cluster-group'});
+  const lkG = el('g', {id:'link-group'});
+  const ndG = el('g', {id:'node-group'});
+  svg.appendChild(bgG); svg.appendChild(clG); svg.appendChild(lkG); svg.appendChild(ndG);
+
+  // 레이어 밴드
+  for (const li of layerInfos) {
+    const { c, label } = li.config;
+    bgG.appendChild(el('rect', {
+      x: String(li.bandX), y: String(li.bandY),
+      width: String(li.bandW), height: String(li.bandH),
+      rx: '8', fill: `rgba(${c},.03)`,
+      stroke: `rgba(${c},.08)`, 'stroke-width':'1',
+    }));
+    const t = el('text', {
+      x: String(li.bandX + 10), y: String(li.bandY + 14),
+      fill: `rgba(${c},.45)`,
+      'font-family':'ui-monospace, monospace','font-size':'10',
+      'font-weight':'700','letter-spacing':'0.08em',
+    });
+    t.textContent = label;
+    bgG.appendChild(t);
+  }
+
+  // 사이트 클러스터
+  const drawnClusters = new Set();
+  for (const n of nodes) {
+    const p = nodePos.get(n.id);
+    if (!p) continue;
+    const key = `${p.clusterX},${p.clusterY}`;
+    if (drawnClusters.has(key)) continue;
+    drawnClusters.add(key);
+
+    const fc = FTYPE_COLOR[n.category] || '#6b7280';
+    const rgb = hexRgb(fc);
+    clG.appendChild(el('rect', {
+      x: String(p.clusterX), y: String(p.clusterY),
+      width: String(p.clusterW), height: String(p.clusterH),
+      rx:'6', fill:`rgba(${rgb},.03)`, stroke:`rgba(${rgb},.12)`, 'stroke-width':'1',
+    }));
+    const lbl = el('text', {
+      x: String(p.clusterX + 8), y: String(p.clusterY + 11),
+      fill:`rgba(${rgb},.6)`, 'font-size':'9', 'font-weight':'700',
+    });
+    lbl.textContent = p.sitename;
+    clG.appendChild(lbl);
+  }
+
+  // 링크 렌더링
+  renderLinks(lkG, nodePos);
+
+  // 노드 렌더링
+  for (const n of nodes) {
+    const p = nodePos.get(n.id);
+    if (!p) continue;
+    const nc = FTYPE_COLOR[n.category] || '#6b7280';
+    const isSerial = !n.has_ip;
+    const isErr = n.has_ip && n.status === '이상';
+    const sc = n.has_ip ? (n.status === '이상' ? '#ef4444' : '#22c55e') : '#1e3a5f';
+    const rgb = hexRgb(nc);
+
+    const g = el('g', {class:'node-g', 'data-id':n.id});
+
+    if (isErr) {
+      const glow = el('rect', {
+        x: String(p.x-3), y: String(p.y-3), width: String(NW+6), height: String(NH+6),
+        rx:'7', fill:'#ef4444', opacity:'.1',
+      });
+      glow.style.animation = 'blink .8s ease-in-out infinite';
+      g.appendChild(glow);
+    }
+
+    g.appendChild(el('rect', {
+      x: String(p.x), y: String(p.y), width: String(NW), height: String(NH),
+      rx:'4', fill:`rgba(${rgb},${isSerial?'.05':'.12'})`,
+      stroke:nc, 'stroke-width': isSerial?'0.5':'1',
+      'stroke-opacity': isSerial?'.2':'.5', class:'node-rect',
+    }));
+
+    g.appendChild(el('rect', {
+      x: String(p.x+1), y: String(p.y+1), width: String(NW-2), height:'2',
+      rx:'4', fill:nc, opacity: isSerial?'.2':'.6',
+    }));
+
+    const shortType = n.equipmenttype.length > 10 ? n.equipmenttype.slice(0,9)+'…' : n.equipmenttype;
+    const nameTxt = el('text', {
+      x: String(p.x+5), y: String(p.y+12), 'font-size':'8',
+      fill: isSerial ? '#2d4a6e' : '#cbd5e1', 'font-weight':'600',
+    });
+    nameTxt.textContent = shortType;
+    g.appendChild(nameTxt);
+
+    const ipTxt = el('text', {
+      x: String(p.x+5), y: String(p.y+22), 'font-size':'7',
+      fill:'#2d4a6e', 'font-family':'ui-monospace, monospace',
+    });
+    const ipStr = n.ip_address || '';
+    ipTxt.textContent = ipStr ? (ipStr.length > 15 ? ipStr.slice(0,14)+'…' : ipStr) : 'serial';
+    g.appendChild(ipTxt);
+
+    if (n.has_ip) {
+      const dot = el('circle', {
+        cx: String(p.x+NW-6), cy: String(p.y+7), r:'3', fill:sc, filter:'url(#glow)',
+      });
+      if (isErr) dot.style.animation = 'blink .6s ease-in-out infinite';
+      g.appendChild(dot);
+    }
+
+    g.addEventListener('click', (ev) => { ev.stopPropagation(); selectNode(n.id); });
+    ndG.appendChild(g);
+  }
+
+  // 모드 설명
+  const modeDescs = {
+    adaptive: `적응형 — VP ${wrap.clientWidth}×${wrap.clientHeight}px → ${layout._numCols || '?'}열×${layout._colW || '?'}px (SVG ${svgW}×${svgH})`,
+    vertical: '세로 — 레이어를 위→아래 수직 스택',
+    horizontal: '가로 — 레이어를 왼→오 수평 스택',
+  };
+  document.getElementById('modeDesc').textContent = modeDescs[currentMode] || '';
+
+  // fitView
+  fitView();
+
+  // 범례 갱신
+  buildLegend();
+}
+
+// ─── Link Rendering ───────────────────────────────────────────────
+function renderLinks(lkG, nodePos) {
+  const sitePairLinks = new Map();
+  const intraSiteLinks = [];
+
+  for (const e of edges) {
+    const sp = nodePos.get(e.source), tp = nodePos.get(e.target);
+    if (!sp || !tp) continue;
+
+    if (sp.sitename === tp.sitename) {
+      if (e.link_protocol !== 'modbus_rtu') intraSiteLinks.push(e);
+      continue;
+    }
+
+    // 시설유형별 분리 집약 — 같은 사이트라도 시설유형이 다르면 별도 링크
+    const sn = nodeMap.get(e.source), tn = nodeMap.get(e.target);
+    const sCat = sn?.category || '', tCat = tn?.category || '';
+    const key = `${sp.sitename}:${sCat}|${tp.sitename}:${tCat}|${e.link_protocol}`;
+    if (!sitePairLinks.has(key)) {
+      sitePairLinks.set(key, { sSite:sp.sitename, tSite:tp.sitename,
+        sCat, tCat, proto:e.link_protocol,
+        count:0, hasErr:false, sourceIds:new Set(), targetIds:new Set() });
+    }
+    const agg = sitePairLinks.get(key);
+    agg.count++;
+    agg.sourceIds.add(e.source);
+    agg.targetIds.add(e.target);
+    if ((sn?.has_ip && sn?.status==='이상') || (tn?.has_ip && tn?.status==='이상')) agg.hasErr = true;
+  }
+
+  for (const [, agg] of sitePairLinks) {
+    // 해당 시설유형의 노드에서 클러스터 중심 계산
+    const sNodes = nodes.filter(n => n.sitename===agg.sSite && n.category===agg.sCat && nodePos.has(n.id));
+    const tNodes = nodes.filter(n => n.sitename===agg.tSite && n.category===agg.tCat && nodePos.has(n.id));
+    if (!sNodes.length || !tNodes.length) continue;
+
+    const sp0 = nodePos.get(sNodes[0].id), tp0 = nodePos.get(tNodes[0].id);
+    const x1 = sp0.clusterX + sp0.clusterW/2, y1 = sp0.clusterY + sp0.clusterH/2;
+    const x2 = tp0.clusterX + tp0.clusterW/2, y2 = tp0.clusterY + tp0.clusterH/2;
+    const ps = PROTO_STYLE[agg.proto] || PROTO_STYLE.unknown;
+    const lc = agg.hasErr ? '#ef4444' : ps.c;
+
+    const g = el('g', { class:'link-g', 'data-s':[...agg.sourceIds].join(','),
+      'data-t':[...agg.targetIds].join(','), 'data-s-site':agg.sSite, 'data-t-site':agg.tSite });
+
+    const dy = Math.abs(y2-y1), dx = x2-x1;
+    let pathD;
+    if (dy > 40) {
+      pathD = `M${x1},${y1} C${x1},${y1+dy*.35} ${x2},${y2-dy*.35} ${x2},${y2}`;
+    } else {
+      const mx = (x1+x2)/2, my = (y1+y2)/2 - Math.min(Math.abs(dx)*.12, 30);
+      pathD = `M${x1},${y1} Q${mx},${my} ${x2},${y2}`;
+    }
+
+    const lw = Math.min(ps.w + Math.log2(agg.count+1)*.5, 4);
+    g.appendChild(el('path', { d:pathD, fill:'none', stroke:lc, 'stroke-width':String(lw+3), opacity:'.03' }));
+
+    const mAttrs = { d:pathD, fill:'none', stroke:lc, 'stroke-width':String(lw), opacity:'.35' };
+    if (ps.dash) mAttrs['stroke-dasharray'] = ps.dash;
+
+    if (agg.hasErr) {
+      const fl = el('path', { ...mAttrs, 'stroke-dasharray':'6 4', opacity:'.6' });
+      fl.style.animation = 'flow 0.8s linear infinite';
+      g.appendChild(fl);
+    } else {
+      g.appendChild(el('path', mAttrs));
+    }
+
+    if (agg.count > 2) {
+      const mx=(x1+x2)/2, my=(y1+y2)/2-5;
+      const lb = el('text', { x:String(mx), y:String(my), fill:lc, opacity:'.4',
+        'font-size':'7', 'font-family':'ui-monospace, monospace', 'text-anchor':'middle' });
+      lb.textContent = `×${agg.count}`;
+      g.appendChild(lb);
+    }
+
+    lkG.appendChild(g);
+  }
+
+  for (const e of intraSiteLinks) {
+    const sp = nodePos.get(e.source), tp = nodePos.get(e.target);
+    if (!sp || !tp) continue;
+    const ps = PROTO_STYLE[e.link_protocol] || PROTO_STYLE.unknown;
+    const sn = nodeMap.get(e.source), tn = nodeMap.get(e.target);
+    const worstErr = (sn?.has_ip && sn?.status==='이상') || (tn?.has_ip && tn?.status==='이상');
+    const lc = worstErr ? '#ef4444' : ps.c;
+    const g = el('g', { class:'link-g', 'data-s':e.source, 'data-t':e.target });
+    g.appendChild(el('path', {
+      d:`M${sp.x+sp.w/2},${sp.y+sp.h/2} L${tp.x+tp.w/2},${tp.y+tp.h/2}`,
+      fill:'none', stroke:lc, 'stroke-width':String(ps.w*.7), opacity:'.2',
+    }));
+    lkG.appendChild(g);
+  }
+}
+
+// ─── Node Select / Highlight ──────────────────────────────────────
+function selectNode(nodeId) {
+  if (nodeId === selectedNodeId) { clearHighlight(); selectedNodeId = null; return; }
+  selectedNodeId = nodeId;
+
+  const n = nodeMap.get(nodeId);
+  if (!n) return;
+
+  const adj = new Set([nodeId]);
+  for (const e of edges) {
+    if (e.source === nodeId) adj.add(e.target);
+    if (e.target === nodeId) adj.add(e.source);
+  }
+  for (const nd of nodes) {
+    if (nd.sitename === n.sitename) adj.add(nd.id);
+  }
+
+  svg.querySelectorAll('.node-g').forEach(g => {
+    const nid = g.dataset.id;
+    if (adj.has(nid)) { g.classList.remove('dimmed'); g.classList.add('highlight'); }
+    else { g.classList.add('dimmed'); g.classList.remove('highlight'); }
+  });
+  svg.querySelectorAll('.link-g').forEach(g => {
+    const sIds = (g.dataset.s||'').split(',');
+    const tIds = (g.dataset.t||'').split(',');
+    const sSite = g.dataset.sSite||'', tSite = g.dataset.tSite||'';
+    const connected = sIds.some(s=>adj.has(s)) || tIds.some(t=>adj.has(t)) || sSite===n.sitename || tSite===n.sitename;
+    if (connected) { g.classList.remove('dimmed'); g.classList.add('highlight'); }
+    else { g.classList.add('dimmed'); g.classList.remove('highlight'); }
+  });
+}
+
+function clearHighlight() {
+  svg.querySelectorAll('.node-g,.link-g').forEach(g => g.classList.remove('dimmed','highlight'));
+}
+
+// ─── Pan / Zoom ───────────────────────────────────────────────────
+function applyTransform() {
+  svg.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  document.getElementById('zoomPct').textContent = Math.round(zoom*100)+'%';
+}
+
+function fitView() {
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  const sw = +svg.getAttribute('width'), sh = +svg.getAttribute('height');
+  const z = Math.min((ww-20)/sw, (wh-20)/sh, 1.5) * 0.95;
+  zoom = z;
+  panX = 10;
+  panY = (wh - sh*z)/2;
+  applyTransform();
+}
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.node-g,.zoom-ctrl,.legend')) return;
+  dragActive = true; dragLX = e.clientX; dragLY = e.clientY;
+  wrap.classList.add('dragging');
+});
+window.addEventListener('mousemove', e => {
+  // 툴팁
+  if (!dragActive) {
+    const nodeG = e.target.closest?.('.node-g');
+    if (nodeG) {
+      const n = nodeMap.get(nodeG.dataset.id);
+      if (n) {
+        const fc = FTYPE_COLOR[n.category] || '#6b7280';
+        const sc = n.has_ip ? (n.status==='이상'?'#ef4444':'#22c55e') : '#475569';
+        tooltip.innerHTML = `<div style="font-weight:700;color:${fc}">${n.sitename} ${n.category}</div>` +
+          `<div style="color:#94a3b8">${n.equipmenttype} · <span style="color:${sc}">${n.has_ip?(n.status||'—'):'시리얼'}</span></div>` +
+          (n.ip_address ? `<div style="font-family:monospace;font-size:9px;color:#475569">${n.ip_address}</div>` : '');
+        tooltip.style.left = (e.clientX+14)+'px';
+        tooltip.style.top = (e.clientY-10)+'px';
+        tooltip.style.opacity = '1';
+      }
+    } else { tooltip.style.opacity = '0'; }
+  }
+  if (!dragActive) return;
+  panX += e.clientX - dragLX; panY += e.clientY - dragLY;
+  dragLX = e.clientX; dragLY = e.clientY;
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { dragActive = false; wrap.classList.remove('dragging'); });
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = wrap.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const oz = zoom;
+  let nz = oz * (e.deltaY < 0 ? 1.12 : 0.89);
+  nz = Math.max(0.08, Math.min(5, nz));
+  zoom = nz;
+  panX = mx - (mx - panX) * nz / oz;
+  panY = my - (my - panY) * nz / oz;
+  applyTransform();
+}, {passive:false});
+
+wrap.addEventListener('click', e => {
+  if (!e.target.closest('.node-g,.zoom-ctrl,.legend')) { clearHighlight(); selectedNodeId = null; }
+});
+
+document.getElementById('zoomIn').addEventListener('click', () => { zoom = Math.min(5, zoom*1.2); applyTransform(); });
+document.getElementById('zoomOut').addEventListener('click', () => { zoom = Math.max(0.08, zoom*.83); applyTransform(); });
+document.getElementById('zoomFit').addEventListener('click', fitView);
+
+// ─── Mode Buttons ─────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMode = btn.dataset.mode;
+    selectedNodeId = null;
+    render();
+  });
+});
+
+// ─── Resize ───────────────────────────────────────────────────────
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (currentMode === 'adaptive') render();
+    else fitView();
+  }, 200);
+});
+
+// ─── Legend ────────────────────────────────────────────────────────
+function buildLegend() {
+  const legendEl = document.getElementById('legend');
+  legendEl.innerHTML = '';
+
+  const usedTypes = new Set(nodes.map(n=>n.category));
+  const usedProtos = new Set(edges.map(e=>e.link_protocol));
+
+  let html = '<div class="legend-lbl">시설 유형</div>';
+  for (const [ft, c] of Object.entries(FTYPE_COLOR)) {
+    if (!usedTypes.has(ft)) continue;
+    html += `<div class="legend-item"><div class="legend-dot" style="background:${c}"></div>${ft}</div>`;
+  }
+  html += '<div class="legend-lbl">프로토콜</div>';
+  for (const [proto, style] of Object.entries(PROTO_STYLE)) {
+    if (proto==='unknown' || !usedProtos.has(proto)) continue;
+    const border = style.dash ? `2px dashed ${style.c}` : `2px solid ${style.c}`;
+    html += `<div class="legend-item"><div class="legend-line" style="border-top:${border}"></div>${PROTO_LABEL[proto]||proto}</div>`;
+  }
+  html += '<div class="legend-lbl">상태</div>';
+  html += '<div class="legend-item"><div class="legend-dot" style="background:#22c55e;border-radius:50%"></div>정상</div>';
+  html += '<div class="legend-item"><div class="legend-dot" style="background:#ef4444;border-radius:50%"></div>이상</div>';
+
+  legendEl.innerHTML = html;
+}
+
+// ─── Clock ────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('ko-KR',{hour12:false});
+}, 1000);
+
+// ─── Init ─────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
