@@ -2,6 +2,19 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — VisionAdviceCard fault_cases 섹션 렌더) [P3 후속]
+
+P3 백엔드가 채운 `DiagnoseResponse.fault_cases` 를 진단 카드 UI 에 표시.
+
+- `types/chat.ts` — `VisionFaultCase` 인터페이스 + `VisionAdvice.fault_cases[]`
+- `VisionAdviceCard.tsx` — "관련 고장 케이스 · N건" 섹션 (Wrench 아이콘).
+  매뉴얼 인용(BookOpen)보다 앞에 배치. 케이스당 case_id + equipment_type Badge +
+  brand/model + severity Badge + score(3자리) + 증상/원인/조치 3단 라벨드 행.
+- **E2E** (`p3-vision-card-fault-cases.png`): PLC ERR LED 쿼리에 3건 노출
+  (#1 PLC 0.622 / #4 모뎀 0.478 / #3 RTU 0.459)
+
+커밋: `slm-dashboard@dad3e31`
+
 ### 완료 (2026-04-19 — 고장 진단 케이스 DB + RAG 통합 P3) [B+C 병행]
 
 **배경:** 사용자 추천 결정 "A+B 병행 + C 엑셀 IMPORT/EXPORT 포함". 진단 품질의
