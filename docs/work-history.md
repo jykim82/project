@@ -10,7 +10,7 @@
 
 **구현:**
 
-Migration (`web@TBD` / `0048_fault_case.sql`)
+Migration (`web@ece49d4` / `0048_fault_case.sql`)
 - `tb_fault_case` — case_id/equipment_type/brand/model/symptom/cause/action/
   severity/reference_url/notes/is_active/created_by/created_at/updated_at +
   embedding_key. 화이트리스트/심각도 CHECK + UNIQUE(equipment_type, brand, model,
