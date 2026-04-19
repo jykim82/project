@@ -73,6 +73,11 @@ EMBEDDINGS_DIR = os.environ.get(
     "EMBEDDINGS_DIR",
     os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "manual_embeddings")),
 )
+# [P3-F] 고장 케이스 RAG — fault_case 엔드포인트와 동일 NPZ 디렉터리
+FAULT_CASE_EMBEDDINGS_DIR = os.environ.get(
+    "FAULT_CASE_EMBEDDINGS_DIR",
+    os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "fault_case_embeddings")),
+)
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "snowflake-arctic-embed2:latest")
 
 DB_HOST = os.environ.get("DB_HOST", "timescaledb")
@@ -146,6 +151,20 @@ class ActiveAlarm(BaseModel):
     duration_hours: Optional[float] = None
 
 
+class FaultCaseHit(BaseModel):
+    """[P3-F] tb_fault_case 검색 결과 1건."""
+    case_id: int
+    equipment_type: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    symptom: str
+    cause: Optional[str] = None
+    action: Optional[str] = None
+    severity: Optional[str] = None
+    reference_url: Optional[str] = None
+    score: float
+
+
 class DiagnoseResponse(BaseModel):
     equipment_guess: str
     equipment_type: str
@@ -155,6 +174,8 @@ class DiagnoseResponse(BaseModel):
     observed_state: list[str]
     advice_text: str
     manual_excerpts: list[ManualExcerpt] = []
+    # [P3-F] 고장 케이스 DB 검색 결과 — 매뉴얼보다 우선 표시
+    fault_cases: list[FaultCaseHit] = []
     is_registered: bool = False
     matched_equipment_id: Optional[str] = None
     sitename: Optional[str] = None
@@ -452,9 +473,19 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
 
     # [E-025 P3] 매뉴얼 RAG — 장비 식별 성공 시에만 검색
     manual_excerpts_raw: list[dict] = []
+    # [P3-F] 고장 케이스 RAG — 매뉴얼보다 우선. equipment_type 이 기타여도 증상 기반으로 일부 매치 가능.
+    fault_cases_raw: list[dict] = []
     if equipment_guess and equipment_guess != "식별 실패" and equipment_type != "기타":
         manual_excerpts_raw = _retrieve_manual_excerpts(
             equipment_guess=equipment_guess,
+            equipment_type=equipment_type,
+            brand=brand,
+            observed_state=observed_state,
+            user_text=req.user_text,
+            top_k=3,
+        )
+    if equipment_type != "기타" or observed_state:
+        fault_cases_raw = _retrieve_fault_cases(
             equipment_type=equipment_type,
             brand=brand,
             observed_state=observed_state,
@@ -503,6 +534,7 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
         observed_state=observed_state,
         advice_text=advice,
         manual_excerpts=[ManualExcerpt(**e) for e in manual_excerpts_raw],
+        fault_cases=[FaultCaseHit(**c) for c in fault_cases_raw],
         is_registered=bool(matched_equipment_id),
         matched_equipment_id=matched_equipment_id,
         has_issue=has_issue,
@@ -974,6 +1006,151 @@ def _fetch_active_alarms(
     return results
 
 
+# ─────────────────────────────────────────────────────────────────────
+# [P3-F] tb_fault_case RAG 인덱스 (NPZ + DB 메타 조인)
+# ─────────────────────────────────────────────────────────────────────
+
+class _FaultCaseIndex:
+    """tb_fault_case + data/fault_case_embeddings/ NPZ 를 메모리에 로드.
+
+    매뉴얼 인덱스와 구조 동일. 차이:
+      - 1케이스 = 1 벡터 (청크 X)
+      - symptom/cause/action 결합 텍스트로 임베딩
+      - equipment_type/brand/model 메타로 boost
+    """
+    def __init__(self) -> None:
+        self._loaded_count: int = -1  # -1 = 아직 로드 안 함
+        self._embeddings: Optional[np.ndarray] = None
+        self._rows: list[dict] = []
+
+    def reload(self) -> None:
+        """DB 변경이 있을 때 강제 재로드. 매 진단 요청마다 호출 비용 낮추려면
+        `_fault_case_index.load()` 대신 `_FaultCaseIndex.reload_if_stale()` 같은
+        경량 API 추가 가능 — 현재는 in-memory 캐시를 그대로 사용.
+        """
+        self._loaded_count = -1
+        self.load()
+
+    def load(self) -> None:
+        if self._loaded_count >= 0:
+            return
+        t0 = time.perf_counter()
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT case_id, equipment_type, brand, model, symptom, cause, action,
+                       severity, reference_url, embedding_key
+                FROM tb_fault_case
+                WHERE is_active = TRUE AND embedding_key IS NOT NULL
+                """
+            )
+            rows = cur.fetchall()
+            cur.close()
+        finally:
+            conn.close()
+        embs: list[np.ndarray] = []
+        self._rows = []
+        for case_id, etype, brand, model, symptom, cause, action, sev, ref_url, key in rows:
+            path = os.path.join(FAULT_CASE_EMBEDDINGS_DIR, f"{key}.npz")
+            if not os.path.exists(path):
+                logger.warning(f"[FAULT_RAG] npz missing: {path}")
+                continue
+            try:
+                data = np.load(path)
+                emb = data["embedding"].astype(np.float32)
+            except Exception as e:
+                logger.warning(f"[FAULT_RAG] npz load 실패 {path}: {e}")
+                continue
+            embs.append(emb)
+            self._rows.append({
+                "case_id": int(case_id),
+                "equipment_type": etype,
+                "brand": brand,
+                "model": model,
+                "symptom": symptom,
+                "cause": cause,
+                "action": action,
+                "severity": sev,
+                "reference_url": ref_url,
+            })
+        self._embeddings = np.stack(embs, axis=0) if embs else np.zeros((0, 1024), dtype=np.float32)
+        self._loaded_count = len(self._rows)
+        logger.info(
+            f"[FAULT_RAG] loaded {self._loaded_count} cases / {int((time.perf_counter()-t0)*1000)}ms"
+        )
+
+    def search(
+        self,
+        query_emb: np.ndarray,
+        equipment_type: Optional[str] = None,
+        brand: Optional[str] = None,
+        top_k: int = 3,
+        min_score: float = 0.35,
+    ) -> list[dict]:
+        if self._embeddings is None or self._embeddings.shape[0] == 0:
+            return []
+        scores = self._embeddings @ query_emb
+        bonus = np.zeros(len(self._rows), dtype=np.float32)
+        for i, row in enumerate(self._rows):
+            if equipment_type and row["equipment_type"] == equipment_type:
+                bonus[i] += 0.15
+            if brand and row["brand"] and row["brand"].lower() == brand.lower():
+                bonus[i] += 0.10
+        final = scores + bonus
+        idx_sorted = np.argsort(-final)
+        results: list[dict] = []
+        for idx in idx_sorted[: top_k * 2]:
+            raw_score = float(scores[int(idx)])
+            if raw_score < min_score:
+                continue
+            row = self._rows[int(idx)]
+            results.append({**row, "score": raw_score})
+            if len(results) >= top_k:
+                break
+        return results
+
+
+_fault_case_index = _FaultCaseIndex()
+
+
+def _retrieve_fault_cases(
+    equipment_type: str,
+    brand: Optional[str],
+    observed_state: list[str],
+    user_text: Optional[str],
+    top_k: int = 3,
+) -> list[dict]:
+    """tb_fault_case RAG 검색. 매뉴얼 RAG 보다 높은 정밀도 기대 (구조화된 증상 텍스트)."""
+    try:
+        _fault_case_index.load()
+    except Exception as e:
+        logger.warning(f"[FAULT_RAG] index load 실패: {e}")
+        return []
+    if _fault_case_index._loaded_count == 0:
+        return []
+    query = _build_search_query("", observed_state, user_text)
+    if not query:
+        return []
+    try:
+        query_emb = _embed_query(query)
+    except Exception as e:
+        logger.warning(f"[FAULT_RAG] embed 실패: {e}")
+        return []
+    results = _fault_case_index.search(
+        query_emb,
+        equipment_type=equipment_type if equipment_type and equipment_type != "기타" else None,
+        brand=brand,
+        top_k=top_k,
+    )
+    logger.info(f"[FAULT_RAG] query={query[:80]!r} → {len(results)} cases")
+    return results
+
+
 def _retrieve_manual_excerpts(
     equipment_guess: str,
     equipment_type: str,
@@ -1005,6 +1182,21 @@ def _retrieve_manual_excerpts(
     )
     logger.info(f"[RAG] query={query[:80]!r} → {len(results)} excerpts")
     return results
+
+
+# ─────────────────────────────────────────────────────────────────────
+# [P3-F] fault_case 인덱스 수동 재로드 (CRUD 후 즉시 반영)
+# ─────────────────────────────────────────────────────────────────────
+
+@app.post("/vision/fault-cases/reload")
+def reload_fault_cases() -> dict:
+    """tb_fault_case 가 변경되면 호출 — 메모리 인덱스 강제 재로드."""
+    try:
+        _fault_case_index.reload()
+        return {"status": "ok", "loaded": _fault_case_index._loaded_count}
+    except Exception as e:
+        logger.warning(f"fault_case reload 실패: {e}")
+        raise HTTPException(500, f"reload 실패: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────

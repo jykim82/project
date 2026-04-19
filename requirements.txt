@@ -10,3 +10,4 @@ scikit-learn>=1.5
 scipy>=1.14
 python-dotenv>=1.0
 python-multipart>=0.0.6
+openpyxl>=3.1
