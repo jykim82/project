@@ -2,6 +2,37 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 사진만 업로드 시 용도 재질의 P2) [시나리오 1-a]
+
+**배경:** 사진만 첨부 (텍스트 없음) 시 기존엔 무조건 VLM(46s) 호출 → 낭비.
+용도 재질의 UI 추가로 사용자가 "고장 등록 / 진단 / 참고" 선택 → 해당 플로우만 수행.
+
+**구현:**
+
+백엔드 (`slm@753d76c`)
+- `vision_proxy.py` — `is_photo_only` 판정 (user_question 빈 문자열/2자 미만).
+  PHOTO_CLARIFY intent 즉시 응답 (VLM 스킵, 0ms). photo_urls 그대로 보존.
+- 신규 `POST /chat/photo-action` — IntentClarifyCard 버튼 액션:
+  - `fault` → `build_fault_draft` 호출 (photo_urls 포함)
+  - `diagnose` → `vision_agent /vision/diagnose` 호출 (photo_urls[0])
+  - `reference` → 단순 확인
+
+프런트 (`slm-dashboard@db447ff`)
+- `AiServerResponse.photo_clarify` + `PhotoClarify` 타입 + `bot.photo_clarify`
+- `chat-response-mapper.ts` — photo_clarify summary 대체 + 전달
+- `api/fault-record-api.ts` — `postPhotoAction({action, photo_urls, ...})`
+- 신규 `IntentClarifyCard` — 썸네일 + 3버튼 (고장등록/상태진단/참고용) +
+  자유 텍스트. 버튼 클릭 후 결과는 카드 **내부에서** `FaultRecordConfirmCard` /
+  `VisionAdviceCard` 로 **치환 렌더** (기존 메시지 자리 유지)
+- `BotMessage` + `ChatMessageArea` — photoClarify prop 전파
+
+**E2E 검증 (브라우저):**
+1. 사진만 업로드 → IntentClarifyCard 표시 (썸네일 + 3버튼, 0ms 응답)
+2. 텍스트 "난지마을 배수지 PLC 고장" + "고장 등록" 버튼 →
+   동일 위치가 FaultRecordConfirmCard 로 교체 (equipment 자동 매칭, 사진 유지)
+
+**다음:** P3(시나리오 1-b RAG 확장 — D1 결정 필요) → P4(수질계/압력계 매뉴얼).
+
 ### 완료 (2026-04-19 — 사진+고장 등록 시나리오 P1) [채팅 통합 플로우]
 
 **배경:** 채팅 사진 업로드 시 4가지 시나리오 정의 (사진만/사진+등록/등록만/멀티턴).

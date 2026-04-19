@@ -120,6 +120,16 @@ AI   : [FaultRecordConfirmCard — "사진 첨부" 버튼 노출]
 
 ---
 
+## 구현 진행 상황
+
+- ✅ **P1** (시나리오 2·3) 완료 — `slm@e344be0` + `slm-dashboard@5517ca9` + `web@a2cc44c`
+- ✅ **P2** (시나리오 1-a 용도 재질의) 완료 — `slm@753d76c` + `slm-dashboard@db447ff`
+  - 사진만 업로드 → PHOTO_CLARIFY 즉시 응답 (0ms, VLM 스킵)
+  - IntentClarifyCard: 썸네일 + 고장등록/진단/참고 버튼 + 자유 텍스트
+  - 버튼 선택 시 `/chat/photo-action` → 결과를 카드 내부에서 후속 카드로 치환
+- ⏳ **P3** (시나리오 1-b RAG 확장) — D1 결정 후
+- ⏳ **P4** (수질계/압력계 매뉴얼 추가) — D2 결정 후
+
 ## 기존 사양 위배 여부
 
 - ✅ **E-025 Zero-Hallucination 격리**: vision_advice 필드로만 참고 의견 전달 — 유지
