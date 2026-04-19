@@ -107,6 +107,7 @@ from endpoints.chat_feedback import router as chat_feedback_router, init as init
 from endpoints.chat_log import router as chat_log_router, init as init_chat_log
 from endpoints.chat_fault_record import router as chat_fault_record_router, init as init_chat_fault_record
 from endpoints.fault_case import router as fault_case_router, init as init_fault_case
+from endpoints.alarm_fault_correlation import router as afc_router, init as init_afc
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
@@ -2659,6 +2660,10 @@ app.include_router(chat_fault_record_router)
 # [P3] 고장 진단 케이스 DB (migration 0048) — CRUD + 엑셀 IMPORT/EXPORT
 init_fault_case(get_db_connection)
 app.include_router(fault_case_router)
+
+# [P5] 알람 ↔ 장애 매칭 분석
+init_afc(get_db_connection)
+app.include_router(afc_router)
 
 # 설비 건강성 통계 엔드포인트 (migration 0045 views)
 init_equipment_health(get_db_connection)
