@@ -168,7 +168,7 @@ def tasks(
         "TO_CHAR(task_start_time, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS task_start_time, "
         "TO_CHAR(resolved_at, 'YYYY-MM-DD\"T\"HH24:MI:SS') AS resolved_at, "
         "resolved_by, status, task_content, resolution_note, recorded_by, photo_urls, "
-        "replacement_info "
+        "replacement_info, resolution_photo_urls "
         f"FROM tb_task_master WHERE {' AND '.join(where)} "
         "ORDER BY task_start_time DESC LIMIT %s"
     )

@@ -657,6 +657,41 @@ async def attach_photo(
         conn.close()
 
 
+@router.post("/resolve/upload-photo")
+async def resolve_upload_photo(
+    user_id: str,
+    images: list[UploadFile] = File(...),
+):
+    """조치 완료 사진 업로드 — 채팅/Dialog 인라인 업로드용.
+
+    chat_attachments 에 저장하고 URL 배열 반환. 반환된 URL 을 /resolve/direct
+    또는 /resolve/confirm 에 `resolution_photo_urls` 로 전달.
+    """
+    if not images:
+        raise HTTPException(400, "최소 1장의 이미지가 필요합니다")
+    if len(images) > 3:
+        raise HTTPException(400, "이미지는 최대 3장까지 업로드 가능합니다")
+
+    os.makedirs(CHAT_ATTACHMENT_DIR, exist_ok=True)
+    urls: list[str] = []
+    for upload in images:
+        content = await upload.read()
+        if not content:
+            raise HTTPException(400, "빈 파일")
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(413, "이미지 크기는 10MB 이하여야 합니다")
+        ext = os.path.splitext(upload.filename or "")[1].lower() or ".jpg"
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            raise HTTPException(400, f"지원하지 않는 이미지 형식: {ext}")
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        with open(os.path.join(CHAT_ATTACHMENT_DIR, stored_name), "wb") as f:
+            f.write(content)
+        urls.append(f"/api/files/chat_attachments/{stored_name}")
+
+    logger.info(f"resolve upload-photo: user={user_id} +{len(urls)}")
+    return {"photo_urls": urls, "count": len(urls)}
+
+
 @router.delete("/cleanup-expired")
 def cleanup_expired():
     """만료된 pending 삭제 (수동 호출 또는 cron)."""
@@ -695,6 +730,9 @@ class ResolveConfirmRequest(BaseModel):
     user_id: str
     action: str = Field(..., description="yes | cancel")
     resolution_note: Optional[str] = None
+    resolution_photo_urls: Optional[list[str]] = Field(
+        None, description="[P8] 조치 완료 사진 URL (/api/files/chat_attachments/<name>)"
+    )
 
 
 class ResolveConfirmResponse(BaseModel):
@@ -820,6 +858,8 @@ def confirm_resolve(req: ResolveConfirmRequest):
             raise HTTPException(400, "대상 task 없음")
 
         note = req.resolution_note or draft.get("resolution_note") or ""
+        photos = req.resolution_photo_urls or draft.get("resolution_photo_urls") or []
+        photos_json = json.dumps(photos, ensure_ascii=False) if photos else None
         cur.execute(
             """
             UPDATE tb_task_master
@@ -827,18 +867,19 @@ def confirm_resolve(req: ResolveConfirmRequest):
                 resolution_note = COALESCE(NULLIF(resolution_note, ''), '') ||
                                   CASE WHEN COALESCE(resolution_note,'')='' THEN '' ELSE E'\n' END ||
                                   %s,
+                resolution_photo_urls = %s::jsonb,
                 status = '완료'
             WHERE task_id = %s
             """,
-            (req.user_id, note, task_id),
+            (req.user_id, note, photos_json, task_id),
         )
         cur.execute("DELETE FROM tb_chat_pending_action WHERE session_id = %s", (req.session_id,))
         conn.commit()
         cur.close()
-        logger.info(f"resolve 완료: task_id={task_id} user={req.user_id}")
+        logger.info(f"resolve 완료: task_id={task_id} user={req.user_id} photos={len(photos)}")
         return ResolveConfirmResponse(
             status="resolved", task_id=task_id,
-            message=f"장애 #{task_id} 조치 완료로 기록했습니다.",
+            message=f"장애 #{task_id} 조치 완료로 기록했습니다." + (f" (사진 {len(photos)}장)" if photos else ""),
         )
     except HTTPException:
         raise
@@ -854,6 +895,7 @@ class DirectResolveRequest(BaseModel):
     task_id: int
     user_id: str
     resolution_note: str = ""
+    resolution_photo_urls: Optional[list[str]] = None
 
 
 @router.post("/resolve/direct", response_model=ResolveConfirmResponse)
@@ -872,6 +914,8 @@ def direct_resolve(req: DirectResolveRequest):
         if row[0] == "완료" and row[1] is not None:
             raise HTTPException(400, "이미 완료된 장애입니다")
 
+        photos = req.resolution_photo_urls or []
+        photos_json = json.dumps(photos, ensure_ascii=False) if photos else None
         cur.execute(
             """
             UPDATE tb_task_master
@@ -879,16 +923,17 @@ def direct_resolve(req: DirectResolveRequest):
                 resolution_note = COALESCE(NULLIF(resolution_note, ''), '') ||
                                   CASE WHEN COALESCE(resolution_note,'')='' THEN '' ELSE E'\n' END ||
                                   %s,
+                resolution_photo_urls = %s::jsonb,
                 status = '완료'
             WHERE task_id = %s
             """,
-            (req.user_id, req.resolution_note or "(메모 없음)", req.task_id),
+            (req.user_id, req.resolution_note or "(메모 없음)", photos_json, req.task_id),
         )
         conn.commit()
         cur.close()
         return ResolveConfirmResponse(
             status="resolved", task_id=req.task_id,
-            message=f"장애 #{req.task_id} 조치 완료로 기록했습니다.",
+            message=f"장애 #{req.task_id} 조치 완료로 기록했습니다." + (f" (사진 {len(photos)}장)" if photos else ""),
         )
     except HTTPException:
         raise
