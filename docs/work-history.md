@@ -2,6 +2,37 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 알람 ↔ 장애 매칭 분석 P5) [설비 건강성 확장]
+
+**배경:** 시스템 자동 알람(tb_equipment_alarm_report)과 현장 수동 장애 기록
+(tb_task_master) 의 상관 분석이 없었음. 알람 정확도·장애 커버리지·미매칭
+오탐·미검지 후보를 리포트로 제공. 자동 해제·연계는 이전 결정대로 금지
+(`memory/feedback_no_auto_alarm_link.md`).
+
+**백엔드 (`slm@40cd7f9`)**
+- `endpoints/alarm_fault_correlation.py` 신규 — 4 엔드포인트
+  - `/summary` — 5 KPI (알람/장애/매칭 + 정확도/커버리지 + 미매칭)
+  - `/matrix` — 설비유형별 (알람, 장애, 매칭) 교차표
+  - `/lag` — 알람→장애 기록 시간차 히스토그램 (5 bin) + p50/p95/평균
+  - `/unmatched?kind=alarm|fault` — Top 20 목록 (오탐·미검지 후보)
+- 조인 키: `task_master.linked_alarm_start+tagsn ↔ alarm.start_time+tagsn`
+
+**프런트 (`slm-dashboard@fecad28`)**
+- `api/alarm-fault-correlation-api.ts` 신규
+- `AlarmFaultCorrelationSection` 컴포넌트 — KPI/교차표/지연분포/미매칭탭
+  (기간 선택 30/90/180/365일)
+- `/monitoring/equipment-health` 하단에 섹션 삽입 (border-t 구분)
+- 사이드바 메뉴 등록 — 모니터링 > "설비 건강성" (M003-8)
+
+**실데이터 인사이트 (90일):**
+- 알람 5,738 vs 장애 14, 매칭 0 — 현장이 linked_alarm 필드를 미사용
+- 네트워크 알람 3,924 vs 장애 0 — 오탐·센서 과민 가능성
+- PLC 알람 0 vs 장애 5 — 미검지 영역
+- UPS/가압펌프 비율 편차
+
+**디자인 원칙:** 리포트 전용 — 자동 판단/해제 없음. 담당자가 미매칭 Top
+검토 후 센서 임계값/알람 로직 개선에 참고.
+
 ### 완료 (2026-04-19 — VisionAdviceCard fault_cases 섹션 렌더) [P3 후속]
 
 P3 백엔드가 채운 `DiagnoseResponse.fault_cases` 를 진단 카드 UI 에 표시.
