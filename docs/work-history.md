@@ -2,6 +2,43 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-19 — 장애 분류 정책 + 교체 메타 P7) [데이터 신뢰도]
+
+**배경:**
+- "통신 알람으로 뜨는것으로 내가 볼때는 전부 이상으로 하고, 사용자가 현장에서 고장
+   등록을 하면 그것을 고장으로 처리하는게 맞지 않을까? 통신 알람만으로 정확한 고장을
+   인지하기는 어려울거같아"
+- "교체시에는 교체 일자, 교체 설비, 현장명, 제품명, 제조사 등의 기록이 있어야할거같아"
+
+**정책 명문화 (`docs/fault-category-policy.md` + 메모리)**
+- fault_category 4값 명확한 정의 (고장/이상/교체/점검)
+- 알람은 기본 "이상", 현장 확인된 경우만 "고장"
+- 통신·네트워크 키워드는 자동 "이상" 강제 (regex 휴리스틱)
+- 알람→장애 자동 변환 경로 없음 원칙 유지
+
+**교체 메타 (P7, migration 0050):**
+- `tb_task_master.replacement_info JSONB` 신규 (manufacturer/model/serial/
+  old_*/replaced_at)
+- `chat_fault_record._extract_replacement_info` — 자연어에서 "제조사 / 모델
+  / S/N" regex 추출
+- `build_fault_draft` 에 `replacement_info` 파라미터 + 자동 추출+명시 병합
+- `/chat/fault/confirm` INSERT 컬럼 매핑
+- equipment_health `/tasks` + afc `/equipment-timeline` 에 replacement_info
+  포함
+
+**프런트 (`slm-dashboard@9110dce`):**
+- FaultRecordConfirmCard: fault_category='교체' 전용 violet 박스로 제조사/
+  모델/시리얼 표시. 자동 추출 실패 시 보완 안내
+- TaskListDialog: 교체 행 내용 셀에 메타 요약(violet)
+- EquipmentTimelineDialog: 교체 건 메타 표시
+
+**E2E 검증 (`p7-replacement-info.png`):**
+- 채팅 "행정 배수지 PLC 교체 제조사 LS 모델 XGB-XBCH S/N 20240419-001" →
+  draft.replacement_info 3필드 추출 → DB task#29 저장 → 교체/점검 KPI
+  Dialog 에서 "LS · XGB-XBCH · 20240419-001" violet 표시
+
+**커밋:** `slm@40c67af` + `slm-dashboard@9110dce`
+
 ### 완료 (2026-04-19 — 설비 타임라인·KPI 드릴다운·채팅 조치완료 P6) [조치 이력 경로]
 
 **배경:** 장애 기록 후 **조치 이력 확인**과 **조치 완료 등록** 경로가 공백.
