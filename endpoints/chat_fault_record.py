@@ -8,17 +8,27 @@
 설계: docs/flow-diagram-mode-spec.md (섹션 예정), migration 0045_task_master_fault_log
 """
 
+import json
 import logging
+import os
 import re
 import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat/fault", tags=["chat-fault-record"])
+
+# chat_attachments 디렉터리 — vision_proxy와 동일 규칙
+CHAT_ATTACHMENT_DIR = os.environ.get(
+    "CHAT_ATTACHMENT_DIR",
+    os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "web", "files", "chat_attachments"
+    )),
+)
 
 _get_db_connection = None
 
@@ -224,6 +234,9 @@ class DraftRequest(BaseModel):
     user_id: str = Field(..., description="로그인 사용자 ID")
     text: str = Field(..., description="사용자 자연어 입력")
     occurred_at: Optional[str] = Field(None, description="발생시각 ISO 문자열, 없으면 현재")
+    photo_urls: Optional[list[str]] = Field(
+        None, description="첨부 사진 URL 배열 (ex: /api/files/chat_attachments/<uuid>.jpg)"
+    )
 
 
 class DraftResponse(BaseModel):
@@ -257,81 +270,104 @@ class ConfirmResponse(BaseModel):
 # 엔드포인트
 # ============================================================================
 
+def build_fault_draft(
+    cur,
+    user_id: str,
+    text: str,
+    occurred_at_str: Optional[str] = None,
+    photo_urls: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """핵심 로직 — 자연어 파싱 + pending_action 저장 + 확인 응답 dict 반환.
+
+    /chat/fault/draft 엔드포인트와 vision_proxy(사진+FAULT 텍스트 분기)가 공유.
+    반환 dict 는 DraftResponse 스키마와 동일 키셋.
+
+    Note: 호출자가 conn.commit() 책임. cur는 이 함수 내에서 닫지 않음.
+    """
+    parsed = parse_fault_text(text, cur=cur)
+
+    occurred_at = datetime.now()
+    if occurred_at_str:
+        try:
+            occurred_at = datetime.fromisoformat(occurred_at_str.replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    equipment_id = None
+    if parsed["sitename"] and parsed["facilitytype"] and parsed["equipmenttype"]:
+        equipment_id = resolve_equipment_id(
+            cur, parsed["sitename"], parsed["facilitytype"], parsed["equipmenttype"],
+        )
+
+    draft: dict[str, Any] = {
+        **parsed,
+        "equipment_id": equipment_id,
+        "occurred_at": occurred_at.isoformat(),
+        "original_text": text,
+        "photo_urls": list(photo_urls or []),
+    }
+
+    required = ["sitename", "facilitytype", "equipmenttype", "fault_category"]
+    missing = [k for k in required if not draft.get(k)]
+    ready = not missing
+
+    suggested = suggest_ongoing_alarms(
+        cur, draft.get("sitename"), draft.get("facilitytype"), draft.get("equipmenttype"),
+    )
+
+    draft_with_alarms = {**draft, "_suggested_alarms": suggested}
+    session_id = uuid.uuid4().hex
+    cur.execute(
+        """
+        INSERT INTO tb_chat_pending_action (session_id, user_id, intent, draft)
+        VALUES (%s, %s, %s, %s::jsonb)
+        """,
+        (session_id, user_id, "FAULT_RECORD_DRAFT",
+         json.dumps(draft_with_alarms, ensure_ascii=False, default=str)),
+    )
+
+    if ready:
+        msg = (
+            f"장애 기록을 확인합니다:\n"
+            f"• 시설: {draft['sitename']} ({draft['facilitytype']})\n"
+            f"• 설비: {draft['equipmenttype']}\n"
+            f"• 분류: {draft['fault_category']}\n"
+            f"• 발생시각: {occurred_at.strftime('%Y-%m-%d %H:%M')}"
+        )
+        if draft["photo_urls"]:
+            msg += f"\n• 첨부사진: {len(draft['photo_urls'])}장"
+        msg += "\n이대로 기록할까요?"
+        if suggested:
+            msg += f"\n\n※ 관련 진행중 알람 {len(suggested)}건 발견 — 함께 해제할지 선택할 수 있습니다."
+    else:
+        msg = f"다음 정보가 부족합니다: {', '.join(missing)}. 추가 입력이 필요합니다."
+
+    return {
+        "session_id": session_id,
+        "draft": draft,
+        "ready": ready,
+        "missing": missing,
+        "confirm_message": msg,
+        "suggested_alarms": suggested,
+    }
+
+
 @router.post("/draft", response_model=DraftResponse)
 def create_draft(req: DraftRequest):
     """자연어 파싱 → pending_action 저장 → 확인 응답."""
     conn = _get_conn()
     try:
         cur = conn.cursor()
-        parsed = parse_fault_text(req.text, cur=cur)
-
-        # 발생시각
-        occurred_at = datetime.now()
-        if req.occurred_at:
-            try:
-                occurred_at = datetime.fromisoformat(req.occurred_at.replace("Z", "+00:00"))
-            except Exception:
-                pass
-
-        # equipment_id resolve
-        equipment_id = None
-        if parsed["sitename"] and parsed["facilitytype"] and parsed["equipmenttype"]:
-            equipment_id = resolve_equipment_id(cur, parsed["sitename"], parsed["facilitytype"], parsed["equipmenttype"])
-
-        draft: dict[str, Any] = {
-            **parsed,
-            "equipment_id": equipment_id,
-            "occurred_at": occurred_at.isoformat(),
-            "original_text": req.text,
-        }
-
-        # 필수 필드 체크
-        required = ["sitename", "facilitytype", "equipmenttype", "fault_category"]
-        missing = [k for k in required if not draft.get(k)]
-        ready = not missing
-
-        # 연관 진행중 알람 제안
-        suggested = suggest_ongoing_alarms(
-            cur, draft.get("sitename"), draft.get("facilitytype"), draft.get("equipmenttype"),
-        )
-
-        # pending_action INSERT — draft + suggested_alarms 저장 (confirm 시 참조)
-        draft_with_alarms = {**draft, "_suggested_alarms": suggested}
-        session_id = uuid.uuid4().hex
-        cur.execute(
-            """
-            INSERT INTO tb_chat_pending_action (session_id, user_id, intent, draft)
-            VALUES (%s, %s, %s, %s::jsonb)
-            """,
-            (session_id, req.user_id, "FAULT_RECORD_DRAFT",
-             __import__("json").dumps(draft_with_alarms, ensure_ascii=False, default=str)),
+        result = build_fault_draft(
+            cur,
+            user_id=req.user_id,
+            text=req.text,
+            occurred_at_str=req.occurred_at,
+            photo_urls=req.photo_urls,
         )
         conn.commit()
-
-        # 확인 메시지 구성
-        if ready:
-            msg = (
-                f"장애 기록을 확인합니다:\n"
-                f"• 시설: {draft['sitename']} ({draft['facilitytype']})\n"
-                f"• 설비: {draft['equipmenttype']}\n"
-                f"• 분류: {draft['fault_category']}\n"
-                f"• 발생시각: {occurred_at.strftime('%Y-%m-%d %H:%M')}\n"
-                f"이대로 기록할까요?"
-            )
-            if suggested:
-                msg += f"\n\n※ 관련 진행중 알람 {len(suggested)}건 발견 — 함께 해제할지 선택할 수 있습니다."
-        else:
-            msg = f"다음 정보가 부족합니다: {', '.join(missing)}. 추가 입력이 필요합니다."
-
         cur.close()
-        return DraftResponse(
-            session_id=session_id,
-            draft=draft,
-            ready=ready,
-            missing=missing,
-            confirm_message=msg,
-            suggested_alarms=suggested,
-        )
+        return DraftResponse(**result)
     except Exception as e:
         conn.rollback()
         logger.exception("fault draft 실패")
@@ -405,17 +441,20 @@ def confirm_draft(req: ConfirmRequest):
         first_alarm_start = linked_alarms[0][0] if linked_alarms else None
         first_alarm_tagsn = linked_alarms[0][1] if linked_alarms else None
 
+        photo_urls = draft.get("photo_urls") or []
+        photo_urls_json = json.dumps(photo_urls, ensure_ascii=False) if photo_urls else None
+
         cur.execute(
             """
             INSERT INTO tb_task_master
               (sitename, facilitytype, task_category, task_start_time,
                equipment_id, equipmenttype, fault_category, severity,
                linked_alarm_start, linked_alarm_tagsn,
-               task_content, recorded_by, status)
+               task_content, recorded_by, status, photo_urls)
             VALUES (%s, %s, '고장보고', %s,
                     %s, %s, %s, %s,
                     %s, %s,
-                    %s, %s, '진행중')
+                    %s, %s, '진행중', %s::jsonb)
             RETURNING task_id
             """,
             (
@@ -424,6 +463,7 @@ def confirm_draft(req: ConfirmRequest):
                 draft["fault_category"], draft.get("severity"),
                 first_alarm_start, first_alarm_tagsn,
                 draft.get("original_text"), req.user_id,
+                photo_urls_json,
             ),
         )
         task_id = cur.fetchone()[0]
@@ -472,6 +512,74 @@ def confirm_draft(req: ConfirmRequest):
         conn.rollback()
         logger.exception("fault confirm 실패")
         raise HTTPException(status_code=500, detail=f"confirm 처리 실패: {e}")
+    finally:
+        conn.close()
+
+
+@router.post("/attach-photo")
+async def attach_photo(
+    session_id: str,
+    user_id: str,
+    images: list[UploadFile] = File(...),
+):
+    """기존 pending_action draft에 사진을 추가 (시나리오 3 — 사용자가 장애 등록을
+    먼저 요청하고 확인 카드에서 "사진 추가" 버튼을 누른 경우).
+    """
+    if not images:
+        raise HTTPException(400, "최소 1장의 이미지가 필요합니다")
+    if len(images) > 3:
+        raise HTTPException(400, "이미지는 최대 3장까지 업로드 가능합니다")
+
+    os.makedirs(CHAT_ATTACHMENT_DIR, exist_ok=True)
+    new_urls: list[str] = []
+    for upload in images:
+        content = await upload.read()
+        if not content:
+            raise HTTPException(400, "빈 파일")
+        if len(content) > 10 * 1024 * 1024:
+            raise HTTPException(413, "이미지 크기는 10MB 이하여야 합니다")
+        ext = os.path.splitext(upload.filename or "")[1].lower() or ".jpg"
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            raise HTTPException(400, f"지원하지 않는 이미지 형식: {ext}")
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        with open(os.path.join(CHAT_ATTACHMENT_DIR, stored_name), "wb") as f:
+            f.write(content)
+        new_urls.append(f"/api/files/chat_attachments/{stored_name}")
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT draft FROM tb_chat_pending_action
+            WHERE session_id = %s AND user_id = %s AND expires_at > now()
+            """,
+            (session_id, user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "pending 세션 없음 또는 만료")
+        draft = row[0] or {}
+        existing = draft.get("photo_urls") or []
+        draft["photo_urls"] = existing + new_urls
+        cur.execute(
+            "UPDATE tb_chat_pending_action SET draft = %s::jsonb WHERE session_id = %s",
+            (json.dumps(draft, ensure_ascii=False, default=str), session_id),
+        )
+        conn.commit()
+        cur.close()
+        logger.info(f"fault attach-photo: session={session_id} +{len(new_urls)} (total {len(draft['photo_urls'])})")
+        return {
+            "session_id": session_id,
+            "photo_urls": draft["photo_urls"],
+            "added": len(new_urls),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception("fault attach-photo 실패")
+        raise HTTPException(500, f"사진 첨부 실패: {e}")
     finally:
         conn.close()
 

@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Optional
@@ -27,6 +28,9 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+
+# [Scenario 2] 사진 + FAULT 키워드 감지 시 /chat/fault/draft 로 분기
+from endpoints.chat_fault_record import FAULT_KEYWORDS, build_fault_draft
 
 logger = logging.getLogger("slm")
 
@@ -179,6 +183,107 @@ def _infer_site_from_text(user_text: str) -> tuple[Optional[str], Optional[str]]
     return matched_site, matched_ft
 
 
+# ─────────────────────────────────────────────────────────────────────
+# [Scenario 2] 사진 + FAULT 키워드 → 장애 등록 초안 분기
+# ─────────────────────────────────────────────────────────────────────
+
+# 프런트의 isFaultRecordIntent (use-chat-submit.ts) 와 동일 규칙으로 맞추되
+# FAULT_KEYWORDS 기준. "조회/상태 확인" 질의는 제외.
+_FAULT_INTENT_QUERY_EXCLUSIONS = re.compile(r"(상태|어때|얼마|몇|보여|알려|조회)")
+_FAULT_INTENT_RECORD_HINTS = re.compile(r"(기록|저장|남겨|등록|발생|났|발견)")
+
+
+def _detect_fault_intent(text: str) -> bool:
+    """사진과 함께 온 텍스트가 장애 기록 의도인지 판정.
+
+    True 조건:
+      - FAULT_KEYWORDS 중 하나 포함
+      - "조회성 질의" 예외(상태/어때/얼마/몇/보여/알려/조회) 에 해당하더라도
+        기록 힌트(기록/저장/남겨/등록/발생/났/발견)가 함께 있으면 True
+    """
+    if not text:
+        return False
+    if not any(kw in text for (kw, _cat) in FAULT_KEYWORDS):
+        return False
+    if _FAULT_INTENT_QUERY_EXCLUSIONS.search(text) and not _FAULT_INTENT_RECORD_HINTS.search(text):
+        return False
+    return True
+
+
+async def _fault_branch(
+    user_text: str,
+    user_id: Optional[str],
+    saved_urls: list[str],
+    session_id: Optional[str],
+    t_start: float,
+):
+    """사진 + FAULT 텍스트 → build_fault_draft 호출 후 fault_draft 결과 emit.
+
+    DB 커넥션은 build_fault_draft 내부에서 INSERT 하므로 호출자 commit 책임.
+    user_id 없으면 에러 — 프런트가 로그인 후에만 호출하므로 정상 케이스 없음.
+    """
+    yield _sse("progress", {
+        "stage": "classify",
+        "intent": "FAULT_RECORD_DRAFT",
+        "message": "장애 등록 의도 감지 — 사진과 함께 등록합니다",
+    })
+
+    if not user_id:
+        yield _sse("error", {
+            "detail": "user_id 누락 — 로그인 세션 확인 필요",
+            "fallback_message": "장애 기록을 위해서는 로그인이 필요합니다.",
+        })
+        return
+
+    if _get_db_connection is None:
+        yield _sse("error", {
+            "detail": "DB 커넥션 미초기화",
+            "fallback_message": "서버 구성 오류 — 관리자에게 문의해 주세요.",
+        })
+        return
+
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        result = build_fault_draft(
+            cur,
+            user_id=user_id,
+            text=user_text,
+            occurred_at_str=None,
+            photo_urls=saved_urls,
+        )
+        conn.commit()
+        cur.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.exception("fault_branch build_fault_draft 실패")
+        yield _sse("error", {
+            "detail": f"fault draft 실패: {str(e)[:120]}",
+            "fallback_message": "장애 등록 초안 생성 중 오류가 발생했습니다.",
+        })
+        return
+    finally:
+        if conn:
+            conn.close()
+
+    elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+    yield _sse("result", {
+        "intent": "FAULT_RECORD_DRAFT",
+        "session_id": session_id,
+        "fault_draft": result,  # { session_id, draft, ready, missing, confirm_message, suggested_alarms }
+        "answer_text": None,
+        "graph_type": "none",
+        "elapsed_ms": elapsed_ms,
+        "stage": "render",
+    })
+    logger.info(
+        f"/ask/multimodal/stream FAULT 분기 완료: session={result['session_id']} "
+        f"photos={len(saved_urls)} elapsed={elapsed_ms}ms"
+    )
+
+
 @router.post("/ask/multimodal/stream")
 async def ask_multimodal_stream(
     user_question: str = Form(""),
@@ -202,9 +307,19 @@ async def ask_multimodal_stream(
         saved_paths.append(p)
         saved_urls.append(u)
 
+    # [Scenario 2] 사진 + FAULT 키워드 감지 — 진단 대신 장애 등록 분기
+    is_fault_intent = _detect_fault_intent(user_question)
+
     async def event_stream():
         t_start = time.perf_counter()
 
+        # ── 시나리오 2: 사진 + "고장 등록" — FaultRecordConfirmCard 로 분기
+        if is_fault_intent:
+            async for ev in _fault_branch(user_question, user_id, saved_urls, session_id, t_start):
+                yield ev
+            return
+
+        # ── 기존 VISION_DIAGNOSE 플로우 (시나리오 1-b / 사진+일반 질의)
         yield _sse("progress", {
             "stage": "classify",
             "intent": "VISION_DIAGNOSE",
