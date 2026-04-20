@@ -926,15 +926,18 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename} 감압시설 설치 위치는 {install_location}입니다."
+          "icon": "map-pin",
+          "text": "설치 위치 · {install_location}"
         },
         {
           "prefix": "•",
-          "text": "본관 및 감압밸브 관경은 {pipe_diameter}입니다."
+          "icon": "gauge",
+          "text": "관경 · 본관 및 감압밸브 {pipe_diameter}"
         },
         {
           "prefix": "•",
-          "text": "{control_method} 제어 방식으로 운영 중이며, 제조사는 {manufacturer}입니다."
+          "icon": "activity",
+          "text": "제어 방식 · {control_method} 방식, 제조사 {manufacturer}"
         }
       ],
       "reference": {
@@ -984,27 +987,33 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename} 감압시설 운영상태는 현재 {status} 상태입니다."
+          "icon": "activity",
+          "text": "운영 상태 · {status}"
         },
         {
           "prefix": "•",
-          "text": "감압 패턴은 {pressure_reduction_pattern} 방식이며, 제어 방식은 {control_method}입니다."
+          "icon": "activity",
+          "text": "감압 패턴 · {pressure_reduction_pattern} 방식, 제어 방식 {control_method}"
         },
         {
           "prefix": "•",
-          "text": "전단압력 평균은 {avg_inlet_pressure}{info_pressure_unit}입니다."
+          "icon": "gauge",
+          "text": "전단압력 · 평균 {avg_inlet_pressure}{info_pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "후단압력 평균은 {avg_outlet_pressure}{info_pressure_unit}입니다."
+          "icon": "gauge",
+          "text": "후단압력 · 평균 {avg_outlet_pressure}{info_pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "감압량 평균은 {avg_pressure_reduction}{info_pressure_unit}입니다."
+          "icon": "gauge",
+          "text": "감압량 · 평균 {avg_pressure_reduction}{info_pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "감압 기준은 {pressure_reduction_criteria}입니다."
+          "icon": "alert",
+          "text": "감압 기준 · {pressure_reduction_criteria}"
         }
       ],
       "reference": {
@@ -1211,15 +1220,18 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename}{block_level} 수용가 수는 {customer_count}이며, 유수율 기준은 {non_revenue_water_rate}입니다."
+          "icon": "users",
+          "text": "수용가 · {customer_count} (유수율 기준 {non_revenue_water_rate})"
         },
         {
           "prefix": "•",
-          "text": "현재 일사용량은 {block_daily_usage}{daily_flow_unit}입니다."
+          "icon": "droplet",
+          "text": "일사용량 · {block_daily_usage}{daily_flow_unit}"
         },
         {
           "prefix": "•",
-          "text": "전체 관로 연장은 {pipeline_total}이며, 이 중 노후 관로는 {pipeline_old}입니다."
+          "icon": "home",
+          "text": "관로 · 전체 연장 {pipeline_total}, 노후 {pipeline_old}"
         }
       ],
       "reference": {
@@ -1618,23 +1630,22 @@
     ],
     "sql": "SELECT \n  sitename,\n  block_level,\n  avg_usage,\n  avg_usage_unit,\n  block_inlet_pressure,\n  block_outlet_pressure,\n  status_pressure_unit,\n  general_overview->'large_customer_status'->>'count' AS large_customer_count,\n  avg_usage * 24 AS avg_usage_day,\n  '㎥'::text AS avg_usage_day_unit,\n  block_daily_usage,\n  daily_flow_unit,\n  supply_ratio_percent\nFROM v_block_info_status \nWHERE sitename = '{sitename}'\n  AND block_level = '{block_level}';",
     "answer_template": {
-      "summary": "{sitename} {block_level} 운영현황은 다음과 같습니다.",
+      "summary": "{sitename} {block_level} 운영현황은 다음과 같습니다. (일평균은 금일 00시~현재 평균 기준)",
       "detail": [
         {
           "prefix": "•",
-          "text": "금일 00시부터 현재 시각까지의 평균값 산출 방식으로 일평균 사용량을 산정합니다."
+          "icon": "droplet",
+          "text": "일평균 사용량 · {avg_usage}{avg_usage_unit}"
         },
         {
           "prefix": "•",
-          "text": "{sitename} {block_level} 일평균 사용량은 {avg_usage}{avg_usage_unit}입니다."
+          "icon": "gauge",
+          "text": "압력 · {block_inlet_pressure}{status_pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "{sitename} {block_level} 압력은 {block_inlet_pressure}{status_pressure_unit}입니다."
-        },
-        {
-          "prefix": "•",
-          "text": "월 200톤 이상 대수용가는 {large_customer_count}개소이며, 일사용량은 {avg_usage_day}{avg_usage_day_unit}입니다."
+          "icon": "users",
+          "text": "대수용가 · {large_customer_count}개소 (월 200톤 이상, 일사용량 {avg_usage_day}{avg_usage_day_unit})"
         }
       ],
       "reference": {
@@ -2075,7 +2086,8 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "주소는 {install_location}입니다."
+          "icon": "map-pin",
+          "text": "주소 · {install_location}"
         },
         {
           "prefix": "",
@@ -2131,7 +2143,8 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "주소는 {install_location}입니다."
+          "icon": "map-pin",
+          "text": "주소 · {install_location}"
         },
         {
           "prefix": "",
@@ -2181,7 +2194,8 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "주소는 {install_location}입니다."
+          "icon": "map-pin",
+          "text": "주소 · {install_location}"
         },
         {
           "prefix": "",
@@ -2230,7 +2244,8 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "주소는 {install_location}입니다."
+          "icon": "map-pin",
+          "text": "주소 · {install_location}"
         },
         {
           "prefix": "",
