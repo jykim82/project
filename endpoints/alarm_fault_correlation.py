@@ -125,6 +125,10 @@ def equipment_status(
     days = max(1, min(days, _MAX_DAYS))
     from_sql = f"now() - interval '{days} days'"
 
+    # [교체 후보 필터] HH/LL/상한/하한 알람은 "실제 수위/압력이 임계값
+    # 도달한 운영 이벤트" — 센서 고장이 아니므로 설비 교체 신호 아님.
+    # 수위계 HH 646건 같은 데이터가 교체 후보로 잘못 분류되는 것을 방지.
+    # 집계 대상은 센서·설비 오작동 알람 (통신이상/헌팅/결측/고장 등).
     sql = f"""
     WITH alarm_agg AS (
       SELECT
@@ -138,6 +142,10 @@ def equipment_status(
         MAX(alarm_start_time) AS last_alarm_at
       FROM tb_equipment_alarm_report
       WHERE alarm_start_time >= {from_sql}
+        AND alarm_msg NOT LIKE '%%HH%%'
+        AND alarm_msg NOT LIKE '%%LL%%'
+        AND alarm_msg NOT LIKE '%%상한%%'
+        AND alarm_msg NOT LIKE '%%하한%%'
       GROUP BY 1, 2, 3
     ),
     fault_agg AS (
@@ -159,7 +167,8 @@ def equipment_status(
       COALESCE(f.fault_cnt, 0)       AS fault_cnt,
       COALESCE(f.in_progress_cnt, 0) AS in_progress_cnt,
       f.last_resolved_at,
-      -- 조치 이후 알람 (last_resolved_at 있을 때만)
+      -- 조치 이후 알람 (last_resolved_at 있을 때만). HH/LL 등 운영
+      -- 이벤트는 집계 대상 아니므로 동일 필터 적용.
       COALESCE((
         SELECT COUNT(*) FROM tb_equipment_alarm_report a2
          WHERE COALESCE(a2.sitename, '(미상)')     = a.sitename
@@ -168,6 +177,10 @@ def equipment_status(
            AND f.last_resolved_at IS NOT NULL
            AND a2.alarm_start_time > f.last_resolved_at
            AND a2.alarm_start_time >= {from_sql}
+           AND a2.alarm_msg NOT LIKE '%%HH%%'
+           AND a2.alarm_msg NOT LIKE '%%LL%%'
+           AND a2.alarm_msg NOT LIKE '%%상한%%'
+           AND a2.alarm_msg NOT LIKE '%%하한%%'
       ), 0) AS alarm_after_resolved
     FROM alarm_agg a
     LEFT JOIN fault_agg f
