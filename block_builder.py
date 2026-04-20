@@ -399,9 +399,21 @@ def build_pressure_detail_block(rows: list, columns: list) -> list:
         except (ValueError, TypeError):
             pass
 
+        # [feedback_preserve_answer_content] 측정 시각 보존:
+        # 기존 "2026-04-20 13:27:00 기준" 정보를 value 꼬리에 "(YYYY-MM-DD HH:MM 기준)"
+        # 형태로 병기. 초 단위는 압력 측정 맥락에서 의미 없어 제외(표기 압축).
+        time_suffix = ""
+        if log_time:
+            t = str(log_time).replace("T", " ")
+            parts = t.split(" ")
+            if len(parts) >= 2 and ":" in parts[1]:
+                date_part = parts[0]
+                hhmm = ":".join(parts[1].split(":")[:2])
+                time_suffix = f" ({date_part} {hhmm} 기준)"
+
         items.append({
             "prefix": "•",
-            "text": f"{datainfo} · {val}{unit}",
+            "text": f"{datainfo} · {val}{unit}{time_suffix}",
             "icon": "gauge",
             "pill": {"text": pill_text, "tone": pill_tone},
         })
