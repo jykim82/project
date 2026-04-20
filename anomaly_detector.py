@@ -2521,6 +2521,29 @@ def build_cross_facility_detail_block(result: Optional[dict]) -> list:
     return items
 
 
+import re as _re_for_pills  # 마커→pill 후처리용
+_MARKER_RE_CF = _re_for_pills.compile(r"<<(ok|warn|error|critical|info):([^>]+)>>")
+_TONE_NORM_CF = {"error": "critical", "critical": "critical", "warn": "warn", "ok": "ok", "info": "info"}
+_PILL_LABEL_CF = {"critical": "이상", "warn": "주의", "ok": "정상", "info": "정보"}
+
+
+def _lift_markers_cf(items: list) -> list:
+    """분석형 detail items 의 <<tone:label>> 마커를 pill 로 승격."""
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        text = it.get("text") or ""
+        m = _MARKER_RE_CF.search(text)
+        if not m:
+            continue
+        tone = _TONE_NORM_CF.get(m.group(1), "info")
+        it["text"] = _MARKER_RE_CF.sub(lambda mo: mo.group(2), text, count=1)
+        label = _PILL_LABEL_CF.get(tone, "")
+        if label and "pill" not in it:
+            it["pill"] = {"text": label, "tone": tone}
+    return items
+
+
 def build_cross_facility_scan_block(mismatches: list[dict]) -> tuple[list, dict]:
     """전체 스캔 결과 → (detail_block, data) (ANOMALY_CROSS_FACILITY용)."""
     data = {
@@ -2598,7 +2621,7 @@ def build_cross_facility_scan_block(mismatches: list[dict]) -> tuple[list, dict]
 
         items.append({"prefix": "", "text": ""})  # 빈 줄 구분
 
-    return items, data
+    return _lift_markers_cf(items), data
 
 
 # ─── 시설간 다중 홉 전파 추적 ───

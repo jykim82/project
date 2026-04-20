@@ -80,6 +80,9 @@ def build_hunting_result_block(rows: list, columns: list) -> list:
     """
     헌팅 점검 결과를 시맨틱 마커 리스트로 조립한다.
     듀얼 알고리즘: A(3h 방향전환) + B(5m 분산 뷰) 비교.
+
+    [옵션 b] <<tone:label>> 마커를 pill 로 승격. 텍스트 구조(설명문·
+    근거 수치)는 기존대로 유지.
     """
     items = []
     for row in rows:
@@ -89,39 +92,45 @@ def build_hunting_result_block(rows: list, columns: list) -> list:
         level_range = rd.get("level_range_3h", 0)
         status = rd.get("hunting_status", "STABLE")
 
-        # 알고리즘 A 마커
+        # 알고리즘 A → pill
         if status == "CONFIRMED_HUNTING":
-            marker_a = "<<error:헌팅 확인>>"
+            pill_a = {"text": "헌팅 확인", "tone": "critical"}
         elif status == "SUSPECTED":
-            marker_a = "<<warn:헌팅 의심>>"
+            pill_a = {"text": "헌팅 의심", "tone": "warn"}
         else:
-            marker_a = "<<ok:정상>>"
+            pill_a = {"text": "정상", "tone": "ok"}
 
-        # 알고리즘 B (5분 분산)
+        # 알고리즘 B (5분 분산) → pill
         diff_pct = rd.get("diff_percent_5m", 0)
         var_status = rd.get("variance_status_5m", "-")
         max_5m = rd.get("max_val_5m", 0)
         min_5m = rd.get("min_val_5m", 0)
 
         if var_status == "이상":
-            marker_b = f"<<warn:이상>> (변동률 {diff_pct}%)"
+            pill_b = {"text": f"이상 변동률 {diff_pct}%", "tone": "warn"}
         elif var_status == "정상":
-            marker_b = f"<<ok:정상>> (변동률 {diff_pct}%)"
+            pill_b = {"text": f"정상 변동률 {diff_pct}%", "tone": "ok"}
         else:
-            marker_b = "데이터 없음"
+            pill_b = None
 
         items.append({
-            "prefix": "###",
+            "prefix": "•",
             "text": f"{site}",
         })
         items.append({
             "prefix": "-",
-            "text": f"**[A] 방향전환 분석 (3시간)**: {marker_a} — 반전 {reversals}회, 진동폭 {level_range}m",
+            "text": f"[A] 방향전환 분석 (3시간) — 반전 {reversals}회, 진동폭 {level_range}m",
+            "pill": pill_a,
         })
-        items.append({
+        item_b = {
             "prefix": "-",
-            "text": f"**[B] 5분 분산 분석**: {marker_b} — 최대 {max_5m}m, 최소 {min_5m}m",
-        })
+            "text": f"[B] 5분 분산 분석 — 최대 {max_5m}m, 최소 {min_5m}m",
+        }
+        if pill_b:
+            item_b["pill"] = pill_b
+        else:
+            item_b["text"] = item_b["text"] + " (데이터 없음)"
+        items.append(item_b)
     return items
 
 
@@ -697,23 +706,30 @@ def build_upstream_fault_block(rows: list, columns: list) -> list:
     total_utm = int(first.get("total_utm") or 0)
     down_utm = int(first.get("down_utm") or 0)
 
+    def _item(prefix, text, tone=None):
+        it = {"prefix": prefix, "text": text}
+        if tone:
+            pill_text = {"critical": "이상", "warn": "주의", "ok": "정상", "info": "정보"}.get(tone, "")
+            if pill_text:
+                it["pill"] = {"text": pill_text, "tone": tone}
+        return it
+
     # 망 분리 환경 체크: LTE + UTM 전부 다운 → SNMP 폴링 불가
     if global_lte_total > 0 and global_lte_total == global_lte_down and total_utm > 0 and down_utm == total_utm:
-        items.append({"prefix": "•", "text": "<<warn:현재 네트워크 상태 데이터를 신뢰할 수 없습니다>>"})
-        items.append({"prefix": "-", "text": f"전체 장비 {global_lte_total + total_utm}대가 모두 응답 없음으로 기록되어 있습니다."})
-        items.append({"prefix": "-", "text": "원인: 현장 망과 분리된 환경(개발 서버)에서는 SNMP 폴링이 불가합니다."})
-        items.append({"prefix": "-", "text": "조치: 운영 서버 또는 tb_network_status 동기화 후 재조회 바랍니다."})
+        items.append(_item("•", "현재 네트워크 상태 데이터를 신뢰할 수 없습니다", "warn"))
+        items.append(_item("-", f"전체 장비 {global_lte_total + total_utm}대가 모두 응답 없음으로 기록되어 있습니다."))
+        items.append(_item("-", "원인: 현장 망과 분리된 환경(개발 서버)에서는 SNMP 폴링이 불가합니다."))
+        items.append(_item("-", "조치: 운영 서버 또는 tb_network_status 동기화 후 재조회 바랍니다."))
         return items
 
     # UTM 상태
     if total_utm > 0:
         if down_utm == 0:
-            utm_text = f"<<ok:정상>> ({total_utm}대 모두 응답)"
+            items.append(_item("•", f"UTM(인터넷 방화벽): 정상 ({total_utm}대 모두 응답)", "ok"))
         elif down_utm == total_utm:
-            utm_text = f"<<error:전체 장애>> ({down_utm}/{total_utm}대 다운)"
+            items.append(_item("•", f"UTM(인터넷 방화벽): 전체 장애 ({down_utm}/{total_utm}대 다운)", "critical"))
         else:
-            utm_text = f"<<warn:부분 장애>> ({down_utm}/{total_utm}대 다운)"
-        items.append({"prefix": "•", "text": f"UTM(인터넷 방화벽): {utm_text}"})
+            items.append(_item("•", f"UTM(인터넷 방화벽): 부분 장애 ({down_utm}/{total_utm}대 다운)", "warn"))
 
     # SSLVPN별 LTE 하위 장애 분석
     for row in rows:
@@ -723,7 +739,6 @@ def build_upstream_fault_block(rows: list, columns: list) -> list:
         down_lte = int(rd.get("down_lte") or 0)
         sslvpn_alive = rd.get("sslvpn_alive")
 
-        # down_sites: PostgreSQL array_agg 결과가 list 또는 문자열로 올 수 있음
         down_sites = rd.get("down_sites") or []
         if isinstance(down_sites, str):
             import ast
@@ -738,40 +753,38 @@ def build_upstream_fault_block(rows: list, columns: list) -> list:
         down_pct = round(down_lte / total_lte * 100)
 
         if sslvpn_alive is False:
-            sslvpn_status = "<<error:응답없음>>"
+            items.append(_item("•", f"{sslvpn_id}: 응답없음", "critical"))
         elif sslvpn_alive is True:
-            sslvpn_status = "<<ok:정상>>"
+            items.append(_item("•", f"{sslvpn_id}: 정상", "ok"))
         else:
-            sslvpn_status = "<<warn:상태없음>>"
+            items.append(_item("•", f"{sslvpn_id}: 상태없음", "warn"))
 
-        items.append({"prefix": "•", "text": f"{sslvpn_id}: {sslvpn_status}"})
-        items.append({"prefix": "-", "text": f"하위 LTE 현황: {down_lte}/{total_lte}대 다운 ({down_pct}%)"})
+        items.append(_item("-", f"하위 LTE 현황: {down_lte}/{total_lte}대 다운 ({down_pct}%)"))
 
-        # 이상 현장 목록 표시 (최대 15개)
         if down_lte > 0 and down_sites:
-            items.append({"prefix": "-", "text": f"이상 현장: {', '.join(down_sites[:15])}"})
+            items.append(_item("-", f"이상 현장: {', '.join(down_sites[:15])}"))
 
         if down_pct >= 80:
-            items.append({"prefix": "-", "text": f"<<error:판정: {sslvpn_id} 장애로 인한 집단 통신이상 가능성>>"})
+            items.append(_item("-", f"판정: {sslvpn_id} 장애로 인한 집단 통신이상 가능성", "critical"))
         elif down_pct >= 30:
-            items.append({"prefix": "-", "text": f"<<warn:판정: {sslvpn_id} 하위 다수 LTE 다운 — SSLVPN 점검 필요>>"})
+            items.append(_item("-", f"판정: {sslvpn_id} 하위 다수 LTE 다운 — SSLVPN 점검 필요", "warn"))
         elif down_lte <= 2:
-            items.append({"prefix": "-", "text": "<<ok:판정: 개별 현장 통신이상 (상위 장비 무관)>>"})
+            items.append(_item("-", "판정: 개별 현장 통신이상 (상위 장비 무관)", "ok"))
         else:
-            items.append({"prefix": "-", "text": f"<<warn:판정: {down_lte}개 현장 개별 통신이상>>"})
+            items.append(_item("-", f"판정: {down_lte}개 현장 개별 통신이상", "warn"))
 
     # 종합 판정
     if total_utm > 0 and down_utm == total_utm:
-        items.append({"prefix": "•", "text": "<<error:종합 판정: UTM 전체 장애 → 전 현장 통신이상 원인 가능성>>"})
-        items.append({"prefix": "-", "text": "권장 조치: UTM 장비 상태 확인 및 재시작"})
+        items.append(_item("•", "종합 판정: UTM 전체 장애 → 전 현장 통신이상 원인 가능성", "critical"))
+        items.append(_item("-", "권장 조치: UTM 장비 상태 확인 및 재시작"))
     elif global_lte_total > 0:
         gdown_pct = round(global_lte_down / global_lte_total * 100)
         if gdown_pct < 10:
-            items.append({"prefix": "•", "text": f"<<ok:종합 판정: 전체 LTE 다운율 {gdown_pct}% — 상위 장비 정상, 개별 현장 통신이상>>"})
+            items.append(_item("•", f"종합 판정: 전체 LTE 다운율 {gdown_pct}% — 상위 장비 정상, 개별 현장 통신이상", "ok"))
         elif gdown_pct >= 80:
-            items.append({"prefix": "•", "text": f"<<error:종합 판정: 전체 LTE {gdown_pct}% 다운 — 상위 장비 장애 가능성>>"})
+            items.append(_item("•", f"종합 판정: 전체 LTE {gdown_pct}% 다운 — 상위 장비 장애 가능성", "critical"))
         else:
-            items.append({"prefix": "•", "text": f"<<warn:종합 판정: 전체 LTE 다운율 {gdown_pct}% — 일부 상위 장비 또는 다수 현장 이상>>"})
+            items.append(_item("•", f"종합 판정: 전체 LTE 다운율 {gdown_pct}% — 일부 상위 장비 또는 다수 현장 이상", "warn"))
 
     return items
 
@@ -828,8 +841,21 @@ def build_equipment_table(meta: Any) -> list:
 
 
 def build_level_cause_block(rows: list, columns: list) -> list:
-    """배수지 수위 변동 원인 분석 결과를 시맨틱 마커 리스트로 조립한다."""
+    """배수지 수위 변동 원인 분석 결과를 조립한다.
+
+    [옵션 b] <<tone:label>> 마커를 pill 로 승격. text 는 라벨 그대로
+    유지 (마커 벗기고 순수 문자열). tone → pill tone 매핑.
+    """
     items = []
+
+    def _item(prefix, text, tone=None):
+        it = {"prefix": prefix, "text": text}
+        if tone:
+            pill_text = {"critical": "이상", "warn": "주의", "ok": "정상", "info": "정보"}.get(tone, "")
+            if pill_text:
+                it["pill"] = {"text": pill_text, "tone": tone}
+        return it
+
     for row in rows:
         rd = dict(zip(columns, row))
         direction = rd.get("direction", "")
@@ -839,66 +865,57 @@ def build_level_cause_block(rows: list, columns: list) -> list:
         ll_set = rd.get("ll_set", 0)
         upstream = rd.get("upstream_sitename", "")
 
-        # 현재 수위 + 설정값
-        items.append({"prefix": "•", "text": f"현재 수위: {current_level}m (HH: {hh_set}m / LL: {ll_set}m)"})
+        items.append(_item("•", f"현재 수위: {current_level}m (HH: {hh_set}m / LL: {ll_set}m)"))
         if upstream:
-            items.append({"prefix": "•", "text": f"상류 시설: {upstream} {rd.get('upstream_facilitytype', '')}"})
+            items.append(_item("•", f"상류 시설: {upstream} {rd.get('upstream_facilitytype', '')}"))
 
         if direction == "LL":
-            # 펌프 상태
             pump_status = rd.get("pump_status", "-")
             pump_detail = rd.get("pump_detail", "")
             if pump_status == "정지":
-                items.append({"prefix": "-", "text": f"<<error:{pump_detail}>>"})
+                items.append(_item("-", pump_detail, "critical"))
             elif pump_status != "-":
-                items.append({"prefix": "-", "text": f"<<ok:{pump_detail}>>"})
+                items.append(_item("-", pump_detail, "ok"))
 
-            # 공급시간
             supply_hours = rd.get("supply_time_hours")
             if supply_hours is not None:
                 if supply_hours < 2:
-                    items.append({"prefix": "-", "text": f"<<warn:공급가능시간 {supply_hours:.1f}시간 (2시간 미만)>>"})
+                    items.append(_item("-", f"공급가능시간 {supply_hours:.1f}시간 (2시간 미만)", "warn"))
                 else:
-                    items.append({"prefix": "-", "text": f"공급가능시간: {supply_hours:.1f}시간"})
+                    items.append(_item("-", f"공급가능시간: {supply_hours:.1f}시간"))
 
-            # 유입/유출
             if rd.get("outflow_exceeds_inflow"):
                 inflow = rd.get("inflow_avg", 0)
                 outflow = rd.get("outflow_avg", 0)
                 pct = round((outflow - inflow) / inflow * 100, 1) if inflow > 0 else 0
-                items.append({"prefix": "-", "text": f"<<warn:유출량 > 유입량 ({pct}% 초과)>> — 유입 {inflow}, 유출 {outflow} m³/h"})
+                items.append(_item("-", f"유출량 > 유입량 ({pct}% 초과) — 유입 {inflow}, 유출 {outflow} m³/h", "warn"))
             else:
-                items.append({"prefix": "-", "text": "<<ok:유입/유출 균형 정상>>"})
+                items.append(_item("-", "유입/유출 균형 정상", "ok"))
 
-            # 유입밸브
             if rd.get("inlet_valve_closed"):
-                items.append({"prefix": "-", "text": "<<error:유입밸브 차단 상태>>"})
+                items.append(_item("-", "유입밸브 차단 상태", "critical"))
             else:
-                items.append({"prefix": "-", "text": "<<ok:유입밸브 개방 상태>>"})
+                items.append(_item("-", "유입밸브 개방 상태", "ok"))
 
         elif direction == "HH":
-            # 유출밸브
             if rd.get("outlet_valve_closed"):
-                items.append({"prefix": "-", "text": "<<error:유출밸브 차단 상태>>"})
+                items.append(_item("-", "유출밸브 차단 상태", "critical"))
             else:
-                items.append({"prefix": "-", "text": "<<ok:유출밸브 개방 상태>>"})
+                items.append(_item("-", "유출밸브 개방 상태", "ok"))
 
-            # 펌프 전수 운전
             if rd.get("all_pumps_running"):
-                items.append({"prefix": "-", "text": f"<<warn:{rd.get('pump_detail', '상류 가압펌프 전수 연속 운전')}>>"})
+                items.append(_item("-", rd.get("pump_detail", "상류 가압펌프 전수 연속 운전"), "warn"))
             elif rd.get("pump_detail") and rd.get("pump_status") != "-":
-                items.append({"prefix": "-", "text": f"<<ok:{rd.get('pump_detail', '')}>>"})
+                items.append(_item("-", rd.get("pump_detail", ""), "ok"))
 
-            # 설정수위 비교
             us_set = rd.get("upstream_level_set", 0)
             if us_set > 0 and hh_set > 0 and us_set > hh_set:
-                items.append({"prefix": "-", "text": f"<<warn:상류 설정수위({us_set}m) > 배수지 HH({hh_set}m)>> — 설정값 검토 필요"})
+                items.append(_item("-", f"상류 설정수위({us_set}m) > 배수지 HH({hh_set}m) — 설정값 검토 필요", "warn"))
 
-        # 원인 요약
         cause = rd.get("cause_summary", "")
         if cause:
-            sev_marker = {"critical": "<<error:긴급>>", "warning": "<<warn:주의>>", "info": "<<ok:정상>>"}.get(severity, "")
-            items.append({"prefix": "▶", "text": f"**원인 요약**: {cause} {sev_marker}"})
+            tone_map = {"critical": "critical", "warning": "warn", "info": "ok"}
+            items.append(_item("▶", f"원인 요약: {cause}", tone_map.get(severity)))
 
     return items
 

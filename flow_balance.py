@@ -9,10 +9,34 @@
 - 70% 이상 데이터 커버리지 필요 (그 미만은 "데이터부족" 플래그)
 """
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+# <<tone:label>> 마커를 pill 로 승격 (분석형 응답 디자인 일관화)
+_MARKER_RE = re.compile(r"<<(ok|warn|error|critical|info):([^>]+)>>")
+_TONE_NORMALIZE = {"error": "critical", "critical": "critical", "warn": "warn", "ok": "ok", "info": "info"}
+_TONE_PILL_LABEL = {"critical": "이상", "warn": "주의", "ok": "정상", "info": "정보"}
+
+
+def _lift_markers_to_pills(items: list) -> list:
+    """각 item text 내의 첫 <<tone:label>> 마커를 벗겨 pill 필드로 이동."""
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        text = it.get("text") or ""
+        m = _MARKER_RE.search(text)
+        if not m:
+            continue
+        tone = _TONE_NORMALIZE.get(m.group(1), "info")
+        # 마커 벗기기 (첫 번째만, 라벨 문자열만 남김)
+        it["text"] = _MARKER_RE.sub(lambda mo: mo.group(2), text, count=1)
+        pill_label = _TONE_PILL_LABEL.get(tone, "")
+        if pill_label and "pill" not in it:
+            it["pill"] = {"text": pill_label, "tone": tone}
+    return items
 
 # ── 임계값 ──
 _GRADE_THRESHOLDS = [
@@ -440,4 +464,4 @@ def build_flow_balance_scan_block(
             "text": f"<<warn:데이터 부족 {len(skip_edges)}건: {skip_names}{suffix}>>",
         })
 
-    return items, data
+    return _lift_markers_to_pills(items), data
