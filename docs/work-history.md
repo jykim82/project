@@ -2724,11 +2724,19 @@ C안 중기 확장 Phase 2의 남은 3종(P2.6/P2.7/FAQ) 백엔드·프런트 �
 - 채팅 SSE 진행 표시 라벨+도트 스타일 (분류→추출→조회→렌더링)
 
 ### 즉시 진행 가능
-1. **인과 규칙 엔진 고도화** — 선형 체인 → 조건부 규칙 그래프 (선행조건/안전연동/역방향/AND/다중홉)
+(현재 비어있음 — 2026-04-20 기준 아래 이력 참조. 새 항목은 사용자 요청 시 추가)
 
-(2026-04-20 정리: 이전에 등록했던 "가압장→소블록 cross-facility 규칙 추가"는
-`anomaly_detector.py:1654 _CROSS_RULES[0]` 에 이미 구현돼 있음을 확인. 다홉 전파
-역시 _INTRA/_CROSS 결합으로 기본 동작. 완료 처리.)
+(2026-04-20 정리:
+- "가압장→소블록 cross-facility 규칙 추가" — `anomaly_detector.py:1654
+  _CROSS_RULES[0]` 에 이미 구현됨. 다홉 전파도 _INTRA/_CROSS 결합 동작
+- "인과 규칙 엔진 고도화 (선행조건/안전연동/역방향/AND/다중홉)" — 5개 모두
+  이미 구현됨:
+  - 선행조건: `_check_prerequisite` + `PREREQUISITE_FAILED`
+  - 안전연동: `verify_safety_interlocks` + `SAFETY_INTERLOCK_VIOLATED`
+  - 역방향: `anomaly_detector.py:1319` 역방향 추적 로직
+  - AND: `verify_and_conditions` + `AND_CONDITION_VIOLATED`
+  - 다홉: 이미 `완료 처리 이력` 에 기재
+- 이 두 항목은 과거 잘못된 할 일 기재였음. 완료로 이동.)
 
 ### 보류/후순위
 3. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
@@ -2741,6 +2749,8 @@ C안 중기 확장 Phase 2의 남은 3종(P2.6/P2.7/FAQ) 백엔드·프런트 �
    - 사양 확정 필요: 임계값(80% vs 전체), 신규 인텐트 vs 기존 `NETWORK_COMM_STATUS` 확장
 
 ### 완료 처리 이력 (이전 남은/향후 항목 중 완료된 것)
+- ~~인과 규칙 엔진 고도화 (선형 체인 → 조건부 규칙 그래프)~~ — 완료 (2026-04-20 재확인: 선행조건 `_check_prerequisite`, 안전연동 `verify_safety_interlocks`, 역방향 추적, AND 조건 `verify_and_conditions`, 다홉 전파 모두 `anomaly_detector.py`에 이미 구현. `PREREQUISITE_FAILED`/`SAFETY_INTERLOCK_VIOLATED`/`AND_CONDITION_VIOLATED` 패턴 정의 완비)
+- ~~인과관계 내재화 확장 (가압장→소블록 cross-facility)~~ — 완료 (2026-04-20 재확인: `anomaly_detector.py:1654 _CROSS_RULES[0]`에 구현됨. 가압장→소블록, 배수지→가압장/소블록, 감압시설→소블록, 소블록→소소블록 5종 cross-rule 활성)
 - ~~TIMESERIES 태그 조회 카탈로그 우선 전환~~ — 완료 (tb_tag_data_group 그룹 기반 전환)
 - ~~인과관계 엔진 Phase 2~~ — 완료 (캔버스 인과 탭 + 구역 분리 + 교차상관 + SLM 해석)
 - ~~시설간 교차 검증~~ — 완료 (ANOMALY_FACILITY_DETAIL 자동 + ANOMALY_CROSS_FACILITY 인텐트)
