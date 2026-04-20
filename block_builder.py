@@ -131,6 +131,10 @@ def build_level_detail_block(rows: list, columns: list) -> list:
     fn_reservoir_level_summary() 다중 행을 개별 수위 항목 리스트로 조립한다.
     반환 컬럼: log_time, out_sitename, out_facilitytype, out_datainfo,
               avg_latest, latest_val, avg_month, avg_year, unit
+
+    [AFTER 일관성] text="라벨 · 값" + icon + pill 구조로 DetailLeaderRow
+    트리거. 월평균 대비 편차로 pill tone 결정(ok / warn / critical).
+    내용 보존: datainfo, latest_val, unit, 월평균 편차% 모두 유지.
     """
     items = []
     for row in rows:
@@ -141,22 +145,29 @@ def build_level_detail_block(rows: list, columns: list) -> list:
         unit = row_dict.get("unit") or ""
         if latest_val is None:
             continue
-        # 월평균 대비 편차 기반 마커
-        marker_text = f"{latest_val}{unit}"
+
+        pill_text = "정상 범위"
+        pill_tone = "ok"
         try:
             lv = float(latest_val)
             am = float(avg_month) if avg_month is not None else None
             if am and am > 0:
                 dev_pct = abs(lv - am) / am * 100
                 if dev_pct >= 30:
-                    marker_text = f"<<error:{latest_val}{unit}>> (월평균 대비 {dev_pct:+.0f}%)"
+                    pill_text = f"월평균 대비 {dev_pct:+.0f}%"
+                    pill_tone = "critical"
                 elif dev_pct >= 15:
-                    marker_text = f"<<warn:{latest_val}{unit}>> (월평균 대비 {dev_pct:+.0f}%)"
-                else:
-                    marker_text = f"<<ok:{latest_val}{unit}>>"
+                    pill_text = f"월평균 대비 {dev_pct:+.0f}%"
+                    pill_tone = "warn"
         except (ValueError, TypeError):
             pass
-        items.append({"prefix": "-", "text": f"{datainfo}: {marker_text}"})
+
+        items.append({
+            "prefix": "•",
+            "text": f"{datainfo} · {latest_val}{unit}",
+            "icon": "gauge",
+            "pill": {"text": pill_text, "tone": pill_tone},
+        })
     return items
 
 
@@ -220,18 +231,41 @@ def build_alarm_list_block(rows: list, columns: list) -> list:
     """
     FACILITY_RECENT_ALARM 다중 행을 알람 목록 리스트로 조립한다.
     반환 컬럼: alarm_start_time, alarm_msg
+
+    [AFTER 일관성] text="발생시각 · 메시지" + icon="alert" + pill(tone)
+    구조로 DetailLeaderRow 트리거. pill 은 _alarm_msg_marker 분류를
+    tone 으로 그대로 승격 (critical/warn/ok). 내용 보존: 시각·메시지
+    원문 모두 유지.
     """
     items = []
     for row in rows:
         row_dict = dict(zip(columns, row))
         alarm_time = row_dict.get("alarm_start_time", "")
         alarm_msg = row_dict.get("alarm_msg", "")
-        if alarm_time and alarm_msg:
-            marked_msg = _alarm_msg_marker(alarm_msg)
-            items.append({
-                "prefix": "-",
-                "text": f"{alarm_time} — {marked_msg}"
-            })
+        if not alarm_time or not alarm_msg:
+            continue
+
+        # 심각도 분류 → pill
+        msg = str(alarm_msg)
+        if any(k in msg for k in ("상한", "초과", "고장", "통신장애", "미수신")):
+            pill_text = "이상"
+            pill_tone = "critical"
+        elif any(k in msg for k in ("하한", "미달", "저하", "약간")):
+            pill_text = "경고"
+            pill_tone = "warn"
+        elif any(k in msg for k in ("정상", "복구", "해제")):
+            pill_text = "복구"
+            pill_tone = "ok"
+        else:
+            pill_text = "알람"
+            pill_tone = "warn"
+
+        items.append({
+            "prefix": "•",
+            "text": f"{alarm_time} · {alarm_msg}",
+            "icon": "alert",
+            "pill": {"text": pill_text, "tone": pill_tone},
+        })
     return items
 
 

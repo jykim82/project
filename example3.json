@@ -360,18 +360,15 @@
     ],
     "sql": "SELECT *\nFROM fn_reservoir_level_summary('{sitename}', '{facilitytype}', '수위');",
     "answer_template": {
-      "summary": "{sitename}{facilitytype} 수위 현황은 다음과 같습니다.",
+      "summary": "{sitename}{facilitytype} 수위 현황은 다음과 같습니다. ({log_time} 기준)",
       "detail": [
         {
           "prefix": "•",
-          "text": "{log_time} 기준 {sitename}{facilitytype} 평균 수위는 {avg_latest}{unit}입니다."
+          "icon": "gauge",
+          "text": "평균 수위 · {avg_latest}{unit}"
         },
         {
           "prefix": "•",
-          "text": "다음은 각 개별 수위 현황입니다."
-        },
-        {
-          "prefix": "-",
           "text": "{level_detail_block}"
         }
       ],
@@ -2294,14 +2291,10 @@
     ],
     "sql": "SELECT\n  TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,\n  alarm_msg\nFROM tb_equipment_alarm_report\nWHERE sitename = '{sitename}'\n  AND facilitytype = '{facilitytype}'\n  AND alarm_msg LIKE '%{alarm_msg}%'\nORDER BY alarm_start_time DESC\nLIMIT 5;",
     "answer_template": {
-      "summary": "{sitename} {facilitytype} 최근 알람은 다음과 같습니다.",
+      "summary": "{sitename} {facilitytype} 최근 알람은 다음과 같습니다. (최대 5건)",
       "detail": [
         {
           "prefix": "•",
-          "text": "최근 알람은 일반적인 센서 알람 발생 빈도를 고려하여 최대 5건까지 표시합니다."
-        },
-        {
-          "prefix": "",
           "text": "{alarm_list_block}"
         }
       ],
