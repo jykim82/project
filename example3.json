@@ -224,31 +224,32 @@
     ],
     "sql": "SELECT\n  sitename,\n  general_overview ->> 'operating_status' AS operating_status,\n  avg_outflow,\n  avg_outflow_unit,\n  avg_usage,\n  usage_unit,\n  avg_reservoir_level,\n  water_level_unit,\n  alarm_high_water_level,\n  alarm_low_water_level,\n  total_supply_time\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
-      "summary": "{sitename} 배수지 운영현황은 다음과 같습니다.",
+      "summary": "{sitename} 배수지 운영현황은 다음과 같습니다. (일평균은 최근 7일 평균 기준)",
       "detail": [
         {
           "prefix": "•",
-          "text": "최근 7일간 평균 산출 방식으로 일평균 공급량을 산정합니다."
+          "icon": "activity",
+          "text": "운영 상태 · {operating_status}"
         },
         {
           "prefix": "•",
-          "text": "{sitename} 배수지 운영 상태는 현재 {operating_status} 상태입니다."
+          "icon": "droplet",
+          "text": "공급량 · 일평균 {avg_outflow}{avg_outflow_unit}, 시간당 {avg_usage}{usage_unit}"
         },
         {
           "prefix": "•",
-          "text": "일평균 공급량은 {avg_outflow}{avg_outflow_unit}이며, 현재 시간당 {avg_usage}{usage_unit} 공급 중입니다."
+          "icon": "gauge",
+          "text": "평균 운영 수위 · {avg_reservoir_level}{water_level_unit}"
         },
         {
           "prefix": "•",
-          "text": "배수지 평균 운영 수위는 {avg_reservoir_level}{water_level_unit}입니다."
+          "icon": "alert",
+          "text": "수위 경보 기준 · HH {alarm_high_water_level}{water_level_unit}, LL {alarm_low_water_level}{water_level_unit}"
         },
         {
           "prefix": "•",
-          "text": "배수지 수위 경보 기준은 HH {alarm_high_water_level}{water_level_unit}, LL {alarm_low_water_level}{water_level_unit}입니다."
-        },
-        {
-          "prefix": "•",
-          "text": "현재 배수지 용수공급가능시간은 {total_supply_time}시간입니다."
+          "icon": "clock",
+          "text": "용수공급가능시간 · {total_supply_time}시간"
         }
       ],
       "reference": {
