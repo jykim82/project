@@ -363,7 +363,9 @@ def build_pressure_detail_block(rows: list, columns: list) -> list:
     반환 컬럼: datainfo, pressure_val, log_time, month_avg, year_avg, unit
     - 설정압력(Analog Output 개념) 제외
     - 동일 datainfo 중복 제거
-    - 월평균 대비 편차 시맨틱 마커 (±30% 이상 error, ±15% warn)
+    - 월평균 대비 편차 판정 → pill tone (±30% 이상 critical, ±15% warn, 그 외 ok)
+    - [AFTER 일관성] text="라벨 · 값" + icon="gauge" + pill 구조로 프런트
+      DetailLeaderRow 분기(라벨|값|배지) 트리거
     """
     items = []
     seen = set()
@@ -377,24 +379,32 @@ def build_pressure_detail_block(rows: list, columns: list) -> list:
         month_avg = row_dict.get("month_avg")
         unit = row_dict.get("unit") or ""
         dedup_key = (datainfo, val, log_time)
-        if val is not None and dedup_key not in seen:
-            seen.add(dedup_key)
-            # 월평균 대비 편차 마커
-            status_tag = ""
-            try:
-                v = float(val)
-                m = float(month_avg) if month_avg else None
-                if m and abs(m) > 0.001:
-                    dev_pct = abs(v - m) / abs(m) * 100
-                    if dev_pct >= 30:
-                        status_tag = f" <<error:편차 {dev_pct:.0f}%>>"
-                    elif dev_pct >= 15:
-                        status_tag = f" <<warn:편차 {dev_pct:.0f}%>>"
-                    else:
-                        status_tag = f" <<ok:정상 범위>>"
-            except (ValueError, TypeError):
-                pass
-            items.append({"prefix": "•", "text": f"{log_time} 기준 {datainfo}: {val}{unit}{status_tag}"})
+        if val is None or dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        pill_text = "정상 범위"
+        pill_tone = "ok"
+        try:
+            v = float(val)
+            m = float(month_avg) if month_avg else None
+            if m and abs(m) > 0.001:
+                dev_pct = abs(v - m) / abs(m) * 100
+                if dev_pct >= 30:
+                    pill_text = f"편차 {dev_pct:.0f}%"
+                    pill_tone = "critical"
+                elif dev_pct >= 15:
+                    pill_text = f"편차 {dev_pct:.0f}%"
+                    pill_tone = "warn"
+        except (ValueError, TypeError):
+            pass
+
+        items.append({
+            "prefix": "•",
+            "text": f"{datainfo} · {val}{unit}",
+            "icon": "gauge",
+            "pill": {"text": pill_text, "tone": pill_tone},
+        })
     return items
 
 
