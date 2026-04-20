@@ -1969,15 +1969,12 @@
     ],
     "sql": "SELECT * FROM fn_equipment_type_path_server_origin('{sitename}', '{facilitytype}');\n\nSELECT\n  source_sitename,\n  source_facilitytype,\n  source_equipmenttype,\n  target_equipmenttype,\n  link_device_interface,\n  link_protocol\nFROM fn_network_path_hop_detail('{sitename}', '{facilitytype}');",
     "answer_template": {
-      "summary": "{sitename} {facilitytype} 통신 구성은 다음과 같습니다.",
+      "summary": "{sitename} {facilitytype} 통신 구성은 다음과 같습니다. (프로토콜 정책이 여러 개면 unknown 표기)",
       "detail": [
         {
           "prefix": "•",
-          "text": "네트워크 전체 흐름은 {type_path}입니다."
-        },
-        {
-          "prefix": "•",
-          "text": "이더넷 통신 경로 및 프로토콜 (다수의 프로토콜 정책이 있는 경우는 unknown으로 표기합니다.)"
+          "icon": "activity",
+          "text": "전체 흐름 · {type_path}"
         },
         {
           "prefix": "",

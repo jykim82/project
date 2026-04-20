@@ -522,7 +522,11 @@ def build_network_hop_detail_block(rows: list, columns: list) -> list:
     fn_network_path_hop_detail() 다중 행을 source_sitename 기준 그룹핑하여 조립한다.
     반환 컬럼: source_sitename, source_facilitytype, source_equipmenttype,
               target_equipmenttype, link_device_interface, link_protocol
-    반환: [{"prefix": "1.", "text": "당진시청의 연결 구간별 ..."}, {"prefix": "-", "text": "..."}, ...]
+
+    [AFTER 일관성] 그룹 헤더는 prefix="•" + 단순 텍스트(섹션 구분),
+    hop 행은 prefix="•" + "src → tgt · interface, protocol" +
+    icon="zap" + pill(protocol) 로 leader 렌더.
+    내용 보존: src, tgt, interface, protocol 모두 유지.
     """
     from collections import OrderedDict
     groups = OrderedDict()
@@ -536,19 +540,26 @@ def build_network_hop_detail_block(rows: list, columns: list) -> list:
         groups[key].append(row_dict)
 
     items = []
-    for idx, (group_name, hops) in enumerate(groups.items(), 1):
+    for group_name, hops in groups.items():
         items.append({
-            "prefix": f"{idx}.",
-            "text": f"{group_name}의 연결 구간별 통신 방식 및 프로토콜 정보"
+            "prefix": "•",
+            "text": f"{group_name} 연결 구간",
         })
         for hop in hops:
-            src = hop.get("source_equipmenttype", "")
-            tgt = hop.get("target_equipmenttype", "")
-            interface = hop.get("link_device_interface", "")
-            protocol = hop.get("link_protocol", "")
+            src = hop.get("source_equipmenttype", "") or ""
+            tgt = hop.get("target_equipmenttype", "") or ""
+            interface = hop.get("link_device_interface", "") or "-"
+            protocol = hop.get("link_protocol", "") or ""
+            pill_tone = "neutral"
+            if protocol and protocol.lower() == "unknown":
+                pill_tone = "warn"
+            elif protocol:
+                pill_tone = "info"
             items.append({
-                "prefix": "-",
-                "text": f"{src} - {tgt} : {interface} 통신, 프로토콜 : {protocol}"
+                "prefix": "•",
+                "text": f"{src} → {tgt} · {interface}",
+                "icon": "zap",
+                "pill": {"text": protocol or "-", "tone": pill_tone},
             })
     return items
 
@@ -571,39 +582,54 @@ def build_network_status_block(rows: list, columns: list) -> list:
         groups[key].append(row_dict)
 
     items = []
+    # [AFTER 일관성] 설명문은 상단 요약으로 유지 (그룹 헤더 구분용)
     items.append({
         "prefix": "•",
         "text": "네트워크 상태는 상위 네트워크 장비부터 현장까지 구간을 확인합니다."
     })
+
+    # status_code → pill tone/라벨 매핑
+    def _pill_from_status(status_code, error):
+        if status_code == "ok" or status_code == "OK" or (isinstance(status_code, str) and "정상" in status_code):
+            return {"text": "정상", "tone": "ok"}
+        if status_code and (isinstance(status_code, str) and ("이상" in status_code or "error" in status_code.lower())):
+            return {"text": "이상", "tone": "critical"}
+        if status_code and isinstance(status_code, str) and ("경고" in status_code or "warn" in status_code.lower()):
+            return {"text": "경고", "tone": "warn"}
+        if not status_code:
+            return {"text": "상태없음", "tone": "warn"}
+        # fallback
+        return {"text": str(status_code), "tone": "warn"}
+
     for group_name, hops in groups.items():
+        # 그룹 헤더 ({group_name} 에 " · " 없어 bullet/group 스타일로 렌더)
         items.append({"prefix": "•", "text": group_name})
         for hop in hops:
             equip = hop.get("equipmenttype", "")
             status = hop.get("status_code")
             rtt = hop.get("rtt_ms")
             error = hop.get("error_message")
-            marked_status = wrap_status_marker(status) if status else "<<warn:상태없음>>"
-            if status and rtt is not None:
-                rtt_val = int(float(str(rtt))) if rtt else 0
-                items.append({
-                    "prefix": "-",
-                    "text": f"{equip} : {marked_status}, 응답속도 : {rtt_val}ms"
-                })
-            elif status and error:
-                items.append({
-                    "prefix": "-",
-                    "text": f"{equip} : {marked_status}, {error}"
-                })
-            elif status:
-                items.append({
-                    "prefix": "-",
-                    "text": f"{equip} : {marked_status}"
-                })
+
+            # 값 (value) 부분: 응답속도 또는 error 메시지
+            if rtt is not None:
+                try:
+                    rtt_val = int(float(str(rtt)))
+                    value_part = f"응답 {rtt_val}ms"
+                except (ValueError, TypeError):
+                    value_part = "응답 -"
+            elif error:
+                value_part = str(error)
             else:
-                items.append({
-                    "prefix": "-",
-                    "text": f"{equip} : <<warn:상태없음>>"
-                })
+                value_part = "-"
+
+            pill = _pill_from_status(status, error)
+
+            items.append({
+                "prefix": "•",
+                "text": f"{equip} · {value_part}",
+                "icon": "zap",
+                "pill": pill,
+            })
     return items
 
 
