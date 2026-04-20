@@ -667,19 +667,23 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename} 가압장 설치 위치는 {install_location}에 위치하고 있습니다."
+          "icon": "map-pin",
+          "text": "설치 위치 · {install_location}"
         },
         {
           "prefix": "•",
-          "text": "설치년도는 {install_year}년입니다."
+          "icon": "clock",
+          "text": "설치년도 · {install_year}년"
         },
         {
           "prefix": "•",
-          "text": "가압장 시설용량은 {facility_capacity_m3}이며, {booster_type} 방식으로 운영 중입니다."
+          "icon": "home",
+          "text": "시설용량 · {facility_capacity_m3}, {booster_type} 방식 운영"
         },
         {
           "prefix": "•",
-          "text": "펌프는 총 {pump_count}대이며, {linked_reservoirs} 배수지와 연동되어 운영 중입니다."
+          "icon": "zap",
+          "text": "펌프 구성 · 총 {pump_count}대, {linked_reservoirs} 배수지 연계"
         }
       ],
       "reference": {
