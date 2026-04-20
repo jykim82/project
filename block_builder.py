@@ -176,6 +176,9 @@ def build_today_flow_detail_block(rows: list, columns: list) -> list:
     """
     fn_today_outflow() 다중 행을 금일 적산 항목 리스트로 조립한다.
     반환 컬럼: sitename, facilitytype, datainfo, unit, today_outflow
+
+    [AFTER 일관성] "{datainfo} · {value}{unit}" + icon="droplet" +
+    pill(tone: ok/warn by value=0). 내용 보존.
     """
     items = []
     for row in rows:
@@ -185,15 +188,20 @@ def build_today_flow_detail_block(rows: list, columns: list) -> list:
         unit = row_dict.get("unit") or ""
         if today_outflow is None:
             continue
+        pill_text = "적산"
+        pill_tone = "ok"
         try:
-            val = float(today_outflow)
-            if val == 0:
-                val_text = f"<<warn:0{unit}>>"
-            else:
-                val_text = f"<<ok:{today_outflow}{unit}>>"
+            if float(today_outflow) == 0:
+                pill_text = "0"
+                pill_tone = "warn"
         except (ValueError, TypeError):
-            val_text = f"{today_outflow}{unit}"
-        items.append({"prefix": "-", "text": f"{datainfo}: {val_text}"})
+            pass
+        items.append({
+            "prefix": "•",
+            "text": f"{datainfo} · {today_outflow}{unit}",
+            "icon": "droplet",
+            "pill": {"text": pill_text, "tone": pill_tone},
+        })
     return items
 
 
@@ -202,6 +210,9 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
     """
     fn_today_outflow_all() 다중 행을 전체 배수지 유출 현황 항목 리스트로 조립한다.
     반환 컬럼: result_sitename, result_facilitytype, result_today_outflow, result_is_total
+
+    [AFTER 일관성] "{sitename} {facilitytype} · {outflow}㎥" +
+    icon="droplet" + pill(tone: ok/critical by value=0).
     """
     items = []
     for row in rows:
@@ -211,18 +222,23 @@ def build_outflow_detail_block(rows: list, columns: list) -> list:
         outflow = row_dict.get("result_today_outflow")
         is_total = row_dict.get("result_is_total", 0)
         if is_total == 1:
-            continue  # 합계 행은 별도 처리 (total_outflow)
+            continue
         if outflow is None:
             continue
+        pill_text = "정상"
+        pill_tone = "ok"
         try:
-            val = float(outflow)
-            if val == 0:
-                val_text = f"<<error:0㎥>>"
-            else:
-                val_text = f"<<ok:{outflow}㎥>>"
+            if float(outflow) == 0:
+                pill_text = "0"
+                pill_tone = "critical"
         except (ValueError, TypeError):
-            val_text = f"{outflow}㎥"
-        items.append({"prefix": "-", "text": f"{sitename} {facilitytype}: {val_text}"})
+            pass
+        items.append({
+            "prefix": "•",
+            "text": f"{sitename} {facilitytype} · {outflow}㎥",
+            "icon": "droplet",
+            "pill": {"text": pill_text, "tone": pill_tone},
+        })
     return items
 
 
@@ -290,6 +306,9 @@ def build_latest_value_list_block(rows: list, columns: list) -> list:
     """
     FACILITY_TAG_LATEST_VALUE 다중 행을 최신값 리스트로 조립한다.
     반환 컬럼: datadesc, latest_val, latest_time
+
+    [AFTER 일관성] "{datadesc} · {val} ({time})" + icon="activity"
+    leader 구조. 내용 보존 (datadesc, val, time 모두 유지).
     """
     items = []
     for row in rows:
@@ -297,12 +316,14 @@ def build_latest_value_list_block(rows: list, columns: list) -> list:
         datadesc = row_dict.get("datadesc", "")
         latest_val = row_dict.get("latest_val", "")
         latest_time = row_dict.get("latest_time", "")
-        if datadesc and latest_val is not None:
-            formatted_val = _format_latest_value(datadesc, latest_val)
-            items.append({
-                "prefix": "-",
-                "text": f"{datadesc}: {formatted_val} ({latest_time})"
-            })
+        if not datadesc or latest_val is None:
+            continue
+        formatted_val = _format_latest_value(datadesc, latest_val)
+        items.append({
+            "prefix": "•",
+            "text": f"{datadesc} · {formatted_val} ({latest_time})",
+            "icon": "activity",
+        })
     return items
 
 

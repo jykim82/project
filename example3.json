@@ -592,14 +592,15 @@
     ],
     "sql": "SELECT *\nFROM fn_today_outflow_all(CURRENT_DATE);",
     "answer_template": {
-      "summary": "금일 전체 배수지 유출 현황은 다음과 같습니다.",
+      "summary": "금일 전체 배수지 유출 현황은 다음과 같습니다. (당일 00시~현재 누적 기준)",
       "detail": [
         {
           "prefix": "•",
-          "text": "전체 배수지 유출량은 {total_outflow}㎥입니다."
+          "icon": "droplet",
+          "text": "전체 유출량 · {total_outflow}㎥"
         },
         {
-          "prefix": "",
+          "prefix": "•",
           "text": "{outflow_detail_block}"
         }
       ],
@@ -2516,23 +2517,28 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename} 배수지는 총 {zone_count}지로 구성되어 있으며, 총 시설용량은 {facility_capacity}{facility_unit}입니다."
+          "icon": "home",
+          "text": "시설 구성 · 총 {zone_count}지, 시설용량 {facility_capacity}{facility_unit}"
         },
         {
           "prefix": "•",
-          "text": "한 달 평균 기준 유입량은 {monthly_inflow}{avg_unit}, 유출량은 {monthly_outflow}{avg_unit}입니다."
+          "icon": "droplet",
+          "text": "월 평균 유입/유출 · {monthly_inflow}{avg_unit} / {monthly_outflow}{avg_unit}"
         },
         {
           "prefix": "•",
-          "text": "금일 기준 유입량은 {today_inflow}{avg_unit}, 유출량은 {today_outflow}{avg_unit}입니다."
+          "icon": "droplet",
+          "text": "금일 유입/유출 · {today_inflow}{avg_unit} / {today_outflow}{avg_unit}"
         },
         {
           "prefix": "•",
-          "text": "한 달 평균 기준 용수공급가능시간은 {supply_hours_monthly}시간입니다."
+          "icon": "clock",
+          "text": "월 평균 기준 공급가능시간 · {supply_hours_monthly}시간"
         },
         {
           "prefix": "•",
-          "text": "금일 기준 용수공급가능시간은 {supply_hours_today}시간입니다."
+          "icon": "clock",
+          "text": "금일 기준 공급가능시간 · {supply_hours_today}시간"
         }
       ],
       "reference": {
