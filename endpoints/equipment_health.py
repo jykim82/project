@@ -371,3 +371,125 @@ def equipment_lifespan(
         }
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# [중기 확장 #3] 설비 교체 실적 (P7 replacement_info)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/replacement-history")
+def replacement_history(months: int = Query(24, ge=1, le=120)):
+    """최근 교체(fault_category='교체') 실적 집계.
+
+    응답:
+      summary: {total, monthly, by_category, by_sitename_top}
+      rows:    [{task_id, sitename, facilitytype, equipmenttype, category,
+                 task_start_time, replacement_info, recorded_by}]
+    """
+    if _get_db_connection is None:
+        raise HTTPException(500, "DB 미초기화")
+    conn = _get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"""
+          SELECT
+            t.task_id,
+            t.sitename,
+            t.facilitytype,
+            t.equipmenttype,
+            m.category,
+            to_char(t.task_start_time, 'YYYY-MM-DD HH24:MI:SS') AS task_start_time,
+            to_char(t.task_start_time, 'YYYY-MM') AS month,
+            t.replacement_info,
+            t.recorded_by,
+            t.task_content
+          FROM tb_task_master t
+          LEFT JOIN tb_equipment_category_map m ON m.equipmenttype = t.equipmenttype
+          WHERE t.task_category = '고장보고'
+            AND t.fault_category = '교체'
+            AND t.task_start_time >= now() - interval '{months} months'
+          ORDER BY t.task_start_time DESC
+        """)
+        rows = _rows_to_dicts(cur)
+
+        monthly = {}
+        by_category = {}
+        by_sitename = {}
+        for r in rows:
+            m = r.get("month")
+            if m:
+                monthly[m] = monthly.get(m, 0) + 1
+            c = r.get("category") or "(미분류)"
+            by_category[c] = by_category.get(c, 0) + 1
+            s = r.get("sitename") or "(미상)"
+            by_sitename[s] = by_sitename.get(s, 0) + 1
+
+        top_sites = sorted(by_sitename.items(), key=lambda x: -x[1])[:10]
+
+        # month 필드는 요약용이라 row 에서 제거 (중복)
+        for r in rows:
+            r.pop("month", None)
+
+        cur.close()
+        return {
+            "status": "OK",
+            "summary": {
+                "total": len(rows),
+                "monthly": [{"month": k, "cnt": v} for k, v in sorted(monthly.items())],
+                "by_category": [{"category": k, "cnt": v} for k, v in sorted(by_category.items(), key=lambda x: -x[1])],
+                "by_sitename_top": [{"sitename": k, "cnt": v} for k, v in top_sites],
+            },
+            "rows": rows,
+        }
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# [중기 확장 #4] 카테고리별 연도별 고장률 추이 (내용연수 근거)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/fault-trend-by-category")
+def fault_trend_by_category(years: int = Query(5, ge=1, le=10)):
+    """카테고리별 연도별 고장 보고 건수 추이.
+
+    응답:
+      years:      [2021, 2022, ...]
+      categories: [{category, series: [cnt_year1, cnt_year2, ...]}]
+    """
+    if _get_db_connection is None:
+        raise HTTPException(500, "DB 미초기화")
+    conn = _get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"""
+          SELECT
+            COALESCE(m.category, '(미분류)') AS category,
+            EXTRACT(YEAR FROM t.task_start_time)::int AS year,
+            COUNT(*) AS cnt
+          FROM tb_task_master t
+          LEFT JOIN tb_equipment_category_map m ON m.equipmenttype = t.equipmenttype
+          WHERE t.task_category = '고장보고'
+            AND t.task_start_time >= now() - interval '{years} years'
+          GROUP BY 1, 2
+          ORDER BY 2, 1
+        """)
+        raw = cur.fetchall()
+        # (category, year, cnt)
+        years_set = sorted({r[1] for r in raw})
+        cats_set = sorted({r[0] for r in raw})
+        table = {(r[0], r[1]): int(r[2]) for r in raw}
+        categories = []
+        for c in cats_set:
+            categories.append({
+                "category": c,
+                "series": [table.get((c, y), 0) for y in years_set],
+            })
+        cur.close()
+        return {
+            "status": "OK",
+            "years": years_set,
+            "categories": categories,
+        }
+    finally:
+        conn.close()
