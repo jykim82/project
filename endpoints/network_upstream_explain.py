@@ -174,15 +174,27 @@ def _fallback_summary(sslvpn_rows: list[dict], global_stats: dict) -> str:
         return "네트워크 상태 데이터가 없습니다."
     gt = global_stats.get("global_lte_total", 0)
     gd = global_stats.get("global_lte_down", 0)
+    gp = global_stats.get("global_lte_down_pct", 0)
     ut = global_stats.get("total_utm", 0)
     ud = global_stats.get("down_utm", 0)
+    # [Rule 9] UTM 전 구간 장애 + 전체 LTE 90% 이상 다운 → UTM 장애와 관제
+    # 호스트(관제 PC·관제망) 네트워크 문제가 모두 동일 스냅샷을 만들 수 있어
+    # 단일 원인으로 단정하지 않고 두 가능성을 병기한다.
+    if ut > 0 and ud == ut and gt > 0 and gp >= 90.0:
+        return (
+            f"UTM {ut}대 전부 응답 없음 · 전체 LTE 모뎀 {gt}대 중 {gd}대 "
+            f"({gp}%) 다운 상태입니다. 상위 장비(UTM) 전체 장애 또는 관제 "
+            "호스트·관제망 자체 네트워크 문제 가능성이 모두 있으며, 현재 "
+            "데이터만으로는 구분할 수 없습니다. 관제 PC에서 내부 장비 "
+            "도달성을 직접 확인해 주십시오."
+        )
     if ut > 0 and ud == ut:
         return (
             f"UTM {ut}대 전부 응답 없음으로 상위 장비 전체 장애가 의심됩니다. "
             f"전체 LTE 모뎀 {gt}대 중 {gd}대가 통신이상 상태입니다."
         )
     parts = [
-        f"전체 LTE 모뎀 {gt}대 중 {gd}대 ({global_stats.get('global_lte_down_pct', 0)}%)가 통신이상입니다."
+        f"전체 LTE 모뎀 {gt}대 중 {gd}대 ({gp}%)가 통신이상입니다."
     ]
     for r in sslvpn_rows[:3]:
         parts.append(
@@ -258,7 +270,7 @@ async def explain_upstream_fault():
         float(global_stats["global_lte_total"]),
         float(global_stats["global_lte_down"]),
         float(global_stats["global_lte_down_pct"]),
-        0.0, 10.0, 80.0, 100.0,  # 프롬프트 규칙 상수
+        0.0, 10.0, 80.0, 90.0, 100.0,  # 프롬프트 규칙 상수 (Rule 9에서 90 추가)
     ]
     for r in sslvpn_rows:
         allowed_numbers.append(float(r["total_lte"]))
@@ -287,7 +299,11 @@ async def explain_upstream_fault():
         "5. 존댓말 '~습니다' 종결.\n"
         "6. UTM 전체 장애(down_utm == total_utm) 시 '상위 전 구간 장애'로 해석.\n"
         "7. 특정 SSLVPN 하위 80% 이상 다운 시 '해당 SSLVPN 장애로 인한 집단 통신이상' 가능성 언급.\n"
-        "8. 전체 LTE 다운율이 10% 미만이면 '상위 장비는 정상이고 개별 현장 이상' 해석.\n\n"
+        "8. 전체 LTE 다운율이 10% 미만이면 '상위 장비는 정상이고 개별 현장 이상' 해석.\n"
+        "9. UTM 전체 장애(down_utm == total_utm) 이면서 전체 LTE 다운율이 90% 이상인 경우, "
+        "단일 원인으로 단정하지 말고 'UTM 장애 또는 관제 호스트·관제망 네트워크 문제 가능성이 "
+        "모두 있으며 현재 스냅샷만으로는 구분할 수 없음'이라고 병기 해석하라. "
+        "이 경우 '관제 PC에서 내부 장비 도달성 직접 확인 권장'까지만 안내하고 수리 방법은 언급하지 말라.\n\n"
         f"{context_block}\n\n"
         "원인 연쇄 서술 (2~4문장, 위 수치·명칭만 사용, 존댓말):"
     )
