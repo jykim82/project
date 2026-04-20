@@ -2724,19 +2724,7 @@ C안 중기 확장 Phase 2의 남은 3종(P2.6/P2.7/FAQ) 백엔드·프런트 �
 - 채팅 SSE 진행 표시 라벨+도트 스타일 (분류→추출→조회→렌더링)
 
 ### 즉시 진행 가능
-(현재 비어있음 — 2026-04-20 기준 아래 이력 참조. 새 항목은 사용자 요청 시 추가)
-
-(2026-04-20 정리:
-- "가압장→소블록 cross-facility 규칙 추가" — `anomaly_detector.py:1654
-  _CROSS_RULES[0]` 에 이미 구현됨. 다홉 전파도 _INTRA/_CROSS 결합 동작
-- "인과 규칙 엔진 고도화 (선행조건/안전연동/역방향/AND/다중홉)" — 5개 모두
-  이미 구현됨:
-  - 선행조건: `_check_prerequisite` + `PREREQUISITE_FAILED`
-  - 안전연동: `verify_safety_interlocks` + `SAFETY_INTERLOCK_VIOLATED`
-  - 역방향: `anomaly_detector.py:1319` 역방향 추적 로직
-  - AND: `verify_and_conditions` + `AND_CONDITION_VIOLATED`
-  - 다홉: 이미 `완료 처리 이력` 에 기재
-- 이 두 항목은 과거 잘못된 할 일 기재였음. 완료로 이동.)
+(현재 비어있음. 새 항목은 사용자 요청 시 추가.)
 
 ### 보류/후순위
 3. **배수지 이상 스캔 컴팩트 레이아웃** — 보류 (유저 요청으로 리버트, 재논의 필요)
