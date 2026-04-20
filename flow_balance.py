@@ -437,12 +437,13 @@ def build_flow_balance_scan_block(
                     f"({e['imbalance_m3']:,.1f}m³) — {grade}>>",
         })
 
-        # 하류 시설별 상세
+        # 하류 시설별 상세 — 들여쓰기는 prefix="-" (isChild) 로 처리,
+        # text 는 간결한 "시설: 값 (메타)" 형태 (leader 트리거 회피)
         for d in e["downstream_facilities"]:
             vol_str = f"{d['volume_m3']:,.1f}m³" if d["volume_m3"] > 0 else "0m³"
             items.append({
-                "prefix": "",
-                "text": f"    · {d['sitename']} {d['facilitytype']}: "
+                "prefix": "-",
+                "text": f"{d['sitename']} {d['facilitytype']}: "
                         f"{vol_str} ({d['method']}, 커버리지 {d['coverage_pct']:.0f}%)",
             })
 

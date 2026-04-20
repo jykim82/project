@@ -2619,7 +2619,8 @@ def build_cross_facility_scan_block(mismatches: list[dict]) -> tuple[list, dict]
                     ),
                 })
 
-        items.append({"prefix": "", "text": ""})  # 빈 줄 구분
+        # 빈 줄 구분은 CSS margin(프런트) 으로 대체 — text="" item 제거
+        # (prefix 가 달라서 시각적 구분은 자연스럽게 발생)
 
     return _lift_markers_cf(items), data
 

@@ -1907,7 +1907,8 @@
         {
           "prefix": "•",
           "icon": "droplet",
-          "text": "야간최소유량 · {current_val}{unit} {nmf_status}"
+          "text": "야간최소유량 · {current_val}{unit}",
+          "pill": {"text": "{nmf_pill_text}", "tone": "{nmf_pill_tone}"}
         }
       ],
       "reference": {

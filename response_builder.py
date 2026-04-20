@@ -2162,15 +2162,25 @@ def process_sql_result(
             if abs(avg_m) > 0.001:
                 dev_pct = (curr - avg_m) / abs(avg_m) * 100
                 if abs(dev_pct) >= 50:
-                    data["nmf_status"] = f"<<error:월평균 대비 {dev_pct:+.0f}%>>"
+                    data["nmf_status"] = ""  # 레거시 호환 (빈 문자열)
+                    data["nmf_pill_text"] = f"월평균 대비 {dev_pct:+.0f}%"
+                    data["nmf_pill_tone"] = "critical"
                 elif abs(dev_pct) >= 20:
-                    data["nmf_status"] = f"<<warn:월평균 대비 {dev_pct:+.0f}%>>"
+                    data["nmf_status"] = ""
+                    data["nmf_pill_text"] = f"월평균 대비 {dev_pct:+.0f}%"
+                    data["nmf_pill_tone"] = "warn"
                 else:
-                    data["nmf_status"] = "<<ok:정상 범위>>"
+                    data["nmf_status"] = ""
+                    data["nmf_pill_text"] = "정상 범위"
+                    data["nmf_pill_tone"] = "ok"
             else:
                 data["nmf_status"] = ""
+                data["nmf_pill_text"] = ""
+                data["nmf_pill_tone"] = "neutral"
         except (ValueError, TypeError):
             data["nmf_status"] = ""
+            data["nmf_pill_text"] = ""
+            data["nmf_pill_tone"] = "neutral"
 
     # -------------------------------------------------
     # 설비현황 (배수지 / 가압장 / 감압시설 공통)
