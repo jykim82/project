@@ -660,6 +660,15 @@ def build_network_status_block(rows: list, columns: list) -> list:
                 "icon": "zap",
                 "pill": pill,
             })
+
+    # 제어망 그룹이 경로 끝에 있으면 이후 업무망은 단방향 경계라 모니터링
+    # 불가 — 안내 메시지 추가 (migration 0052)
+    if any("제어망" in gn for gn in groups):
+        items.append({
+            "prefix": "•",
+            "text": "이후 업무망 구간 — 일방향(망간자료 전송장치) 경계로 역방향 모니터링 불가",
+            "icon": "info",
+        })
     return items
 
 
