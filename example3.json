@@ -429,15 +429,12 @@
     ],
     "sql": "SELECT\n  sitename,\n  avg_usage,\n  usage_unit,\n  avg_inflow,\n  avg_inflow_unit,\n  avg_outflow,\n  avg_outflow_unit\nFROM v_reservoir_info_status\nWHERE sitename = '{sitename}';",
     "answer_template": {
-      "summary": "금일 {sitename}배수지 평균사용량은 다음과 같습니다.",
+      "summary": "금일 {sitename}배수지 평균사용량은 다음과 같습니다. (금일 00시~현재 평균 기준)",
       "detail": [
         {
-          "prefix": "ㆍ",
-          "text": "금일 00시부터 현재시간까지의 평균값 산출 방식으로 시간당 평균 사용량을 산정합니다."
-        },
-        {
-          "prefix": "ㆍ",
-          "text": "{sitename}배수지 시간당 평균 사용량은 {avg_usage}{usage_unit}입니다."
+          "prefix": "•",
+          "icon": "droplet",
+          "text": "시간당 평균 사용량 · {avg_usage}{usage_unit}"
         }
       ],
       "reference": {
@@ -445,15 +442,11 @@
         "items": [
           {
             "prefix": "1.",
-            "text": "{sitename}배수지 유량현황"
+            "text": "{sitename}배수지 유량현황 (최근 7일간 평균 산출방식으로 일평균 유입/유출 산정)"
           },
           {
-            "prefix": "ㆍ",
-            "text": "최근 7일간 평균 산출방식으로 일평균 유입량과 유출량을 산정합니다."
-          },
-          {
-            "prefix": "ㆍ",
-            "text": "배수지 일평균 유입량은 {avg_inflow}{avg_inflow_unit}, 일평균 유출량은 {avg_outflow}{avg_outflow_unit}입니다."
+            "prefix": "2.",
+            "text": "일평균 유입량 {avg_inflow}{avg_inflow_unit}, 일평균 유출량 {avg_outflow}{avg_outflow_unit}"
           }
         ]
       },
@@ -490,23 +483,21 @@
     ],
     "sql": "SELECT\n  sitename,\n  avg_usage,\n  usage_unit,\n  avg_inflow,\n  avg_inflow_unit,\n  avg_outflow,\n  avg_outflow_unit,\n  CASE\n    WHEN avg_usage IS NULL THEN 'Y'\n    ELSE 'N'\n  END AS is_avg_usage_null\nFROM v_reservoir_info_status;",
     "answer_template": {
-      "summary": "금일 전체 배수지 평균사용량은 다음과 같습니다.",
+      "summary": "금일 전체 배수지 평균사용량은 다음과 같습니다. (금일 00시~현재 평균 기준)",
       "detail": [
         {
-          "prefix": "ㆍ",
-          "text": "금일 00시부터 현재시간까지의 평균값 산출 방식으로 시간당 평균 사용량을 산정합니다."
+          "prefix": "•",
+          "icon": "droplet",
+          "text": "전체 평균 사용량 · {total_avg_usage}{usage_unit}"
         },
         {
-          "prefix": "ㆍ",
-          "text": "배수지 전체 평균 사용량은 {total_avg_usage}{usage_unit}입니다. 다음은 개별 배수지의 평균 사용량입니다."
-        },
-        {
-          "prefix": "",
+          "prefix": "•",
           "text": "{avg_usage_detail_block}"
         },
         {
-          "prefix": "ㆍ",
-          "text": "(데이터 없음): {no_data_sitename_list}"
+          "prefix": "•",
+          "icon": "ban",
+          "text": "데이터 없음 · {no_data_sitename_list}"
         }
       ],
       "recommend_questions": {
@@ -1910,11 +1901,12 @@
     ],
     "sql": "WITH current_nmf AS (\n    SELECT\n        log_time,\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        val AS current_val\n    FROM fn_night_min_flow_summary(\n            '{sitename}',\n            '{facilitytype}',\n            (now() - interval '1 day')::date,\n            now()::date\n    )\n    ORDER BY log_time DESC\n    LIMIT 1\n),\navg_nmf AS (\n    SELECT\n        sitename,\n        facilitytype,\n        label,\n        datadesc,\n        unit,\n        period_type,\n        ROUND(AVG(val), 2) AS avg_val\n    FROM (\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'year' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 year')::date, now()::date)\n        UNION ALL\n        SELECT sitename, facilitytype, label, datadesc, unit, val, 'month' AS period_type\n        FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', (now() - interval '1 month')::date, now()::date)\n    ) t\n    GROUP BY sitename, facilitytype, label, datadesc, unit, period_type\n)\nSELECT\n    c.sitename,\n    c.facilitytype,\n    c.label,\n    c.datadesc,\n    c.current_val,\n    c.unit,\n    c.log_time,\n    MAX(CASE WHEN a.period_type = 'month' THEN a.avg_val END) AS avg_month,\n    MAX(CASE WHEN a.period_type = 'year'  THEN a.avg_val END) AS avg_year\nFROM current_nmf c\nLEFT JOIN avg_nmf a\n  ON c.sitename = a.sitename\n AND c.facilitytype = a.facilitytype\n AND c.label = a.label\n AND c.datadesc = a.datadesc\nGROUP BY c.sitename, c.facilitytype, c.label, c.datadesc, c.current_val, c.unit, c.log_time;",
     "answer_template": {
-      "summary": "{sitename}{facilitytype} 야간최소유량 현황은 다음과 같습니다.",
+      "summary": "{sitename}{facilitytype} 야간최소유량 현황은 다음과 같습니다. ({log_time} 기준)",
       "detail": [
         {
           "prefix": "•",
-          "text": "{log_time} 기준 야간최소유량은 {current_val}{unit}입니다. {nmf_status}"
+          "icon": "droplet",
+          "text": "야간최소유량 · {current_val}{unit} {nmf_status}"
         }
       ],
       "reference": {

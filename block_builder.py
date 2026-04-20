@@ -638,7 +638,9 @@ def build_avg_usage_detail_block(rows: list, columns: list) -> list:
     """
     v_reservoir_info_status 다중 행을 개별 배수지 평균사용량 항목 리스트로 조립한다.
     반환 컬럼: sitename, avg_usage, usage_unit, ..., is_avg_usage_null
-    반환: [{"prefix": "-", "text": "신평: 12.34m³/h"}, ...]
+
+    [AFTER 일관성] "sitename · val{unit}" + icon="droplet" leader 구조.
+    내용 보존: sitename, avg_usage, unit 그대로.
     """
     items = []
     for row in rows:
@@ -649,7 +651,11 @@ def build_avg_usage_detail_block(rows: list, columns: list) -> list:
         is_null = row_dict.get("is_avg_usage_null", "N")
         if is_null == "Y" or avg_usage is None:
             continue
-        items.append({"prefix": "-", "text": f"{sitename}: {avg_usage}{usage_unit}"})
+        items.append({
+            "prefix": "•",
+            "text": f"{sitename} · {avg_usage}{usage_unit}",
+            "icon": "droplet",
+        })
     return items
 
 
