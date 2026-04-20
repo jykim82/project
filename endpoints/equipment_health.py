@@ -278,3 +278,96 @@ def ranking(
         return {"status": "OK", "data": data}
     finally:
         conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 내용연수 기반 교체 권고 (migration 0053)
+# ─────────────────────────────────────────────────────────────────────
+
+@router.get("/lifespan")
+def equipment_lifespan(
+    only_categorized: bool = Query(False, description="카테고리 매핑된 설비만 반환"),
+):
+    """설비별 설치 경과 연수 + 내용연수 기준 교체 권고 상태.
+
+    응답:
+      categories: [{category, years_recommended, years_tax, eol_note, remarks}]
+      equipments: [{equipment_id, sitename, facilitytype, equipmenttype,
+                    category, commissioned_at, years_used,
+                    years_recommended, years_tax, status}]
+        status ∈ {no_data, no_category, normal, approaching, overdue}
+    """
+    if _get_db_connection is None:
+        raise HTTPException(500, "DB 미초기화")
+    conn = _get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # 기준 테이블
+        cur.execute("""
+            SELECT category, years_recommended, years_tax, eol_note, remarks
+            FROM tb_equipment_lifespan
+            ORDER BY years_recommended
+        """)
+        categories = _rows_to_dicts(cur)
+
+        # 설비 + 카테고리 매핑 + 경과 연수 계산
+        cur.execute("""
+            SELECT
+              e.equipment_id,
+              e.sitename,
+              e.facilitytype,
+              e.equipmenttype,
+              m.category,
+              e.commissioned_at,
+              CASE
+                WHEN e.commissioned_at IS NOT NULL
+                THEN EXTRACT(YEAR FROM age(now()::date, e.commissioned_at))::int
+                ELSE NULL
+              END AS years_used,
+              l.years_recommended,
+              l.years_tax,
+              CASE
+                WHEN m.category IS NULL                       THEN 'no_category'
+                WHEN e.commissioned_at IS NULL                THEN 'no_data'
+                WHEN EXTRACT(YEAR FROM age(now()::date, e.commissioned_at))
+                     >= l.years_recommended                   THEN 'overdue'
+                WHEN EXTRACT(YEAR FROM age(now()::date, e.commissioned_at))
+                     >= l.years_recommended - 1               THEN 'approaching'
+                ELSE                                               'normal'
+              END AS status
+            FROM tb_equipment_info e
+            LEFT JOIN tb_equipment_category_map m ON m.equipmenttype = e.equipmenttype
+            LEFT JOIN tb_equipment_lifespan    l ON l.category      = m.category
+            WHERE e.status IN ('운영중', 'operational')
+              AND (NOT %s OR m.category IS NOT NULL)
+            ORDER BY
+              CASE WHEN e.commissioned_at IS NULL THEN 1 ELSE 0 END,
+              (e.commissioned_at) ASC NULLS LAST,
+              e.sitename, e.facilitytype, e.equipmenttype
+        """, (only_categorized,))
+        equipments = _rows_to_dicts(cur)
+
+        # 상태별 집계
+        counts = {"overdue": 0, "approaching": 0, "normal": 0,
+                  "no_data": 0, "no_category": 0}
+        for r in equipments:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+        # commissioned_at ISO 문자열 변환
+        for r in equipments:
+            if r.get("commissioned_at"):
+                r["commissioned_at"] = r["commissioned_at"].isoformat()
+
+        cur.close()
+        return {
+            "status": "OK",
+            "categories": categories,
+            "equipments": equipments,
+            "summary": {
+                "total": len(equipments),
+                **counts,
+            },
+        }
+    finally:
+        conn.close()
