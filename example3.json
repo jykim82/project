@@ -737,31 +737,38 @@
       "detail": [
         {
           "prefix": "•",
-          "text": "{sitename} 가압장 운영상태는 현재 {operating_status} 상태입니다."
+          "icon": "activity",
+          "text": "운영 상태 · {operating_status}"
         },
         {
           "prefix": "•",
-          "text": "전체 펌프 {pump_count}대 중 평상시 {normal_operation_pump_count}대를 운영합니다."
+          "icon": "zap",
+          "text": "펌프 구성 · 전체 {pump_count}대, 평시 {normal_operation_pump_count}대 운영"
         },
         {
           "prefix": "•",
-          "text": "현재 평균 가압량은 {booster_avg_pressure}{pressure_unit}입니다."
+          "icon": "gauge",
+          "text": "평균 가압량 · {booster_avg_pressure}{pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "전단압력은 {booster_inlet_pressure}{pressure_unit}, 후단압력은 {booster_outlet_pressure}{pressure_unit}입니다."
+          "icon": "gauge",
+          "text": "전·후단 압력 · 전단 {booster_inlet_pressure}{pressure_unit}, 후단 {booster_outlet_pressure}{pressure_unit}"
         },
         {
           "prefix": "•",
-          "text": "현재 {running_pump_count}대 펌프가 가동 중입니다."
+          "icon": "zap",
+          "text": "가동 펌프 · {running_pump_count}대"
         },
         {
           "prefix": "•",
-          "text": "펌프 가동 기준은 수위 {pump_start_threshold}에서 기동, {pump_stop_threshold}에서 정지입니다."
+          "icon": "alert",
+          "text": "펌프 가동 기준 · 수위 {pump_start_threshold} 기동, {pump_stop_threshold} 정지"
         },
         {
           "prefix": "•",
-          "text": "흡수정은 총 {infiltration_well_count}지이며, 현재 수위는 {zone_1_height}m, {zone_2_height}m입니다."
+          "icon": "droplet",
+          "text": "흡수정 · 총 {infiltration_well_count}지, 수위 {zone_1_height}m / {zone_2_height}m"
         }
       ],
       "reference": {
