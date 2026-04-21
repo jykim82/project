@@ -1372,6 +1372,9 @@ async def lifespan(app: FastAPI):
     # site_profiler 초기화 (get_db_connection 정의 후)
     site_profiler = SiteProfiler(get_db_connection)
 
+    # AI 런타임 설정 DB 로드 (풀 초기화 후)
+    _ai_settings.load_from_db()
+
     # CSV 내보내기 디렉토리 생성
     os.makedirs(CSV_EXPORT_DIR, exist_ok=True)
 
@@ -1838,11 +1841,45 @@ def _init_db_pool() -> None:
 # AI 런타임 설정 (UI에서 변경 가능)
 # =============================================================================
 class _AiRuntimeSettings:
-    """서버 재시작 없이 변경 가능한 AI 파라미터"""
+    """서버 재시작 없이 변경 가능한 AI 파라미터.
+
+    DB 영속: tb_comm_code (SITE_SETTING/AI_NUM_CTX/AI_TEMPERATURE/AI_TIMEOUT).
+    load_from_db() 는 DB 풀 초기화 이후 기동 시 1회 호출.
+    """
     def __init__(self):
         self.num_ctx: int = 4096
         self.temperature: float = 0.0
         self.timeout: int = 30
+
+    def load_from_db(self) -> None:
+        """DB 에서 AI 파라미터를 읽어 메모리 값을 덮어쓴다. 실패 시 기본값 유지."""
+        try:
+            with db_conn() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT comm_cd, comm_val FROM tb_comm_code "
+                    "WHERE region='R01' AND grp_cd='SITE_SETTING' "
+                    "AND comm_cd IN ('AI_NUM_CTX','AI_TEMPERATURE','AI_TIMEOUT')"
+                )
+                for cd, val in cur.fetchall():
+                    if val is None:
+                        continue
+                    try:
+                        if cd == "AI_NUM_CTX":
+                            self.num_ctx = int(val)
+                        elif cd == "AI_TEMPERATURE":
+                            self.temperature = float(val)
+                        elif cd == "AI_TIMEOUT":
+                            self.timeout = int(val)
+                    except (TypeError, ValueError):
+                        logger.warning(f"AI 파라미터 파싱 실패 {cd}={val}")
+                cur.close()
+            logger.info(
+                f"AI 파라미터 DB 로드: num_ctx={self.num_ctx} "
+                f"temperature={self.temperature} timeout={self.timeout}"
+            )
+        except Exception as e:
+            logger.warning(f"AI 파라미터 DB 로드 실패 (기본값 유지): {e}")
 
 _ai_settings = _AiRuntimeSettings()
 

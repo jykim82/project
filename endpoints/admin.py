@@ -612,25 +612,42 @@ async def update_site_settings(request: Request):
             )
             conn.commit()
 
-        # AI 파라미터 변경 (서버 재시작 없이 즉시 반영)
+        # AI 파라미터 변경 (서버 재시작 없이 즉시 반영 + DB 영속 저장)
+        # tb_comm_code(SITE_SETTING/AI_*)에 comm_val 로 UPSERT (migration 0055)
+        def _upsert_ai_param(comm_cd: str, comm_nm: str, comm_val: str) -> None:
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code
+                    (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                VALUES ('R01', 'SITE_SETTING', %s, %s, %s, 'Y')
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET comm_val = EXCLUDED.comm_val
+                """,
+                (comm_cd, comm_nm, comm_val),
+            )
+
         ai = body.get("ai")
         if ai:
             if "num_ctx" in ai:
                 val = max(1024, min(32768, int(ai["num_ctx"])))
                 _ai_settings.num_ctx = val
+                _upsert_ai_param("AI_NUM_CTX", "AI 컨텍스트 크기", str(val))
                 logger.info(f"AI num_ctx 변경: {val}")
             if "temperature" in ai:
                 val = max(0.0, min(1.0, float(ai["temperature"])))
                 _ai_settings.temperature = val
+                _upsert_ai_param("AI_TEMPERATURE", "AI Temperature", str(val))
                 logger.info(f"AI temperature 변경: {val}")
             if "timeout" in ai:
                 val = max(10, min(120, int(ai["timeout"])))
                 _ai_settings.timeout = val
+                _upsert_ai_param("AI_TIMEOUT", "AI 타임아웃(초)", str(val))
                 logger.info(f"AI timeout 변경: {val}")
             if "model" in ai:
                 from slm_config import set_model
                 set_model(ai["model"])
                 logger.info(f"AI model 변경: {ai['model']}")
+            conn.commit()
 
         cur.close()
         return {"status": "OK"}
