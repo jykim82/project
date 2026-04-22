@@ -8,6 +8,34 @@
 
 ---
 
+### [E-031] 알람원인 순위 질의 무한 대기 — _ALARM_FILTER_RULES 상수 누락
+
+- **날짜:** 2026-04-23
+- **증상:** "천의리 배수지 통신 경보 발생원인 진단 순위 1순위부터 4순위까지 알려줘" 질의 시 SSE 스트림이 `extract` 단계 이후 멈춰 프런트가 영원히 로딩 상태. 사용자에게 에러 이벤트도 전달 안 됨.
+- **원인:**
+  1. `ai_server.py`가 `_extract_alarm_filter()` 를 호출하나 `from sql_executor import ...` 목록에 누락 (`NameError: name '_extract_alarm_filter' is not defined`)
+  2. import 추가 후에도 `sql_executor._extract_alarm_filter` 내부 루프에서 참조하는 `_ALARM_FILTER_RULES` 상수 자체가 어디에도 정의 안 됨 (리팩토링 누락)
+  3. SSE `event_generator` 안에서 예외 발생 시 `error` 이벤트 방출 없이 TaskGroup 에서 그대로 터지고 connection abort → 프런트는 타임아웃까지 대기
+- **해결:**
+  1. `ai_server.py` import 에 `_extract_alarm_filter` 추가
+  2. `sql_executor.py` 에 `_ALARM_FILTER_RULES` 상수 정의 (통신/수위/압력/전원/펌프/밸브/수질/유량 8 카테고리 — q_keywords·category·msg_keywords·label 튜플)
+  3. E2E: "천의리 배수지 통신 경보 발생원인 진단 순위" → 정상 응답 (모뎀 통신이상 10건 집계 반환)
+- **재발 방지:** 모듈 분리 리팩토링 시 참조 상수/함수 모두 추적. SSE event_generator 내부의 예외는 `try/except` + `yield _sse_event("error", ...)` 패턴으로 사용자에게 통지해야 함 (E-027 과 동일 교훈 — 침묵 실패 금지).
+- **커밋:** `slm@29176de`
+
+---
+
+### [E-030] 결측현황 응답에 `{sitename}` placeholder 원문 노출
+
+- **날짜:** 2026-04-23
+- **증상:** "성북2 배수지 결측현황" 질의 응답의 summary 가 렌더링된 한국어 문장이 아니라 `{sitename} {facilitytype} 데이터 결측 분석 결과입니다.` 템플릿 그대로 노출.
+- **원인:** `TAG_DAILY_MISSING_SUMMARY` 는 `_DYNAMIC_SQL_INTENTS` 로 분류되어 `ai_server.py:4070-4094, 5579-5604` 의 청크 핸들러가 처리. 청크 핸들러가 `answer_template` 을 `isinstance(answer_template, dict) else {}` 로 그대로 반환 (`_tdm_rendered = answer_template`) — `render_answer_template()` 호출이 누락되어 placeholder 치환 안 됨.
+- **해결:** 두 청크 경로 모두 `render_answer_template(answer_template, {**params, "total_count": str(_total)})` 호출 + `apply_corrections_to_answer(_tdm_rendered, params)` 추가.
+- **재발 방지:** 청크/동적 SQL 핸들러를 새로 추가할 때 일반 `process_sql_result → render_answer_template` 경로와 동일하게 렌더링 수행 여부 체크. grep 패턴 `answer_template if isinstance` 로 추적.
+- **커밋:** `slm@29176de`
+
+---
+
 ### [E-029] 채팅 사진 업로드 → 비전 에이전트 404 (파일 경로 컨테이너/호스트 불일치)
 
 - **날짜:** 2026-04-19
