@@ -1852,14 +1852,17 @@ class _AiRuntimeSettings:
         self.timeout: int = 30
 
     def load_from_db(self) -> None:
-        """DB 에서 AI 파라미터를 읽어 메모리 값을 덮어쓴다. 실패 시 기본값 유지."""
+        """DB 에서 AI 파라미터·모델명을 읽어 메모리 값을 덮어쓴다.
+        실패 시 기본값·환경변수 모델 유지."""
+        model_loaded: Optional[str] = None
         try:
             with db_conn() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT comm_cd, comm_val FROM tb_comm_code "
                     "WHERE region='R01' AND grp_cd='SITE_SETTING' "
-                    "AND comm_cd IN ('AI_NUM_CTX','AI_TEMPERATURE','AI_TIMEOUT')"
+                    "AND comm_cd IN ('AI_NUM_CTX','AI_TEMPERATURE',"
+                    "'AI_TIMEOUT','AI_MODEL')"
                 )
                 for cd, val in cur.fetchall():
                     if val is None:
@@ -1871,12 +1874,18 @@ class _AiRuntimeSettings:
                             self.temperature = float(val)
                         elif cd == "AI_TIMEOUT":
                             self.timeout = int(val)
+                        elif cd == "AI_MODEL":
+                            model_loaded = str(val)
                     except (TypeError, ValueError):
                         logger.warning(f"AI 파라미터 파싱 실패 {cd}={val}")
                 cur.close()
+            if model_loaded:
+                from slm_config import set_model
+                set_model(model_loaded)
             logger.info(
                 f"AI 파라미터 DB 로드: num_ctx={self.num_ctx} "
-                f"temperature={self.temperature} timeout={self.timeout}"
+                f"temperature={self.temperature} timeout={self.timeout} "
+                f"model={model_loaded or '(env 유지)'}"
             )
         except Exception as e:
             logger.warning(f"AI 파라미터 DB 로드 실패 (기본값 유지): {e}")

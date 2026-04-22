@@ -646,6 +646,7 @@ async def update_site_settings(request: Request):
             if "model" in ai:
                 from slm_config import set_model
                 set_model(ai["model"])
+                _upsert_ai_param("AI_MODEL", "AI 모델명", str(ai["model"]))
                 logger.info(f"AI model 변경: {ai['model']}")
             conn.commit()
 
