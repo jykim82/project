@@ -156,7 +156,7 @@ from response_builder import (
     _execute_reservoir_supply_query, wrap_status_marker,
     _sql_escape_literal, _get_tag_datainfo_cache, _query_flow_timeseries,
 )
-from sql_executor import _SUPPLY_INTENTS, _TIMESERIES_CHUNK_INTENTS, _execute_level_cause_analysis
+from sql_executor import _SUPPLY_INTENTS, _TIMESERIES_CHUNK_INTENTS, _execute_level_cause_analysis, _extract_alarm_filter
 from response_builder import _ANOMALY_FILTER_INTENTS
 
 # =============================================================================
@@ -4085,7 +4085,12 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
                 csv_fn = save_csv(_tdm_rows, _tdm_cols, intent, sid)
                 _total = len(_tdm_rows)
                 _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
-                _tdm_rendered = answer_template if isinstance(answer_template, dict) else {}
+                # placeholder 치환 — params 기반 ({sitename}, {facilitytype} 등)
+                _tdm_rendered = (
+                    render_answer_template(answer_template, {**params, "total_count": str(_total)})
+                    if isinstance(answer_template, dict) else {}
+                )
+                _tdm_rendered = apply_corrections_to_answer(_tdm_rendered, params)
                 return build_success_response(
                     intent=intent, answer=_tdm_rendered, graph_type=graph_type,
                     data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,
@@ -5587,7 +5592,12 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
                     csv_fn = save_csv(_tdm_rows, _tdm_cols, intent, sid)
                     _total = len(_tdm_rows)
                     _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
-                    _tdm_rendered = answer_template if isinstance(answer_template, dict) else {}
+                    # placeholder 치환 — params 기반 ({sitename}, {facilitytype} 등)
+                    _tdm_rendered = (
+                        render_answer_template(answer_template, {**params, "total_count": str(_total)})
+                        if isinstance(answer_template, dict) else {}
+                    )
+                    _tdm_rendered = apply_corrections_to_answer(_tdm_rendered, params)
                     yield _sse_event("result", build_success_response(
                         intent=intent, answer=_tdm_rendered, graph_type=graph_type,
                         data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,

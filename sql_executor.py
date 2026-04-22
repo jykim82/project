@@ -1097,6 +1097,27 @@ def _get_catalog_trend_filter(question: str, datainfo: str) -> tuple[str, str, s
 
 
 
+# (q_keywords, categories, msg_keywords, label) — 상단 질문 키워드·분류·메시지 규칙
+_ALARM_FILTER_RULES: list[tuple[list[str], list[str], list[str], str]] = [
+    (["통신", "모뎀", "네트워크", "lte"],
+        ["통신", "네트워크"], ["통신이상", "모뎀", "네트워크"],       "통신"),
+    (["수위", "저수위", "만수위"],
+        ["수위"], ["수위", "HH", "LL", "상한", "하한"],             "수위"),
+    (["압력", "저압", "고압"],
+        ["압력"], ["압력", "PH", "PL"],                             "압력"),
+    (["전원", "정전", "ups", "전압"],
+        ["전원", "UPS"], ["전원", "정전", "UPS", "전압"],           "전원"),
+    (["펌프", "fault", "고장"],
+        ["펌프"], ["펌프", "FAULT", "고장"],                         "펌프"),
+    (["밸브"],
+        ["밸브"], ["밸브", "VALVE"],                                 "밸브"),
+    (["수질", "탁도", "잔류염소", "ph"],
+        ["수질"], ["탁도", "잔류염소", "PH", "수질"],               "수질"),
+    (["유량"],
+        ["유량"], ["유량", "순시", "적산"],                          "유량"),
+]
+
+
 def _extract_alarm_filter(question: str) -> tuple[str, str]:
     """질문에서 경보 카테고리 필터 SQL 절과 라벨을 추출한다.
 
