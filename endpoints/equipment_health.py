@@ -450,45 +450,81 @@ def replacement_history(months: int = Query(24, ge=1, le=120)):
 # ─────────────────────────────────────────────────────────────────────
 
 @router.get("/fault-trend-by-category")
-def fault_trend_by_category(years: int = Query(5, ge=1, le=10)):
-    """카테고리별 연도별 고장 보고 건수 추이.
+def fault_trend_by_category(
+    granularity: str = Query("year", pattern="^(year|month)$"),
+    years: int = Query(5, ge=1, le=10),
+    months: int = Query(24, ge=3, le=60),
+):
+    """카테고리별 시간별 고장 보고 건수 추이 + 카테고리별 설비 수.
+
+    파라미터:
+      granularity: 'year' (연도별) | 'month' (월별)
+      years:       granularity='year' 시 기간 (1~10)
+      months:      granularity='month' 시 기간 (3~60)
 
     응답:
-      years:      [2021, 2022, ...]
-      categories: [{category, series: [cnt_year1, cnt_year2, ...]}]
+      granularity: 'year' | 'month'
+      labels:      ['2021', '2022', ...] 또는 ['2025-03', '2025-04', ...]
+      categories: [{
+        category,
+        equipment_count,  # 해당 카테고리 전체 설비 수 (고장률 계산용)
+        series: [cnt_label1, cnt_label2, ...]
+      }]
     """
     if _get_db_connection is None:
         raise HTTPException(500, "DB 미초기화")
     conn = _get_db_connection()
     try:
         cur = conn.cursor()
+
+        # 카테고리별 설비 수 (정규화용)
+        cur.execute("""
+          SELECT COALESCE(m.category, '(미분류)') AS category, COUNT(*)
+          FROM tb_equipment_info e
+          LEFT JOIN tb_equipment_category_map m ON m.equipmenttype = e.equipmenttype
+          GROUP BY 1
+        """)
+        equip_counts = {r[0]: int(r[1]) for r in cur.fetchall()}
+
+        # 고장 추이 집계
+        if granularity == "year":
+            trunc_expr = "EXTRACT(YEAR FROM t.task_start_time)::int"
+            where_time = f"t.task_start_time >= now() - interval '{years} years'"
+            label_fmt = lambda v: str(v)
+        else:
+            trunc_expr = "to_char(date_trunc('month', t.task_start_time), 'YYYY-MM')"
+            where_time = f"t.task_start_time >= now() - interval '{months} months'"
+            label_fmt = lambda v: str(v)
+
         cur.execute(f"""
           SELECT
             COALESCE(m.category, '(미분류)') AS category,
-            EXTRACT(YEAR FROM t.task_start_time)::int AS year,
+            {trunc_expr} AS label,
             COUNT(*) AS cnt
           FROM tb_task_master t
           LEFT JOIN tb_equipment_category_map m ON m.equipmenttype = t.equipmenttype
           WHERE t.task_category = '고장보고'
-            AND t.task_start_time >= now() - interval '{years} years'
+            AND {where_time}
           GROUP BY 1, 2
           ORDER BY 2, 1
         """)
         raw = cur.fetchall()
-        # (category, year, cnt)
-        years_set = sorted({r[1] for r in raw})
+        # (category, label, cnt)
+        labels_set = sorted({label_fmt(r[1]) for r in raw})
         cats_set = sorted({r[0] for r in raw})
-        table = {(r[0], r[1]): int(r[2]) for r in raw}
+        table = {(r[0], label_fmt(r[1])): int(r[2]) for r in raw}
         categories = []
         for c in cats_set:
             categories.append({
                 "category": c,
-                "series": [table.get((c, y), 0) for y in years_set],
+                "equipment_count": equip_counts.get(c, 0),
+                "series": [table.get((c, lb), 0) for lb in labels_set],
             })
         cur.close()
         return {
             "status": "OK",
-            "years": years_set,
+            "granularity": granularity,
+            "labels": labels_set,
             "categories": categories,
         }
     finally:
