@@ -147,6 +147,126 @@ def list_feedback(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/stats")
+def feedback_stats(
+    region: str = Query(...),
+    weeks: int = Query(12, ge=1, le=52),
+):
+    """피드백 집계 — 상단 대시보드용 (전체 기간 + 최근 N 주 트렌드).
+
+    응답:
+      totals: { total, positive, negative, pending, reviewed, applied,
+                success_pct, avg_review_hours }
+      by_intent: [{ intent_name, positive, negative, total, wrong_rate }] — 오답 많은 순
+      weekly:   [{ week_start, positive, negative }] — 주간 N주
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            # 1) 전체 집계 + 평균 리뷰 시간
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*)                                             AS total,
+                  COUNT(*) FILTER (WHERE feedback_type='positive')     AS positive,
+                  COUNT(*) FILTER (WHERE feedback_type<>'positive')    AS negative,
+                  COUNT(*) FILTER (WHERE reviewed = false
+                                   AND feedback_type<>'positive')      AS pending,
+                  COUNT(*) FILTER (WHERE reviewed = true)              AS reviewed,
+                  COUNT(*) FILTER (WHERE applied_to_index = true)      AS applied,
+                  AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at))/3600.0)
+                    FILTER (WHERE reviewed = true AND reviewed_at IS NOT NULL)
+                                                                       AS avg_review_h
+                FROM tb_ai_chat_feedback
+                WHERE region = %s
+                """,
+                (region,),
+            )
+            row = cur.fetchone()
+            total, positive, negative, pending, reviewed, applied, avg_h = row
+            success_pct = round(100.0 * (positive or 0) / total, 1) if total else 0.0
+
+            # 2) 인텐트별 집계 (오답 많은 순 상위 10)
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(intent_name, '(unknown)')                 AS intent_name,
+                  COUNT(*) FILTER (WHERE feedback_type='positive')   AS positive,
+                  COUNT(*) FILTER (WHERE feedback_type<>'positive')  AS negative,
+                  COUNT(*)                                           AS total
+                FROM tb_ai_chat_feedback
+                WHERE region = %s
+                GROUP BY 1
+                ORDER BY negative DESC, total DESC
+                LIMIT 10
+                """,
+                (region,),
+            )
+            by_intent = []
+            for r in cur.fetchall():
+                intent_name, pos, neg, tot = r
+                by_intent.append({
+                    "intent_name": intent_name,
+                    "positive": int(pos or 0),
+                    "negative": int(neg or 0),
+                    "total": int(tot or 0),
+                    "wrong_rate": round(100.0 * (neg or 0) / (tot or 1), 1),
+                })
+
+            # 3) 주간 트렌드 (최근 N 주)
+            cur.execute(
+                f"""
+                WITH weeks AS (
+                  SELECT generate_series(
+                    date_trunc('week', now()) - interval '{weeks - 1} weeks',
+                    date_trunc('week', now()),
+                    interval '1 week'
+                  )::date AS week_start
+                )
+                SELECT
+                  w.week_start,
+                  COUNT(f.*) FILTER (WHERE f.feedback_type='positive')  AS positive,
+                  COUNT(f.*) FILTER (WHERE f.feedback_type<>'positive') AS negative
+                FROM weeks w
+                LEFT JOIN tb_ai_chat_feedback f
+                  ON f.region = %s
+                 AND date_trunc('week', f.created_at)::date = w.week_start
+                GROUP BY w.week_start
+                ORDER BY w.week_start
+                """,
+                (region,),
+            )
+            weekly = [
+                {"week_start": r[0].isoformat(),
+                 "positive": int(r[1] or 0),
+                 "negative": int(r[2] or 0)}
+                for r in cur.fetchall()
+            ]
+
+        return {
+            "totals": {
+                "total": int(total or 0),
+                "positive": int(positive or 0),
+                "negative": int(negative or 0),
+                "pending": int(pending or 0),
+                "reviewed": int(reviewed or 0),
+                "applied": int(applied or 0),
+                "success_pct": success_pct,
+                "avg_review_hours": round(float(avg_h), 1) if avg_h is not None else None,
+            },
+            "by_intent": by_intent,
+            "weekly": weekly,
+        }
+    except Exception as e:
+        logger.error("feedback_stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @router.patch("/{feedback_id}/review")
 def mark_reviewed(feedback_id: int, body: FeedbackReview):
     """수동 검토 완료 — 운영자가 정답 intent/유사 질문 지정 가능.
