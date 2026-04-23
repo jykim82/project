@@ -358,10 +358,55 @@ async def get_flow_map_realtime():
                 logger.warning(f"가압장 펌프 가동 상태 조회 실패: {e}")
                 conn.rollback()
 
+        # 4-d) 배수지 수질 (탁도/잔류염소/PH/전기전도/온도)
+        reservoir_water_quality: dict[str, dict] = {}
+        reservoir_sites = [sn for sn, ft in node_set if ft == "배수지"]
+        if reservoir_sites:
+            try:
+                cur.execute("""
+                    SELECT ti.sitename,
+                      MAX(CASE WHEN ti.datainfo ILIKE '%%탁도%%'        THEN r.val END) AS turbidity,
+                      MAX(CASE WHEN ti.datainfo ILIKE '%%잔류염소%%'    THEN r.val END) AS chlorine,
+                      MAX(CASE WHEN ti.datainfo ILIKE '%%PH%%'         THEN r.val END) AS ph,
+                      MAX(CASE WHEN ti.datainfo ILIKE '%%전기전도%%'    THEN r.val END) AS conductivity,
+                      MAX(CASE WHEN ti.datainfo ILIKE '%%온도%%'
+                               AND ti.datainfo NOT ILIKE '%%조도%%'      THEN r.val END) AS temperature
+                    FROM tb_tag_info ti
+                    JOIN LATERAL (
+                        SELECT val FROM tb_tag_raw_data r
+                        WHERE r.tagsn = ti.tagsn
+                          AND r.logtime >= now() - interval '30 minutes'
+                        ORDER BY logtime DESC LIMIT 1
+                    ) r ON true
+                    WHERE ti.sitename = ANY(%s)
+                      AND ti.facilitytype = '배수지'
+                      AND ti.tagtype = 'Analog Input'
+                      AND (ti.datainfo ILIKE '%%탁도%%' OR ti.datainfo ILIKE '%%잔류염소%%'
+                           OR ti.datainfo ILIKE '%%PH%%' OR ti.datainfo ILIKE '%%전기전도%%'
+                           OR (ti.datainfo ILIKE '%%온도%%' AND ti.datainfo NOT ILIKE '%%조도%%'))
+                      AND ti.datainfo NOT LIKE '%%SET%%'
+                      AND ti.datainfo NOT LIKE '%%알람%%'
+                    GROUP BY ti.sitename
+                """, (reservoir_sites,))
+                for row in cur.fetchall():
+                    sn, turb, chl, ph, cond, temp = row
+                    quality: dict = {}
+                    if turb is not None: quality["turbidity"] = float(turb)
+                    if chl  is not None: quality["chlorine"]  = float(chl)
+                    if ph   is not None: quality["ph"]        = float(ph)
+                    if cond is not None: quality["conductivity"] = float(cond)
+                    if temp is not None: quality["temperature"]  = float(temp)
+                    if quality:
+                        reservoir_water_quality[sn] = quality
+            except Exception as e:
+                logger.warning(f"배수지 수질 조회 실패: {e}")
+                conn.rollback()
+
         # 5) 노드 데이터 구성 — 같은 그룹의 활성 태그 합산
         node_data = _build_node_data(
             node_set, facility_tag_candidates, latest_values,
             reservoir_supply, booster_pump_status,
+            reservoir_water_quality=reservoir_water_quality,
         )
 
         # 5-b) 진행 중인 알람 조회 — 시설별 가장 심각한 알람 등급 판정
@@ -404,8 +449,10 @@ async def get_flow_map_realtime():
 # ---------------------------------------------------------------------------
 
 def _build_node_data(node_set, facility_tag_candidates, latest_values,
-                     reservoir_supply, booster_pump_status):
+                     reservoir_supply, booster_pump_status,
+                     reservoir_water_quality=None):
     """시설별 노드 데이터 구성 — 같은 그룹의 활성 태그 합산."""
+    reservoir_water_quality = reservoir_water_quality or {}
     baseline_cache = _get_flow_baseline_cache() if _get_flow_baseline_cache else {}
     node_data: dict[str, dict] = {}
 
@@ -509,6 +556,10 @@ def _build_node_data(node_set, facility_tag_candidates, latest_values,
             pump_info = booster_pump_status.get(sn)
             if pump_info:
                 node_entry["pump_status"] = pump_info
+        elif ft == "배수지":
+            wq = reservoir_water_quality.get(sn)
+            if wq:
+                node_entry["water_quality"] = wq
         node_data[nid] = node_entry
 
     return node_data
