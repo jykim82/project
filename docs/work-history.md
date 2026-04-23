@@ -2,6 +2,50 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-04-22 ~ 23 — 관리/UX + 채팅 SSE 안정화 + 카탈로그 보강)
+
+**1. AI 런타임 파라미터 DB 영속화** (migration 0055/0056)
+- `tb_comm_code.comm_val` 컬럼 추가 → 수치·문자열 설정 영속 경로 확보
+- `AI_NUM_CTX/AI_TEMPERATURE/AI_TIMEOUT/AI_MODEL` 4 행 시드 +
+  `_AiRuntimeSettings.load_from_db()` + admin.py PUT UPSERT
+
+**2. 고장 추이 차트 다각화 + 밀도 반응** (#152/155/157/158)
+- Backend `/fault-trend-by-category` granularity(year/month) + equipment_count
+- Frontend: 연/월 · 건수/고장률% · 범례 on/off · 상단 배치 · 밀도 반응 layout
+
+**3. 채팅 피드백 집계 대시보드** (#159)
+- `GET /chat/feedback/stats` — totals 6 + by_intent + weekly
+- `/admin/chat-feedback` 상단 KPI 6 + 주간 스택 + 인텐트 오답 순위
+
+**4. 6 페이지 섹션 접기/펴기 통일** (#160/161/162)
+- `components/ui/collapsible-section.tsx` — CollapsibleSection + usePersistedCollapse
+- alarm / alarm-calendar / equipment-health / network / crisis (현황+이력)
+- SectionHeader(제목 + outline `[^ 접기]`) 패턴으로 전 페이지 시각 통일
+
+**5. 경보 확인 기능** (#163/164)
+- 현황 탭 onConfirm 미전달 버그 수정 + UI amber outline `[⚠ 확인]` 버튼
+- **전체 확인 일괄** `[✓✓ 전체 확인 (N건)]` — Promise.all 병렬
+
+**6. 용수흐름 상단 탭 재배치** (#153)
+- 흐름도·계통·계통도 → 계통·흐름도·계통도 + 아이콘(Layers/Waves/Network) 중복 해소
+
+**7. 채팅 SSE 안정화 버그 수정 — 에러 E-030/031/032/033**
+- **E-030** `TAG_DAILY_MISSING_SUMMARY` placeholder `{sitename}` 원문 노출 →
+  청크 핸들러 render_answer_template 호출 추가
+- **E-031** 알람원인 순위 질의 무한 대기 → `_extract_alarm_filter` import +
+  `_ALARM_FILTER_RULES` 8 카테고리 정의
+- **E-032** 배수지 공급량 NameError → AST 스캔으로 `_execute_reservoir_supply_query_with_conn`
+  + `_extract_alarm_level` 추가 import
+- **E-033** 죽동 수위 트렌드 "카탈로그 미등록" → migration 0057 자동 백필 6 배수지
+
+**검토 중 (미적용):**
+- 합덕3 소블록 압력 현황 SQL 13초 — `fn_pressure_avg_summary` CTE 최적화 권장
+- 석문 가압장 알람 오늘 11초 — 벡터 검색 threshold 조정
+- "순위→수위" 입력 보정 오작동 — 문맥 고려 필요
+- 트렌드 카탈로그 fallback — 미등록 시 tb_tag_info 직접 매칭
+
+---
+
 ### 완료 (2026-04-20 — 대형 작업 묶음) [UX 일관성 + 데이터 모델]
 
 **1. Rule 9 — 전체 네트워크 다운 시 원인 병기** (`slm@3ea6d02`)
