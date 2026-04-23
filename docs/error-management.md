@@ -8,6 +8,19 @@
 
 ---
 
+### [E-033] 트렌드 쿼리 "카탈로그 미등록" — tb_trend_catalog 데이터 누락
+
+- **날짜:** 2026-04-23
+- **증상:** "죽동 배수지 수위 트렌드를 보여줘" 질의에 `"죽동 배수지에 '수위' 트렌드 카탈로그가 등록되지 않았습니다. 조회 가능 항목: 유량/유입유량/유출유량..."` 응답. 실제 `tb_tag_info` 에는 `죽동(배) 수위1/수위2` Analog Input 태그 존재.
+- **원인:** `_execute_catalog_trend_query_inner` (sql_executor.py:826) 가 **tb_trend_catalog 기반**으로 태그를 조회. 6 배수지(죽동·송산2산단공업·송산2산단생활·합덕·합덕인더스·합덕일반)가 DB 시드 단계에서 trend_name='수위' 행 누락. tb_tag_info 에 실제 태그가 있어도 카탈로그 미등록이면 빈 결과 반환.
+- **해결:** migration 0057 자동 백필 — tb_tag_info 에서 Analog Input 수위 태그를 갖는 배수지 중 카탈로그 미등록 시설을 찾아 items JSONB 자동 생성 (label=`{sitename} 배수지 수위{n}`, unit='m', data_category='수위'). 6건 INSERT.
+- **재발 방지:**
+  - 신규 시설 추가 시 trend_catalog 자동 시드 스크립트 (카테고리별 태그 패턴 기반)
+  - `_execute_catalog_trend_query_inner` fallback: 카탈로그 미등록 시 tb_tag_info 직접 매칭으로 2차 조회 (TODO)
+- **커밋:** `web@<commit>`
+
+---
+
 ### [E-032] 배수지 일별 공급량 질의 실패 — sql_executor 함수 import 누락 (일괄)
 
 - **날짜:** 2026-04-23
