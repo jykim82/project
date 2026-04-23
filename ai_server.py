@@ -153,10 +153,10 @@ from response_builder import (
     _execute_night_min_flow_query, _execute_night_min_flow_stddev_query,
     _execute_tag_daily_summary_query, _execute_timeseries_query,
     _execute_hunting_check, _execute_catalog_trend_query,
-    _execute_reservoir_supply_query, wrap_status_marker,
+    _execute_reservoir_supply_query, _execute_reservoir_supply_query_with_conn, wrap_status_marker,
     _sql_escape_literal, _get_tag_datainfo_cache, _query_flow_timeseries,
 )
-from sql_executor import _SUPPLY_INTENTS, _TIMESERIES_CHUNK_INTENTS, _execute_level_cause_analysis, _extract_alarm_filter
+from sql_executor import _SUPPLY_INTENTS, _TIMESERIES_CHUNK_INTENTS, _execute_level_cause_analysis, _extract_alarm_filter, _extract_alarm_level
 from response_builder import _ANOMALY_FILTER_INTENTS
 
 # =============================================================================
