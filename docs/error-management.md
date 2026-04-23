@@ -17,7 +17,7 @@
 - **재발 방지:**
   - 신규 시설 추가 시 trend_catalog 자동 시드 스크립트 (카테고리별 태그 패턴 기반)
   - `_execute_catalog_trend_query_inner` fallback: 카탈로그 미등록 시 tb_tag_info 직접 매칭으로 2차 조회 (TODO)
-- **커밋:** `web@<commit>`
+- **커밋:** `web@2838d63`
 
 ---
 
