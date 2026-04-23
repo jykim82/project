@@ -38,11 +38,22 @@
   + `_extract_alarm_level` 추가 import
 - **E-033** 죽동 수위 트렌드 "카탈로그 미등록" → migration 0057 자동 백필 6 배수지
 
+**8. 펌프 가동 시각화 + 배수지 수질값 통일** (3 뷰)
+- flow_realtime.py 펌프 SQL 인버터+직기동 중복 카운트 수정 (삼봉 10→5, 복운 4→2 등)
+- water_quality 신규 집계 (탁도/잔류염소/pH/전기전도/온도)
+- 계통도/흐름도/GIS 관망도 **동일한 Fan 회전 아이콘** 으로 통일
+  (running=빨간 animate-spin, 정지=회색). 배수지 수질 한 줄 라벨로 표시
+
+**9. FlowNodeTrendPanel 트렌드 접기/펴기**
+- 유량/수위/수압 각 트렌드 독립 접기. 카드 외부 헤더 행에 토글 배치
+  (큰 숫자 가리지 않게), localStorage 개별 유지
+
 **검토 중 (미적용):**
 - 합덕3 소블록 압력 현황 SQL 13초 — `fn_pressure_avg_summary` CTE 최적화 권장
 - 석문 가압장 알람 오늘 11초 — 벡터 검색 threshold 조정
 - "순위→수위" 입력 보정 오작동 — 문맥 고려 필요
 - 트렌드 카탈로그 fallback — 미등록 시 tb_tag_info 직접 매칭
+- 펌프 집계 자동화 — tb_equipment_info 기반 매핑 테이블 (1 설비:N 태그) 전환 검토
 
 ---
 
