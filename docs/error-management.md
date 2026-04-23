@@ -8,6 +8,31 @@
 
 ---
 
+### [E-032] 배수지 일별 공급량 질의 실패 — sql_executor 함수 import 누락 (일괄)
+
+- **날짜:** 2026-04-23
+- **증상:** "한달간 전체 배수지의 일별 공급량을 표로 보여줘" 요청 시 에러 `name '_execute_reservoir_supply_query_with_conn' is not defined` → 프런트에서 "조회된 데이터가 없습니다" 로 표시되나 실제론 NameError
+- **원인:** E-031 과 동일 패턴 — `ai_server.py` 가 `sql_executor.py` 에서 함수를 호출하나 import 목록에 누락. E-031 수정 후에도 `_execute_reservoir_supply_query_with_conn` 과 `_extract_alarm_level` 2개가 여전히 미import 상태였음
+- **해결:**
+  1. AST 분석으로 참조 vs import 불일치 전수 스캔 → 2개 추가 누락 함수 식별
+  2. `from sql_executor import ..., _execute_reservoir_supply_query_with_conn`
+  3. `from sql_executor import ..., _extract_alarm_level`
+- **재발 방지:** 모듈 분리 시 import 누락 자동 탐지 스크립트 (AST 기반) — sql_executor 에 정의된 모든 `_execute_*`·`_extract_*` 함수 중 ai_server 에서 참조하면서 import 안 된 함수 나열
+- **검증 스크립트 (재사용 가능):**
+  ```python
+  import ast, re
+  src = open('ai_server.py').read()
+  imported = {a.name for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.ImportFrom) and n.module in ('sql_executor','response_builder')
+              for a in n.names}
+  refs = set(re.findall(r'(_execute_\w+|_extract_\w+)', src))
+  defined = set(re.findall(r'^def (_\w+)', open('sql_executor.py').read(), re.M))
+  print("Missing imports:", sorted((refs - imported) & defined))
+  ```
+- **커밋:** `slm@3549b61`
+
+---
+
 ### [E-031] 알람원인 순위 질의 무한 대기 — _ALARM_FILTER_RULES 상수 누락
 
 - **날짜:** 2026-04-23
