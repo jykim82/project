@@ -327,27 +327,44 @@ async def get_flow_map_realtime():
                 conn.rollback()
 
         # 4-c) 가압장 펌프 가동 상태 조회
+        #   - 동일 펌프가 인버터/직기동 2개 운전 태그를 갖는 경우(예: 삼봉 펌프1 →
+        #     "인버터1 운전" + "직기동1 운전") 중복 카운트 방지 위해 펌프 번호
+        #     기준 DISTINCT 집계. val=1 태그 하나라도 있으면 해당 펌프 가동으로 간주.
         booster_pump_status: dict[str, dict] = {}
         booster_sites = [sn for sn, ft in node_set if ft == "가압장"]
         if booster_sites:
             try:
                 cur.execute("""
-                    SELECT ti.sitename, COUNT(*) AS total_pumps,
-                           SUM(CASE WHEN r.val = 1 THEN 1 ELSE 0 END) AS running_pumps
-                    FROM tb_tag_info ti
-                    JOIN LATERAL (
-                        SELECT val FROM tb_tag_raw_data r
-                        WHERE r.tagsn = ti.tagsn
-                          AND r.logtime >= now() - interval '10 minutes'
-                        ORDER BY logtime DESC LIMIT 1
-                    ) r ON true
-                    WHERE ti.sitename = ANY(%s)
-                      AND ti.facilitytype = '가압장'
-                      AND ti.equipmenttype ~ '가압펌프'
-                      AND (ti.datainfo ~* '운전|동작' OR ti.datadesc ~* 'RUN|동작')
-                      AND NOT ti.datainfo ~* 'FAULT|FLT|STOP|정지'
-                      AND ti.tagtype = 'Digital Input'
-                    GROUP BY ti.sitename
+                    WITH pump_tags AS (
+                        SELECT ti.sitename,
+                               -- datainfo 에서 펌프 번호 추출 (가압펌프N/인버터N/직기동N/펌프N)
+                               COALESCE(
+                                   substring(ti.datainfo FROM '가압펌프\\s*(\\d+)'),
+                                   substring(ti.datainfo FROM '인버터\\s*(\\d+)'),
+                                   substring(ti.datainfo FROM '직기동\\s*(\\d+)'),
+                                   substring(ti.datainfo FROM '펌프\\s*(\\d+)')
+                               ) AS pump_num,
+                               r.val
+                        FROM tb_tag_info ti
+                        JOIN LATERAL (
+                            SELECT val FROM tb_tag_raw_data r
+                            WHERE r.tagsn = ti.tagsn
+                              AND r.logtime >= now() - interval '10 minutes'
+                            ORDER BY logtime DESC LIMIT 1
+                        ) r ON true
+                        WHERE ti.sitename = ANY(%s)
+                          AND ti.facilitytype = '가압장'
+                          AND ti.equipmenttype ~ '가압펌프'
+                          AND (ti.datainfo ~* '운전|동작' OR ti.datadesc ~* 'RUN|동작')
+                          AND NOT ti.datainfo ~* 'FAULT|FLT|STOP|정지'
+                          AND ti.tagtype = 'Digital Input'
+                    )
+                    SELECT sitename,
+                           COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL) AS total_pumps,
+                           COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL AND val = 1) AS running_pumps
+                    FROM pump_tags
+                    GROUP BY sitename
+                    HAVING COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL) > 0
                 """, (booster_sites,))
                 for row in cur.fetchall():
                     booster_pump_status[row[0]] = {
