@@ -186,6 +186,7 @@ web/
 - `docs/chat-photo-upload-scenario-spec.md` — 사진 업로드 4 시나리오 (P1~P3)
 - `docs/dev-tag-ingest-spec.md` — 원격→로컬 tb_tag_raw_data 복제 (납품 시 제거)
 - `docs/equipment-fault-tracking-spec.md` — 설비 장애 이력 추적 (migration 0045)
+- `docs/report-spec.md` — 보고서 (장애 조치 / 일 점검) 사양 + 채팅 점검 인텐트 (migration 0058)
 - `docs/feature-spec.md` — 기능 개괄
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
