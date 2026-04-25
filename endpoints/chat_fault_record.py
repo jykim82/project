@@ -147,16 +147,31 @@ def parse_fault_text(text: str, cur=None) -> dict[str, Any]:
         "equipmenttype": None,
         "fault_category": None,
         "severity": None,
+        "inspection_type": None,
+        "task_category_hint": None,  # '점검' 또는 '고장보고' (INSERT 분기용)
     }
     t = text.strip()
 
-    # 1) fault_category (키워드 순서 중요, 복합어 먼저)
+    # 0) inspection_type 우선 추출 (점검 sub-type)
+    #    매칭 시 fault_category='점검', task_category_hint='점검' 으로 자동 셋업
+    if re.search(r"(일상\s*점검|일점검)", t):
+        result["inspection_type"] = "일상"
+    elif re.search(r"(정기\s*점검|월간\s*점검|연간\s*점검|분기\s*점검)", t):
+        result["inspection_type"] = "정기"
+    elif re.search(r"(특별\s*점검|긴급\s*점검)", t):
+        result["inspection_type"] = "특별"
+    if result["inspection_type"]:
+        result["fault_category"] = "점검"
+        result["task_category_hint"] = "점검"
+
+    # 1) fault_category (키워드 순서 중요, 복합어 먼저) — inspection_type 미매칭 시
     fault_kw_found: str | None = None
-    for kw, cat in FAULT_KEYWORDS:
-        if kw in t:
-            result["fault_category"] = cat
-            fault_kw_found = kw
-            break
+    if not result["fault_category"]:
+        for kw, cat in FAULT_KEYWORDS:
+            if kw in t:
+                result["fault_category"] = cat
+                fault_kw_found = kw
+                break
 
     # [policy] 통신·네트워크 키워드 → 고장을 이상으로 강제
     # (현장 확인 단서가 있으면 사용자 명시 의도 존중해 "고장" 유지)
@@ -517,26 +532,34 @@ def confirm_draft(req: ConfirmRequest):
         replacement_info = draft.get("replacement_info")
         replacement_json = json.dumps(replacement_info, ensure_ascii=False) if replacement_info else None
 
+        # 점검 인텐트로 들어온 경우 task_category='점검' 으로 INSERT
+        # (그 외는 기존대로 '고장보고')
+        task_category_value = draft.get("task_category_hint") or "고장보고"
+        inspection_type_value = draft.get("inspection_type")
+
         cur.execute(
             """
             INSERT INTO tb_task_master
               (sitename, facilitytype, task_category, task_start_time,
                equipment_id, equipmenttype, fault_category, severity,
                linked_alarm_start, linked_alarm_tagsn,
-               task_content, recorded_by, status, photo_urls, replacement_info)
-            VALUES (%s, %s, '고장보고', %s,
+               task_content, recorded_by, status, photo_urls, replacement_info,
+               inspection_type)
+            VALUES (%s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s,
-                    %s, %s, '진행중', %s::jsonb, %s::jsonb)
+                    %s, %s, '진행중', %s::jsonb, %s::jsonb,
+                    %s)
             RETURNING task_id
             """,
             (
-                draft["sitename"], draft["facilitytype"], occurred_at,
+                draft["sitename"], draft["facilitytype"], task_category_value, occurred_at,
                 draft.get("equipment_id"), draft["equipmenttype"],
                 draft["fault_category"], draft.get("severity"),
                 first_alarm_start, first_alarm_tagsn,
                 draft.get("original_text"), req.user_id,
                 photo_urls_json, replacement_json,
+                inspection_type_value,
             ),
         )
         task_id = cur.fetchone()[0]

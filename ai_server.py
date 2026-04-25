@@ -2780,6 +2780,11 @@ from endpoints.vision_proxy import (
 init_vision_proxy(get_db_connection)
 app.include_router(vision_proxy_router)
 
+# 보고서 (장애 조치 / 일 점검) — Migration 0058
+from endpoints.reports import router as reports_router, init as init_reports
+init_reports(get_db_connection)
+app.include_router(reports_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
