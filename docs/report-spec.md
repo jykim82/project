@@ -1,8 +1,8 @@
 ---
 name: 보고서 사양 (장애 조치·일 점검)
-status: P1 사양 확정 v2 — 정합성 보강 / 구현 대기
+status: P1 사양 v3 — incident_report 양식 흡수 / 구현 완료
 created: 2026-04-25
-updated: 2026-04-25
+updated: 2026-04-26
 ---
 
 # 보고서 사양 — 장애 조치 보고서 + 일 점검 보고서
@@ -146,7 +146,45 @@ JSONB 객체 배열로 출처 메타 보존:
 - **인쇄 캡션**: `[항목 N] {site_name} · {equipment_name} · {source 한글화}`
   (예: "발생 시점", "조치 후", "추가 참고")
 
-### 3.5 분류 정책 (기존 유지)
+### 3.5 incident_report 양식 흡수 (Migration 0059)
+
+`docs/incident_report.html` (장애조치결과보고서 표준 양식) 의 항목을 흡수.
+
+**`tb_report` 추가:**
+- `approval_chain JSONB` — 결재란
+  ```json
+  {
+    "담당": { "name": "홍길동", "signed_at": "2026-04-25T18:00:00Z" },
+    "검토": { "name": "김검토", "signed_at": null },
+    "승인": { "name": "이승인", "signed_at": null }
+  }
+  ```
+  값이 `null`/`""` 이면 빈 칸으로 인쇄.
+
+**`tb_report_item` 추가:**
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| symptom | TEXT | 장애 현상 (양식 §장애현상) |
+| cause | TEXT | 장애 원인 (양식 §장애원인) |
+| key_issues | TEXT | 주요 사항 (양식 마지막 멀티라인) |
+| system_categories | JSONB | 장애 시스템 체크박스 배열 |
+| equipment_categories | JSONB | 장애 장비 체크박스 배열 |
+
+**system_categories 화이트리스트:**
+`현장제어반`, `네트워크`, `SCADA/HMI`, `서버/DB`, `전원/UPS`, `계측/센서`,
+`응용 SW`, `기타`
+
+**equipment_categories 화이트리스트:**
+`유량계`, `수위계`, `압력계`, `수질계측기`, `펌프/밸브`, `PLC/RTU`,
+`DSU/모뎀`, `Serial Converter`, `스위치/라우터`, `서버/PC`, `기타`
+
+**기존 occurred_text/resolved_text 매핑:**
+- `occurred_text` ⇄ 양식 "장애현상" (symptom 비어있을 때 fallback)
+- `resolved_text` ⇄ 양식 "조치사항"
+- 두 새 필드 (cause, key_issues) 는 사용자가 추가로 입력 (LLM 요약은 occurred/resolved
+  단락만 다룸)
+
+### 3.6 분류 정책 (기존 유지)
 
 `docs/fault-category-policy.md` 그대로 적용. 본 보고서는 분류를 *재해석하지
 않으며* `tb_task_master` 의 값을 그대로 캐시·표시. 알람 자동 연계 금지
@@ -385,3 +423,7 @@ Migration 0049/0054 패턴 따라 모든 region 에 동일 등록 + MASTER/ADMIN
 - 2026-04-25 — v2 정합성 보강 (10항목): region 처리, photo_urls JSONB 객체
   배열, 시점 메타 5컬럼 캐시, 후보 필터 단순화, 메뉴 INSERT 형식, AI 요약 모듈
   명시, unique 제약, reorder API, 인쇄 라이트모드 강제, 권한 응답 코드
+- 2026-04-26 — v3 incident_report.html 양식 흡수 (Migration 0059):
+  approval_chain (결재란), symptom/cause/key_issues 본문 필드,
+  system_categories/equipment_categories 체크박스 배열,
+  인쇄 모드에 `IncidentReportPrintLayout` 컴포넌트 (Nanum Myeongjo, A4 표 양식)
