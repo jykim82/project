@@ -11,3 +11,7 @@
 /screenshots/
 /dev-logs/
 /dev-data/
+
+# 테스트·임시 산출물 (Playwright snapshot/console, 시각 검증 png) — 커밋 제외
+/tmp/
+/.playwright-mcp/
