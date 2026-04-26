@@ -55,48 +55,66 @@ def _get_conn():
 # ============================================================================
 
 def _row_to_report(row: dict) -> dict:
+    approval = row.get("approval_chain")
+    if isinstance(approval, str):
+        try:
+            approval = json.loads(approval)
+        except Exception:
+            approval = None
     return {
-        "report_id":     row["report_id"],
-        "region":        row["region"],
-        "report_type":   row["report_type"],
-        "report_date":   row["report_date"].isoformat() if row.get("report_date") else None,
-        "author_id":     row["author_id"],
-        "title":         row["title"],
-        "status":        row["status"],
-        "finalized_at":  row["finalized_at"].isoformat() if row.get("finalized_at") else None,
-        "finalized_by":  row.get("finalized_by"),
-        "photo_layout":  row.get("photo_layout"),
-        "created_at":    row["created_at"].isoformat() if row.get("created_at") else None,
-        "updated_at":    row["updated_at"].isoformat() if row.get("updated_at") else None,
+        "report_id":      row["report_id"],
+        "region":         row["region"],
+        "report_type":    row["report_type"],
+        "report_date":    row["report_date"].isoformat() if row.get("report_date") else None,
+        "author_id":      row["author_id"],
+        "title":          row["title"],
+        "status":         row["status"],
+        "finalized_at":   row["finalized_at"].isoformat() if row.get("finalized_at") else None,
+        "finalized_by":   row.get("finalized_by"),
+        "photo_layout":   row.get("photo_layout"),
+        "approval_chain": approval,
+        "created_at":     row["created_at"].isoformat() if row.get("created_at") else None,
+        "updated_at":     row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
 
 
 def _row_to_item(row: dict) -> dict:
-    photos = row.get("photo_urls")
-    if isinstance(photos, str):
-        try:
-            photos = json.loads(photos)
-        except Exception:
-            photos = []
+    def _maybe_json(v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return None
+        return v
+
+    photos = _maybe_json(row.get("photo_urls")) or []
+    sys_cats = _maybe_json(row.get("system_categories")) or []
+    eq_cats  = _maybe_json(row.get("equipment_categories")) or []
     return {
-        "item_id":        row["item_id"],
-        "report_id":      row["report_id"],
-        "seq":            row["seq"],
-        "task_id":        row.get("task_id"),
-        "site_name":      row.get("site_name"),
-        "facility_type":  row.get("facility_type"),
-        "equipment_name": row.get("equipment_name"),
-        "fault_category": row.get("fault_category"),
+        "item_id":         row["item_id"],
+        "report_id":       row["report_id"],
+        "seq":             row["seq"],
+        "task_id":         row.get("task_id"),
+        "site_name":       row.get("site_name"),
+        "facility_type":   row.get("facility_type"),
+        "equipment_name":  row.get("equipment_name"),
+        "fault_category":  row.get("fault_category"),
         "inspection_type": row.get("inspection_type"),
-        "occurred_at":    row["occurred_at"].isoformat() if row.get("occurred_at") else None,
-        "occurred_text":  row.get("occurred_text"),
-        "resolved_at":    row["resolved_at"].isoformat() if row.get("resolved_at") else None,
-        "resolved_text":  row.get("resolved_text"),
-        "original_text":  row.get("original_text"),
-        "photo_urls":     photos or [],
-        "exclude_photo":  bool(row.get("exclude_photo")),
-        "ai_summary_at":  row["ai_summary_at"].isoformat() if row.get("ai_summary_at") else None,
-        "ai_model":       row.get("ai_model"),
+        "occurred_at":     row["occurred_at"].isoformat() if row.get("occurred_at") else None,
+        "occurred_text":   row.get("occurred_text"),
+        "resolved_at":     row["resolved_at"].isoformat() if row.get("resolved_at") else None,
+        "resolved_text":   row.get("resolved_text"),
+        "original_text":   row.get("original_text"),
+        "photo_urls":      photos,
+        "exclude_photo":   bool(row.get("exclude_photo")),
+        "ai_summary_at":   row["ai_summary_at"].isoformat() if row.get("ai_summary_at") else None,
+        "ai_model":        row.get("ai_model"),
+        # Migration 0059 — incident_report 양식 필드
+        "symptom":              row.get("symptom"),
+        "cause":                row.get("cause"),
+        "key_issues":           row.get("key_issues"),
+        "system_categories":    sys_cats,
+        "equipment_categories": eq_cats,
     }
 
 
@@ -298,6 +316,7 @@ class PatchReportRequest(BaseModel):
     user_id: str
     title: Optional[str] = None
     photo_layout: Optional[str] = None
+    approval_chain: Optional[dict] = None  # Migration 0059
 
 
 class FinalizeRequest(BaseModel):
@@ -326,6 +345,12 @@ class PatchItemRequest(BaseModel):
     fault_category: Optional[str] = None
     inspection_type: Optional[str] = None
     exclude_photo: Optional[bool] = None
+    # Migration 0059 — incident_report 양식 필드
+    symptom: Optional[str] = None
+    cause: Optional[str] = None
+    key_issues: Optional[str] = None
+    system_categories: Optional[list[str]] = None
+    equipment_categories: Optional[list[str]] = None
 
 
 class ResummarizeRequest(BaseModel):
@@ -574,6 +599,9 @@ def patch_report(report_id: int, req: PatchReportRequest):
             if req.photo_layout not in ("1up", "2up"):
                 raise HTTPException(status_code=400, detail="photo_layout 은 1up/2up")
             sets.append("photo_layout = %s"); params.append(req.photo_layout)
+        if req.approval_chain is not None:
+            sets.append("approval_chain = %s::jsonb")
+            params.append(json.dumps(req.approval_chain, ensure_ascii=False, default=str))
         if not sets:
             return _row_to_report(report)
         sets.append("updated_at = now()")
@@ -758,12 +786,21 @@ def patch_item(item_id: int, req: PatchItemRequest):
         _ensure_draft_or_405(report)
 
         sets, params = [], []
+        # 단순 컬럼
         for f in ("occurred_at", "occurred_text", "resolved_at", "resolved_text",
                   "site_name", "facility_type", "equipment_name", "fault_category",
-                  "inspection_type", "exclude_photo"):
+                  "inspection_type", "exclude_photo",
+                  "symptom", "cause", "key_issues"):
             v = getattr(req, f)
             if v is not None:
                 sets.append(f"{f} = %s"); params.append(v)
+        # JSONB 배열 (Migration 0059 — incident_report 양식 체크박스)
+        if req.system_categories is not None:
+            sets.append("system_categories = %s::jsonb")
+            params.append(json.dumps(req.system_categories, ensure_ascii=False))
+        if req.equipment_categories is not None:
+            sets.append("equipment_categories = %s::jsonb")
+            params.append(json.dumps(req.equipment_categories, ensure_ascii=False))
         if not sets:
             return _row_to_item(item)
         sets.append("updated_at = now()")
