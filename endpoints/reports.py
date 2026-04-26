@@ -31,7 +31,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from report_summarizer import summarize_task
+from report_summarizer import summarize_task, refine_item_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -818,6 +818,12 @@ def patch_item(item_id: int, req: PatchItemRequest):
 
 @router.post("/items/{item_id}/resummarize")
 def resummarize_item(item_id: int, req: ResummarizeRequest):
+    """현재 항목 본문(사용자 편집 포함)을 LLM 으로 정제.
+
+    중요: 사용자가 추가·편집한 내용은 절대 사라지지 않는다.
+    LLM 호출 실패 시에도 현재 텍스트를 그대로 보존.
+    원본 task 의 task_content 는 참고만 하고 새로 추가하지 않는다.
+    """
     conn = _get_conn()
     try:
         cur = conn.cursor()
@@ -825,21 +831,27 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
         _ensure_owner_or_403(report, req.user_id)
         _ensure_draft_or_405(report)
 
-        if not item.get("task_id"):
-            raise HTTPException(status_code=400, detail="원본 task 가 없는 항목은 재요약 불가")
-
-        tr = _resolve_task(cur, item["task_id"], report["region"])
-        rebuilt = _summarize_and_build_item(tr, seq=item["seq"])
+        # 현재 본문(사용자 편집 포함)을 입력으로
+        refined = refine_item_summary(
+            current_occurred=item.get("occurred_text"),
+            current_resolved=item.get("resolved_text"),
+            original_text=item.get("original_text"),
+            site_name=item.get("site_name"),
+            facility_type=item.get("facility_type"),
+            equipment_name=item.get("equipment_name"),
+            fault_category=item.get("fault_category"),
+            inspection_type=item.get("inspection_type"),
+        )
 
         cur.execute(
             """
             UPDATE tb_report_item
-               SET occurred_text = %s, resolved_text = %s, original_text = %s,
+               SET occurred_text = %s, resolved_text = %s,
                    ai_summary_at = now(), ai_model = %s, updated_at = now()
              WHERE item_id = %s RETURNING *
             """,
-            (rebuilt["occurred_text"], rebuilt["resolved_text"],
-             rebuilt["original_text"], rebuilt.get("ai_model"), item_id),
+            (refined["occurred_text"], refined["resolved_text"],
+             refined.get("model"), item_id),
         )
         updated = _fetchone_dict(cur)
         conn.commit()
