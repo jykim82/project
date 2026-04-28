@@ -146,6 +146,26 @@ JSONB 객체 배열로 출처 메타 보존:
 - **인쇄 캡션**: `[항목 N] {site_name} · {equipment_name} · {source 한글화}`
   (예: "발생 시점", "조치 후", "추가 참고")
 
+### 3.4.1 보고서 유형별 항목 라벨 (v4)
+
+같은 컬럼 (`tb_report_item`) 이지만 보고서 유형에 따라 표시 라벨이 다름:
+
+| 컬럼 | 장애 조치 보고서 (`fault_action`) | 일 점검 보고서 (`daily_inspection`) |
+|---|---|---|
+| `occurred_at` | 발생 일시 | 점검 일시 |
+| `occurred_text` | 발생 내용 | 점검 내용 |
+| `resolved_at` | 조치 일시 | 조치 일시 |
+| `resolved_text` | 조치 내용 | 조치 사항 |
+| `symptom` | 장애 현상 | 점검 결과 |
+| `cause` | 장애 원인 | *(미사용 — 카드/양식에서 숨김)* |
+| `key_issues` | 주요 사항 | 특이 사항 |
+| `system_categories` | 장애 시스템 (`system`) | 점검 시스템 (`inspection_system`) |
+| `equipment_categories` | 장애 장비 (`equipment`) | 점검 장비 (`inspection_equipment`) |
+| 인쇄 양식 제목 | 장애조치결과보고서 | 일상점검결과보고서 |
+
+프런트 분기: ItemCard 가 `getItemLabels(reportType)` 으로 라벨·카테고리 type
+선택. 인쇄 양식 (`incident-html.ts`) 은 `getSheetLabels(reportType)` 사용.
+
 ### 3.5 incident_report 양식 흡수 (Migration 0059)
 
 `docs/incident_report.html` (장애조치결과보고서 표준 양식) 의 항목을 흡수.
@@ -170,6 +190,10 @@ JSONB 객체 배열로 출처 메타 보존:
 | system_categories | JSONB | 장애 시스템 체크박스 배열 |
 | equipment_categories | JSONB | 장애 장비 체크박스 배열 |
 
+**카테고리 type 4종 (Migration 0060/0062):**
+- `system` (장애 시스템) / `equipment` (장애 장비) — 장애 조치 보고서
+- `inspection_system` (점검 시스템) / `inspection_equipment` (점검 장비) — 일 점검 보고서
+
 **system_categories / equipment_categories 옵션 — 관리 메뉴에서 동적 CRUD (Migration 0060):**
 
 - 테이블: `tb_report_category(category_id, category_type, code, label, sort_order, use_yn)`
@@ -184,8 +208,10 @@ JSONB 객체 배열로 출처 메타 보존:
 - 초기 seed 19종 (장애 시스템 8 + 장애 장비 11) — 기존 하드코딩 상수와 동일
 
 **기본 seed 값:**
-- 장애 시스템 (8): 현장제어반·네트워크·SCADA/HMI·서버/DB·전원/UPS·계측/센서·응용 SW·기타
-- 장애 장비 (11): 유량계·수위계·압력계·수질계측기·펌프/밸브·PLC/RTU·DSU/모뎀·Serial Converter·스위치/라우터·서버/PC·기타
+- 장애 시스템 `system` (8): 현장제어반·네트워크·SCADA/HMI·서버/DB·전원/UPS·계측/센서·응용 SW·기타
+- 장애 장비 `equipment` (11): 유량계·수위계·압력계·수질계측기·펌프/밸브·PLC/RTU·DSU/모뎀·Serial Converter·스위치/라우터·서버/PC·기타
+- 점검 시스템 `inspection_system` (8) — Migration 0062: 시설 외관·계측/센서·전원/UPS·통신/네트워크·제어반·서버/DB·응용 SW·기타
+- 점검 장비 `inspection_equipment` (10) — Migration 0062: 펌프/밸브·유량계·수위계·압력계·수질계측기·PLC/RTU·모뎀·스위치·서버/PC·기타
 
 추가/수정/사용 토글/삭제 모두 관리 페이지에서 가능. `tb_report_item.system_categories`/`equipment_categories` JSONB 배열에는 `code` 값이 저장되며, 화면 표시는 `label` 사용.
 
@@ -565,6 +591,13 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
   · `light_format_report_text` — 단어 치환 + 문장 분리 + `• ` 기호 부여
   · `summarize_task` / `refine_item_summary` 모두에 적용 (LLM 응답·fallback 공통)
   · 보고서 본문이 일관된 양식으로 출력 (LLM 부재 환경에서도 보고서체 보장)
+- 2026-04-28 — v4 일 점검 보고서 항목 정리 (Migration 0062):
+  · 카테고리 type 2종 추가: inspection_system (8) / inspection_equipment (10)
+  · 보고서 유형별 라벨·옵션 분기 (§3.4.1 표)
+  · 인쇄 양식 제목 분기 (장애조치결과보고서 / 일상점검결과보고서)
+  · `getItemLabels(reportType)` (프런트) / `getSheetLabels(reportType)` (인쇄)
+  · 일 점검 보고서엔 `cause` (장애 원인) 행이 카드/양식에서 숨김
+  · 관리 페이지 4 탭 (시스템/장비 × 장애/점검)
 - 2026-04-28 — v4 사진 영역 조치 전/후 분리 (§6.7):
   · 항목 카드의 사진 영역을 두 그룹으로 분리 (조치 전 / 조치 후)
   · 각 그룹에 별도 URL 입력 + [사진 추가] 버튼
