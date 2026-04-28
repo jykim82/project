@@ -956,12 +956,13 @@ def stats_root_causes(
     try:
         cur = conn.cursor()
         # 1. 근본원인별 빈도 (전사)
+        # NOTE: lateral alias 는 tb_report_item.cause 컬럼과 충돌하지 않도록 'rc_code' 사용
         sql = [
             """
-            SELECT cause AS code, COUNT(*) AS cnt
+            SELECT rc.code AS code, COUNT(*) AS cnt
               FROM tb_report_item i
               JOIN tb_report r ON r.report_id = i.report_id
-              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS cause
+              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS rc(code)
              WHERE r.region = %s
             """
         ]
@@ -970,7 +971,7 @@ def stats_root_causes(
             sql.append("AND i.occurred_at >= %s"); params.append(date_from)
         if date_to:
             sql.append("AND i.occurred_at < (%s::date + INTERVAL '1 day')"); params.append(date_to)
-        sql.append("GROUP BY cause ORDER BY cnt DESC")
+        sql.append("GROUP BY rc.code ORDER BY cnt DESC")
         cur.execute(" ".join(sql), tuple(params))
         by_cause = _fetchall_dict(cur)
 
@@ -978,11 +979,11 @@ def stats_root_causes(
         sql2 = [
             """
             SELECT t.equipment_id, t.equipmenttype, t.sitename,
-                   cause AS code, COUNT(*) AS cnt
+                   rc.code AS code, COUNT(*) AS cnt
               FROM tb_report_item i
               JOIN tb_report r ON r.report_id = i.report_id
               JOIN tb_task_master t ON t.task_id = i.task_id
-              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS cause
+              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS rc(code)
              WHERE r.region = %s
                AND t.equipment_id IS NOT NULL
             """
@@ -992,7 +993,7 @@ def stats_root_causes(
             sql2.append("AND i.occurred_at >= %s"); params2.append(date_from)
         if date_to:
             sql2.append("AND i.occurred_at < (%s::date + INTERVAL '1 day')"); params2.append(date_to)
-        sql2.append("GROUP BY t.equipment_id, t.equipmenttype, t.sitename, cause "
+        sql2.append("GROUP BY t.equipment_id, t.equipmenttype, t.sitename, rc.code "
                     "ORDER BY t.equipment_id, cnt DESC")
         cur.execute(" ".join(sql2), tuple(params2))
         by_equipment = _fetchall_dict(cur)

@@ -94,6 +94,7 @@ class OllamaClient:
         timeout: Optional[float] = None,
         backoff_seconds: float = _BACKOFF_SECONDS,
         keep_alive: Optional[str] = None,
+        format: Optional[str] = None,
     ) -> str:
         """
         Ollama /api/generate 호출하여 텍스트 응답을 반환한다.
@@ -136,6 +137,9 @@ class OllamaClient:
             # 모델을 VRAM에 상주시켜 idle 후 cold-start 회피
             "keep_alive": keep_alive if keep_alive is not None else OLLAMA_KEEP_ALIVE,
         }
+        # format='json' 시 Ollama 가 JSON-only 출력을 강제 (분류·구조화 응답에 유용)
+        if format:
+            payload["format"] = format
 
         try:
             resp = httpx.post(

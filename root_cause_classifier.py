@@ -128,6 +128,7 @@ def classify_item(
             model=use_model,
             num_predict=200,
             timeout=timeout,
+            format="json",  # Ollama JSON-only 출력 강제 — 분류·정형 응답 빈 응답 회피
         )
     except OllamaConnectionError as e:
         logger.warning(f"classify_item: Ollama 연결 실패 ({e})")
