@@ -170,13 +170,24 @@ JSONB 객체 배열로 출처 메타 보존:
 | system_categories | JSONB | 장애 시스템 체크박스 배열 |
 | equipment_categories | JSONB | 장애 장비 체크박스 배열 |
 
-**system_categories 화이트리스트:**
-`현장제어반`, `네트워크`, `SCADA/HMI`, `서버/DB`, `전원/UPS`, `계측/센서`,
-`응용 SW`, `기타`
+**system_categories / equipment_categories 옵션 — 관리 메뉴에서 동적 CRUD (Migration 0060):**
 
-**equipment_categories 화이트리스트:**
-`유량계`, `수위계`, `압력계`, `수질계측기`, `펌프/밸브`, `PLC/RTU`,
-`DSU/모뎀`, `Serial Converter`, `스위치/라우터`, `서버/PC`, `기타`
+- 테이블: `tb_report_category(category_id, category_type, code, label, sort_order, use_yn)`
+- 관리 메뉴: **`관리 > 보고서 카테고리`** (`/admin/report-categories`, `M100-11`)
+- 백엔드 API: `slm/endpoints/report_categories.py`
+  - `GET /report-categories?category_type=system|equipment`
+  - `POST /report-categories` `{ category_type, code, label?, sort_order? }`
+  - `PATCH /report-categories/{id}` `{ label?, sort_order?, use_yn? }`
+  - `DELETE /report-categories/{id}`
+- 프런트 훅: `useReportCategories('system' | 'equipment')`
+- 보고서 항목 카드 + 인쇄 양식이 본 훅을 통해 옵션 동적 로딩
+- 초기 seed 19종 (장애 시스템 8 + 장애 장비 11) — 기존 하드코딩 상수와 동일
+
+**기본 seed 값:**
+- 장애 시스템 (8): 현장제어반·네트워크·SCADA/HMI·서버/DB·전원/UPS·계측/센서·응용 SW·기타
+- 장애 장비 (11): 유량계·수위계·압력계·수질계측기·펌프/밸브·PLC/RTU·DSU/모뎀·Serial Converter·스위치/라우터·서버/PC·기타
+
+추가/수정/사용 토글/삭제 모두 관리 페이지에서 가능. `tb_report_item.system_categories`/`equipment_categories` JSONB 배열에는 `code` 값이 저장되며, 화면 표시는 `label` 사용.
 
 **기존 occurred_text/resolved_text 매핑:**
 - `occurred_text` ⇄ 양식 "장애현상" (symptom 비어있을 때 fallback)
@@ -538,6 +549,12 @@ incident 양식 3필드는 분량·중요도가 LLM 정제 대상이 되기엔 �
   · `light_format_report_text` — 단어 치환 + 문장 분리 + `• ` 기호 부여
   · `summarize_task` / `refine_item_summary` 모두에 적용 (LLM 응답·fallback 공통)
   · 보고서 본문이 일관된 양식으로 출력 (LLM 부재 환경에서도 보고서체 보장)
+- 2026-04-28 — v4 카테고리 동적 관리 (Migration 0060):
+  · `tb_report_category` 신규 + seed 19종 (장애 시스템 8 + 장애 장비 11)
+  · 관리 메뉴 `/admin/report-categories` (M100-11) — 추가/수정/사용 토글/삭제
+  · 백엔드 `endpoints/report_categories.py` (GET/POST/PATCH/DELETE)
+  · 프런트 `useReportCategories` 훅 — 항목 카드·인쇄 양식 모두 DB 옵션 사용
+  · `SYSTEM_CATEGORY_OPTIONS` / `EQUIPMENT_CATEGORY_OPTIONS` 상수는 @deprecated
 - 2026-04-28 — v4 5필드 정제 확장:
   · `refine_item_summary` 가 occurred/resolved 외에 symptom/cause/key_issues
     도 입력·출력 (LLM 호출은 발생/조치만, 나머지 3필드는 light_format)
