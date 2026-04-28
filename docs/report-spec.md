@@ -200,10 +200,29 @@ JSONB 객체 배열로 출처 메타 보존:
 - `POST /reports/items/classify-causes-batch` — 일괄 (기본 미분류만, limit)
 - `GET  /reports/stats/root-causes?region=` — 빈도/설비별/교체 후보 순위
 
-**노후도 점수 (단계):**
-- P1: COUNT (단순 합산)
-- P2: + cause weight
-- P3: + 시간 감쇠 (최근 1년 1.0 → 1~2년 0.5 → 그 이상 0.2) + `tb_equipment_lifespan` 연식
+**노후도 점수 (구현 완료):**
+
+`weighted_score = SUM( taxonomy.weight × time_decay )` — 통계 SQL CTE 안에서 산출
+
+| 시점 | 시간 감쇠 (`time_decay`) |
+|---|---|
+| 최근 1년 | 1.0 |
+| 1~2년 | 0.5 |
+| 그 이상 | 0.2 |
+
+UI 노출 (교체 후보 순위 표):
+- 가중치 점수 (≥5 default badge / 2~5 secondary / <2 outline)
+- 최근 1년 발생 건수 (primary 컬러 강조)
+- 코드 매칭 건수 / 총 보고 건수
+
+**야간 cron 트리거:**
+- `POST /reports/items/classify-causes-cron` — 모든 region 미분류 항목 일괄 분류
+- 외부 cron 또는 OS 스케줄러에서 호출 (인증 헤더 없이 동작 — 내부망 한정)
+- 응답: `{ regions:[{region, processed, hits}], total_processed }`
+- 운영 권장: `crontab -e` 으로 매일 03:00 호출
+
+**P3 추가 확장 가능 (현재 보류):**
+- `tb_equipment_lifespan` 연식 보정 (설비별 도입 연도 기반)
 
 **LLM 빈 응답 회피 — Ollama `format=json` 옵션:**
 `gemma4` 같은 멀티모달 모델은 자유 단락엔 강하나 정형 JSON 출력엔
