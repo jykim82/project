@@ -355,6 +355,7 @@ class PatchItemRequest(BaseModel):
 
 class ResummarizeRequest(BaseModel):
     user_id: str
+    dry_run: Optional[bool] = False  # True 면 결과만 반환, DB 미반영 (미리보기)
 
 
 class AddPhotoRequest(BaseModel):
@@ -823,6 +824,8 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
     중요: 사용자가 추가·편집한 내용은 절대 사라지지 않는다.
     LLM 호출 실패 시에도 현재 텍스트를 그대로 보존.
     원본 task 의 task_content 는 참고만 하고 새로 추가하지 않는다.
+
+    `dry_run=True` 인 경우 결과만 반환하고 DB 는 변경하지 않는다 — 미리보기 용도.
     """
     conn = _get_conn()
     try:
@@ -842,6 +845,22 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
             fault_category=item.get("fault_category"),
             inspection_type=item.get("inspection_type"),
         )
+
+        if req.dry_run:
+            # 미리보기 — DB 미반영. 현재값/정제값 함께 반환 (프런트에서 비교 표시)
+            return {
+                "dry_run": True,
+                "current": {
+                    "occurred_text": item.get("occurred_text") or "",
+                    "resolved_text": item.get("resolved_text") or "",
+                },
+                "refined": {
+                    "occurred_text": refined.get("occurred_text") or "",
+                    "resolved_text": refined.get("resolved_text") or "",
+                },
+                "model": refined.get("model"),
+                "fallback": refined.get("fallback", False),
+            }
 
         cur.execute(
             """
