@@ -205,9 +205,20 @@ JSONB 객체 배열로 출처 메타 보존:
 - P2: + cause weight
 - P3: + 시간 감쇠 (최근 1년 1.0 → 1~2년 0.5 → 그 이상 0.2) + `tb_equipment_lifespan` 연식
 
-**LLM 모델 주의:** 분류 작업엔 멀티모달(`gemma4`) 보다 텍스트 전용 모델
-(예: `gemma3:4b-it-qat`, `qwen2.5:7b`) 이 응답률 높음. `tb_comm_code
-(grp_cd='SITE_SETTING', comm_cd='AI_MODEL')` 에서 변경.
+**LLM 빈 응답 회피 — Ollama `format=json` 옵션:**
+`gemma4` 같은 멀티모달 모델은 자유 단락엔 강하나 정형 JSON 출력엔
+빈 응답을 자주 반환. `ollama_client.generate(format="json")` 으로
+JSON-only 모드 강제. **모델 교체 불필요 — 1줄 수정만**.
+
+**통계 대시보드 (`/monitoring/equipment-health` 5번째 탭):**
+- `RootCauseStatsSection` 컴포넌트
+- 코드별 빈도 (그룹 색상 배지 + 분포 막대)
+- 설비 교체 후보 순위 (cause_count, total_count)
+- 설비별 코드 분포
+- [전체 재분류] 버튼 — `classify-causes-batch` 호출
+
+**점검 보고서 항목 제외:** `report_type='daily_inspection'` 인 항목은 근본원인
+분류 대상이 아니므로 batch / stats 모두 자동 제외.
 
 ### 3.5 incident_report 양식 흡수 (Migration 0059)
 
