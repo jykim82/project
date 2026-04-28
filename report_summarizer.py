@@ -24,6 +24,95 @@ logger = logging.getLogger(__name__)
 _client = OllamaClient()
 
 
+# ============================================================================
+# 약식 정제 (rule-based light format)
+#   - 구어체 → 보고서체 단어 치환 (예: "기록해줘" 제거, "났네" → "발생.")
+#   - 다중 공백 정리
+#   - 마침표·줄바꿈 단위로 문장 분리 후 앞에 "• " 기호 부여
+#
+# LLM 호출 결과·사용자 입력·fallback 모두에 동일하게 후처리되어
+# 보고서 본문이 일관된 양식으로 출력된다.
+# ============================================================================
+
+_REPORT_BULLET = "• "
+
+# (정규식 패턴, 치환문) — 순서대로 적용. 보고용 단어 치환.
+_PHRASE_NORMALIZATIONS: list[tuple[str, str]] = [
+    # 1) 명령형 어미 제거 — 끝부분의 "기록해줘"/"등록해줘"
+    (r"\s*(?:기록|등록)\s*해\s*줘\.?\s*$", ""),
+    (r"(?:기록|등록)\s*해\s*줘\.?", ""),
+    (r"\s*기록\.?\s*$", ""),
+    # 2) 종결어미 보고체 변환
+    (r"했어요\.?", "함."),
+    (r"했어\.?", "함."),
+    (r"했네\.?", "함."),
+    (r"했지\.?", "함."),
+    (r"했음", "함"),  # 이미 보고체에 가까움
+    (r"났어요\.?", "발생함."),
+    (r"났어\.?", "발생함."),
+    (r"났네\.?", "발생함."),
+    (r"이야\.?", "임."),
+    (r"\s야\.?", "임."),
+    (r"이지\.?", "임."),
+    (r"라네\.?", "임."),
+    # 3) 구어체 → 보고서체 (연결어미/종결어미 분리)
+    (r"안\s*돌아감\.?", "동작 불가."),
+    (r"안\s*돌아가\.?", "동작 불가."),
+    (r"안\s*돼서", "동작하지 않아"),     # 연결어미
+    (r"안\s*돼요\.?", "동작 불가."),
+    (r"안\s*돼\.", "동작 불가."),
+    (r"먹통", "동작 불가"),
+]
+
+
+def apply_phrase_normalization(text: str) -> str:
+    """구어체 → 보고서체 단어 치환 + 공백 정리."""
+    if not text:
+        return ""
+    out = text
+    for pat, rep in _PHRASE_NORMALIZATIONS:
+        out = re.sub(pat, rep, out)
+    # 다중 공백 → 단일 (탭 포함)
+    out = re.sub(r"[ \t]+", " ", out)
+    # 다중 빈 줄 → 1개
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+def _split_sentences(text: str) -> list[str]:
+    """마침표/물음표/느낌표 뒤 공백 또는 명시적 줄바꿈으로 문장 분리."""
+    if not text:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def apply_bullet_format(text: str) -> str:
+    """각 문장 앞에 '• ' 부여. 이미 기호로 시작하면 유지."""
+    if not text:
+        return ""
+    sentences = _split_sentences(text)
+    out = []
+    for s in sentences:
+        if s.startswith(("•", "·", "○", "▶", "※", "-", "*", "1)", "2)", "3)", "1.", "2.", "3.")):
+            out.append(s)
+        else:
+            out.append(f"{_REPORT_BULLET}{s}")
+    return "\n".join(out)
+
+
+def light_format_report_text(text: str | None, *, normalize_phrases: bool = True) -> str:
+    """약식 정제 — 단어 치환 + 줄바꿈 + 기호 부여를 한 번에 적용.
+
+    LLM 응답·사용자 입력·fallback 모두에 동일 적용하여 보고서 일관성 확보.
+    """
+    if not text:
+        return ""
+    if normalize_phrases:
+        text = apply_phrase_normalization(text)
+    return apply_bullet_format(text)
+
+
 _SYSTEM_PROMPT = """당신은 상수도 운영 보고서 작성을 돕는 보조 도우미입니다.
 입력으로 주어진 사실(시설·설비·분류·발생 원문·조치 원문)만으로 두 단락의
 보고서 본문을 한국어로 작성합니다.
@@ -179,10 +268,10 @@ def refine_item_summary(
     res_in = (current_resolved or "").strip()
 
     def _safe_fallback() -> dict[str, str]:
-        # 사용자 입력 그대로 반환 — 절대 사라지지 않도록
+        # 사용자 입력 그대로 반환 — 단, 보고서 일관성 위해 약식 정제는 적용
         return {
-            "occurred_text": occ_in or "발생 정보 없음",
-            "resolved_text": res_in or "조치 정보 없음",
+            "occurred_text": light_format_report_text(occ_in or "발생 정보 없음"),
+            "resolved_text": light_format_report_text(res_in or "조치 정보 없음"),
             "model": use_model,
             "fallback": True,
         }
@@ -207,9 +296,11 @@ def refine_item_summary(
         return _safe_fallback()
 
     # 정상 케이스: LLM 결과로 교체. 단 비어있는 칸은 사용자 입력으로 보강 (덮어쓰기 금지)
+    final_occ = occ_out or occ_in or "발생 정보 없음"
+    final_res = res_out or res_in or "조치 정보 없음"
     return {
-        "occurred_text": occ_out or occ_in or "발생 정보 없음",
-        "resolved_text": res_out or res_in or "조치 정보 없음",
+        "occurred_text": light_format_report_text(final_occ),
+        "resolved_text": light_format_report_text(final_res),
         "model": use_model,
         "fallback": False,
     }
@@ -258,11 +349,15 @@ def summarize_task(
     except OllamaConnectionError as e:
         logger.warning(f"summarize_task: Ollama 연결 실패 → fallback ({e})")
         out = _fallback_summary(task_content, resolution_note)
+        out["occurred_text"] = light_format_report_text(out["occurred_text"])
+        out["resolved_text"] = light_format_report_text(out["resolved_text"])
         out.update({"model": use_model, "fallback": True})
         return out
     except Exception as e:
         logger.warning(f"summarize_task: 예외 → fallback ({e})")
         out = _fallback_summary(task_content, resolution_note)
+        out["occurred_text"] = light_format_report_text(out["occurred_text"])
+        out["resolved_text"] = light_format_report_text(out["resolved_text"])
         out.update({"model": use_model, "fallback": True})
         return out
 
@@ -273,12 +368,14 @@ def summarize_task(
     if not occ and not res:
         logger.warning(f"summarize_task: 응답 파싱 실패 → fallback. raw={raw[:200]!r}")
         out = _fallback_summary(task_content, resolution_note)
+        out["occurred_text"] = light_format_report_text(out["occurred_text"])
+        out["resolved_text"] = light_format_report_text(out["resolved_text"])
         out.update({"model": use_model, "fallback": True})
         return out
 
     return {
-        "occurred_text": occ or _fallback_summary(task_content, None)["occurred_text"],
-        "resolved_text": res or _fallback_summary(None, resolution_note)["resolved_text"],
+        "occurred_text": light_format_report_text(occ or _fallback_summary(task_content, None)["occurred_text"]),
+        "resolved_text": light_format_report_text(res or _fallback_summary(None, resolution_note)["resolved_text"]),
         "model": use_model,
         "fallback": False,
     }
