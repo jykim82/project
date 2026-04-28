@@ -67,8 +67,10 @@ def list_categories(
     category_type: Optional[str] = Query(None, description="'system' / 'equipment' / None=전체"),
     include_disabled: bool = Query(False, description="use_yn='N' 항목 포함 여부"),
 ):
-    if category_type and category_type not in ("system", "equipment"):
-        raise HTTPException(status_code=400, detail="category_type 은 'system' / 'equipment'")
+    if category_type and category_type not in (
+        "system", "equipment", "inspection_system", "inspection_equipment"
+    ):
+        raise HTTPException(status_code=400, detail="category_type 은 system/equipment/inspection_system/inspection_equipment")
     conn = _get_conn()
     try:
         cur = conn.cursor()
@@ -93,8 +95,10 @@ def list_categories(
 
 @router.post("")
 def create_category(req: CreateCategoryRequest):
-    if req.category_type not in ("system", "equipment"):
-        raise HTTPException(status_code=400, detail="category_type 은 'system' / 'equipment'")
+    if req.category_type not in (
+        "system", "equipment", "inspection_system", "inspection_equipment"
+    ):
+        raise HTTPException(status_code=400, detail="category_type 은 system/equipment/inspection_system/inspection_equipment")
     code = req.code.strip()
     if not code:
         raise HTTPException(status_code=400, detail="code 는 비워둘 수 없음")
