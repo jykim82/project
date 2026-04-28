@@ -1,8 +1,8 @@
 ---
 name: 보고서 사양 (장애 조치·일 점검)
-status: P1 사양 v3 — incident_report 양식 흡수 / 구현 완료
+status: P1 사양 v4 — PDF·인쇄 양식 100% 일치 + UX 보강 / 구현 완료
 created: 2026-04-25
-updated: 2026-04-26
+updated: 2026-04-28
 ---
 
 # 보고서 사양 — 장애 조치 보고서 + 일 점검 보고서
@@ -273,23 +273,32 @@ Migration 0049/0054 패턴 따라 모든 region 에 동일 등록 + MASTER/ADMIN
   - 본인이 아닌 사용자가 편집·확정·재오픈 호출 시 **403 Forbidden**
   - finalized 보고서 삭제도 본인만 (P1 — P2 에서 admin 분리)
 
-### 5.5 인쇄용 출력 (A4)
+### 5.5 인쇄·PDF 출력 (A4) — 새 창 방식
 
-- `@page { size: A4; margin: 18mm 14mm; }`
-- **라이트모드 강제**:
-  ```css
-  @media print {
-    :root { color-scheme: light !important; }
-    body { background: white !important; color: black !important; }
-    .no-print { display: none !important; }
-  }
-  ```
-- 페이지 1: 표지 헤더 (제목·보고일자·작성자) + 본문 항목 표
-- 부록 페이지: 사진 (`photo_layout` 따라 1-up / 2-up)
-  - 출처 순서: `fault` → `action` → `user`
-  - 캡션: `[항목 N] {site_name} · {equipment_name} · {source 한글화}`
-  - `exclude_photo=true` 인 항목 또는 `photo_urls=[]` 인 항목은 부록 미포함
-- `print-color-adjust: exact` — 일부 색 보존이 필요한 카드만 적용
+**v4 변경:** in-page `@media print` 분기는 dashboard layout 폰트·색이 인쇄에
+새는 문제로 폐기. **새 창에 incident_report.html 양식을 그대로 재현하는 방식**
+으로 통일.
+
+- 모듈: `slm-dashboard/src/lib/reports/incident-html.ts`
+- 함수: `openIncidentPrintWindow(report)`
+  1. `generateIncidentHtml(report)` 가 docs/incident_report.html 의 CSS
+     (Nanum Myeongjo 30px·.document max-width 820px·결재란 width/height·표
+     padding) 그대로 포함한 self-contained HTML 문자열 생성
+  2. `window.open('_blank')` → `document.write(html)` → 폰트 로딩 후
+     `window.print()` 자동 호출
+  3. 사용자가 OS 인쇄 다이얼로그에서 **PDF로 저장** 또는 실제 프린터 선택
+- 본문: 항목별 1페이지 (`page-break-after: always`) + 사진 부록 페이지
+- 사진 부록 정렬: `fault` → `action` → `user`
+- 캡션: `[항목 N] {site_name} · {equipment_name} · {source 한글화}` — `user`
+  사진엔 사용자 캡션 추가
+- `exclude_photo=true` 인 항목 또는 `photo_urls=[]` 인 항목은 부록 미포함
+- 새 창 상단 `.pdf-hint` 노출: "PDF로 저장하려면 인쇄 다이얼로그에서 대상을
+  'PDF로 저장' 으로 선택하세요" (인쇄 시 hidden)
+
+**상세 페이지 헤더 버튼:**
+- `[인쇄]` (Printer 아이콘) — `openIncidentPrintWindow` 호출
+- `[PDF]` (Download 아이콘) — `openIncidentPrintWindow` 호출 (동일 함수, 사용자가
+  다이얼로그에서 선택)
 
 ## 6. AI 요약 (Ollama)
 
@@ -325,11 +334,44 @@ Migration 0049/0054 패턴 따라 모든 region 에 동일 등록 + MASTER/ADMIN
 - UI "원문 보기" 토글 (`feedback_preserve_answer_content` 원칙)
 - 사용자 편집 후에도 `original_text` 불변
 
-### 6.4 재요약
+### 6.4 정제 (재요약) — v4: 사용자 입력 보존 + 미리보기 후 적용
 
-- 단일 항목 `[재요약]` → POST `/reports/items/{item_id}/resummarize`
-- 사용자 편집 내용은 덮어씀 (확인 다이얼로그)
-- `ai_summary_at` 갱신
+**v4 변경 ①** 의미가 *"원본에서 다시 시작"* → *"현재 본문 정제 (사용자 편집 보존)"*
+로 변경됨.
+
+- 모듈: `slm/report_summarizer.py` — `refine_item_summary()` 신규
+- 입력: 현재 `tb_report_item.occurred_text` + `resolved_text` + 시점 메타 +
+  `original_text` (참고용 컨텍스트로만 — 절대 새 정보로 추가 X)
+- 시스템 프롬프트 (요지):
+  - "사용자가 추가한 단편을 반드시 포함, 임의 생성 금지"
+  - "입력의 시간·수치·고유명사·인물명 절대 누락하지 않음"
+  - "원문은 참고만 하고 새 사실로 추가하지 않음"
+- 호출 실패·응답 누락 시 **사용자 입력 그대로 보존** (절대 클리어 X)
+- LLM 응답이 빈 칸이면 사용자 입력으로 보강
+
+**v4 변경 ②** UI 흐름 — *미리보기 후 적용*:
+
+1. 사용자가 항목 카드의 [정제] (Sparkles 아이콘) 클릭
+2. 확인 다이얼로그: "현재 본문을 SLM 이 정제할까요?"
+3. [정제 실행] 클릭 → `POST /reports/items/{id}/resummarize` `{ user_id, dry_run: true }`
+   - 백엔드: `refine_item_summary` 결과만 반환, **DB 미반영**
+4. 미리보기 다이얼로그: 현재 본문 vs 정제 결과를 두 컬럼으로 비교
+   - "발생 단락": 현재 / 정제 결과
+   - "조치 단락": 현재 / 정제 결과
+5. [적용] 클릭 → `PATCH /reports/items/{id}` 로 occurred_text/resolved_text 업데이트
+   → 화면 새로고침
+6. [취소] 클릭 → 다이얼로그 닫고 현재 본문 유지
+
+**편집 모드에서는 [정제] 비활성** (저장되지 않은 입력이 LLM 호출 후 사라지지 않도록).
+
+### 6.5 항목 헤더 5필드 인라인 편집 (v4)
+
+편집 모드에서 헤더에 5개 입력 필드 노출 (기존 read-only 에서 변경):
+- `site_name` (시설명) / `facility_type` (시설 유형) / `equipment_name` (설비명)
+- `fault_category` (분류 — 고장/이상/교체/점검)
+- `inspection_type` (점검 sub-type — 일상/정기/특별)
+
+저장 후 다시 편집 진입 시 `useEffect` 로 draft 상태를 최신값으로 동기화.
 
 ## 7. 채팅 인텐트 분기 (점검 등록)
 
@@ -427,3 +469,16 @@ Migration 0049/0054 패턴 따라 모든 region 에 동일 등록 + MASTER/ADMIN
   approval_chain (결재란), symptom/cause/key_issues 본문 필드,
   system_categories/equipment_categories 체크박스 배열,
   인쇄 모드에 `IncidentReportPrintLayout` 컴포넌트 (Nanum Myeongjo, A4 표 양식)
+- 2026-04-27 — v4 PDF·인쇄 양식 100% 일치 + UX 보강:
+  · `lib/reports/incident-html.ts` `generateIncidentHtml` 새 창 방식으로 전환
+    (in-page `@media print` 폐기) — incident_report.html CSS 그대로 재현
+  · 상세 페이지 헤더 [PDF] 버튼 추가
+  · `refine_item_summary()` — 재요약을 "현재 본문 정제 (사용자 편집 보존)"
+    의미로 변경. LLM 실패·응답 누락 시 사용자 입력 보존
+  · 항목 헤더 5필드 인라인 편집 (site_name/facility_type/equipment_name/
+    fault_category/inspection_type)
+  · 편집 모드에서 [정제] 버튼 비활성화 + 경고 다이얼로그 강화
+- 2026-04-28 — v4 정제 미리보기 흐름:
+  · `POST /reports/items/{id}/resummarize` 가 `dry_run` 파라미터 지원
+  · 결과를 미리보기 다이얼로그에서 현재 vs 정제 결과 두 컬럼 비교
+  · [적용] 클릭 시에만 PATCH 로 본문 대체 (사용자 의도 명시 후 반영)
