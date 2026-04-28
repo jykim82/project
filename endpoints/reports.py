@@ -32,6 +32,7 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from report_summarizer import summarize_task, refine_item_summary
+from root_cause_classifier import classify_item
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -90,6 +91,7 @@ def _row_to_item(row: dict) -> dict:
     photos = _maybe_json(row.get("photo_urls")) or []
     sys_cats = _maybe_json(row.get("system_categories")) or []
     eq_cats  = _maybe_json(row.get("equipment_categories")) or []
+    root_causes = _maybe_json(row.get("root_causes")) or []
     return {
         "item_id":         row["item_id"],
         "report_id":       row["report_id"],
@@ -115,6 +117,10 @@ def _row_to_item(row: dict) -> dict:
         "key_issues":           row.get("key_issues"),
         "system_categories":    sys_cats,
         "equipment_categories": eq_cats,
+        # Migration 0063 — LLM 사후 분류 결과
+        "root_causes":              root_causes,
+        "root_cause_classified_at": row["root_cause_classified_at"].isoformat() if row.get("root_cause_classified_at") else None,
+        "root_cause_model":         row.get("root_cause_model"),
     }
 
 
@@ -813,6 +819,208 @@ def patch_item(item_id: int, req: PatchItemRequest):
         row = _fetchone_dict(cur)
         conn.commit()
         return _row_to_item(row)
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# 근본원인 분류 (Migration 0063)
+# ============================================================================
+
+def _load_taxonomy(cur) -> list[dict]:
+    cur.execute(
+        "SELECT code, group_code, label, hint, weight, sort_order "
+        "FROM tb_root_cause_taxonomy WHERE use_yn = 'Y' "
+        "ORDER BY sort_order, code"
+    )
+    return _fetchall_dict(cur)
+
+
+@router.get("/taxonomy/root-causes")
+def list_root_cause_taxonomy():
+    """관리·통계 페이지용 — 분류 코드 마스터 조회."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        rows = _load_taxonomy(cur)
+        return {"taxonomy": rows, "total": len(rows)}
+    finally:
+        conn.close()
+
+
+class ClassifyRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/items/{item_id}/classify-causes")
+def classify_item_endpoint(item_id: int, req: ClassifyRequest):
+    """단일 항목 LLM 사후 분류 — 즉시 실행."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        item, report = _load_item_with_report(cur, item_id)
+        _ensure_owner_or_403(report, req.user_id)
+        # finalized 라도 분류는 허용 (통계 누적 목적)
+
+        taxonomy = _load_taxonomy(cur)
+        result = classify_item(item=item, taxonomy=taxonomy)
+        codes = result["codes"]
+
+        cur.execute(
+            """
+            UPDATE tb_report_item
+               SET root_causes = %s::jsonb,
+                   root_cause_classified_at = now(),
+                   root_cause_model = %s,
+                   updated_at = now()
+             WHERE item_id = %s
+             RETURNING *
+            """,
+            (json.dumps(codes), result.get("model"), item_id),
+        )
+        updated = _fetchone_dict(cur)
+        conn.commit()
+        return {"item": _row_to_item(updated), "fallback": result.get("fallback", False)}
+    finally:
+        conn.close()
+
+
+class ClassifyBatchRequest(BaseModel):
+    user_id: str
+    region: str
+    only_unclassified: bool = True
+    limit: int = 100
+
+
+@router.post("/items/classify-causes-batch")
+def classify_causes_batch(req: ClassifyBatchRequest):
+    """야간 배치 등 일괄 분류. 기본 미분류 항목만 (limit 까지)."""
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        sql = [
+            """
+            SELECT i.* FROM tb_report_item i
+              JOIN tb_report r ON r.report_id = i.report_id
+             WHERE r.region = %s
+            """
+        ]
+        params: list[Any] = [req.region]
+        if req.only_unclassified:
+            sql.append("AND i.root_cause_classified_at IS NULL")
+        sql.append("ORDER BY i.item_id LIMIT %s")
+        params.append(req.limit)
+        cur.execute(" ".join(sql), tuple(params))
+        items = _fetchall_dict(cur)
+
+        if not items:
+            return {"processed": 0, "results": []}
+
+        taxonomy = _load_taxonomy(cur)
+        results = []
+        for it in items:
+            res = classify_item(item=it, taxonomy=taxonomy)
+            cur.execute(
+                """
+                UPDATE tb_report_item
+                   SET root_causes = %s::jsonb,
+                       root_cause_classified_at = now(),
+                       root_cause_model = %s,
+                       updated_at = now()
+                 WHERE item_id = %s
+                """,
+                (json.dumps(res["codes"]), res.get("model"), it["item_id"]),
+            )
+            results.append({
+                "item_id": it["item_id"],
+                "codes": res["codes"],
+                "fallback": res.get("fallback", False),
+            })
+        conn.commit()
+        return {"processed": len(results), "results": results}
+    finally:
+        conn.close()
+
+
+@router.get("/stats/root-causes")
+def stats_root_causes(
+    region: str = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+):
+    """근본원인별 빈도 + 설비별 분포 통계.
+
+    P1 기본: 단순 COUNT. P2 에서 weight 곱·시간 감쇠 적용 예정.
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        # 1. 근본원인별 빈도 (전사)
+        sql = [
+            """
+            SELECT cause AS code, COUNT(*) AS cnt
+              FROM tb_report_item i
+              JOIN tb_report r ON r.report_id = i.report_id
+              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS cause
+             WHERE r.region = %s
+            """
+        ]
+        params: list[Any] = [region]
+        if date_from:
+            sql.append("AND i.occurred_at >= %s"); params.append(date_from)
+        if date_to:
+            sql.append("AND i.occurred_at < (%s::date + INTERVAL '1 day')"); params.append(date_to)
+        sql.append("GROUP BY cause ORDER BY cnt DESC")
+        cur.execute(" ".join(sql), tuple(params))
+        by_cause = _fetchall_dict(cur)
+
+        # 2. 설비별 분포 (item.task_id → tb_task_master.equipment_id)
+        sql2 = [
+            """
+            SELECT t.equipment_id, t.equipmenttype, t.sitename,
+                   cause AS code, COUNT(*) AS cnt
+              FROM tb_report_item i
+              JOIN tb_report r ON r.report_id = i.report_id
+              JOIN tb_task_master t ON t.task_id = i.task_id
+              CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS cause
+             WHERE r.region = %s
+               AND t.equipment_id IS NOT NULL
+            """
+        ]
+        params2: list[Any] = [region]
+        if date_from:
+            sql2.append("AND i.occurred_at >= %s"); params2.append(date_from)
+        if date_to:
+            sql2.append("AND i.occurred_at < (%s::date + INTERVAL '1 day')"); params2.append(date_to)
+        sql2.append("GROUP BY t.equipment_id, t.equipmenttype, t.sitename, cause "
+                    "ORDER BY t.equipment_id, cnt DESC")
+        cur.execute(" ".join(sql2), tuple(params2))
+        by_equipment = _fetchall_dict(cur)
+
+        # 3. 교체 후보 순위 (P1 단순 합산, P2에서 weight·시간감쇠)
+        cur.execute(
+            """
+            SELECT t.equipment_id, t.equipmenttype, t.sitename,
+                   COUNT(*) FILTER (WHERE i.root_causes IS NOT NULL
+                                      AND jsonb_array_length(i.root_causes) > 0) AS cause_count,
+                   COUNT(*) AS total_count
+              FROM tb_report_item i
+              JOIN tb_report r ON r.report_id = i.report_id
+              JOIN tb_task_master t ON t.task_id = i.task_id
+             WHERE r.region = %s AND t.equipment_id IS NOT NULL
+             GROUP BY t.equipment_id, t.equipmenttype, t.sitename
+             ORDER BY cause_count DESC, total_count DESC
+             LIMIT 50
+            """,
+            (region,),
+        )
+        replacement_ranking = _fetchall_dict(cur)
+
+        return {
+            "by_cause": by_cause,
+            "by_equipment": by_equipment,
+            "replacement_ranking": replacement_ranking,
+        }
     finally:
         conn.close()
 
