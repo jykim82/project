@@ -427,6 +427,22 @@ incident 양식 3필드는 분량·중요도가 LLM 정제 대상이 되기엔 �
 비어있는 필드는 row 자체가 자동 생략. 사용자가 [적용 (5개 필드 대체)] 누르면
 `PATCH /reports/items/{id}` 한 번에 5개 필드 모두 갱신.
 
+### 6.7 사진 영역 — 조치 전 / 조치 후 분리
+
+상세 페이지 항목 카드의 사진 영역은 **조치 전(fault) / 조치 후(action)** 두
+그룹으로 분리 노출 + 각각 별도 추가 입력:
+
+- **조치 전 사진 그룹**: `source IN ('fault','user')` 사진 표시 + URL 입력
+  → [사진 추가] 시 `source='fault'` + `caption='조치 전'` 으로 저장
+- **조치 후 사진 그룹**: `source = 'action'` 사진 표시 + URL 입력 → [사진 추가]
+  시 `source='action'` + `caption='조치 후'` 으로 저장
+
+**컴포넌트:** `PhotoGroup` (props: label, source, photos, editable, inputUrl,
+onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
+
+**인쇄 양식 영향 없음:** `lib/reports/incident-html.ts` 의 사진 부록은 이미
+`fault → action → user` 순서로 정렬됨 — UI 분리와 동일한 출력 순.
+
 ### 6.6 항목 헤더 5필드 인라인 편집 (v4)
 
 편집 모드에서 헤더에 5개 입력 필드 노출 (기존 read-only 에서 변경):
@@ -549,6 +565,12 @@ incident 양식 3필드는 분량·중요도가 LLM 정제 대상이 되기엔 �
   · `light_format_report_text` — 단어 치환 + 문장 분리 + `• ` 기호 부여
   · `summarize_task` / `refine_item_summary` 모두에 적용 (LLM 응답·fallback 공통)
   · 보고서 본문이 일관된 양식으로 출력 (LLM 부재 환경에서도 보고서체 보장)
+- 2026-04-28 — v4 사진 영역 조치 전/후 분리 (§6.7):
+  · 항목 카드의 사진 영역을 두 그룹으로 분리 (조치 전 / 조치 후)
+  · 각 그룹에 별도 URL 입력 + [사진 추가] 버튼
+  · 추가 시 자동으로 source('fault' 또는 'action') + caption 셋업
+  · 인쇄 양식 부록은 영향 없음 (이미 source 순 정렬)
+  · `PhotoGroup` 컴포넌트 도입
 - 2026-04-28 — v4 카테고리 동적 관리 (Migration 0060):
   · `tb_report_category` 신규 + seed 19종 (장애 시스템 8 + 장애 장비 11)
   · 관리 메뉴 `/admin/report-categories` (M100-11) — 추가/수정/사용 토글/삭제
