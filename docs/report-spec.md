@@ -400,6 +400,22 @@ LLM 응답 / 사용자 입력 / fallback 모두에 동일하게 후처리하여 
 - `refine_item_summary` (정제 / 미리보기) — return 전에 적용
 - LLM 정상 응답 / fallback 모두에 동일 적용 (양식 일관성)
 
+**대상 필드 (서술이 포함된 5개 항목 모두 정제):**
+| 필드 | 소스 | LLM 호출 | light_format |
+|---|---|---|---|
+| `occurred_text` (발생 단락) | LLM 프롬프트 입력 | ✓ | ✓ |
+| `resolved_text` (조치 단락) | LLM 프롬프트 입력 | ✓ | ✓ |
+| `symptom` (장애 현상) | incident 양식 사용자 입력 | — | ✓ |
+| `cause` (장애 원인) | incident 양식 사용자 입력 | — | ✓ |
+| `key_issues` (주요 사항) | incident 양식 사용자 입력 | — | ✓ |
+
+incident 양식 3필드는 분량·중요도가 LLM 정제 대상이 되기엔 작아 `light_format`
+만 적용 (사실 보존 + 양식 통일). LLM 호출은 발생/조치 두 단락에 집중.
+
+**미리보기 다이얼로그**: 5개 필드를 row 단위로 좌(현재) / 우(정제) 비교.
+비어있는 필드는 row 자체가 자동 생략. 사용자가 [적용 (5개 필드 대체)] 누르면
+`PATCH /reports/items/{id}` 한 번에 5개 필드 모두 갱신.
+
 ### 6.6 항목 헤더 5필드 인라인 편집 (v4)
 
 편집 모드에서 헤더에 5개 입력 필드 노출 (기존 read-only 에서 변경):
@@ -522,3 +538,9 @@ LLM 응답 / 사용자 입력 / fallback 모두에 동일하게 후처리하여 
   · `light_format_report_text` — 단어 치환 + 문장 분리 + `• ` 기호 부여
   · `summarize_task` / `refine_item_summary` 모두에 적용 (LLM 응답·fallback 공통)
   · 보고서 본문이 일관된 양식으로 출력 (LLM 부재 환경에서도 보고서체 보장)
+- 2026-04-28 — v4 5필드 정제 확장:
+  · `refine_item_summary` 가 occurred/resolved 외에 symptom/cause/key_issues
+    도 입력·출력 (LLM 호출은 발생/조치만, 나머지 3필드는 light_format)
+  · dry_run 응답 5필드 current/refined
+  · 미리보기 다이얼로그 — 5개 row 비교, 비어있는 필드 자동 생략
+  · [적용 (5개 필드 대체)] → PATCH 한 번에 5필드 갱신
