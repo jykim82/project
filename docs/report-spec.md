@@ -166,6 +166,49 @@ JSONB 객체 배열로 출처 메타 보존:
 프런트 분기: ItemCard 가 `getItemLabels(reportType)` 으로 라벨·카테고리 type
 선택. 인쇄 양식 (`incident-html.ts`) 은 `getSheetLabels(reportType)` 사용.
 
+### 3.4.2 근본원인 LLM 사후 분류 (Migration 0063)
+
+사용자 입력 부담 없이 통계용 라벨을 누적하기 위해, **자유 텍스트는 그대로
+유지** + **LLM 이 사후에 분류** 하는 방식 채택. 운영자는 평소처럼 자유롭게
+보고서를 작성하고, 백엔드가 야간 배치 또는 [재분류] 트리거로 코드를 부여.
+
+**분류 체계 (`tb_root_cause_taxonomy`)** — 18 코드 / 7 그룹:
+
+| 그룹 | 코드 | 라벨 |
+|---|---|---|
+| COMM | COMM_MODEM/COMM_CABLE/COMM_SIGNAL/COMM_NETWORK | 모뎀 고장 / 케이블 빠짐 / LTE 신호 / 네트워크 일반 |
+| POWER | POWER_UPS/POWER_TRIP/POWER_NOISE | UPS 노후 / 차단기 트립 / 전원 노이즈 |
+| PLC | PLC_CARD/PLC_FIRMWARE | PLC 카드 고장 / 펌웨어·메모리 |
+| SENSOR | SENSOR_STUCK/SENSOR_NOISE/SENSOR_DRIFT/SENSOR_FAULT | 계측값 고정 / 노이즈 / 드리프트 / 센서 고장 |
+| MECHANICAL | MECH_PUMP/MECH_VALVE | 펌프 / 밸브 |
+| HUMAN | HUMAN_INSTALL/HUMAN_OPERATE | 시공 결함 / 조작 실수 |
+| UNKNOWN | UNKNOWN | 원인 미상 |
+
+`weight` 컬럼으로 노후도 가중치 보유 (P1 단순 합산, P2 가중치·시간 감쇠).
+
+**`tb_report_item` 추가:**
+- `root_causes JSONB` — 코드 배열 (LLM 분류 결과)
+- `root_cause_classified_at TIMESTAMPTZ`
+- `root_cause_model VARCHAR(50)`
+
+**백엔드 모듈 / 엔드포인트:**
+- `slm/root_cause_classifier.py` `classify_item()` — 자유 텍스트 → 코드 0~3개
+  · 시스템 프롬프트: 명백히 부합하는 코드만, 새로운 사실 생성 금지
+  · LLM 빈 응답·실패 시 빈 codes + fallback=True (잘못된 코드 절대 부여 X)
+- `GET  /reports/taxonomy/root-causes` — 마스터 조회
+- `POST /reports/items/{id}/classify-causes` — 단일 즉시 분류
+- `POST /reports/items/classify-causes-batch` — 일괄 (기본 미분류만, limit)
+- `GET  /reports/stats/root-causes?region=` — 빈도/설비별/교체 후보 순위
+
+**노후도 점수 (단계):**
+- P1: COUNT (단순 합산)
+- P2: + cause weight
+- P3: + 시간 감쇠 (최근 1년 1.0 → 1~2년 0.5 → 그 이상 0.2) + `tb_equipment_lifespan` 연식
+
+**LLM 모델 주의:** 분류 작업엔 멀티모달(`gemma4`) 보다 텍스트 전용 모델
+(예: `gemma3:4b-it-qat`, `qwen2.5:7b`) 이 응답률 높음. `tb_comm_code
+(grp_cd='SITE_SETTING', comm_cd='AI_MODEL')` 에서 변경.
+
 ### 3.5 incident_report 양식 흡수 (Migration 0059)
 
 `docs/incident_report.html` (장애조치결과보고서 표준 양식) 의 항목을 흡수.
@@ -591,6 +634,13 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
   · `light_format_report_text` — 단어 치환 + 문장 분리 + `• ` 기호 부여
   · `summarize_task` / `refine_item_summary` 모두에 적용 (LLM 응답·fallback 공통)
   · 보고서 본문이 일관된 양식으로 출력 (LLM 부재 환경에서도 보고서체 보장)
+- 2026-04-28 — v4 근본원인 LLM 사후 분류 (Migration 0063, §3.4.2):
+  · `tb_root_cause_taxonomy` 18 코드 / 7 그룹 (COMM/POWER/PLC/SENSOR/MECH/HUMAN/UNKNOWN)
+  · `tb_report_item.root_causes JSONB` + classified_at + model
+  · `slm/root_cause_classifier.py` — 자유 텍스트 → 코드 0~3개
+  · API 4종 (taxonomy 조회, 단일 분류, 배치, 통계)
+  · 통계 API: 코드별 빈도 / 설비별 분포 / 교체 후보 순위
+  · 사용자 입력 부담 0 — 야간 배치 또는 [재분류] 트리거
 - 2026-04-28 — v4 일 점검 보고서 항목 정리 (Migration 0062):
   · 카테고리 type 2종 추가: inspection_system (8) / inspection_equipment (10)
   · 보고서 유형별 라벨·옵션 분기 (§3.4.1 표)
