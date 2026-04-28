@@ -2785,6 +2785,11 @@ from endpoints.reports import router as reports_router, init as init_reports
 init_reports(get_db_connection)
 app.include_router(reports_router)
 
+# 보고서 카테고리 (장애 시스템 / 장애 장비) — Migration 0060
+from endpoints.report_categories import router as report_categories_router, init as init_report_categories
+init_report_categories(get_db_connection)
+app.include_router(report_categories_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
