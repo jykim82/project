@@ -894,7 +894,10 @@ class ClassifyBatchRequest(BaseModel):
 
 @router.post("/items/classify-causes-batch")
 def classify_causes_batch(req: ClassifyBatchRequest):
-    """야간 배치 등 일괄 분류. 기본 미분류 항목만 (limit 까지)."""
+    """야간 배치 등 일괄 분류. 기본 미분류 항목만 (limit 까지).
+
+    점검 보고서(`daily_inspection`) 항목은 근본원인 분류 대상이 아니므로 제외.
+    """
     conn = _get_conn()
     try:
         cur = conn.cursor()
@@ -902,7 +905,7 @@ def classify_causes_batch(req: ClassifyBatchRequest):
             """
             SELECT i.* FROM tb_report_item i
               JOIN tb_report r ON r.report_id = i.report_id
-             WHERE r.region = %s
+             WHERE r.region = %s AND r.report_type = 'fault_action'
             """
         ]
         params: list[Any] = [req.region]
@@ -942,6 +945,75 @@ def classify_causes_batch(req: ClassifyBatchRequest):
         conn.close()
 
 
+class CronClassifyRequest(BaseModel):
+    only_unclassified: bool = True
+    limit_per_region: int = 200
+
+
+@router.post("/items/classify-causes-cron")
+def classify_causes_cron(req: CronClassifyRequest):
+    """야간 cron 트리거 — 모든 region 의 미분류 fault_action 항목 일괄 분류.
+
+    외부 cron job 또는 스케줄러에서 호출. 인증 헤더 없이 동작 (운영 시
+    내부망에서만 노출 권장).
+
+    응답: { regions: [{region, processed, hits}], total_processed }
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        # 1) region 목록 — tb_report 에서 distinct
+        cur.execute("SELECT DISTINCT region FROM tb_report ORDER BY region")
+        regions = [r[0] for r in cur.fetchall()]
+        if not regions:
+            return {"regions": [], "total_processed": 0}
+
+        taxonomy = _load_taxonomy(cur)
+
+        out = []
+        total = 0
+        for region in regions:
+            sql = [
+                """
+                SELECT i.* FROM tb_report_item i
+                  JOIN tb_report r ON r.report_id = i.report_id
+                 WHERE r.region = %s AND r.report_type = 'fault_action'
+                """
+            ]
+            params: list[Any] = [region]
+            if req.only_unclassified:
+                sql.append("AND i.root_cause_classified_at IS NULL")
+            sql.append("ORDER BY i.item_id LIMIT %s")
+            params.append(req.limit_per_region)
+            cur.execute(" ".join(sql), tuple(params))
+            items = _fetchall_dict(cur)
+
+            hits = 0
+            for it in items:
+                res = classify_item(item=it, taxonomy=taxonomy)
+                cur.execute(
+                    """
+                    UPDATE tb_report_item
+                       SET root_causes = %s::jsonb,
+                           root_cause_classified_at = now(),
+                           root_cause_model = %s,
+                           updated_at = now()
+                     WHERE item_id = %s
+                    """,
+                    (json.dumps(res["codes"]), res.get("model"), it["item_id"]),
+                )
+                if res["codes"]:
+                    hits += 1
+            conn.commit()
+            out.append({"region": region, "processed": len(items), "hits": hits})
+            total += len(items)
+            logger.info(f"[cron] root-cause classify: region={region} processed={len(items)} hits={hits}")
+
+        return {"regions": out, "total_processed": total}
+    finally:
+        conn.close()
+
+
 @router.get("/stats/root-causes")
 def stats_root_causes(
     region: str = Query(...),
@@ -963,7 +1035,7 @@ def stats_root_causes(
               FROM tb_report_item i
               JOIN tb_report r ON r.report_id = i.report_id
               CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS rc(code)
-             WHERE r.region = %s
+             WHERE r.region = %s AND r.report_type = 'fault_action'
             """
         ]
         params: list[Any] = [region]
@@ -984,7 +1056,7 @@ def stats_root_causes(
               JOIN tb_report r ON r.report_id = i.report_id
               JOIN tb_task_master t ON t.task_id = i.task_id
               CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS rc(code)
-             WHERE r.region = %s
+             WHERE r.region = %s AND r.report_type = 'fault_action'
                AND t.equipment_id IS NOT NULL
             """
         ]
@@ -998,22 +1070,55 @@ def stats_root_causes(
         cur.execute(" ".join(sql2), tuple(params2))
         by_equipment = _fetchall_dict(cur)
 
-        # 3. 교체 후보 순위 (P1 단순 합산, P2에서 weight·시간감쇠)
+        # 3. 교체 후보 순위 — P2(weight) + P3(시간 감쇠) 적용
+        # weighted_score = SUM( taxonomy.weight × time_decay )
+        # time_decay: 최근 1년 1.0 / 1~2년 0.5 / 그 이상 0.2
         cur.execute(
             """
-            SELECT t.equipment_id, t.equipmenttype, t.sitename,
-                   COUNT(*) FILTER (WHERE i.root_causes IS NOT NULL
-                                      AND jsonb_array_length(i.root_causes) > 0) AS cause_count,
-                   COUNT(*) AS total_count
-              FROM tb_report_item i
-              JOIN tb_report r ON r.report_id = i.report_id
-              JOIN tb_task_master t ON t.task_id = i.task_id
-             WHERE r.region = %s AND t.equipment_id IS NOT NULL
-             GROUP BY t.equipment_id, t.equipmenttype, t.sitename
-             ORDER BY cause_count DESC, total_count DESC
+            WITH item_codes AS (
+              SELECT t.equipment_id, t.equipmenttype, t.sitename,
+                     i.item_id, i.occurred_at, rc.code,
+                     CASE
+                       WHEN i.occurred_at >= now() - interval '1 year'  THEN 1.0
+                       WHEN i.occurred_at >= now() - interval '2 years' THEN 0.5
+                       ELSE 0.2
+                     END AS time_decay
+                FROM tb_report_item i
+                JOIN tb_report r       ON r.report_id = i.report_id
+                JOIN tb_task_master t  ON t.task_id   = i.task_id
+                CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(i.root_causes, '[]'::jsonb)) AS rc(code)
+               WHERE r.region = %s AND r.report_type = 'fault_action'
+                 AND t.equipment_id IS NOT NULL
+            ),
+            weighted AS (
+              SELECT ic.equipment_id, ic.equipmenttype, ic.sitename,
+                     COUNT(*) AS cause_count,
+                     SUM(tx.weight * ic.time_decay) AS weighted_score,
+                     SUM(CASE WHEN ic.time_decay >= 1.0 THEN 1 ELSE 0 END) AS recent_1y,
+                     SUM(CASE WHEN ic.time_decay >= 0.5 AND ic.time_decay < 1.0 THEN 1 ELSE 0 END) AS recent_2y
+                FROM item_codes ic
+                JOIN tb_root_cause_taxonomy tx ON tx.code = ic.code
+               GROUP BY ic.equipment_id, ic.equipmenttype, ic.sitename
+            ),
+            totals AS (
+              SELECT t.equipment_id, COUNT(*) AS total_count
+                FROM tb_report_item i
+                JOIN tb_report r      ON r.report_id = i.report_id
+                JOIN tb_task_master t ON t.task_id   = i.task_id
+               WHERE r.region = %s AND r.report_type = 'fault_action'
+                 AND t.equipment_id IS NOT NULL
+               GROUP BY t.equipment_id
+            )
+            SELECT w.equipment_id, w.equipmenttype, w.sitename,
+                   w.cause_count, COALESCE(t.total_count, 0) AS total_count,
+                   ROUND(w.weighted_score::numeric, 2) AS weighted_score,
+                   w.recent_1y, w.recent_2y
+              FROM weighted w
+              LEFT JOIN totals t USING (equipment_id)
+             ORDER BY weighted_score DESC NULLS LAST, w.cause_count DESC
              LIMIT 50
             """,
-            (region,),
+            (region, region),
         )
         replacement_ranking = _fetchall_dict(cur)
 
