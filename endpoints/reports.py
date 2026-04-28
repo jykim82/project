@@ -834,10 +834,13 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
         _ensure_owner_or_403(report, req.user_id)
         _ensure_draft_or_405(report)
 
-        # 현재 본문(사용자 편집 포함)을 입력으로
+        # 현재 본문(사용자 편집 포함)을 입력으로 — 5개 서술 필드 모두 정제
         refined = refine_item_summary(
             current_occurred=item.get("occurred_text"),
             current_resolved=item.get("resolved_text"),
+            current_symptom=item.get("symptom"),
+            current_cause=item.get("cause"),
+            current_key_issues=item.get("key_issues"),
             original_text=item.get("original_text"),
             site_name=item.get("site_name"),
             facility_type=item.get("facility_type"),
@@ -847,16 +850,22 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
         )
 
         if req.dry_run:
-            # 미리보기 — DB 미반영. 현재값/정제값 함께 반환 (프런트에서 비교 표시)
+            # 미리보기 — DB 미반영. 5개 필드 current/refined 함께 반환
             return {
                 "dry_run": True,
                 "current": {
                     "occurred_text": item.get("occurred_text") or "",
                     "resolved_text": item.get("resolved_text") or "",
+                    "symptom":       item.get("symptom") or "",
+                    "cause":         item.get("cause") or "",
+                    "key_issues":    item.get("key_issues") or "",
                 },
                 "refined": {
                     "occurred_text": refined.get("occurred_text") or "",
                     "resolved_text": refined.get("resolved_text") or "",
+                    "symptom":       refined.get("symptom") or "",
+                    "cause":         refined.get("cause") or "",
+                    "key_issues":    refined.get("key_issues") or "",
                 },
                 "model": refined.get("model"),
                 "fallback": refined.get("fallback", False),
@@ -866,10 +875,12 @@ def resummarize_item(item_id: int, req: ResummarizeRequest):
             """
             UPDATE tb_report_item
                SET occurred_text = %s, resolved_text = %s,
+                   symptom = %s, cause = %s, key_issues = %s,
                    ai_summary_at = now(), ai_model = %s, updated_at = now()
              WHERE item_id = %s RETURNING *
             """,
             (refined["occurred_text"], refined["resolved_text"],
+             refined.get("symptom"), refined.get("cause"), refined.get("key_issues"),
              refined.get("model"), item_id),
         )
         updated = _fetchone_dict(cur)

@@ -241,12 +241,20 @@ def refine_item_summary(
     equipment_name: str | None = None,
     fault_category: str | None = None,
     inspection_type: str | None = None,
+    # incident_report 양식 추가 서술 필드 (light_format 만 적용 — LLM 호출 X)
+    current_symptom: str | None = None,
+    current_cause: str | None = None,
+    current_key_issues: str | None = None,
     model: Optional[str] = None,
     timeout: float = 60.0,
 ) -> dict[str, str]:
     """현재 항목 본문(사용자 편집 포함)을 LLM 으로 정제. 사용자 입력 사실은 보존.
 
     LLM 호출 실패 시 사용자 입력을 그대로 반환 (절대 클리어하지 않음).
+
+    추가: 5개 서술 필드(발생/조치/현상/원인/주요사항) 모두 정제 결과를 반환.
+    LLM 호출은 발생/조치 두 단락에만 (분량·중요도 기준), 나머지 3필드는
+    `light_format_report_text` 만 적용 — 사실은 그대로 두고 양식만 통일.
     """
     prompt = (
         _REFINE_SYSTEM_PROMPT
@@ -272,6 +280,9 @@ def refine_item_summary(
         return {
             "occurred_text": light_format_report_text(occ_in or "발생 정보 없음"),
             "resolved_text": light_format_report_text(res_in or "조치 정보 없음"),
+            "symptom":    light_format_report_text(current_symptom),
+            "cause":      light_format_report_text(current_cause),
+            "key_issues": light_format_report_text(current_key_issues),
             "model": use_model,
             "fallback": True,
         }
@@ -301,6 +312,10 @@ def refine_item_summary(
     return {
         "occurred_text": light_format_report_text(final_occ),
         "resolved_text": light_format_report_text(final_res),
+        # incident 양식 3필드 — LLM 호출 X, light_format 만 적용 (사실 보존 + 양식 통일)
+        "symptom":    light_format_report_text(current_symptom),
+        "cause":      light_format_report_text(current_cause),
+        "key_issues": light_format_report_text(current_key_issues),
         "model": use_model,
         "fallback": False,
     }
