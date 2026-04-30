@@ -24,6 +24,7 @@ endpoints/reports.py — 보고서 (장애 조치 / 일 점검) CRUD
 from __future__ import annotations
 
 import json
+import re
 import logging
 from datetime import date, datetime
 from typing import Any, Optional
@@ -1010,6 +1011,98 @@ def classify_causes_cron(req: CronClassifyRequest):
             logger.info(f"[cron] root-cause classify: region={region} processed={len(items)} hits={hits}")
 
         return {"regions": out, "total_processed": total}
+    finally:
+        conn.close()
+
+
+@router.get("/stats/unclassified-items")
+def stats_unclassified_items(
+    region: str = Query(...),
+    limit: int = Query(50, le=200),
+):
+    """미분류 항목 — 분류 시도 후 root_causes 가 빈 배열 또는 UNKNOWN 만 인 항목.
+
+    운영자가 어떤 텍스트가 분류기에 약한지 식별하여 taxonomy.hint 보강하도록.
+    추정 사유 (휴리스틱):
+    - 'too_short': 텍스트 합계가 30자 미만
+    - 'placeholder': '기록해줘'·'테스트' 같은 더미 패턴
+    - 'unknown_only': UNKNOWN 1개만 매칭
+    - 'no_match': 분류 시도했으나 코드 매칭 0
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT i.item_id, i.report_id, i.occurred_at, i.root_causes,
+                   i.root_cause_classified_at,
+                   COALESCE(i.site_name,'') AS site_name,
+                   COALESCE(i.equipment_name,'') AS equipment_name,
+                   COALESCE(i.fault_category,'') AS fault_category,
+                   COALESCE(i.occurred_text,'') AS occurred_text,
+                   COALESCE(i.symptom,'') AS symptom,
+                   COALESCE(i.cause,'') AS cause,
+                   COALESCE(i.resolved_text,'') AS resolved_text,
+                   COALESCE(i.key_issues,'') AS key_issues
+              FROM tb_report_item i
+              JOIN tb_report r ON r.report_id = i.report_id
+             WHERE r.region = %s AND r.report_type = 'fault_action'
+               AND i.root_cause_classified_at IS NOT NULL
+               AND (
+                    i.root_causes IS NULL
+                    OR jsonb_array_length(i.root_causes) = 0
+                    OR i.root_causes = '["UNKNOWN"]'::jsonb
+               )
+             ORDER BY i.item_id DESC
+             LIMIT %s
+            """,
+            (region, limit),
+        )
+        rows = _fetchall_dict(cur)
+        out = []
+        placeholder_re = re.compile(r"(기록해줘|등록해줘|테스트|browser test|\[수정\s*#\d+\])")
+        for r in rows:
+            text_parts = [
+                r.get("occurred_text",""),
+                r.get("symptom",""),
+                r.get("cause",""),
+                r.get("resolved_text",""),
+                r.get("key_issues",""),
+            ]
+            joined = " ".join(p for p in text_parts if p).strip()
+            n = len(joined)
+            rc_raw = r.get("root_causes")
+            if isinstance(rc_raw, str):
+                try:
+                    rc = json.loads(rc_raw)
+                except Exception:
+                    rc = []
+            else:
+                rc = rc_raw or []
+
+            if not joined or n < 30:
+                reason = "too_short"
+            elif placeholder_re.search(joined):
+                reason = "placeholder"
+            elif rc == ["UNKNOWN"]:
+                reason = "unknown_only"
+            else:
+                reason = "no_match"
+
+            out.append({
+                "item_id":          r["item_id"],
+                "report_id":        r["report_id"],
+                "occurred_at":      r["occurred_at"].isoformat() if r.get("occurred_at") else None,
+                "site_name":        r.get("site_name") or None,
+                "equipment_name":   r.get("equipment_name") or None,
+                "fault_category":   r.get("fault_category") or None,
+                "text_preview":     joined[:120],
+                "text_length":      n,
+                "root_causes":      rc,
+                "classified_at":    r["root_cause_classified_at"].isoformat() if r.get("root_cause_classified_at") else None,
+                "reason":           reason,
+            })
+        return {"items": out, "total": len(out)}
     finally:
         conn.close()
 
