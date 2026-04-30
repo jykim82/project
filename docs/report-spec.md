@@ -691,6 +691,11 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
   · `signed_at` 필드는 P1 항상 NULL (스키마만 보존, 향후 활용 가능)
   · 결재 워크플로 시스템화 미진행 — 이름만 인쇄 양식에 노출
   · ApprovalEditor 안내 문구 추가
+- 2026-04-30 — 운영 가이드 신설 (`docs/operations/`):
+  · `report-quickstart.md` — 운영자용 1장 매뉴얼 (작성·정제·결재·인쇄 흐름)
+  · `cron-setup.md` — 근본원인 자동 분류 cron 등록 가이드
+    (Linux crontab / macOS launchd / Docker compose 사이드카)
+  · launchd `local.slm.classify-cron` 등록 검증 (매일 03:00 호출)
 - 2026-04-28 — v4 사진 영역 조치 전/후 분리 (§6.7):
   · 항목 카드의 사진 영역을 두 그룹으로 분리 (조치 전 / 조치 후)
   · 각 그룹에 별도 URL 입력 + [사진 추가] 버튼

@@ -197,6 +197,8 @@ web/
 
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성
+- `docs/operations/report-quickstart.md` — 보고서 작성 빠른 가이드 (운영자용 1장)
+- `docs/operations/cron-setup.md` — 근본원인 자동 분류 cron 등록 가이드 (Linux/macOS/Docker)
 - `docs/claude-code-setup-guide.md` — 스킬/에이전트/셋업
 - `docs/migration-to-mac.md` — Windows → Mac 이전 기록 (구조 다이어그램은 이관 시점 스냅샷 — **폴더 구조 정본은 본 CLAUDE.md 의 "📂 디렉토리 구조" 섹션**)
 - `docs/deploy-secrets.md` — 시크릿 관리
