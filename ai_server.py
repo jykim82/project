@@ -2790,6 +2790,11 @@ from endpoints.report_categories import router as report_categories_router, init
 init_report_categories(get_db_connection)
 app.include_router(report_categories_router)
 
+# 채팅에서 보고서 직접 생성 — "이번 주 장애 보고서 만들어줘"
+from endpoints.chat_report_create import router as chat_report_router, init as init_chat_report
+init_chat_report(get_db_connection)
+app.include_router(chat_report_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
