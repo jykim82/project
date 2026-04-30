@@ -224,6 +224,18 @@ UI 노출 (교체 후보 순위 표):
 **P3 추가 확장 가능 (현재 보류):**
 - `tb_equipment_lifespan` 연식 보정 (설비별 도입 연도 기반)
 
+**미분류 항목 진단 (운영자 보강):**
+- `GET /reports/stats/unclassified-items?region=` — 분류 시도 후 실패 항목 + 추정 사유
+- 사유 휴리스틱: `too_short` (30자 미만) / `placeholder` (더미·테스트 패턴) /
+  `unknown_only` (UNKNOWN 만 매칭) / `no_match` (코드 매칭 0)
+- 통계 페이지 "미분류 항목" 섹션 — 각 행에 사유 Badge + 본문 미리보기 + tooltip 가이드
+- 운영자 액션: hint 보강 (관리 메뉴) → [전체 재분류] 재실행
+
+**대시보드 KPI — 교체 권고:**
+- `/dashboard` 메인 KPI 카드 7번째: 교체 권고 (가중치 점수 ≥ 5.0 인 설비 수)
+- 1순위 설비 ID·점수 sub-text 노출
+- 클릭 시 `/monitoring/equipment-health` 근본원인 통계 탭으로 이동
+
 **LLM 빈 응답 회피 — Ollama `format=json` 옵션:**
 `gemma4` 같은 멀티모달 모델은 자유 단락엔 강하나 정형 JSON 출력엔
 빈 응답을 자주 반환. `ollama_client.generate(format="json")` 으로
