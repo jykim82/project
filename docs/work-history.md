@@ -2,6 +2,42 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 1) [관망 고도화]
+
+**Migration 0064 + 백엔드 모듈 + 프런트 관리 페이지 — On/Off 토글 동작**
+
+1. **DB Migration 0064** (`db/migrations/0064_epanet_phase1.sql`)
+   - `SITE_SETTING.EPANET_ENABLED` (default 'N' — opt-in)
+   - `tb_epanet_artifact` (region 멀티테넌시, 변환 산출물 메타)
+   - `tb_menu M100-12 EPANET 시뮬레이션` + MASTER/ADMIN 권한
+
+2. **백엔드 신규 모듈** (`slm/epanet/`)
+   - `__init__.py` — 활성화·wntr 가용성 체크
+   - `shp_reader.py` — pyshp 기반 경량 SHP 스캐너 (geopandas 미사용, .cpg 자동 인코딩 감지 + EUC-KR/CP949 폴백)
+   - `inp_converter.py` — SHP → EPANET 2.2 .inp 텍스트 직접 생성 (wntr 의존 X, validate_with_wntr 옵션)
+   - `endpoints/epanet.py` — status/scan/inp/generate/list/download/delete (6 엔드포인트, 토글 OFF 시 503)
+   - `endpoints/admin.py` — 사이트 설정 GET/PUT 에 `epanet_enabled` 추가
+   - `requirements.txt` — wntr+pyshp 추가
+   - `Dockerfile` — build-essential 추가 (다음 이미지 빌드 시 wntr 자동 설치)
+
+3. **프런트** (`slm-dashboard/`)
+   - `admin/site-settings/page.tsx` — EPANET 토글 카드 (Waves icon, cyan)
+   - `admin/epanet/page.tsx` 신규 — 환경 진단·SHP 스캔·INP 생성·산출물 표
+   - `sidebar-menus.ts` — M100-12 fallback 등록
+
+4. **검증**
+   - 송수관 132건 + 배수지 15건 → 노드 131 / 링크 132 / 배수지 15 / 26KB .inp 생성
+   - 토글 OFF 시 모든 `/admin/epanet/*` 엔드포인트 503 (게이팅 정상)
+   - 사이트 설정 GET/PUT 에 `epanet_enabled` 정상 반영
+
+5. **사양**: `docs/gis_plan.md` (Phase 1 결과 절 추가) / `docs/feature-spec.md` §18.4 + §18-A
+
+**Phase 2 후속**: wntr 검증 활성화 (Docker 이미지 빌드 후) / 다중 vertex 보존 / 펌프·밸브 SHP 반영 / GIS 시각화 오버레이 / 시뮬레이션 실행
+
+**커밋 체인**: `slm@3b2be9f` + `slm-dashboard@63b4f4b` + `web@b18eda3`
+
+---
+
 ### 완료 (2026-04-22 ~ 23 — 관리/UX + 채팅 SSE 안정화 + 카탈로그 보강)
 
 **1. AI 런타임 파라미터 DB 영속화** (migration 0055/0056)

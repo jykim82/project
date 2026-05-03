@@ -557,6 +557,51 @@
 - Ollama 상태 뱃지
 - 서버 재시작 없이 즉시 반영 (_AiRuntimeSettings)
 
+### 18.4 EPANET 수리 시뮬레이션 (Migration 0064 — Phase 1)
+- 활성/비활성 토글 (`tb_comm_code SITE_SETTING.EPANET_ENABLED`, default 'N')
+- 활성화 시: 관리 그룹에 "EPANET 시뮬레이션" 메뉴(M100-12) 노출, `/admin/epanet/*` API 200 응답
+- 비활성 시: 모든 `/admin/epanet/*` 엔드포인트 503, 관리 페이지는 안내 카드만 노출
+- 활성화 후 [관리 페이지로 이동] 버튼 제공 → `/admin/epanet`
+- 상세 사양: `docs/gis_plan.md`
+
+---
+
+## 18-A. 관리 > EPANET 시뮬레이션 (M100-12, Phase 1)
+
+### 18-A.1 페이지 구성
+- 환경 진단 카드 — 모듈 활성/wntr 가용성/SHP 디렉토리/INP 출력 디렉토리/SHP 파일 분류 카운트
+- 변환 작업 카드 — [SHP 스캔] / [INP 생성] 두 버튼
+- 스캔 결과 표 — 파일/레코드/지오메트리/인코딩/필드 수 (스캔 실행 후 노출)
+- 산출물 표 — 파일/노드/링크/상태/생성 시각/작성자 + [다운로드][삭제]
+
+### 18-A.2 API (`/admin/epanet/*`)
+| 엔드포인트 | 동작 |
+|-----------|------|
+| GET    /admin/epanet/status            | 활성화·환경 상태 (토글 OFF 도 200) |
+| POST   /admin/epanet/scan              | SHP 메타·필드명·인코딩·BBOX (변환 전 검증) |
+| POST   /admin/epanet/inp/generate      | SHP→.inp 변환 + tb_epanet_artifact 저장 |
+| GET    /admin/epanet/inp/list          | 산출물 목록 (region 필터, 최근순) |
+| GET    /admin/epanet/inp/{id}/download | .inp 파일 다운로드 |
+| DELETE /admin/epanet/inp/{id}          | 산출물 삭제 (DB+파일) |
+
+### 18-A.3 SHP 입력 (Phase 1 자동 분류)
+- 송수관/배수관: `SAA003*`, `SAA004*` (`PIPE_SHP_HINTS`)
+- 배수지: `SA114*` (`RESERVOIR_SHP_HINT`)
+- 위치: 컨테이너 `/data/files/gis/shp/` (호스트 `web/files/gis/shp/`), 환경변수 `EPANET_SHP_BASE_DIR` 변경 가능
+- 인코딩: .cpg 자동 감지 + EUC-KR/CP949 폴백 (한글 필드명 정상 처리)
+
+### 18-A.4 INP 출력
+- 위치: 컨테이너 `/data/files/epanet/{region}_{YYYYMMDD_HHMMSS}.inp`
+- 포맷: EPANET 2.2 텍스트 — `[TITLE]/[JUNCTIONS]/[RESERVOIRS]/[PIPES]/[OPTIONS]/[TIMES]/[REPORT]/[COORDINATES]` 등
+- 노드 ID: 좌표 4자리 반올림 → MD5 해시 8자리 prefix (`N{hex8}`) — 동일 좌표 자동 병합
+- 기본값: 관경 100mm / 조도 C=120 / 표고 0m / 수요 0 LPS
+
+### 18-A.5 Phase 1 한계 (Phase 2 후속)
+- PolyLine 직선 근사 (첫·끝점만 사용 — 다중 vertex 미반영)
+- 표고/수요/펌프·밸브 미반영
+- wntr 검증은 미설치 상태에서 스킵 (Dockerfile build-essential 추가 — 다음 이미지 빌드 시 자동 설치)
+- GIS 시각화 오버레이 미구현 (Phase 2)
+
 ---
 
 ## 19. 구축 > 태그 마스터
