@@ -91,7 +91,32 @@ slm-dashboard/src/app/(dashboard)/admin/
 - 직선 근사: PolyLine 의 첫 점 ↔ 마지막 점만 한 파이프로 단순화 (다중 vertex 미반영)
 - 표고/수요 기본값 0 (EPANET 시뮬레이션 결과 정확도 제약)
 - 펌프·밸브 SHP 미반영 (Phase 2 에서 SA100 제수밸브 등 추가)
-- wntr 미설치 상태 — Dockerfile 에 build-essential 추가됨, 다음 이미지 빌드 시 활성
+
+### Phase 2 (2026-05-04 — wntr 시뮬레이션 동작)
+- ✅ wntr 설치 — Dockerfile 에 build-essential 추가 + backend 이미지 재빌드 (wntr 1.x + pyshp 3.x)
+- ✅ Migration 0065 — `tb_epanet_simulation_result` (sim_id/artifact_id/sim_type/status + 수치 요약 6 + result_data JSONB)
+- ✅ 신규 모듈 `slm/epanet/simulator.py` — `run_steady_state(inp_path)` 정상상태 시뮬레이션
+- ✅ 엔드포인트 추가:
+  · POST   /admin/epanet/inp/{id}/simulate       — 정상상태 시뮬레이션 실행
+  · GET    /admin/epanet/inp/{id}/simulations    — artifact 별 시뮬레이션 이력
+  · GET    /admin/epanet/sim/{sim_id}            — 시뮬 상세 (result_data 포함)
+- ✅ 프런트 — 산출물 표 행에 [시뮬] 버튼 추가 + 결과 미리보기 카드 (압력 범위·유량 범위·실행 시간)
+- 노드 ID 좌표 정밀도 4자리 → 0자리 (1m 단위 병합) — connected components 17→15
+- ARM64 환경 폴백: EpanetSimulator 미가용 시 `WNTRSimulator` 사용. PDD 모드 + 가장 큰 connected component 자동 추출
+- 검증 (artifact #3, 송수관 132건 + 1m 병합):
+  · 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0~50.0m / 유량 ±0.0205 LPS / 108ms
+  · 표고 0 + 배수지 head 50m + 수요 0 LPS 환경에서의 정적 분포 (Phase 3 에서 표고·수요 입력 후 의미 있는 분포)
+
+### Phase 2.5 (계획)
+- PolyLine 다중 vertex 보존 → INP `[VERTICES]` 섹션에 굴곡 좌표 추가 (지도 표출 정확도)
+- GIS 시각화 오버레이 — 시뮬레이션 결과 압력 히트맵·파이프 유량 색상 (`/monitoring/gis` dynamic import)
+- 펌프·밸브 SHP 반영 (`SA100` 제수밸브)
+
+### Phase 3 (계획)
+- 표고 데이터 매핑 (DEM/배수지 EL.) — EPANET junction.elevation 자동 입력
+- 시간대별 수요 패턴 (계량기 데이터 + DAY/NIGHT pattern) — EPS(Extended Period Simulation) 활성
+- 시나리오 분석 — 밸브 개폐·관로 파손·펌프 가동 변경 시뮬레이션 비교
+- 실측-모델 비교 — 센서 실측값 vs EPANET 예측 편차
 
 ### SHP 파일 위치
 - 호스트: `/Users/jykim/web/files/gis/shp/` (`docs/SHP추출/` 의 SAA003/SAA004/SA114 만 복사)

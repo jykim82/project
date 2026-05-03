@@ -2,6 +2,33 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 2) [관망 고도화 — wntr 동작]
+
+**Migration 0065 + wntr 설치 + 정상상태 시뮬레이션 엔드포인트 + 프런트 [시뮬] 버튼**
+
+1. **wntr 라이브러리 설치** — Dockerfile build-essential 추가 + backend 이미지 재빌드 (wntr 1.x + pyshp 3.x)
+2. **DB Migration 0065** — `tb_epanet_simulation_result`
+   - sim_id/artifact_id (FK CASCADE)/sim_type/status + 수치 요약 6 컬럼 (min/max/avg pressure_m, min/max flow_lps, node/link count) + result_data JSONB + duration_ms
+   - region 멀티테넌시 + 인덱스 2종 (artifact + region)
+3. **백엔드** (`slm/epanet/`)
+   - `simulator.py` 신규 — `run_steady_state(inp_path)` 정상상태 시뮬레이션
+   - ARM64 환경 폴백: EpanetSimulator 미가용 시 `WNTRSimulator` 자동 사용
+   - PDD(Pressure Driven Demand) 모드 + 가장 큰 connected component 자동 추출 (`_isolate_largest_component`)
+   - 노드 좌표 정밀도 4자리 → 0자리 (1m 단위 병합) — disconnected components 17→15
+   - `endpoints/epanet.py` — 시뮬 3 엔드포인트 추가
+     · POST `/admin/epanet/inp/{id}/simulate`
+     · GET  `/admin/epanet/inp/{id}/simulations`
+     · GET  `/admin/epanet/sim/{sim_id}`
+4. **프런트** — 산출물 표 행에 [시뮬] 버튼 (Activity icon, cyan) + 시뮬 결과 미리보기 카드 (4 KPI: 노드/링크/압력 범위/평균 압력 + 유량 범위/실행 시간)
+5. **검증** — artifact #3 (송수관 132건, 1m 병합) → 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0m / 유량 ±0.0205 LPS / 108ms
+6. **사양**: `docs/gis_plan.md` Phase 2 절 추가 + Phase 2.5/Phase 3 계획 / `docs/feature-spec.md` §18-A.5/§18-A.6
+
+**Phase 2.5 후속**: 다중 vertex 보존 / GIS 시각화 오버레이 / 펌프·밸브 SHP
+
+**커밋 체인**: `slm@TBD` + `slm-dashboard@TBD` + `web@TBD`
+
+---
+
 ### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 1) [관망 고도화]
 
 **Migration 0064 + 백엔드 모듈 + 프런트 관리 페이지 — On/Off 토글 동작**

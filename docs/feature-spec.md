@@ -577,12 +577,15 @@
 ### 18-A.2 API (`/admin/epanet/*`)
 | 엔드포인트 | 동작 |
 |-----------|------|
-| GET    /admin/epanet/status            | 활성화·환경 상태 (토글 OFF 도 200) |
-| POST   /admin/epanet/scan              | SHP 메타·필드명·인코딩·BBOX (변환 전 검증) |
-| POST   /admin/epanet/inp/generate      | SHP→.inp 변환 + tb_epanet_artifact 저장 |
-| GET    /admin/epanet/inp/list          | 산출물 목록 (region 필터, 최근순) |
-| GET    /admin/epanet/inp/{id}/download | .inp 파일 다운로드 |
-| DELETE /admin/epanet/inp/{id}          | 산출물 삭제 (DB+파일) |
+| GET    /admin/epanet/status                     | 활성화·환경 상태 (토글 OFF 도 200) |
+| POST   /admin/epanet/scan                       | SHP 메타·필드명·인코딩·BBOX (변환 전 검증) |
+| POST   /admin/epanet/inp/generate               | SHP→.inp 변환 + tb_epanet_artifact 저장 |
+| GET    /admin/epanet/inp/list                   | 산출물 목록 (region 필터, 최근순) |
+| GET    /admin/epanet/inp/{id}/download          | .inp 파일 다운로드 |
+| DELETE /admin/epanet/inp/{id}                   | 산출물 삭제 (DB+파일) |
+| POST   /admin/epanet/inp/{id}/simulate          | (Phase 2) 정상상태 시뮬레이션 실행 |
+| GET    /admin/epanet/inp/{id}/simulations       | (Phase 2) artifact 별 시뮬 이력 |
+| GET    /admin/epanet/sim/{sim_id}               | (Phase 2) 시뮬 상세 (result_data 포함) |
 
 ### 18-A.3 SHP 입력 (Phase 1 자동 분류)
 - 송수관/배수관: `SAA003*`, `SAA004*` (`PIPE_SHP_HINTS`)
@@ -596,11 +599,18 @@
 - 노드 ID: 좌표 4자리 반올림 → MD5 해시 8자리 prefix (`N{hex8}`) — 동일 좌표 자동 병합
 - 기본값: 관경 100mm / 조도 C=120 / 표고 0m / 수요 0 LPS
 
-### 18-A.5 Phase 1 한계 (Phase 2 후속)
-- PolyLine 직선 근사 (첫·끝점만 사용 — 다중 vertex 미반영)
-- 표고/수요/펌프·밸브 미반영
-- wntr 검증은 미설치 상태에서 스킵 (Dockerfile build-essential 추가 — 다음 이미지 빌드 시 자동 설치)
-- GIS 시각화 오버레이 미구현 (Phase 2)
+### 18-A.5 Phase 2 (2026-05-04 — wntr 시뮬레이션 동작)
+- Migration 0065 — `tb_epanet_simulation_result` (sim_id/artifact_id/result_data JSONB)
+- 산출물 표 행에 [시뮬] 버튼 추가 → 정상상태 시뮬 → 결과 미리보기 카드 (압력 범위·유량 범위·실행 시간)
+- ARM64 환경: EPANET 네이티브 라이브러리 미포함 → `WNTRSimulator` 폴백 + PDD 모드 + 가장 큰 connected component 자동 추출
+- 노드 좌표 1m 단위 병합 — SHP line 끝점 미접합으로 인한 disconnected component 감소
+- 검증: 송수관 132건 → 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0m / 108ms
+
+### 18-A.6 Phase 2.5 / Phase 3 (계획)
+- PolyLine 다중 vertex 보존 (`[VERTICES]` 섹션)
+- GIS 시각화 오버레이 (시뮬 결과 압력 히트맵·파이프 유량 색상)
+- 펌프·밸브 SHP 반영 (SA100 제수밸브)
+- 표고 데이터 매핑 + 수요 패턴 + EPS 시계열 + 시나리오 비교 + 실측-모델 비교
 
 ---
 
