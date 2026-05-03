@@ -151,6 +151,7 @@ from response_builder import (
     _filter_cross_mismatches, _diagnose_no_data, classify_chart_data_type,
     _query_recent_values,
     _execute_night_min_flow_query, _execute_night_min_flow_stddev_query,
+    _extract_stddev_stats,
     _execute_tag_daily_summary_query, _execute_timeseries_query,
     _execute_hunting_check, _execute_catalog_trend_query,
     _execute_reservoir_supply_query, _execute_reservoir_supply_query_with_conn, wrap_status_marker,
