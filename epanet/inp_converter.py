@@ -38,9 +38,13 @@ class ConvertResult:
     warnings: list = field(default_factory=list)
 
 
-def _node_id(x: float, y: float) -> str:
-    """좌표 → 짧은 노드 ID (소수 4자리 반올림으로 동일 노드 자동 병합)."""
-    rx, ry = round(x, 4), round(y, 4)
+def _node_id(x: float, y: float, precision: int = 0) -> str:
+    """좌표 → 짧은 노드 ID. precision=0 → 1m 단위 병합 (UTM-K 미터 좌표).
+
+    SHP 라인의 끝점이 인근 다른 라인의 끝점과 정확히 일치하지 않을 때
+    같은 노드로 묶어 connected component 수를 줄임 (시뮬레이션 정합성).
+    """
+    rx, ry = round(x, precision), round(y, precision)
     h = hashlib.md5(f"{rx},{ry}".encode()).hexdigest()
     return f"N{h[:8]}"
 
