@@ -3,8 +3,10 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 시스템 의존성 (psycopg2-binary는 빌드 불필요)
+# build-essential / g++ — EPANET 모듈의 wntr 패키지 C++ 확장 빌드용 (Migration 0064)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Python 의존성 설치

@@ -11,3 +11,6 @@ scipy>=1.14
 python-dotenv>=1.0
 python-multipart>=0.0.6
 openpyxl>=3.1
+# EPANET 수리 시뮬레이션 (Migration 0064 Phase 1) — 모듈 비활성 시 임포트 안 됨
+wntr>=1.2.0
+pyshp>=2.3.0

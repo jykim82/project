@@ -2795,6 +2795,12 @@ from endpoints.chat_report_create import router as chat_report_router, init as i
 init_chat_report(get_db_connection)
 app.include_router(chat_report_router)
 
+# EPANET 수리 시뮬레이션 (Migration 0064 Phase 1) — 활성화 토글 OFF default
+import epanet as epanet_module
+from endpoints.epanet import router as epanet_router
+epanet_module.init(get_db_connection)
+app.include_router(epanet_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""

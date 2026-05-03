@@ -521,11 +521,15 @@ async def get_site_settings():
                 settings["landing_enabled"] = use_yn == "Y"
             elif comm_cd == "TREND_EXPLAIN_ENABLED":
                 settings["trend_explain_enabled"] = use_yn == "Y"
+            elif comm_cd == "EPANET_ENABLED":
+                settings["epanet_enabled"] = use_yn == "Y"
 
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
         if "trend_explain_enabled" not in settings:
             settings["trend_explain_enabled"] = False
+        if "epanet_enabled" not in settings:
+            settings["epanet_enabled"] = False
 
         # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
         settings["db"] = {
@@ -605,6 +609,20 @@ async def update_site_settings(request: Request):
                 """
                 INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
                 VALUES ('R01', 'SITE_SETTING', 'TREND_EXPLAIN_ENABLED', '트렌드 AI 요약', %s)
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET use_yn = %s
+                """,
+                (use_yn, use_yn),
+            )
+            conn.commit()
+
+        # EPANET 수리 시뮬레이션 활성화 (Migration 0064)
+        if "epanet_enabled" in body:
+            use_yn = "Y" if body["epanet_enabled"] else "N"
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'EPANET_ENABLED', 'EPANET 수리 시뮬레이션 활성화', %s)
                 ON CONFLICT (region, grp_cd, comm_cd)
                 DO UPDATE SET use_yn = %s
                 """,
