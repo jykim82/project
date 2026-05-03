@@ -189,6 +189,7 @@ web/
 - `docs/equipment-fault-tracking-spec.md` — 설비 장애 이력 추적 (migration 0045)
 - `docs/report-spec.md` — 보고서 (장애 조치 / 일 점검) 사양 + 채팅 점검 인텐트 (migration 0058)
 - `docs/feature-spec.md` — 기능 개괄
+- `docs/gis_plan.md` — EPANET + GIS 관망 고도화 (Phase 1 구현 완료 / Migration 0064 — `slm/epanet/` 모듈 + `/admin/epanet` 페이지)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
@@ -229,7 +230,7 @@ web/
 
 ## 탐색·분석 문서 (히스토리성)
 - `docs/design-analysis.md`, `docs/test-image-samples.md`, `docs/query-test-results.md`
-- `docs/facility-selector.md`, `docs/gis_plan.md`, `docs/iforest.md`
+- `docs/facility-selector.md`, `docs/iforest.md`
 - `docs/reservoir_hunting_detection_logic.md`, `docs/c-plan-expansion.md`
 
 ---
