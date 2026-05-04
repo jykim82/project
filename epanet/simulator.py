@@ -22,6 +22,8 @@ class SimulationResult:
     success: bool
     junctions: list = field(default_factory=list)
     pipes: list = field(default_factory=list)
+    reservoirs: list = field(default_factory=list)
+    bbox: Optional[tuple] = None     # (xmin, ymin, xmax, ymax)
     node_count: int = 0
     link_count: int = 0
     min_pressure_m: Optional[float] = None
@@ -116,28 +118,38 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
             results = sim.run_sim()
             engine = "wntr"
 
-        # 노드 결과 (압력·헤드·수요)
+        # 노드 결과 (압력·헤드·수요) + 좌표 포함
         pressure = results.node["pressure"]
         head = results.node.get("head") if hasattr(results.node, "get") else results.node["head"]
         demand = results.node.get("demand") if hasattr(results.node, "get") else results.node["demand"]
         junctions: list = []
         pressures_m: list = []
+        all_xs: list = []
+        all_ys: list = []
         for nid in wn.junction_name_list:
             try:
+                node = wn.get_node(nid)
+                coord = getattr(node, "coordinates", None)
+                cx = float(coord[0]) if coord else None
+                cy = float(coord[1]) if coord else None
                 p = float(pressure[nid].iloc[0])
                 h = float(head[nid].iloc[0]) if head is not None else None
                 d = float(demand[nid].iloc[0]) if demand is not None else None
                 junctions.append({
                     "id": nid,
+                    "x": cx, "y": cy,
                     "pressure_m": round(p, 3),
                     "head_m": round(h, 3) if h is not None else None,
                     "demand_lps": round(d * 1000.0, 4) if d is not None else None,
                 })
                 pressures_m.append(p)
+                if cx is not None:
+                    all_xs.append(cx)
+                    all_ys.append(cy)
             except Exception as e:
                 logger.warning(f"junction {nid} 결과 추출 실패: {e}")
 
-        # 파이프 결과 (유량·유속·손실)
+        # 파이프 결과 (유량·유속·손실) + vertex 좌표
         flow = results.link["flowrate"]
         velocity = results.link.get("velocity") if hasattr(results.link, "get") else None
         headloss = results.link.get("headloss") if hasattr(results.link, "get") else None
@@ -145,11 +157,17 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
         flows_lps: list = []
         for lid in wn.pipe_name_list:
             try:
+                pipe = wn.get_link(lid)
+                start_id = pipe.start_node_name
+                end_id = pipe.end_node_name
+                vertices = list(getattr(pipe, "vertices", None) or [])
                 f_cms = float(flow[lid].iloc[0])
                 v = float(velocity[lid].iloc[0]) if velocity is not None else None
                 hl = float(headloss[lid].iloc[0]) if headloss is not None else None
                 pipes.append({
                     "id": lid,
+                    "start": start_id, "end": end_id,
+                    "vertices": [[float(vx), float(vy)] for vx, vy in vertices],
                     "flow_lps": round(f_cms * 1000.0, 4),
                     "velocity_mps": round(v, 3) if v is not None else None,
                     "headloss_m": round(hl, 3) if hl is not None else None,
@@ -158,11 +176,34 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
             except Exception as e:
                 logger.warning(f"pipe {lid} 결과 추출 실패: {e}")
 
+        # 배수지 좌표 (시각화용 — 시뮬 결과에는 포함 안 됨)
+        reservoirs: list = []
+        for rid in wn.reservoir_name_list:
+            try:
+                node = wn.get_node(rid)
+                coord = getattr(node, "coordinates", None)
+                cx = float(coord[0]) if coord else None
+                cy = float(coord[1]) if coord else None
+                head_m = float(getattr(node, "head_timeseries", lambda: None)() or 0)
+                reservoirs.append({"id": rid, "x": cx, "y": cy, "head_m": round(head_m, 2)})
+                if cx is not None:
+                    all_xs.append(cx)
+                    all_ys.append(cy)
+            except Exception:
+                pass
+
         duration_ms = int((time.time() - start) * 1000)
+        bbox = (
+            (round(min(all_xs), 4), round(min(all_ys), 4),
+             round(max(all_xs), 4), round(max(all_ys), 4))
+            if all_xs else None
+        )
         return SimulationResult(
             success=True,
             junctions=junctions,
             pipes=pipes,
+            reservoirs=reservoirs,
+            bbox=bbox,
             node_count=len(junctions),
             link_count=len(pipes),
             min_pressure_m=round(min(pressures_m), 3) if pressures_m else None,

@@ -35,6 +35,7 @@ class ConvertResult:
     link_count: int
     reservoir_count: int = 0
     skipped_records: int = 0
+    vertex_count: int = 0
     warnings: list = field(default_factory=list)
 
 
@@ -112,12 +113,15 @@ def convert_pipes_to_inp(
                 diameter_mm = default_diameter_mm
 
             pipe_id = f"P{len(pipes) + 1:06d}"
+            # 중간 vertex (첫·끝점 제외) — INP [VERTICES] 섹션에 보존하여 굴곡 표현
+            mid_vertices = [(float(x), float(y)) for x, y in rec.points[1:-1]]
             pipes.append({
                 "id": pipe_id,
                 "n1": n1, "n2": n2,
                 "length": max(0.1, length_m),
                 "diameter": max(1.0, diameter_mm),
                 "roughness": default_roughness_c,
+                "vertices": mid_vertices,
             })
             for nid, pt in ((n1, p1), (n2, p2)):
                 if nid not in junctions:
@@ -160,12 +164,14 @@ def convert_pipes_to_inp(
         reservoirs=reservoirs,
     )
 
+    vertex_count = sum(len(p.get("vertices") or []) for p in pipes)
     return ConvertResult(
         inp_text=inp,
         node_count=len(junctions),
         link_count=len(pipes),
         reservoir_count=len(reservoirs),
         skipped_records=skipped,
+        vertex_count=vertex_count,
         warnings=warnings,
     )
 
@@ -268,7 +274,12 @@ def _build_inp_text(*, title: str, junctions: dict, pipes: list,
         lines.append(f" {rid:<15} {x:<11.4f} {y:<11.4f}")
     lines.append("")
 
+    # [VERTICES] — 파이프 중간 vertex (지도 표출 굴곡 보존)
     lines.append("[VERTICES]")
+    lines.append(";Link            X-Coord     Y-Coord")
+    for p in pipes:
+        for vx, vy in (p.get("vertices") or []):
+            lines.append(f" {p['id']:<15} {vx:<11.4f} {vy:<11.4f}")
     lines.append("")
 
     lines.append("[BACKDROP]")

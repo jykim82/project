@@ -370,6 +370,10 @@ def simulate_inp(artifact_id: int, request: Request, region: str = "R01") -> dic
         "min_flow_lps": result.min_flow_lps,
         "max_flow_lps": result.max_flow_lps,
         "duration_ms": result.duration_ms,
+        "bbox": list(result.bbox) if result.bbox else None,
+        "junctions": result.junctions,
+        "pipes": result.pipes,
+        "reservoirs": result.reservoirs,
     }
 
 
