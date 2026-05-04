@@ -107,9 +107,26 @@ slm-dashboard/src/app/(dashboard)/admin/
   · 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0~50.0m / 유량 ±0.0205 LPS / 108ms
   · 표고 0 + 배수지 head 50m + 수요 0 LPS 환경에서의 정적 분포 (Phase 3 에서 표고·수요 입력 후 의미 있는 분포)
 
-### Phase 2.5 (계획)
-- PolyLine 다중 vertex 보존 → INP `[VERTICES]` 섹션에 굴곡 좌표 추가 (지도 표출 정확도)
-- GIS 시각화 오버레이 — 시뮬레이션 결과 압력 히트맵·파이프 유량 색상 (`/monitoring/gis` dynamic import)
+### Phase 2.5 (2026-05-04 — 다중 vertex + 시뮬 좌표 응답 + SVG 시각화)
+- ✅ INP `[VERTICES]` 섹션 — PolyLine 첫·끝점 외 중간 점 모두 보존 (굴곡 표현)
+- ✅ 시뮬 응답 좌표 포함 — junction.x/y, pipe.vertices, reservoir.x/y, bbox
+- ✅ tb_epanet_simulation_result.result_data 에 좌표 + 결과 저장
+- ✅ `EpanetSimulationCanvas` SVG 컴포넌트 신규 (`components/epanet/`)
+  · UTM-K 좌표 자체 SVG viewBox (좌표 변환 라이브러리 의존 X — proj4js 등 불필요)
+  · 노드: 압력 색상 히트맵 (HSL 240→0)
+  · 파이프: polyline + 유량 색상(정류 청록 / 역류 주황) + 굵기 (절댓값 비례)
+  · 배수지: 청록 사각형
+  · 호버 툴팁 (id / 압력 / 유량 / 유속 / 시작·끝 노드)
+  · 압력·유량 범례
+- 검증: artifact #4 송수관 132건 → 시뮬 #4 — bbox UTM-K 미터 좌표 [156280, 465458, 194003, 494896], 노드/파이프 좌표 응답 정상
+- ⚠ MapLibre 통합 (GIS 페이지 오버레이) 은 별도 Phase 3 — 현재는 `/admin/epanet` 페이지의 자체 SVG 캔버스로 결과 확인
+
+### Phase 3 (계획)
+- 표고 데이터 매핑 (DEM/배수지 EL.) — EPANET junction.elevation 자동 입력
+- 시간대별 수요 패턴 (계량기 데이터 + DAY/NIGHT pattern) — EPS(Extended Period Simulation) 활성
+- 시나리오 분석 — 밸브 개폐·관로 파손·펌프 가동 변경 시뮬레이션 비교
+- 실측-모델 비교 — 센서 실측값 vs EPANET 예측 편차
+- GIS 페이지 통합 오버레이 — UTM-K → WGS84 (proj4js EPSG:5179→4326) 변환 후 MapLibre 압력/유량 레이어 표출
 - 펌프·밸브 SHP 반영 (`SA100` 제수밸브)
 
 ### Phase 3 (계획)

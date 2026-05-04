@@ -2,6 +2,26 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 2.5) [시각화 + GIS 밸브 심볼]
+
+**다중 vertex 보존 + 시뮬 응답 좌표 포함 + SVG 시각화 컴포넌트 + GIS 밸브 SVG 심볼**
+
+1. **INP `[VERTICES]` 섹션** — PolyLine 첫·끝점 외 중간 점 보존 (지도 표출 굴곡 정확도)
+2. **시뮬 응답 좌표 포함** — `simulator.py` 가 wntr.WaterNetworkModel 의 노드 좌표·파이프 vertex·배수지 좌표·bbox 를 응답에 포함, `tb_epanet_simulation_result.result_data` 에도 저장
+3. **`EpanetSimulationCanvas` SVG 컴포넌트** (`slm-dashboard/src/components/epanet/`)
+   - UTM-K 좌표 자체 viewBox (proj4js 등 변환 라이브러리 의존 없음)
+   - 노드: 압력 색상 히트맵 (HSL 240→0)
+   - 파이프: polyline + 정류(청록)/역류(주황) 색상 + 굵기 비례
+   - 배수지: 청록 사각형
+   - 호버 툴팁 + 범례
+   - `/admin/epanet` 페이지 시뮬 결과 카드에 통합
+4. **GIS 밸브 SVG 심볼** — `GisShpLayer` 가 `layerDef.icon` 무시하던 버그 수정. SVG → Canvas → `addImage` → MapLibre symbol layer. 줌별 0.45x ~ 1.4x 스케일. 5종 밸브 (제수/경계/지수/이토/공기) + 유량계/소화전/배수지/가압장 심볼 표출
+5. **사양**: `docs/gis_plan.md` Phase 2.5 절 + Phase 3 계획 / `docs/feature-spec.md` §18-A.6/§18-A.7
+
+**커밋 체인**: `slm-dashboard@ce44b1a` (밸브) → `web@cbafb63` / `slm@TBD` + `slm-dashboard@TBD` + `web@TBD` (Phase 2.5)
+
+---
+
 ### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 2) [관망 고도화 — wntr 동작]
 
 **Migration 0065 + wntr 설치 + 정상상태 시뮬레이션 엔드포인트 + 프런트 [시뮬] 버튼**

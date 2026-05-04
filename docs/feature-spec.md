@@ -606,11 +606,18 @@
 - 노드 좌표 1m 단위 병합 — SHP line 끝점 미접합으로 인한 disconnected component 감소
 - 검증: 송수관 132건 → 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0m / 108ms
 
-### 18-A.6 Phase 2.5 / Phase 3 (계획)
-- PolyLine 다중 vertex 보존 (`[VERTICES]` 섹션)
-- GIS 시각화 오버레이 (시뮬 결과 압력 히트맵·파이프 유량 색상)
+### 18-A.6 Phase 2.5 (2026-05-04 — 다중 vertex + SVG 시각화)
+- INP `[VERTICES]` 섹션 — PolyLine 굴곡 점 보존
+- 시뮬 응답 좌표 포함 — junction.x/y, pipe.vertices, reservoir.x/y, bbox
+- `EpanetSimulationCanvas` SVG 컴포넌트 — 압력 히트맵·유량 색상·정/역류 구분·호버 툴팁·범례
+- UTM-K 좌표 자체 SVG viewBox (변환 라이브러리 의존 없음)
+
+### 18-A.7 Phase 3 (계획)
+- 표고 데이터 매핑 (DEM/배수지 EL.)
+- 시간대별 수요 패턴 + EPS 시계열
+- 시나리오 분석·실측-모델 비교
+- GIS 페이지 오버레이 (UTM-K → WGS84 변환 + MapLibre)
 - 펌프·밸브 SHP 반영 (SA100 제수밸브)
-- 표고 데이터 매핑 + 수요 패턴 + EPS 시계열 + 시나리오 비교 + 실측-모델 비교
 
 ---
 
