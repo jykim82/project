@@ -612,12 +612,22 @@
 - `EpanetSimulationCanvas` SVG 컴포넌트 — 압력 히트맵·유량 색상·정/역류 구분·호버 툴팁·범례
 - UTM-K 좌표 자체 SVG viewBox (변환 라이브러리 의존 없음)
 
-### 18-A.7 Phase 3 (계획)
+### 18-A.7 Phase 2.6 (2026-05-05 — GIS 페이지 시뮬 오버레이 + 토글)
+- pyproj 의존성 추가 (`EPANET_SHP_CRS=EPSG:5186` default — 당진시 검증)
+- 시뮬 응답에 lng/lat (WGS84) 포함 — junction.lng/lat, pipe.vertices_lnglat, reservoir.lng/lat, bbox_lnglat
+- 신규 `components/gis/GisEpanetSimLayer.tsx` — 가장 최근 success 시뮬 자동 fetch + MapLibre paint expression
+  · 노드 압력 → `circle-color` interpolate (HSL 240 → 0)
+  · 파이프 유량 → `line-color` (정/역/거의 0 분기) + `line-width` interpolate
+  · 배수지 → 청록 큰 원
+- `monitoring/gis/page.tsx` 상단 툴바 [EPANET 시뮬] 토글 버튼 (cyan, 시설물 목록 우측)
+- 토글 OFF 시 source/layer 미추가 (성능 보호)
+
+### 18-A.8 Phase 3 (계획)
 - 표고 데이터 매핑 (DEM/배수지 EL.)
 - 시간대별 수요 패턴 + EPS 시계열
 - 시나리오 분석·실측-모델 비교
-- GIS 페이지 오버레이 (UTM-K → WGS84 변환 + MapLibre)
 - 펌프·밸브 SHP 반영 (SA100 제수밸브)
+- 시뮬 선택 UI (GIS 오버레이에 사용할 sim_id 드롭다운 — 현재는 가장 최근 자동)
 
 ---
 

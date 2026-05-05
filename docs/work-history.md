@@ -2,6 +2,25 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-05 — EPANET 수리 시뮬레이션 Phase 2.6) [GIS 페이지 오버레이 + 토글]
+
+**좌표계 EPSG:5186 확정 + pyproj 변환 + GIS 페이지 시뮬 오버레이 + [EPANET 시뮬] 토글 버튼**
+
+1. **좌표계 EPSG:5186 확정** — 당진시 SHP BBOX 검증 (5종 한국 좌표계 후보 비교)
+2. **백엔드** (`slm/`)
+   - `requirements.txt` — pyproj>=3.6.0
+   - `epanet/simulator.py` — `_get_transformer()` lazy + `_to_lnglat()` 헬퍼, `SimulationResult.bbox_lnglat` 추가, junction/reservoir 에 `lng/lat`, pipe 에 `vertices_lnglat` 추가
+   - `endpoints/epanet.py` — simulate 응답에 `bbox_lnglat` 포함
+3. **프런트** (`slm-dashboard/`)
+   - `components/gis/GisEpanetSimLayer.tsx` 신규 — visible=true 시 최신 success 시뮬 자동 fetch + MapLibre 3 layer (노드/파이프/배수지) + 압력/유량 paint expression
+   - `monitoring/gis/page.tsx` — `showEpanetSim` state + [EPANET 시뮬] 토글 버튼 (cyan, 상단 툴바) + `<GisEpanetSimLayer />` 통합
+4. **검증** — bbox UTM [156280, 465458, 194003, 494896] → WGS84 [126.51, 36.79, 126.93, 37.05] (당진시 영역 정확)
+5. **사양**: `docs/gis_plan.md` Phase 2.6 절 + `docs/feature-spec.md` §18-A.7 (Phase 3 §18-A.8 로 이동)
+
+**커밋 체인**: `slm@TBD` + `slm-dashboard@TBD` + `web@TBD`
+
+---
+
 ### 완료 (2026-05-04 — EPANET 수리 시뮬레이션 Phase 2.5) [시각화 + GIS 밸브 심볼]
 
 **다중 vertex 보존 + 시뮬 응답 좌표 포함 + SVG 시각화 컴포넌트 + GIS 밸브 SVG 심볼**
