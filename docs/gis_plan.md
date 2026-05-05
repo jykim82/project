@@ -107,6 +107,13 @@ slm-dashboard/src/app/(dashboard)/admin/
   · 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0~50.0m / 유량 ±0.0205 LPS / 108ms
   · 표고 0 + 배수지 head 50m + 수요 0 LPS 환경에서의 정적 분포 (Phase 3 에서 표고·수요 입력 후 의미 있는 분포)
 
+### Phase 2.6 후속 (2026-05-06 — 흐름 방향 정합성)
+- ✅ pipe start = 배수지 가까운 끝점 — SHP line direction 의 임의성 제거. 자연스러운 수원→소비처 방향.
+- ✅ reservoir snap — reservoir SHP 좌표를 200m 이내 가장 가까운 송수관 끝점으로 흡수. connected component 에 자동 포함되어 시뮬 그래프에 반영됨.
+- ✅ default_demand_lps 0 → 0.1 — 모든 junction 균등 demand. demand 0 이면 정수상태에서 flow 도 0 이라 흐름 방향 무의미. Phase 3 에서 계량기 기반 실측 demand 로 대체.
+- 검증: artifact #9 → 시뮬 #7 — flow 범위 -1.79 ~ +3.39 LPS, 정류 82 / 역류 42 / 거의 0 7개 (정류 우세 = 수원→소비처 방향 정합)
+- 압력은 49.959 ~ 50.0m (미세 분포 — 헤드 손실 발생)
+
 ### Phase 2.6 (2026-05-05 ~ 06 — GIS 페이지 시뮬 오버레이 + 토글 + 흐름 화살표)
 - ✅ pyproj 추가 — `EPANET_SHP_CRS` 환경변수(default `EPSG:5186` Korea 2000 / Central Belt 2010 — 당진시 SHP 검증)
 - ✅ 시뮬 응답에 lng/lat 포함 — `junction.lng/lat`, `pipe.vertices_lnglat`, `reservoir.lng/lat`, `bbox_lnglat`

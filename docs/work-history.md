@@ -2,6 +2,25 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-06 — EPANET Phase 2.6 후속) [흐름 방향 정합성]
+
+**pipe direction 정렬 + reservoir snap + 균등 demand → 의미 있는 화살표**
+
+1. **pipe start = 배수지 가까운 끝점** (`inp_converter.py`)
+   - SHP line direction 이 임의로 그려져 있어 화살표 방향이 무의미했던 문제 해결
+   - reservoir 좌표 미리 로드 후 pipe 의 첫·끝점 중 reservoir 최단 거리 더 짧은 쪽을 start, vertices 도 같이 reverse
+2. **reservoir snap** — 200m 이내 가장 가까운 송수관 끝점으로 흡수
+   - reservoir SHP 가 송수관 끝점과 미세하게 어긋나 별도 component 로 빠지던 문제 해결
+   - 10/15 reservoir snap 성공 (나머지 5는 200m 이상 떨어짐)
+3. **default_demand_lps 0 → 0.1** — 균등 demand 부여로 정수상태에서도 의미 있는 flow 발생
+   - GenerateRequest 에 파라미터 추가 (운영자 조정 가능)
+   - Phase 3 에서 계량기 기반 실측 demand 로 대체 예정
+4. **검증**: artifact #9 → 시뮬 #7 — flow ±3.39 LPS / pressure 49.959~50.0m / 정류 82 / 역류 42 / 거의 0 7 (정류 우세 = 수원→소비처 방향 정합)
+
+**커밋 체인**: `slm@TBD` + `web@TBD`
+
+---
+
 ### 완료 (2026-05-05 — EPANET 수리 시뮬레이션 Phase 2.6) [GIS 페이지 오버레이 + 토글]
 
 **좌표계 EPSG:5186 확정 + pyproj 변환 + GIS 페이지 시뮬 오버레이 + [EPANET 시뮬] 토글 버튼**

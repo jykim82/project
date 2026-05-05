@@ -612,6 +612,13 @@
 - `EpanetSimulationCanvas` SVG 컴포넌트 — 압력 히트맵·유량 색상·정/역류 구분·호버 툴팁·범례
 - UTM-K 좌표 자체 SVG viewBox (변환 라이브러리 의존 없음)
 
+### 18-A.6.5 Phase 2.6 후속 (2026-05-06 — 흐름 방향 정합성)
+- pipe.start = 배수지 가까운 끝점 (SHP line direction 의 임의성 제거)
+- reservoir snap — 200m 이내 가장 가까운 송수관 끝점으로 흡수 (connected component 자동 포함)
+- default_demand_lps 0 → 0.1 (균등 demand 부여로 의미 있는 flow 발생)
+- 검증: flow ±3.4 LPS, 정류 82 / 역류 42 (정류 우세 = 수원→소비처 정합)
+- GenerateRequest 에 default_demand_lps 파라미터 추가 (운영자 조정 가능)
+
 ### 18-A.7 Phase 2.6 (2026-05-05 — GIS 페이지 시뮬 오버레이 + 토글)
 - pyproj 의존성 추가 (`EPANET_SHP_CRS=EPSG:5186` default — 당진시 검증)
 - 시뮬 응답에 lng/lat (WGS84) 포함 — junction.lng/lat, pipe.vertices_lnglat, reservoir.lng/lat, bbox_lnglat
