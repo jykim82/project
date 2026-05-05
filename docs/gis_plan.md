@@ -107,12 +107,17 @@ slm-dashboard/src/app/(dashboard)/admin/
   · 시뮬 #3 — 노드 128 / 링크 131 / 압력 50.0~50.0m / 유량 ±0.0205 LPS / 108ms
   · 표고 0 + 배수지 head 50m + 수요 0 LPS 환경에서의 정적 분포 (Phase 3 에서 표고·수요 입력 후 의미 있는 분포)
 
-### Phase 2.6 (2026-05-05 — GIS 페이지 시뮬 오버레이 + 토글)
+### Phase 2.6 (2026-05-05 ~ 06 — GIS 페이지 시뮬 오버레이 + 토글 + 흐름 화살표)
 - ✅ pyproj 추가 — `EPANET_SHP_CRS` 환경변수(default `EPSG:5186` Korea 2000 / Central Belt 2010 — 당진시 SHP 검증)
 - ✅ 시뮬 응답에 lng/lat 포함 — `junction.lng/lat`, `pipe.vertices_lnglat`, `reservoir.lng/lat`, `bbox_lnglat`
-- ✅ 신규 컴포넌트 `GisEpanetSimLayer.tsx` — 가장 최근 success 시뮬 자동 fetch + MapLibre source/layer 추가
-  · 노드: `circle` paint — 압력 색상 (HSL 240 파랑 → 0 빨강, 4구간 보간)
-  · 파이프: `line` paint — 정류 청록 / 역류 주황 / |flow|<2% max 회색, 굵기 0.6~4 LPS 절댓값 비례
+- ✅ 백엔드 `GET /admin/epanet/sim/latest?region=R01` — region 단위 가장 최근 success 시뮬 단일 쿼리 (artifact 무관)
+- ✅ 신규 컴포넌트 `GisEpanetSimLayer.tsx` — `/sim/latest` 단일 호출 + MapLibre source/layer 추가
+  · 노드: `circle` paint — 압력 색상 (HSL 240 파랑 → 0 빨강, 4구간 보간; 분포 없으면 단색 hsl(160) 폴백)
+  · 파이프: `line` paint — 정류 청록 / 역류 주황 / |flow|<2% max 회색, 굵기 0.6~4 LPS 절댓값 비례 (분포 없으면 회색 1.5px)
+  · 흐름 방향 화살표: SDF 화살표 SVG → addImage → `symbol` layer (`symbol-placement: line`)
+    · symbol-spacing 200~600px 줌별 보간 (널찍한 간격)
+    · 정류 0° / 역류 180° (`icon-rotate` case 표현식)
+    · 색상 paint = line-color 와 동일 분기
   · 배수지: `circle` 청록 + 외곽선
 - ✅ GIS 페이지 상단 툴바에 [EPANET 시뮬] 토글 버튼 (시설물 목록 옆)
   · 비활성 시 source/layer 자체 미추가 (성능 보호)
