@@ -8,10 +8,45 @@ wntr 미설치 시 ImportError 발생 — 호출 측에서 503 으로 응답.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+
+# SHP 좌표계 (당진시 SHP 검증 결과 EPSG:5186 = Korea 2000 / Central Belt 2010)
+# 다른 사이트는 환경변수로 변경 가능
+SHP_CRS = os.environ.get("EPANET_SHP_CRS", "EPSG:5186")
+WGS84 = "EPSG:4326"
+
+
+def _get_transformer():
+    """UTM/TM-K → WGS84 변환기 (한 번만 생성, lazy)."""
+    global _transformer
+    try:
+        return _transformer
+    except NameError:
+        pass
+    try:
+        from pyproj import Transformer
+        _transformer = Transformer.from_crs(SHP_CRS, WGS84, always_xy=True)
+        return _transformer
+    except Exception as e:
+        logger.warning(f"pyproj Transformer 생성 실패 ({e}) — lng/lat 변환 비활성")
+        _transformer = None
+        return None
+
+
+def _to_lnglat(x: float, y: float) -> Optional[tuple]:
+    tr = _get_transformer()
+    if tr is None:
+        return None
+    try:
+        lng, lat = tr.transform(x, y)
+        return (round(float(lng), 7), round(float(lat), 7))
+    except Exception:
+        return None
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +58,8 @@ class SimulationResult:
     junctions: list = field(default_factory=list)
     pipes: list = field(default_factory=list)
     reservoirs: list = field(default_factory=list)
-    bbox: Optional[tuple] = None     # (xmin, ymin, xmax, ymax)
+    bbox: Optional[tuple] = None         # (xmin, ymin, xmax, ymax) UTM
+    bbox_lnglat: Optional[tuple] = None  # (lng_min, lat_min, lng_max, lat_max)
     node_count: int = 0
     link_count: int = 0
     min_pressure_m: Optional[float] = None
@@ -132,12 +168,15 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                 coord = getattr(node, "coordinates", None)
                 cx = float(coord[0]) if coord else None
                 cy = float(coord[1]) if coord else None
+                lnglat = _to_lnglat(cx, cy) if cx is not None else None
                 p = float(pressure[nid].iloc[0])
                 h = float(head[nid].iloc[0]) if head is not None else None
                 d = float(demand[nid].iloc[0]) if demand is not None else None
                 junctions.append({
                     "id": nid,
                     "x": cx, "y": cy,
+                    "lng": lnglat[0] if lnglat else None,
+                    "lat": lnglat[1] if lnglat else None,
                     "pressure_m": round(p, 3),
                     "head_m": round(h, 3) if h is not None else None,
                     "demand_lps": round(d * 1000.0, 4) if d is not None else None,
@@ -161,13 +200,19 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                 start_id = pipe.start_node_name
                 end_id = pipe.end_node_name
                 vertices = list(getattr(pipe, "vertices", None) or [])
+                vertices_xy = [[float(vx), float(vy)] for vx, vy in vertices]
+                vertices_lnglat = [
+                    list(_to_lnglat(vx, vy) or [None, None])
+                    for vx, vy in vertices_xy
+                ]
                 f_cms = float(flow[lid].iloc[0])
                 v = float(velocity[lid].iloc[0]) if velocity is not None else None
                 hl = float(headloss[lid].iloc[0]) if headloss is not None else None
                 pipes.append({
                     "id": lid,
                     "start": start_id, "end": end_id,
-                    "vertices": [[float(vx), float(vy)] for vx, vy in vertices],
+                    "vertices": vertices_xy,
+                    "vertices_lnglat": vertices_lnglat,
                     "flow_lps": round(f_cms * 1000.0, 4),
                     "velocity_mps": round(v, 3) if v is not None else None,
                     "headloss_m": round(hl, 3) if hl is not None else None,
@@ -184,8 +229,14 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                 coord = getattr(node, "coordinates", None)
                 cx = float(coord[0]) if coord else None
                 cy = float(coord[1]) if coord else None
+                lnglat = _to_lnglat(cx, cy) if cx is not None else None
                 head_m = float(getattr(node, "head_timeseries", lambda: None)() or 0)
-                reservoirs.append({"id": rid, "x": cx, "y": cy, "head_m": round(head_m, 2)})
+                reservoirs.append({
+                    "id": rid, "x": cx, "y": cy,
+                    "lng": lnglat[0] if lnglat else None,
+                    "lat": lnglat[1] if lnglat else None,
+                    "head_m": round(head_m, 2),
+                })
                 if cx is not None:
                     all_xs.append(cx)
                     all_ys.append(cy)
@@ -198,12 +249,19 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
              round(max(all_xs), 4), round(max(all_ys), 4))
             if all_xs else None
         )
+        bbox_lnglat = None
+        if bbox:
+            sw = _to_lnglat(bbox[0], bbox[1])
+            ne = _to_lnglat(bbox[2], bbox[3])
+            if sw and ne:
+                bbox_lnglat = (sw[0], sw[1], ne[0], ne[1])
         return SimulationResult(
             success=True,
             junctions=junctions,
             pipes=pipes,
             reservoirs=reservoirs,
             bbox=bbox,
+            bbox_lnglat=bbox_lnglat,
             node_count=len(junctions),
             link_count=len(pipes),
             min_pressure_m=round(min(pressures_m), 3) if pressures_m else None,
