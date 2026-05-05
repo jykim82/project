@@ -419,6 +419,49 @@ def list_simulations(artifact_id: int, region: str = "R01", limit: int = 20) -> 
 
 
 # ===========================================================================
+# 6-D) GET /admin/epanet/sim/latest — region 별 가장 최근 success 시뮬
+# ===========================================================================
+
+@router.get("/sim/latest")
+def get_latest_simulation(region: str = "R01") -> dict:
+    """region 의 가장 최근 success 시뮬 상세 (artifact 무관). 없으면 404."""
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT sim_id, artifact_id, sim_type, status,
+                   node_count, link_count,
+                   min_pressure_m, max_pressure_m, avg_pressure_m,
+                   min_flow_lps, max_flow_lps,
+                   result_data, duration_ms, error_message,
+                   created_at, created_by
+              FROM tb_epanet_simulation_result
+             WHERE region = %s AND status = 'success'
+             ORDER BY created_at DESC
+             LIMIT 1
+            """,
+            (region,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, detail="성공한 시뮬레이션이 없습니다.")
+    return {
+        "sim_id": row[0], "artifact_id": row[1], "sim_type": row[2], "status": row[3],
+        "node_count": row[4], "link_count": row[5],
+        "min_pressure_m": row[6], "max_pressure_m": row[7], "avg_pressure_m": row[8],
+        "min_flow_lps": row[9], "max_flow_lps": row[10],
+        "result_data": row[11], "duration_ms": row[12], "error_message": row[13],
+        "created_at": row[14].isoformat() if row[14] else None,
+        "created_by": row[15],
+    }
+
+
+# ===========================================================================
 # 6-C) GET /admin/epanet/sim/{sim_id} — 시뮬레이션 상세 (result_data 포함)
 # ===========================================================================
 
