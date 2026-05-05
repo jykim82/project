@@ -150,6 +150,7 @@ class GenerateRequest(BaseModel):
     reservoir_file: Optional[str] = None
     default_diameter_mm: float = 100.0
     default_roughness_c: float = 120.0
+    default_demand_lps: float = 0.1               # 0 이면 flow 가 모두 0 → 화살표 방향 무의미
 
 
 @router.post("/inp/generate")
@@ -206,6 +207,7 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
             network_title=title,
             default_diameter_mm=req.default_diameter_mm,
             default_roughness_c=req.default_roughness_c,
+            default_demand_lps=req.default_demand_lps,
         )
         Path(out_path).write_text(result.inp_text, encoding="utf-8")
         size = os.path.getsize(out_path)

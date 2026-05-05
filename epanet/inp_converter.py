@@ -69,7 +69,10 @@ def convert_pipes_to_inp(
     network_title: str = "SLM EPANET Phase 1",
     default_diameter_mm: float = 100.0,
     default_roughness_c: float = 120.0,
-    default_demand_lps: float = 0.0,
+    # 노드별 균등 demand (LPS) — 0 이면 정수상태에서 flow 도 0 이라 흐름 방향 무의미.
+    # 약한 균등 demand 를 부여하면 reservoir → 말단 흐름이 자연스럽게 발생함.
+    # Phase 3 에서 계량기 기반 실측 demand 로 대체.
+    default_demand_lps: float = 0.1,
     default_elevation_m: float = 0.0,
 ) -> ConvertResult:
     """관망 SHP → EPANET .inp 텍스트.
@@ -82,7 +85,38 @@ def convert_pipes_to_inp(
     warnings: list[str] = []
     skipped = 0
 
-    # ---- 1) 파이프 SHP 처리 ----
+    # ---- 1) 배수지 SHP 먼저 로드 — pipe direction 결정에 사용 ----
+    reservoir_points: list[tuple] = []  # [(x, y, head_m, name), ...]
+    if reservoir_shp_path:
+        rpath = Path(reservoir_shp_path)
+        if not rpath.exists():
+            warnings.append(f"배수지 SHP 없음: {rpath.name}")
+        else:
+            for idx, rec in enumerate(iter_records(rpath), start=1):
+                if not rec.points:
+                    continue
+                pt = rec.points[0]
+                head_m = _resolve_attr(rec.attrs,
+                                       ("표고", "EL", "ELEVATION", "수위"),
+                                       default=50.0)
+                try:
+                    head_m = float(head_m) if head_m else 50.0
+                except (ValueError, TypeError):
+                    head_m = 50.0
+                name = _resolve_attr(rec.attrs,
+                                     ("시설명", "NAME", "관리번호"),
+                                     default=f"RES{idx:03d}")
+                reservoir_points.append((float(pt[0]), float(pt[1]),
+                                         head_m, str(name)))
+
+    def _min_sq_dist(p, points):
+        """p 에서 points 들 중 최소 제곱거리. points 비면 0."""
+        if not points:
+            return 0.0
+        return min((p[0] - rx) ** 2 + (p[1] - ry) ** 2
+                   for rx, ry, *_ in points)
+
+    # ---- 2) 파이프 SHP 처리 — start 는 reservoir 더 가까운 끝점 ----
     for shp in pipe_shp_paths:
         path = Path(shp)
         if not path.exists():
@@ -92,8 +126,12 @@ def convert_pipes_to_inp(
             if not rec.points or len(rec.points) < 2:
                 skipped += 1
                 continue
-            # 첫 점 ↔ 마지막 점만 한 파이프로 단순화 (Phase 1 직선 근사)
-            p1, p2 = rec.points[0], rec.points[-1]
+            pts = rec.points
+            p1, p2 = pts[0], pts[-1]
+            # 배수지 가까운 쪽이 start — 자연스러운 흐름 방향 (수원 → 소비처)
+            if reservoir_points and _min_sq_dist(p2, reservoir_points) < _min_sq_dist(p1, reservoir_points):
+                pts = list(reversed(pts))
+                p1, p2 = pts[0], pts[-1]
             n1, n2 = _node_id(*p1), _node_id(*p2)
             if n1 == n2:
                 skipped += 1
@@ -104,17 +142,17 @@ def convert_pipes_to_inp(
                                         ("구경", "DIA", "DIAMETER", "관경"),
                                         default=default_diameter_mm)
             try:
-                length_m = float(length_m) if length_m else _euclidean_length(rec.points)
+                length_m = float(length_m) if length_m else _euclidean_length(pts)
             except (ValueError, TypeError):
-                length_m = _euclidean_length(rec.points)
+                length_m = _euclidean_length(pts)
             try:
                 diameter_mm = float(diameter_mm) if diameter_mm else default_diameter_mm
             except (ValueError, TypeError):
                 diameter_mm = default_diameter_mm
 
             pipe_id = f"P{len(pipes) + 1:06d}"
-            # 중간 vertex (첫·끝점 제외) — INP [VERTICES] 섹션에 보존하여 굴곡 표현
-            mid_vertices = [(float(x), float(y)) for x, y in rec.points[1:-1]]
+            # 중간 vertex (첫·끝점 제외) — 정렬 후 pts 기준
+            mid_vertices = [(float(x), float(y)) for x, y in pts[1:-1]]
             pipes.append({
                 "id": pipe_id,
                 "n1": n1, "n2": n2,
@@ -131,30 +169,30 @@ def convert_pipes_to_inp(
                         "demand": default_demand_lps,
                     }
 
-    # ---- 2) 배수지 SHP 처리 ----
-    if reservoir_shp_path:
-        rpath = Path(reservoir_shp_path)
-        if not rpath.exists():
-            warnings.append(f"배수지 SHP 없음: {rpath.name}")
-        else:
-            for idx, rec in enumerate(iter_records(rpath), start=1):
-                if not rec.points:
-                    continue
-                pt = rec.points[0]
-                rid = _node_id(*pt)
-                head_m = _resolve_attr(rec.attrs,
-                                       ("표고", "EL", "ELEVATION", "수위"),
-                                       default=50.0)
-                try:
-                    head_m = float(head_m) if head_m else 50.0
-                except (ValueError, TypeError):
-                    head_m = 50.0
-                name = _resolve_attr(rec.attrs,
-                                     ("시설명", "NAME", "관리번호"),
-                                     default=f"RES{idx:03d}")
-                reservoirs[rid] = {"coord": pt, "head": head_m, "name": str(name)}
-                # 배수지 노드는 junction 에서 제외 (reservoir 로 분류)
-                junctions.pop(rid, None)
+    # ---- 3) 배수지 노드를 reservoirs dict 에 등록 ----
+    # reservoir SHP 의 좌표가 송수관 끝점과 미세하게 어긋나면 다른 connected
+    # component 로 분리되어 시뮬에 빠짐. 200m 이내 가장 가까운 junction 의 좌표로
+    # snap 해서 같은 노드 ID 를 갖게 함 → reservoir 가 시뮬 그래프에 포함되어
+    # 의미 있는 flow 방향이 산출됨.
+    SNAP_THRESHOLD_M_SQ = 200.0 ** 2
+    snapped = 0
+    for rx, ry, head_m, name in reservoir_points:
+        if junctions:
+            best_jid = min(
+                junctions.keys(),
+                key=lambda jid: (junctions[jid]["coord"][0] - rx) ** 2
+                                + (junctions[jid]["coord"][1] - ry) ** 2,
+            )
+            bx, by = junctions[best_jid]["coord"]
+            d_sq = (bx - rx) ** 2 + (by - ry) ** 2
+            if d_sq <= SNAP_THRESHOLD_M_SQ:
+                rx, ry = bx, by  # snap
+                snapped += 1
+        rid = _node_id(rx, ry)
+        reservoirs[rid] = {"coord": (rx, ry), "head": head_m, "name": name}
+        junctions.pop(rid, None)
+    if snapped:
+        warnings.append(f"reservoir {snapped}개를 가까운 송수관 끝점으로 snap (≤200m)")
 
     # ---- 3) .inp 텍스트 구성 ----
     inp = _build_inp_text(
