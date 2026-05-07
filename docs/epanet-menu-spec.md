@@ -251,3 +251,14 @@ INSERT INTO tb_menu VALUES
   · 사이드바 amber/red 점 (`useEpanetDataQuality` 훅 + `MENU_DATA_QUALITY_KEY` 매핑)
   · sidebar-menus.ts fallback + dataQualityKey 필드
   · 사양 §1.1~1.3 의 임시 코드 (M030-/M040-/M050-) 는 실제로 M003-/M006-/M008- 로 등록됨
+- 2026-05-07 — Phase 3.1 구현 완료 (표고 입력)
+  · Migration 0067 — `tb_epanet_elevation_point` (region/x/y/elevation_m/source/label/notes)
+  · 백엔드 `endpoints/epanet.py`:
+    - GET/POST/DELETE `/admin/epanet/elevations` (단건/일괄/CSV-bulk)
+    - `inp_converter.py` IDW 보간 (k=4, power=2) — 운영자 입력 표고를 모든 junction 에 부여
+    - `GenerateRequest.use_elevation_points` (default true), `use_synthetic_elevation` (default false)
+    - 합성 표고: NW 30m → SE 5m 그라디언트 (배수지 head 50m 보다 충분히 낮게, 음수 압력 방지)
+  · 프런트 `EpanetElevationInput` 컴포넌트 — 단건 입력 / CSV 업로드 / 표 / 일괄 삭제
+  · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
+  · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
+  · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
