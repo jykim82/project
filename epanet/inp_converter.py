@@ -77,6 +77,9 @@ def convert_pipes_to_inp(
     # Phase 3.1 표고 입력
     elevation_points: Optional[list[tuple]] = None,  # [(x, y, elevation_m), ...]
     use_synthetic_elevation: bool = False,           # 시연용 합성 표고 (좌표 기반 그라디언트)
+    # Phase 3.2 수요 입력
+    demand_points: Optional[list[tuple]] = None,     # [(x, y, demand_lps), ...]
+    use_synthetic_demand: bool = False,              # 시연용 합성 demand (도심=고, 외곽=저)
 ) -> ConvertResult:
     """관망 SHP → EPANET .inp 텍스트.
 
@@ -173,12 +176,10 @@ def convert_pipes_to_inp(
                     }
 
     # ---- 2.5) 표고 보간 (IDW) — junction.elevation 부여 ----
-    # 우선순위: elevation_points (운영자 입력) → use_synthetic_elevation (시연용)
-    if elevation_points and junctions:
-        for nid, j in junctions.items():
-            jx, jy = j["coord"]
-            j["elevation"] = _idw_elevation(jx, jy, elevation_points, default=default_elevation_m)
-    elif use_synthetic_elevation and junctions:
+    # 우선순위: use_synthetic_elevation (명시적 시연 모드) > elevation_points (운영자 입력) > default
+    # 운영자 입력 점이 1~2개로 너무 적으면 IDW 결과가 모두 동일해져 의미 없음 →
+    # 합성 모드를 명시적으로 우선시킴.
+    if use_synthetic_elevation and junctions:
         # 합성: bbox 중심 기준 0~50m 그라디언트 (NW=고지대 → SE=저지대)
         all_xs = [j["coord"][0] for j in junctions.values()]
         all_ys = [j["coord"][1] for j in junctions.values()]
@@ -194,6 +195,38 @@ def convert_pipes_to_inp(
                 tx = (jx - xmin) / xspan
                 ty = (ymax - jy) / yspan
                 j["elevation"] = round(30.0 - (tx + ty) * 0.5 * 25.0, 2)
+    elif elevation_points and junctions:
+        for nid, j in junctions.items():
+            jx, jy = j["coord"]
+            j["elevation"] = _idw_elevation(jx, jy, elevation_points,
+                                             default=default_elevation_m)
+
+    # ---- 2.6) 수요 보간 (IDW) — junction.demand 부여 (Phase 3.2) ----
+    # 우선순위: use_synthetic_demand > demand_points > default
+    if use_synthetic_demand and junctions:
+        # 합성: bbox 중심에 가까울수록 demand 1 LPS, 외곽 0.05 LPS 그라디언트.
+        # 도심에 수요가 집중되는 일반적 분포 흉내 — 시연용.
+        all_xs = [j["coord"][0] for j in junctions.values()]
+        all_ys = [j["coord"][1] for j in junctions.values()]
+        if all_xs:
+            cx = (min(all_xs) + max(all_xs)) / 2.0
+            cy = (min(all_ys) + max(all_ys)) / 2.0
+            max_r = max(
+                (max(all_xs) - min(all_xs)) / 2.0,
+                (max(all_ys) - min(all_ys)) / 2.0,
+                1.0,
+            )
+            for nid, j in junctions.items():
+                jx, jy = j["coord"]
+                d = ((jx - cx) ** 2 + (jy - cy) ** 2) ** 0.5
+                t = min(1.0, d / max_r)
+                # 중심 1.0 LPS → 외곽 0.05 LPS (선형)
+                j["demand"] = round(1.0 - t * 0.95, 4)
+    elif demand_points and junctions:
+        for nid, j in junctions.items():
+            jx, jy = j["coord"]
+            j["demand"] = _idw_elevation(jx, jy, demand_points,
+                                          default=default_demand_lps)
 
     # ---- 3) 배수지 노드를 reservoirs dict 에 등록 ----
     # reservoir SHP 의 좌표가 송수관 끝점과 미세하게 어긋나면 다른 connected

@@ -238,6 +238,163 @@ def delete_all_elevation_points(region: str = "R01") -> dict:
 
 
 # ===========================================================================
+# E2) 수요 입력 CRUD (Phase 3.2)
+# ===========================================================================
+
+class DemandPointIn(BaseModel):
+    region: str = "R01"
+    x: float
+    y: float
+    demand_lps: float
+    label: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/demands")
+def list_demand_points(region: str = "R01", limit: int = 500) -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT point_id, region, x, y, demand_lps, source, label, notes,
+                   created_at, created_by
+              FROM tb_epanet_demand_point
+             WHERE region = %s
+             ORDER BY created_at DESC
+             LIMIT %s
+            """,
+            (region, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        items = [{
+            "point_id": r[0], "region": r[1],
+            "x": float(r[2]), "y": float(r[3]),
+            "demand_lps": float(r[4]),
+            "source": r[5], "label": r[6], "notes": r[7],
+            "created_at": r[8].isoformat() if r[8] else None,
+            "created_by": r[9],
+        } for r in rows]
+        return {"items": items, "total": len(items)}
+    finally:
+        conn.close()
+
+
+@router.post("/demands")
+def add_demand_point(req: DemandPointIn, request: Request) -> dict:
+    _ensure_enabled(req.region)
+    user_id = _get_user_id(request)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO tb_epanet_demand_point
+                (region, x, y, demand_lps, source, label, notes, created_by)
+            VALUES (%s, %s, %s, %s, 'manual', %s, %s, %s)
+            RETURNING point_id
+            """,
+            (req.region, req.x, req.y, req.demand_lps, req.label, req.notes, user_id),
+        )
+        pid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        return {"point_id": pid}
+    finally:
+        conn.close()
+
+
+@router.post("/demands/bulk-csv")
+async def upload_demands_csv(request: Request) -> dict:
+    """CSV 본문 업로드. 컬럼: x,y,demand_lps[,label,notes]"""
+    region = request.query_params.get("region", "R01")
+    _ensure_enabled(region)
+    user_id = _get_user_id(request)
+    body = (await request.body()).decode("utf-8", errors="ignore")
+    if not body.strip():
+        raise HTTPException(400, detail="빈 CSV")
+
+    import csv
+    from io import StringIO
+    reader = csv.reader(StringIO(body))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(400, detail="CSV 파싱 실패")
+
+    def _is_header(r: list) -> bool:
+        try:
+            float(r[0]); float(r[1]); float(r[2])
+            return False
+        except (ValueError, IndexError):
+            return True
+    data_rows = rows[1:] if rows and _is_header(rows[0]) else rows
+
+    inserted = 0
+    errors: list = []
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        for i, r in enumerate(data_rows, start=1):
+            try:
+                if len(r) < 3:
+                    errors.append(f"행 {i}: 컬럼 부족 ({len(r)})")
+                    continue
+                x = float(r[0]); y = float(r[1]); d = float(r[2])
+                label = r[3].strip() if len(r) > 3 and r[3].strip() else None
+                notes = r[4].strip() if len(r) > 4 and r[4].strip() else None
+                cur.execute(
+                    """
+                    INSERT INTO tb_epanet_demand_point
+                        (region, x, y, demand_lps, source, label, notes, created_by)
+                    VALUES (%s, %s, %s, %s, 'csv', %s, %s, %s)
+                    """,
+                    (region, x, y, d, label, notes, user_id),
+                )
+                inserted += 1
+            except Exception as e:
+                errors.append(f"행 {i}: {e}")
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+    return {"inserted": inserted, "errors": errors[:20], "total_errors": len(errors)}
+
+
+@router.delete("/demands/{point_id}")
+def delete_demand_point(point_id: int, region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM tb_epanet_demand_point WHERE point_id = %s AND region = %s",
+            (point_id, region),
+        )
+        conn.commit()
+        cur.close()
+        return {"deleted": point_id}
+    finally:
+        conn.close()
+
+
+@router.delete("/demands")
+def delete_all_demand_points(region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tb_epanet_demand_point WHERE region = %s", (region,))
+        n = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"deleted_count": n}
+    finally:
+        conn.close()
+
+
+# ===========================================================================
 # 0) GET /admin/epanet/data-quality — 메뉴별 데이터 품질 게이트
 # ===========================================================================
 
@@ -325,15 +482,18 @@ def _check_data_quality(region: str) -> dict:
                 "detail": "모든 reservoir head 동일 (default 가능성)",
             }
 
-        # elevation
+        # elevation — 시뮬 결과의 elevation_m 우선, 없으면 head_m - pressure_m 추정
         junctions = rd.get("junctions") or []
-        # head_m - pressure_m ≈ elevation
         elevs = []
         for j in junctions:
-            h = j.get("head_m")
-            p = j.get("pressure_m")
-            if h is not None and p is not None:
-                elevs.append(h - p)
+            ev = j.get("elevation_m")
+            if ev is not None:
+                elevs.append(float(ev))
+            else:
+                h = j.get("head_m")
+                p = j.get("pressure_m")
+                if h is not None and p is not None:
+                    elevs.append(h - p)
         if elevs:
             stddev = (sum((e - sum(elevs) / len(elevs)) ** 2 for e in elevs) / len(elevs)) ** 0.5
             if stddev > 0.5:
@@ -531,6 +691,8 @@ class GenerateRequest(BaseModel):
     default_demand_lps: float = 0.1               # 0 이면 flow 가 모두 0 → 화살표 방향 무의미
     use_elevation_points: bool = True             # tb_epanet_elevation_point 의 입력 표고를 IDW 보간
     use_synthetic_elevation: bool = False         # 시연용 합성 표고 (운영자 입력 전 미리보기)
+    use_demand_points: bool = True                # tb_epanet_demand_point 의 입력 수요를 IDW 보간
+    use_synthetic_demand: bool = False            # 시연용 합성 demand (도심 고/외곽 저)
 
 
 @router.post("/inp/generate")
@@ -581,17 +743,25 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
     )
 
     try:
-        # 표고 입력 조회 (운영자 입력 점들 → IDW 보간 입력)
+        # 표고·수요 입력 조회 (운영자 입력 점들 → IDW 보간 입력)
         elevation_points: list = []
-        if req.use_elevation_points:
+        demand_points: list = []
+        if req.use_elevation_points or req.use_demand_points:
             conn_e = get_db()
             try:
                 cur = conn_e.cursor()
-                cur.execute(
-                    "SELECT x, y, elevation_m FROM tb_epanet_elevation_point WHERE region = %s",
-                    (req.region,),
-                )
-                elevation_points = [(float(r[0]), float(r[1]), float(r[2])) for r in cur.fetchall()]
+                if req.use_elevation_points:
+                    cur.execute(
+                        "SELECT x, y, elevation_m FROM tb_epanet_elevation_point WHERE region = %s",
+                        (req.region,),
+                    )
+                    elevation_points = [(float(r[0]), float(r[1]), float(r[2])) for r in cur.fetchall()]
+                if req.use_demand_points:
+                    cur.execute(
+                        "SELECT x, y, demand_lps FROM tb_epanet_demand_point WHERE region = %s",
+                        (req.region,),
+                    )
+                    demand_points = [(float(r[0]), float(r[1]), float(r[2])) for r in cur.fetchall()]
                 cur.close()
             finally:
                 conn_e.close()
@@ -605,6 +775,8 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
             default_demand_lps=req.default_demand_lps,
             elevation_points=elevation_points if elevation_points else None,
             use_synthetic_elevation=req.use_synthetic_elevation,
+            demand_points=demand_points if demand_points else None,
+            use_synthetic_demand=req.use_synthetic_demand,
         )
         Path(out_path).write_text(result.inp_text, encoding="utf-8")
         size = os.path.getsize(out_path)

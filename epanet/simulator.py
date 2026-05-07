@@ -169,6 +169,7 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                 cx = float(coord[0]) if coord else None
                 cy = float(coord[1]) if coord else None
                 lnglat = _to_lnglat(cx, cy) if cx is not None else None
+                elev = float(getattr(node, "elevation", 0) or 0)
                 p = float(pressure[nid].iloc[0])
                 h = float(head[nid].iloc[0]) if head is not None else None
                 d = float(demand[nid].iloc[0]) if demand is not None else None
@@ -177,6 +178,7 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                     "x": cx, "y": cy,
                     "lng": lnglat[0] if lnglat else None,
                     "lat": lnglat[1] if lnglat else None,
+                    "elevation_m": round(elev, 3),
                     "pressure_m": round(p, 3),
                     "head_m": round(h, 3) if h is not None else None,
                     "demand_lps": round(d * 1000.0, 4) if d is not None else None,
