@@ -2,6 +2,24 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-07 — EPANET Phase 2.7) [메뉴 뼈대 + 데이터 품질 게이트]
+
+**10 메뉴 등록 + 데이터 품질 API + DataQualityCard 3 단계 UX + 사이드바 점**
+
+1. **Migration 0066** — tb_menu 10건 (M003-9/10, M006-4~7, M008+M008-1~3) + tb_auth_menu 20건
+2. **백엔드** — `GET /admin/epanet/data-quality` 9 항목 체크 + 메뉴별 ready/warning/blocked 분류
+3. **프런트**
+   - `DataQualityCard` 컴포넌트 (✅ Ready / 🟡 Warning + [참고용] 워터마크 / 🔴 Blocked + [관리 페이지로 이동])
+   - `EpanetMenuPlaceholder` + 9 placeholder 페이지 (/monitoring/{leak-suspicious,headloss-anomaly}, /crisis/{valve-impact,pipe-break,pump-control,scenario-diff}, /analysis/{replacement-candidates,network-aging,water-quality})
+   - 사이드바 amber/red 점 (`useEpanetDataQuality` 훅 + `MENU_DATA_QUALITY_KEY` 매핑)
+   - sidebar-menus.ts SidebarMenuChildDef 분리 + 9 fallback
+4. **Playwright 검증** — Blocked/Warning 카드 시각 확인, 콘솔 에러 0
+5. **분류 결과 (현재 데이터)**: warning 5 / blocked 5 / ready 0 — 의도대로 모든 신규 메뉴가 데이터 부족 상태로 표시되어 운영자에게 명확히 안내됨
+
+**커밋 체인**: `slm@TBD` + `slm-dashboard@TBD` + `web@TBD`
+
+---
+
 ### 완료 (2026-05-06 — EPANET Phase 2.6 후속) [흐름 방향 정합성]
 
 **pipe direction 정렬 + reservoir snap + 균등 demand → 의미 있는 화살표**

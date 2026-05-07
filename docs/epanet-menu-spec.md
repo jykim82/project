@@ -243,3 +243,11 @@ INSERT INTO tb_menu VALUES
 
 ## 6. 변경 이력
 - 2026-05-06 — v1 초안 작성 (사용자 결정: 추천안 채택, 데이터 품질 안내 포함)
+- 2026-05-07 — Phase 2.7 구현 완료
+  · Migration 0066 — 메뉴 10건 (M003-9/10, M006-4~7, M008 그룹 + M008-1~3) + 권한 20건
+  · 백엔드 `GET /admin/epanet/data-quality` — 9 항목 체크 + 메뉴별 ready/warning/blocked 분류
+  · 프런트 `DataQualityCard` 컴포넌트 (Ready/Warning/Blocked 3 단계)
+  · `EpanetMenuPlaceholder` 공통 페이지 + 9 placeholder 페이지
+  · 사이드바 amber/red 점 (`useEpanetDataQuality` 훅 + `MENU_DATA_QUALITY_KEY` 매핑)
+  · sidebar-menus.ts fallback + dataQualityKey 필드
+  · 사양 §1.1~1.3 의 임시 코드 (M030-/M040-/M050-) 는 실제로 M003-/M006-/M008- 로 등록됨
