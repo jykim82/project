@@ -80,6 +80,164 @@ def _classify_shp(paths: list[Path]) -> dict:
 
 
 # ===========================================================================
+# E1) 표고 입력 CRUD (Phase 3.1)
+# ===========================================================================
+
+class ElevationPointIn(BaseModel):
+    region: str = "R01"
+    x: float
+    y: float
+    elevation_m: float
+    label: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.get("/elevations")
+def list_elevation_points(region: str = "R01", limit: int = 500) -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT point_id, region, x, y, elevation_m, source, label, notes,
+                   created_at, created_by
+              FROM tb_epanet_elevation_point
+             WHERE region = %s
+             ORDER BY created_at DESC
+             LIMIT %s
+            """,
+            (region, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        items = [{
+            "point_id": r[0], "region": r[1],
+            "x": float(r[2]), "y": float(r[3]),
+            "elevation_m": float(r[4]),
+            "source": r[5], "label": r[6], "notes": r[7],
+            "created_at": r[8].isoformat() if r[8] else None,
+            "created_by": r[9],
+        } for r in rows]
+        return {"items": items, "total": len(items)}
+    finally:
+        conn.close()
+
+
+@router.post("/elevations")
+def add_elevation_point(req: ElevationPointIn, request: Request) -> dict:
+    _ensure_enabled(req.region)
+    user_id = _get_user_id(request)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO tb_epanet_elevation_point
+                (region, x, y, elevation_m, source, label, notes, created_by)
+            VALUES (%s, %s, %s, %s, 'manual', %s, %s, %s)
+            RETURNING point_id
+            """,
+            (req.region, req.x, req.y, req.elevation_m, req.label, req.notes, user_id),
+        )
+        pid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        return {"point_id": pid}
+    finally:
+        conn.close()
+
+
+@router.post("/elevations/bulk-csv")
+async def upload_elevations_csv(request: Request) -> dict:
+    """CSV 본문 업로드 (text/plain 또는 multipart). 컬럼: x,y,elevation_m[,label,notes]"""
+    region = request.query_params.get("region", "R01")
+    _ensure_enabled(region)
+    user_id = _get_user_id(request)
+    body = (await request.body()).decode("utf-8", errors="ignore")
+    if not body.strip():
+        raise HTTPException(400, detail="빈 CSV")
+
+    import csv
+    from io import StringIO
+    reader = csv.reader(StringIO(body))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(400, detail="CSV 파싱 실패")
+
+    # 첫 행이 헤더인지 추론 (숫자 변환 가능 여부)
+    def _is_header(r: list) -> bool:
+        try:
+            float(r[0]); float(r[1]); float(r[2])
+            return False
+        except (ValueError, IndexError):
+            return True
+    data_rows = rows[1:] if rows and _is_header(rows[0]) else rows
+
+    inserted = 0
+    errors: list = []
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        for i, r in enumerate(data_rows, start=1):
+            try:
+                if len(r) < 3:
+                    errors.append(f"행 {i}: 컬럼 부족 ({len(r)})")
+                    continue
+                x = float(r[0]); y = float(r[1]); z = float(r[2])
+                label = r[3].strip() if len(r) > 3 and r[3].strip() else None
+                notes = r[4].strip() if len(r) > 4 and r[4].strip() else None
+                cur.execute(
+                    """
+                    INSERT INTO tb_epanet_elevation_point
+                        (region, x, y, elevation_m, source, label, notes, created_by)
+                    VALUES (%s, %s, %s, %s, 'csv', %s, %s, %s)
+                    """,
+                    (region, x, y, z, label, notes, user_id),
+                )
+                inserted += 1
+            except Exception as e:
+                errors.append(f"행 {i}: {e}")
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+    return {"inserted": inserted, "errors": errors[:20], "total_errors": len(errors)}
+
+
+@router.delete("/elevations/{point_id}")
+def delete_elevation_point(point_id: int, region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM tb_epanet_elevation_point WHERE point_id = %s AND region = %s",
+            (point_id, region),
+        )
+        conn.commit()
+        cur.close()
+        return {"deleted": point_id}
+    finally:
+        conn.close()
+
+
+@router.delete("/elevations")
+def delete_all_elevation_points(region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tb_epanet_elevation_point WHERE region = %s", (region,))
+        n = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"deleted_count": n}
+    finally:
+        conn.close()
+
+
+# ===========================================================================
 # 0) GET /admin/epanet/data-quality — 메뉴별 데이터 품질 게이트
 # ===========================================================================
 
@@ -371,6 +529,8 @@ class GenerateRequest(BaseModel):
     default_diameter_mm: float = 100.0
     default_roughness_c: float = 120.0
     default_demand_lps: float = 0.1               # 0 이면 flow 가 모두 0 → 화살표 방향 무의미
+    use_elevation_points: bool = True             # tb_epanet_elevation_point 의 입력 표고를 IDW 보간
+    use_synthetic_elevation: bool = False         # 시연용 합성 표고 (운영자 입력 전 미리보기)
 
 
 @router.post("/inp/generate")
@@ -421,6 +581,21 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
     )
 
     try:
+        # 표고 입력 조회 (운영자 입력 점들 → IDW 보간 입력)
+        elevation_points: list = []
+        if req.use_elevation_points:
+            conn_e = get_db()
+            try:
+                cur = conn_e.cursor()
+                cur.execute(
+                    "SELECT x, y, elevation_m FROM tb_epanet_elevation_point WHERE region = %s",
+                    (req.region,),
+                )
+                elevation_points = [(float(r[0]), float(r[1]), float(r[2])) for r in cur.fetchall()]
+                cur.close()
+            finally:
+                conn_e.close()
+
         result = convert_pipes_to_inp(
             pipe_shp_paths=pipe_paths,
             reservoir_shp_path=reservoir_path,
@@ -428,6 +603,8 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
             default_diameter_mm=req.default_diameter_mm,
             default_roughness_c=req.default_roughness_c,
             default_demand_lps=req.default_demand_lps,
+            elevation_points=elevation_points if elevation_points else None,
+            use_synthetic_elevation=req.use_synthetic_elevation,
         )
         Path(out_path).write_text(result.inp_text, encoding="utf-8")
         size = os.path.getsize(out_path)

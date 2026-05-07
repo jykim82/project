@@ -71,9 +71,12 @@ def convert_pipes_to_inp(
     default_roughness_c: float = 120.0,
     # 노드별 균등 demand (LPS) — 0 이면 정수상태에서 flow 도 0 이라 흐름 방향 무의미.
     # 약한 균등 demand 를 부여하면 reservoir → 말단 흐름이 자연스럽게 발생함.
-    # Phase 3 에서 계량기 기반 실측 demand 로 대체.
+    # Phase 3.2 에서 계량기 기반 실측 demand 로 대체.
     default_demand_lps: float = 0.1,
     default_elevation_m: float = 0.0,
+    # Phase 3.1 표고 입력
+    elevation_points: Optional[list[tuple]] = None,  # [(x, y, elevation_m), ...]
+    use_synthetic_elevation: bool = False,           # 시연용 합성 표고 (좌표 기반 그라디언트)
 ) -> ConvertResult:
     """관망 SHP → EPANET .inp 텍스트.
 
@@ -169,6 +172,29 @@ def convert_pipes_to_inp(
                         "demand": default_demand_lps,
                     }
 
+    # ---- 2.5) 표고 보간 (IDW) — junction.elevation 부여 ----
+    # 우선순위: elevation_points (운영자 입력) → use_synthetic_elevation (시연용)
+    if elevation_points and junctions:
+        for nid, j in junctions.items():
+            jx, jy = j["coord"]
+            j["elevation"] = _idw_elevation(jx, jy, elevation_points, default=default_elevation_m)
+    elif use_synthetic_elevation and junctions:
+        # 합성: bbox 중심 기준 0~50m 그라디언트 (NW=고지대 → SE=저지대)
+        all_xs = [j["coord"][0] for j in junctions.values()]
+        all_ys = [j["coord"][1] for j in junctions.values()]
+        if all_xs:
+            xmin, xmax = min(all_xs), max(all_xs)
+            ymin, ymax = min(all_ys), max(all_ys)
+            xspan = max(1.0, xmax - xmin)
+            yspan = max(1.0, ymax - ymin)
+            for nid, j in junctions.items():
+                jx, jy = j["coord"]
+                # NW (작은 x, 큰 y) = 고지대 30m, SE (큰 x, 작은 y) = 저지대 5m.
+                # 범위는 배수지 head(default 50m) 보다 충분히 낮게 — 음수 압력 방지.
+                tx = (jx - xmin) / xspan
+                ty = (ymax - jy) / yspan
+                j["elevation"] = round(30.0 - (tx + ty) * 0.5 * 25.0, 2)
+
     # ---- 3) 배수지 노드를 reservoirs dict 에 등록 ----
     # reservoir SHP 의 좌표가 송수관 끝점과 미세하게 어긋나면 다른 connected
     # component 로 분리되어 시뮬에 빠짐. 200m 이내 가장 가까운 junction 의 좌표로
@@ -221,6 +247,37 @@ def _euclidean_length(points: list) -> float:
         dx, dy = x2 - x1, y2 - y1
         total += (dx * dx + dy * dy) ** 0.5
     return max(0.1, total)
+
+
+def _idw_elevation(qx: float, qy: float, points: list, *,
+                   k: int = 4, power: float = 2.0,
+                   default: float = 0.0) -> float:
+    """IDW(역거리가중) 보간 — 가까운 k 개 점의 elevation 가중 평균.
+
+    points: [(x, y, elevation_m), ...]
+    동일 좌표(거리 0)면 그 점의 표고 그대로 반환.
+    """
+    if not points:
+        return default
+    # 거리 계산 + 정렬
+    dists = []
+    for px, py, pz in points:
+        d2 = (qx - px) ** 2 + (qy - py) ** 2
+        if d2 < 1e-6:
+            return float(pz)  # 같은 점
+        dists.append((d2, pz))
+    dists.sort(key=lambda t: t[0])
+    nearest = dists[:k]
+    # IDW weighted average
+    total_w = 0.0
+    total_wz = 0.0
+    for d2, pz in nearest:
+        w = 1.0 / (d2 ** (power / 2.0))
+        total_w += w
+        total_wz += w * pz
+    if total_w == 0:
+        return default
+    return round(total_wz / total_w, 2)
 
 
 def _build_inp_text(*, title: str, junctions: dict, pipes: list,
