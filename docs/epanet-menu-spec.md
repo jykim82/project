@@ -262,3 +262,14 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-07 — Phase 3.2 구현 완료 (수요 입력)
+  · Migration 0068 — `tb_epanet_demand_point` (region/x/y/demand_lps/source/label/notes)
+  · 백엔드:
+    - `/admin/epanet/demands` GET/POST/DELETE + `bulk-csv` (CSV 본문 업로드)
+    - `inp_converter.py` 에 demand_points + use_synthetic_demand 옵션 추가
+    - 합성 수요: bbox 중심 1.0 LPS → 외곽 0.05 LPS 그라디언트
+    - 우선순위 명확화: 합성 옵션이 운영자 입력보다 우선 (시연 모드 명시적 의도)
+  · simulator.py: junction.elevation_m 도 시뮬 응답에 포함 (data-quality 검증 정확도 향상)
+  · 프런트 `EpanetDemandInput` 컴포넌트 + admin/epanet 변환 카드에 수요 옵션 체크박스
+  · 검증: 합성 표고+수요 ON → 시뮬 #12 압력 20.01~41.66m / flow -11.36~+20.24 LPS / elev distinct 96 / demand distinct 47
+  · 메뉴 분류: ready 4 (gis-flow/pipe-break/scenario-diff/replacement-candidates) / warning 1 (headloss-anomaly) / blocked 5
