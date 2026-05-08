@@ -262,6 +262,15 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-08 — Phase 3.3b 구현 완료 (leak-suspicious 분석 활성)
+  · 백엔드 `GET /admin/epanet/leak-suspicious?region=R01&threshold_m=5&hours=1`
+    - 매핑별 실측 (tb_tag_raw_data 최근 N시간 평균 + offset) vs 시뮬 (KNN 노드) 압력 차이
+    - |diff| > threshold → 의심 분류, 의심 → 차이 큰 순 정렬
+    - 응답: items[{tag_sn, label, observed_m, sim_pressure_m, diff_m, suspicious, dist_to_node_m, ...}]
+  · 프런트 `LeakSuspiciousAnalysis` 컴포넌트 — 임계값/시간 슬라이더 + KPI 3개 + 매핑별 비교 표 (의심 행 destructive)
+  · `/monitoring/leak-suspicious/page.tsx` — DataQualityCard 안에 분석 컴포넌트 (ready/warning 시 노출, blocked 시 placeholder)
+  · 검증: 매핑 5건 (압력 태그) → 시뮬 #12 비교 → 의심 5/5 (합성 시뮬 30~35m vs 실측 5~9m, 차이 24~26m)
+  · 운영 환경에선 표고/수요 입력 후 차이가 5m 미만으로 수렴 (정상)
 - 2026-05-08 — Phase 3.3a 구현 완료 (센서 매핑 인프라)
   · Migration 0069 — `tb_epanet_meter_map` (region/tag_sn/x/y/calibration_offset_m/label/notes, UNIQUE region+tag_sn)
   · 백엔드 `/admin/epanet/meters` GET/POST/DELETE + `bulk-csv` (CSV 형식: tag_sn,x,y[,offset,label,notes])
