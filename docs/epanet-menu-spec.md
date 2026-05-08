@@ -262,6 +262,21 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-08 — Phase 3.3c 구현 완료 (headloss-anomaly 분석 + 메뉴 토글 인프라)
+  · **메뉴 토글 인프라**:
+    - Migration 0070 — `tb_epanet_menu_setting` (region/menu_key/enabled, 10 메뉴 default Y)
+    - GET/PUT `/admin/epanet/menu-settings` — region 별 토글 조회·변경
+    - data-quality 응답에 `menus_disabled` 추가 (운영자 비활성)
+    - 사이드바: disabled 메뉴 hidden 처리
+    - DataQualityCard: disabled 상태 안내 ("관리자가 비활성화" + [관리 페이지] 버튼)
+    - `EpanetMenuToggles` 컴포넌트 (10 스위치 + 활성/비활성 카운트)
+  · **Phase 3.3c — headloss-anomaly 분석**:
+    - GET `/admin/epanet/headloss-anomaly?z_threshold=2`
+    - WNTRSimulator 가 headloss 안 채우므로 Hazen-Williams 즉석 계산 (HL = 10.67·Q^1.852 / C^1.852·D^4.87 · L)
+    - 50mm 단위 구경 그룹 → 그룹별 평균/stddev → z-score
+    - 응답: items[{id, diameter, length, unit_loss, group_mean, z_score, anomaly}]
+    - 프런트 `HeadlossAnomalyAnalysis` — z_threshold 슬라이더 + KPI 3 + 파이프별 표 (상위 50건)
+    - 검증: sim #12 → 131 파이프 / 13 구경 그룹 / 9건 이상 (z > 2)
 - 2026-05-08 — Phase 3.3b 구현 완료 (leak-suspicious 분석 활성)
   · 백엔드 `GET /admin/epanet/leak-suspicious?region=R01&threshold_m=5&hours=1`
     - 매핑별 실측 (tb_tag_raw_data 최근 N시간 평균 + offset) vs 시뮬 (KNN 노드) 압력 차이
