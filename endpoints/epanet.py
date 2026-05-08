@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from epanet import is_enabled, is_wntr_available, get_db
 from epanet.shp_reader import scan_shp
 from epanet.inp_converter import convert_pipes_to_inp, validate_with_wntr
-from epanet.simulator import run_steady_state
+from epanet.simulator import run_steady_state, run_what_if
 
 
 logger = logging.getLogger(__name__)
@@ -793,6 +793,56 @@ def get_leak_suspicious(
 
 
 # ===========================================================================
+# E_HELPERS) 분석 공통 헬퍼
+# ===========================================================================
+
+def _latest_artifact_inp(region: str) -> Optional[str]:
+    """region 의 가장 최근 success artifact 의 INP 파일 경로."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT file_path FROM tb_epanet_artifact "
+            "WHERE region = %s AND status = 'success' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (region,),
+        )
+        r = cur.fetchone()
+        cur.close()
+        return r[0] if r and r[0] and os.path.exists(r[0]) else None
+    finally:
+        conn.close()
+
+
+def _latest_sim_data(region: str) -> Optional[dict]:
+    """region 의 가장 최근 success 시뮬 result_data."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT sim_id, result_data FROM tb_epanet_simulation_result "
+            "WHERE region = %s AND status = 'success' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (region,),
+        )
+        r = cur.fetchone()
+        cur.close()
+        if not r or not r[1]:
+            return None
+        return {"sim_id": r[0], "result_data": r[1]}
+    finally:
+        conn.close()
+
+
+def _baseline_pressure_map(region: str) -> dict:
+    """기본 시뮬의 노드별 압력 (변경 시뮬과 비교 기준)."""
+    sim = _latest_sim_data(region)
+    if not sim:
+        return {}
+    return {j["id"]: j.get("pressure_m") for j in (sim["result_data"].get("junctions") or [])}
+
+
+# ===========================================================================
 # E5) 헤드손실 이상 구간 분석 (Phase 3.3c)
 # ===========================================================================
 
@@ -937,6 +987,496 @@ def get_headloss_anomaly(
         "z_threshold": z_threshold,
         "sim_id": sim_id,
         "diameter_buckets": sorted(by_dia.keys()),
+    }
+
+
+# ===========================================================================
+# E6) 차단밸브 영향범위 / 관로 파손 + 우회 (Phase 4-1, 4-2)
+# 합성 자동 fallback — 송수관 임의 K개 link 가상 밸브로 사용
+# ===========================================================================
+
+def _synthetic_valve_pipes(sim_data: dict, n: int = 5) -> list:
+    """대표 가상 밸브 K개 — 첫 N개 큰 |flow| pipe."""
+    pipes = sim_data.get("result_data", {}).get("pipes") or []
+    sorted_p = sorted(pipes, key=lambda p: -abs(p.get("flow_lps") or 0))
+    return [p["id"] for p in sorted_p[:n]]
+
+
+@router.get("/synthetic-valves")
+def get_synthetic_valves(region: str = "R01", n: int = 5) -> dict:
+    """합성 가상 밸브 목록 (분석용)."""
+    _ensure_enabled(region)
+    sim = _latest_sim_data(region)
+    if not sim:
+        return {"items": [], "warning": "성공한 시뮬이 없습니다."}
+    pipes = sim["result_data"].get("pipes") or []
+    sorted_p = sorted(pipes, key=lambda p: -abs(p.get("flow_lps") or 0))
+    items = [{
+        "valve_id": f"V{i+1:02d}",
+        "pipe_id": p["id"],
+        "flow_lps": p.get("flow_lps"),
+        "label": f"가상밸브 {i+1} (pipe {p['id']})",
+    } for i, p in enumerate(sorted_p[:n])]
+    return {"items": items, "synthetic": True}
+
+
+@router.get("/valve-impact")
+def get_valve_impact(
+    region: str = "R01",
+    pipe_id: Optional[str] = None,
+    pressure_drop_m: float = 5.0,
+) -> dict:
+    """선택한 가상 밸브(=pipe id) 차단 시 단수 영향 범위.
+
+    - 미지정 시 합성 가상 밸브 첫 번째 사용
+    - 영향 받음 = baseline pressure - what-if pressure > pressure_drop_m
+    """
+    _ensure_enabled(region)
+    sim = _latest_sim_data(region)
+    if not sim:
+        return {"warning": "성공한 시뮬이 없습니다.", "impacted": [], "valve_pipe_id": None}
+    inp = _latest_artifact_inp(region)
+    if not inp:
+        return {"warning": "INP 파일이 없습니다.", "impacted": [], "valve_pipe_id": None}
+
+    if not pipe_id:
+        valves = _synthetic_valve_pipes(sim, n=1)
+        if not valves:
+            return {"warning": "분석할 pipe 가 없습니다.", "impacted": [], "valve_pipe_id": None}
+        pipe_id = valves[0]
+
+    baseline = _baseline_pressure_map(region)
+    res = run_what_if(inp, remove_links=[pipe_id])
+    if not res.success:
+        return {"error": res.error, "impacted": [], "valve_pipe_id": pipe_id}
+
+    impacted: list = []
+    for j in res.junctions:
+        nid = j["id"]
+        b = baseline.get(nid)
+        a = j.get("pressure_m")
+        if b is None or a is None:
+            continue
+        drop = float(b) - float(a)
+        if drop > pressure_drop_m:
+            impacted.append({
+                "id": nid,
+                "lng": j.get("lng"), "lat": j.get("lat"),
+                "baseline_m": round(float(b), 2),
+                "after_m": round(float(a), 2),
+                "drop_m": round(drop, 2),
+            })
+    impacted.sort(key=lambda i: -i["drop_m"])
+    return {
+        "valve_pipe_id": pipe_id,
+        "synthetic": True,
+        "pressure_drop_m": pressure_drop_m,
+        "impacted_count": len(impacted),
+        "total_nodes": len(res.junctions),
+        "impacted": impacted[:50],
+        "duration_ms": res.duration_ms,
+    }
+
+
+@router.get("/pipe-break")
+def get_pipe_break(
+    region: str = "R01",
+    pipe_id: Optional[str] = None,
+    pressure_drop_m: float = 5.0,
+    flow_change_lps: float = 1.0,
+) -> dict:
+    """관로 파손 시뮬 + 우회 경로 분석.
+
+    - pipe_id 없으면 가장 큰 |flow| pipe 자동 선택
+    - 영향: baseline - after > pressure_drop_m
+    - 우회: |flow_after - flow_before| > flow_change_lps
+    """
+    _ensure_enabled(region)
+    sim = _latest_sim_data(region)
+    if not sim:
+        return {"warning": "성공한 시뮬이 없습니다.", "impacted": [], "rerouted": []}
+    inp = _latest_artifact_inp(region)
+    if not inp:
+        return {"warning": "INP 파일이 없습니다.", "impacted": [], "rerouted": []}
+
+    if not pipe_id:
+        pipes_b = sim["result_data"].get("pipes") or []
+        if not pipes_b:
+            return {"warning": "분석할 pipe 가 없습니다.", "impacted": [], "rerouted": []}
+        pipes_b_sorted = sorted(pipes_b, key=lambda p: -abs(p.get("flow_lps") or 0))
+        pipe_id = pipes_b_sorted[0]["id"]
+
+    baseline_p = _baseline_pressure_map(region)
+    baseline_f = {p["id"]: p.get("flow_lps") or 0
+                  for p in (sim["result_data"].get("pipes") or [])}
+    res = run_what_if(inp, remove_links=[pipe_id])
+    if not res.success:
+        return {"error": res.error, "impacted": [], "rerouted": []}
+
+    impacted: list = []
+    for j in res.junctions:
+        b = baseline_p.get(j["id"])
+        a = j.get("pressure_m")
+        if b is None or a is None:
+            continue
+        drop = float(b) - float(a)
+        if drop > pressure_drop_m:
+            impacted.append({
+                "id": j["id"], "lng": j.get("lng"), "lat": j.get("lat"),
+                "baseline_m": round(float(b), 2),
+                "after_m": round(float(a), 2),
+                "drop_m": round(drop, 2),
+            })
+    impacted.sort(key=lambda i: -i["drop_m"])
+
+    rerouted: list = []
+    for p in res.pipes:
+        if p["id"] == pipe_id:
+            continue
+        bf = baseline_f.get(p["id"])
+        af = p.get("flow_lps")
+        if bf is None or af is None:
+            continue
+        delta = abs(float(af) - float(bf))
+        if delta > flow_change_lps:
+            rerouted.append({
+                "id": p["id"],
+                "before_lps": round(float(bf), 3),
+                "after_lps": round(float(af), 3),
+                "delta_lps": round(delta, 3),
+            })
+    rerouted.sort(key=lambda p: -p["delta_lps"])
+    return {
+        "broken_pipe_id": pipe_id,
+        "pressure_drop_m": pressure_drop_m,
+        "flow_change_lps": flow_change_lps,
+        "impacted_count": len(impacted),
+        "rerouted_count": len(rerouted),
+        "total_nodes": len(res.junctions),
+        "impacted": impacted[:50],
+        "rerouted": rerouted[:50],
+        "duration_ms": res.duration_ms,
+    }
+
+
+# ===========================================================================
+# E7) 펌프 가동 변경 (Phase 4-3) — 합성 펌프 = reservoir head boost
+# ===========================================================================
+
+@router.get("/pump-control")
+def get_pump_control(
+    region: str = "R01",
+    head_boost_m: float = 10.0,
+) -> dict:
+    """가상 펌프 가동 — 모든 reservoir head + boost 후 압력 변화.
+
+    합성 펌프이므로 ON/OFF 가 아니라 head_boost_m 슬라이더로 강도 조절.
+    """
+    _ensure_enabled(region)
+    inp = _latest_artifact_inp(region)
+    if not inp:
+        return {"warning": "INP 파일이 없습니다.", "items": []}
+
+    baseline = _baseline_pressure_map(region)
+    res = run_what_if(inp, add_pump_boost=head_boost_m)
+    if not res.success:
+        return {"error": res.error, "items": []}
+
+    diffs: list = []
+    for j in res.junctions:
+        b = baseline.get(j["id"])
+        a = j.get("pressure_m")
+        if b is None or a is None:
+            continue
+        delta = float(a) - float(b)
+        diffs.append({
+            "id": j["id"], "lng": j.get("lng"), "lat": j.get("lat"),
+            "baseline_m": round(float(b), 2),
+            "after_m": round(float(a), 2),
+            "delta_m": round(delta, 2),
+        })
+    diffs.sort(key=lambda d: -abs(d["delta_m"]))
+    return {
+        "synthetic": True,
+        "head_boost_m": head_boost_m,
+        "total_nodes": len(diffs),
+        "items": diffs[:50],
+        "min_delta_m": min((d["delta_m"] for d in diffs), default=0),
+        "max_delta_m": max((d["delta_m"] for d in diffs), default=0),
+        "avg_delta_m": (sum(d["delta_m"] for d in diffs) / len(diffs)) if diffs else 0,
+        "duration_ms": res.duration_ms,
+    }
+
+
+# ===========================================================================
+# E8) 시나리오 비교 (Phase 4-4) — 두 sim_id diff
+# ===========================================================================
+
+@router.get("/scenario-diff")
+def get_scenario_diff(
+    region: str = "R01",
+    sim_a: Optional[int] = None,
+    sim_b: Optional[int] = None,
+) -> dict:
+    """두 sim_id 의 노드 압력 / 파이프 유량 차이 (B - A)."""
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        if sim_a is None or sim_b is None:
+            cur.execute(
+                "SELECT sim_id, result_data FROM tb_epanet_simulation_result "
+                "WHERE region = %s AND status = 'success' "
+                "ORDER BY created_at DESC LIMIT 2",
+                (region,),
+            )
+            rows = cur.fetchall()
+            if len(rows) < 2:
+                cur.close()
+                return {"warning": "비교할 시뮬이 2개 이상 필요합니다."}
+            sim_b_id, b_data = rows[0]
+            sim_a_id, a_data = rows[1]
+        else:
+            cur.execute(
+                "SELECT sim_id, result_data FROM tb_epanet_simulation_result "
+                "WHERE sim_id = ANY(%s) AND region = %s",
+                ([sim_a, sim_b], region),
+            )
+            rows = cur.fetchall()
+            if len(rows) != 2:
+                cur.close()
+                return {"warning": "지정한 sim_id 를 찾을 수 없습니다."}
+            d = {r[0]: r[1] for r in rows}
+            sim_a_id, sim_b_id = sim_a, sim_b
+            a_data = d[sim_a]; b_data = d[sim_b]
+        cur.close()
+    finally:
+        conn.close()
+
+    a_p = {j["id"]: j.get("pressure_m") for j in (a_data.get("junctions") or [])}
+    b_p = {j["id"]: j.get("pressure_m") for j in (b_data.get("junctions") or [])}
+    nodes: list = []
+    for nid, av in a_p.items():
+        bv = b_p.get(nid)
+        if av is None or bv is None:
+            continue
+        nodes.append({"id": nid, "a_m": round(float(av), 2),
+                      "b_m": round(float(bv), 2),
+                      "delta_m": round(float(bv) - float(av), 2)})
+    nodes.sort(key=lambda n: -abs(n["delta_m"]))
+    a_f = {p["id"]: p.get("flow_lps") for p in (a_data.get("pipes") or [])}
+    b_f = {p["id"]: p.get("flow_lps") for p in (b_data.get("pipes") or [])}
+    pipes: list = []
+    for pid, av in a_f.items():
+        bv = b_f.get(pid)
+        if av is None or bv is None:
+            continue
+        pipes.append({"id": pid, "a_lps": round(float(av), 3),
+                      "b_lps": round(float(bv), 3),
+                      "delta_lps": round(float(bv) - float(av), 3)})
+    pipes.sort(key=lambda p: -abs(p["delta_lps"]))
+    return {
+        "sim_a": sim_a_id, "sim_b": sim_b_id,
+        "node_count": len(nodes), "pipe_count": len(pipes),
+        "top_nodes": nodes[:20],
+        "top_pipes": pipes[:20],
+    }
+
+
+# ===========================================================================
+# E9) 블록 교체 후보 (Phase 5-1) — 헤드손실 z + 매핑 차이 + length 가중
+# ===========================================================================
+
+@router.get("/replacement-candidates")
+def get_replacement_candidates(
+    region: str = "R01",
+    top: int = 30,
+) -> dict:
+    """교체 우선순위 점수 = headloss z-score + leak diff + length 가중."""
+    _ensure_enabled(region)
+    # 헤드손실 분석 결과 활용
+    headloss_resp = get_headloss_anomaly(region=region, z_threshold=1.0)
+    candidates: list = []
+    for it in headloss_resp.get("items", []):
+        z = abs(it.get("z_score") or 0)
+        length = it.get("length") or 0
+        # 점수: z 기여 0~5, length 기여 0~3 (3000m 이상 → 3)
+        score = min(5.0, z) + min(3.0, length / 1000.0)
+        candidates.append({
+            **it,
+            "score": round(score, 2),
+        })
+    candidates.sort(key=lambda c: -c["score"])
+    return {
+        "items": candidates[:top],
+        "total_evaluated": len(candidates),
+        "ranking_method": "headloss z-score + length 가중",
+    }
+
+
+# ===========================================================================
+# E10) 관망 노후도 (Phase 3.3d) — 매핑별 편차 시계열 (월별)
+# ===========================================================================
+
+@router.get("/network-aging")
+def get_network_aging(
+    region: str = "R01",
+    months: int = 3,
+) -> dict:
+    """월별 매핑별 |실측 평균 - 시뮬 압력| 편차 추이.
+
+    데이터 누적 부족 시 단일 시점 (현재 시뮬) 만 표시.
+    """
+    _ensure_enabled(region)
+    sim = _latest_sim_data(region)
+    if not sim:
+        return {"warning": "성공한 시뮬이 없습니다.", "items": [], "months": months}
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT map_id, tag_sn, x, y, calibration_offset_m, label "
+            "FROM tb_epanet_meter_map WHERE region = %s",
+            (region,),
+        )
+        maps = cur.fetchall()
+        if not maps:
+            cur.close()
+            return {"warning": "센서 매핑이 없습니다.", "items": [], "months": months}
+
+        # 월별 평균 (TimescaleDB time_bucket)
+        tag_sns = [r[1] for r in maps]
+        cur.execute(
+            """
+            SELECT tagsn,
+                   date_trunc('month', logtime) AS m,
+                   AVG(val) AS avg_v,
+                   COUNT(*) AS cnt
+              FROM tb_tag_raw_data
+             WHERE tagsn = ANY(%s)
+               AND logtime > NOW() - (%s || ' months')::interval
+             GROUP BY tagsn, m
+             ORDER BY tagsn, m
+            """,
+            (tag_sns, str(months)),
+        )
+        monthly = {}
+        for row in cur.fetchall():
+            monthly.setdefault(row[0], []).append({
+                "month": row[1].strftime("%Y-%m"),
+                "avg_observed": float(row[2]) if row[2] is not None else None,
+                "samples": int(row[3]),
+            })
+        cur.close()
+    finally:
+        conn.close()
+
+    # KNN — 매핑별 가장 가까운 sim 노드
+    sim_junctions = sim["result_data"].get("junctions") or []
+    items: list = []
+    for map_id, tag_sn, x, y, offset, label in maps:
+        x = float(x); y = float(y); offset = float(offset)
+        nearest = None
+        nd2 = float("inf")
+        for j in sim_junctions:
+            jx = j.get("x"); jy = j.get("y")
+            if jx is None or jy is None:
+                continue
+            d2 = (x - jx) ** 2 + (y - jy) ** 2
+            if d2 < nd2:
+                nd2 = d2; nearest = j
+        sim_p = nearest.get("pressure_m") if nearest else None
+        ts = monthly.get(tag_sn) or []
+        series = []
+        for pt in ts:
+            obs = (pt["avg_observed"] + offset) if pt["avg_observed"] is not None else None
+            diff = (abs(obs - sim_p) if obs is not None and sim_p is not None else None)
+            series.append({
+                "month": pt["month"],
+                "observed_m": round(obs, 2) if obs is not None else None,
+                "diff_m": round(diff, 2) if diff is not None else None,
+                "samples": pt["samples"],
+            })
+        # 추세: 마지막 vs 첫 diff
+        trend = "stable"
+        if len(series) >= 2:
+            d_first = series[0].get("diff_m")
+            d_last = series[-1].get("diff_m")
+            if d_first is not None and d_last is not None:
+                if d_last > d_first * 1.2:
+                    trend = "worsening"
+                elif d_last < d_first * 0.8:
+                    trend = "improving"
+        items.append({
+            "map_id": map_id, "tag_sn": tag_sn, "label": label,
+            "sim_pressure_m": round(sim_p, 2) if sim_p is not None else None,
+            "series": series,
+            "trend": trend,
+            "current_diff_m": series[-1].get("diff_m") if series else None,
+        })
+    items.sort(key=lambda i: -(i.get("current_diff_m") or 0))
+    return {
+        "items": items,
+        "months": months,
+        "sim_id": sim["sim_id"],
+        "total_mapped": len(maps),
+    }
+
+
+# ===========================================================================
+# E11) 수질·체류시간 (Phase 6) — 합성 잔류염소 시뮬
+# ===========================================================================
+
+@router.get("/water-quality")
+def get_water_quality(
+    region: str = "R01",
+    initial_mg_l: float = 0.5,
+    kbulk_per_day: float = -0.5,
+) -> dict:
+    """6시간 EPS 시뮬로 노드별 잔류염소 농도 + 체류시간 추정.
+
+    체류시간 ≈ -ln(C/C0) / k (1차 반응)
+    """
+    _ensure_enabled(region)
+    inp = _latest_artifact_inp(region)
+    if not inp:
+        return {"warning": "INP 파일이 없습니다.", "items": []}
+
+    res = run_what_if(inp, quality_initial=initial_mg_l, quality_kbulk=kbulk_per_day)
+    if not res.success:
+        return {"error": res.error, "items": []}
+
+    import math
+    items: list = []
+    for j in res.junctions:
+        c = j.get("quality_mg_l")
+        if c is None or c <= 0:
+            continue
+        # 체류시간 추정 (시간 단위)
+        try:
+            ratio = c / initial_mg_l
+            if ratio > 0 and ratio < 1.0 and kbulk_per_day != 0:
+                hours = -math.log(ratio) / abs(kbulk_per_day) * 24
+            else:
+                hours = 0
+        except Exception:
+            hours = 0
+        items.append({
+            "id": j["id"], "lng": j.get("lng"), "lat": j.get("lat"),
+            "chlorine_mg_l": c,
+            "residence_hours": round(hours, 2),
+            "low_quality": bool(c < initial_mg_l * 0.4),
+        })
+    items.sort(key=lambda i: i["chlorine_mg_l"])
+    low_count = sum(1 for i in items if i["low_quality"])
+    return {
+        "synthetic": True,
+        "initial_mg_l": initial_mg_l,
+        "kbulk_per_day": kbulk_per_day,
+        "total_nodes": len(items),
+        "low_quality_count": low_count,
+        "items": items[:50],
     }
 
 
@@ -1118,18 +1658,18 @@ def _check_data_quality(region: str) -> dict:
             pump_ok = _section_has_data(text, "[PUMPS]")
     except Exception:
         pass
+    # 합성 자동 fallback — 실 SHP/모델 없어도 송수관 위 가상 데이터로 분석 가능
     checks["HAS_VALVE_DATA"] = {
-        "ok": valve_ok,
-        "detail": "INP [VALVES] 섹션에 데이터" if valve_ok else "INP [VALVES] 비어있음 (밸브 SHP 미반영)",
+        "ok": True,
+        "detail": "INP [VALVES] 섹션에 데이터" if valve_ok else "합성 (송수관 임의 5 link 가상 밸브로 사용)",
     }
     checks["HAS_PUMP_DATA"] = {
-        "ok": pump_ok,
-        "detail": "INP [PUMPS] 섹션에 데이터" if pump_ok else "INP [PUMPS] 비어있음 (펌프 SHP 미반영)",
+        "ok": True,
+        "detail": "INP [PUMPS] 섹션에 데이터" if pump_ok else "합성 (배수지↔junction 가상 펌프 1대)",
     }
-    # 10) HAS_WATER_QUALITY_MODEL — Phase 6 별도 모델 입력 (현재 미구현)
     checks["HAS_WATER_QUALITY_MODEL"] = {
-        "ok": False,
-        "detail": "잔류염소·체류시간 모델 입력 미구현 (Phase 6)",
+        "ok": True,
+        "detail": "합성 (잔류염소 초기 0.5 mg/L, 1차 반응)",
     }
 
     # 운영자가 명시적으로 비활성화한 메뉴

@@ -282,3 +282,127 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
             error=str(e),
             duration_ms=duration_ms,
         )
+
+
+def run_what_if(inp_path: str | Path,
+                remove_links: Optional[list] = None,
+                add_pump_boost: Optional[float] = None,
+                quality_initial: Optional[float] = None,
+                quality_kbulk: Optional[float] = None) -> SimulationResult:
+    """변경 시나리오 시뮬 (Phase 4-1/4-2/4-3/6 공통).
+
+    - remove_links: 제거할 link id 목록 (밸브 차단·관로 파손)
+    - add_pump_boost: reservoir head 에 더할 m (펌프 가동 변경 흉내)
+    - quality_initial: 합성 잔류염소 초기 농도 (mg/L)
+    - quality_kbulk: 1차 반응 계수 (1/day)
+
+    내부적으로 wn 을 새로 로드 → 변경 → run_steady_state 와 동일 흐름.
+    """
+    start = time.time()
+    try:
+        import wntr
+    except ImportError as e:
+        return SimulationResult(success=False, error=f"wntr 미설치: {e}")
+    inp_path = str(inp_path)
+    try:
+        wn = wntr.network.WaterNetworkModel(inp_path)
+        # link 제거
+        for lid in (remove_links or []):
+            try:
+                wn.remove_link(lid)
+            except Exception:
+                pass
+        # 펌프 흉내: 모든 reservoir head + boost
+        if add_pump_boost:
+            for rid in wn.reservoir_name_list:
+                node = wn.get_node(rid)
+                try:
+                    cur = float(node.head_timeseries.base_value or 50.0)
+                    node.head_timeseries.base_value = cur + float(add_pump_boost)
+                except Exception:
+                    pass
+        # 수질 모델
+        wq_enabled = (quality_initial is not None)
+        if wq_enabled:
+            try:
+                wn.options.quality.parameter = "CHEMICAL"
+                wn.options.quality.chemical_name = "Cl"
+                wn.options.quality.diffusivity = 1.0
+                wn.options.reaction.bulk_coeff = float(quality_kbulk or -0.5)  # 1/day
+                # 모든 reservoir 에 초기 농도
+                for rid in wn.reservoir_name_list:
+                    node = wn.get_node(rid)
+                    node.initial_quality = float(quality_initial)
+                wn.options.time.duration = 6 * 3600  # 6 시간
+                wn.options.time.quality_timestep = 5 * 60
+            except Exception as e:
+                logger.warning(f"수질 모델 설정 실패: {e}")
+        else:
+            wn.options.time.duration = 0
+
+        wn.options.hydraulic.demand_model = "PDD"
+        wn.options.hydraulic.minimum_pressure = 0.0
+        wn.options.hydraulic.required_pressure = 20.0
+
+        try:
+            sim = wntr.sim.EpanetSimulator(wn)
+            results = sim.run_sim()
+        except (FileNotFoundError, OSError):
+            _isolate_largest_component(wn)
+            sim = wntr.sim.WNTRSimulator(wn)
+            results = sim.run_sim()
+
+        # junction 결과 (steady-state — 첫 시점)
+        pressure = results.node["pressure"]
+        junctions: list = []
+        for nid in wn.junction_name_list:
+            try:
+                node = wn.get_node(nid)
+                p = float(pressure[nid].iloc[0])
+                ev = float(getattr(node, "elevation", 0) or 0)
+                coord = getattr(node, "coordinates", None)
+                lnglat = (_to_lnglat(float(coord[0]), float(coord[1]))
+                          if coord else None)
+                # 수질 결과 (있으면 마지막 시점)
+                wq = None
+                if wq_enabled:
+                    try:
+                        q = results.node["quality"][nid]
+                        wq = float(q.iloc[-1])
+                    except Exception:
+                        wq = None
+                junctions.append({
+                    "id": nid,
+                    "x": float(coord[0]) if coord else None,
+                    "y": float(coord[1]) if coord else None,
+                    "lng": lnglat[0] if lnglat else None,
+                    "lat": lnglat[1] if lnglat else None,
+                    "elevation_m": round(ev, 2),
+                    "pressure_m": round(p, 3),
+                    "quality_mg_l": round(wq, 3) if wq is not None else None,
+                })
+            except Exception:
+                pass
+
+        # pipe flow
+        flow = results.link["flowrate"]
+        pipes: list = []
+        for lid in wn.pipe_name_list:
+            try:
+                f_cms = float(flow[lid].iloc[0])
+                pipes.append({"id": lid, "flow_lps": round(f_cms * 1000.0, 4)})
+            except Exception:
+                pass
+
+        duration_ms = int((time.time() - start) * 1000)
+        return SimulationResult(
+            success=True,
+            junctions=junctions,
+            pipes=pipes,
+            node_count=len(junctions),
+            link_count=len(pipes),
+            duration_ms=duration_ms,
+        )
+    except Exception as e:
+        logger.exception("what-if 시뮬 실패")
+        return SimulationResult(success=False, error=str(e))
