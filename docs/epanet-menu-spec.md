@@ -262,6 +262,28 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-08 — Phase 3.3d / 4 / 5 / 6 일괄 구현 완료 (합성 자동 fallback)
+  · **합성 자동 fallback**: data-quality 의 HAS_VALVE_DATA / HAS_PUMP_DATA / HAS_WATER_QUALITY_MODEL 모두 ok=true (detail 에 "합성" 표기). 실 SHP/모델 입력 후 자동 전환.
+  · **simulator.py `run_what_if(inp_path, remove_links, add_pump_boost, quality_initial, quality_kbulk)`** — 변경 시나리오 즉석 시뮬 (link 제거 / reservoir head boost / 수질 모델)
+  · **분석 API 6개 신규**:
+    - GET `/admin/epanet/synthetic-valves?n=5` — 가상 밸브 목록 (큰 |flow| pipe 5개)
+    - GET `/admin/epanet/valve-impact?pipe_id=&pressure_drop_m=` — 밸브 차단 단수 영향
+    - GET `/admin/epanet/pipe-break?pipe_id=&pressure_drop_m=&flow_change_lps=` — 파손 영향 + 우회 경로
+    - GET `/admin/epanet/pump-control?head_boost_m=` — 펌프 boost 압력 변화
+    - GET `/admin/epanet/scenario-diff?sim_a=&sim_b=` — 두 시뮬 비교 (자동: 최근 2개)
+    - GET `/admin/epanet/replacement-candidates?top=` — z-score + length 가중 우선순위
+    - GET `/admin/epanet/network-aging?months=` — 매핑별 월별 편차 추세
+    - GET `/admin/epanet/water-quality?initial_mg_l=&kbulk_per_day=` — 합성 잔류염소 EPS 시뮬
+  · **프런트 분석 컴포넌트 7개**: ValveImpactAnalysis / PipeBreakAnalysis / PumpControlAnalysis / ScenarioDiffAnalysis / ReplacementCandidatesAnalysis / NetworkAgingAnalysis / WaterQualityAnalysis
+  · **페이지 활성**: 7 placeholder → 분석 컴포넌트 (DataQualityCard 안에서 ready/warning 시 노출)
+  · **검증 (sim #12)**:
+    - valve-impact: 32 노드 영향 (drop>5m)
+    - pipe-break: 32 영향 + 우회 경로
+    - pump-control: 50 노드 (head +10m → 평균 +23m 증가)
+    - scenario-diff: top 20 노드/파이프 차이
+    - replacement-candidates: P000091 score 5.44 1순위
+    - network-aging: 5 매핑 / 4개월 시계열 / 추세 stable
+  · **메뉴 분류**: ready 9 / warning 1 (pump-control) / blocked 0 / disabled 0
 - 2026-05-08 — Phase 3.3c 구현 완료 (headloss-anomaly 분석 + 메뉴 토글 인프라)
   · **메뉴 토글 인프라**:
     - Migration 0070 — `tb_epanet_menu_setting` (region/menu_key/enabled, 10 메뉴 default Y)
