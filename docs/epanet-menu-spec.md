@@ -262,6 +262,14 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-08 — Phase 3.3a 구현 완료 (센서 매핑 인프라)
+  · Migration 0069 — `tb_epanet_meter_map` (region/tag_sn/x/y/calibration_offset_m/label/notes, UNIQUE region+tag_sn)
+  · 백엔드 `/admin/epanet/meters` GET/POST/DELETE + `bulk-csv` (CSV 형식: tag_sn,x,y[,offset,label,notes])
+  · `_check_data_quality` HAS_METER_MAPPING 을 실제 카운트 검사로 변경
+  · 프런트 `EpanetMeterMapping` 컴포넌트 + admin/epanet 페이지 통합
+  · 검증: 매핑 1건 추가만으로 ready 메뉴 4 → **7개** (leak-suspicious / headloss-anomaly / network-aging 활성)
+  · blocked 잔여 3개: valve-impact (Phase 4 — 밸브 SHP), pump-control (Phase 4 — 펌프 SHP), water-quality (Phase 6 — 수질 모델)
+  · Phase 3.3b/c 후속: leak-suspicious / network-aging 페이지의 실제 분석 로직 (실측 vs 시뮬 압력 차이)
 - 2026-05-07 — Phase 3.2 구현 완료 (수요 입력)
   · Migration 0068 — `tb_epanet_demand_point` (region/x/y/demand_lps/source/label/notes)
   · 백엔드:

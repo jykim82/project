@@ -2,6 +2,33 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-08 — EPANET Phase 3.3a) [센서 매핑 인프라 — leak-suspicious/network-aging 활성]
+
+**Migration 0069 + 매핑 CRUD + data-quality 자동 갱신 + 프런트 UI**
+
+1. **Migration 0069** — `tb_epanet_meter_map` (region/tag_sn/x/y/offset_m/label, UNIQUE region+tag_sn)
+2. **백엔드** — `/admin/epanet/meters` GET/POST/DELETE + bulk-csv. data-quality HAS_METER_MAPPING 카운트 검사
+3. **프런트** — `EpanetMeterMapping` 컴포넌트 + admin/epanet 통합
+4. **메뉴 분류 변화**: ready 4 → **7** (leak-suspicious / headloss-anomaly / network-aging 활성). blocked 3 잔여 (valve/pump → Phase 4, water-quality → Phase 6)
+
+**커밋 체인**: `slm@TBD` + `slm-dashboard@TBD` + `web@TBD`
+
+**Phase 3.3b/c (다음)**: 페이지 실 분석 로직 (실측 vs 시뮬 차이 / 편차 시계열)
+
+---
+
+### 완료 (2026-05-08 — EPANET Phase 3.1/3.2) [표고+수요 입력 + IDW 보간]
+
+**Migration 0067/0068 + 표고/수요 CRUD + 합성 그라디언트 + admin UI**
+
+1. **Phase 3.1** (표고): tb_epanet_elevation_point + IDW 보간 + 합성 표고 (NW 30m → SE 5m). 메뉴 ready 0→4
+2. **Phase 3.2** (수요): tb_epanet_demand_point + 합성 수요 (도심 1.0 → 외곽 0.05 LPS). flow ±0.02 → ±20 LPS
+3. 우선순위 명확화 — 합성 옵션이 운영자 입력보다 우선 (시연 모드)
+4. simulator.py: junction.elevation_m 시뮬 응답 포함 (data-quality 정확도 향상)
+5. 검증: artifact #14 / 시뮬 #12 — 압력 20.01~41.66m, flow -11.36~+20.24 LPS
+
+---
+
 ### 완료 (2026-05-07 — EPANET Phase 2.7) [메뉴 뼈대 + 데이터 품질 게이트]
 
 **10 메뉴 등록 + 데이터 품질 API + DataQualityCard 3 단계 UX + 사이드바 점**
