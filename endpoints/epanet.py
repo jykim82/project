@@ -571,6 +571,91 @@ def delete_all_meter_maps(region: str = "R01") -> dict:
 
 
 # ===========================================================================
+# E_MENU) 메뉴 활성/비활성 토글 (Phase 3.3 후속)
+# ===========================================================================
+
+class MenuSettingIn(BaseModel):
+    region: str = "R01"
+    menu_key: str
+    enabled: bool
+
+
+@router.get("/menu-settings")
+def list_menu_settings(region: str = "R01") -> dict:
+    """region 의 EPANET 표현 메뉴별 활성/비활성 상태."""
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT menu_key, label, enabled, updated_at, updated_by
+              FROM tb_epanet_menu_setting
+             WHERE region = %s
+             ORDER BY menu_key
+            """,
+            (region,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        items = [{
+            "menu_key": r[0],
+            "label": r[1],
+            "enabled": (r[2] == "Y"),
+            "updated_at": r[3].isoformat() if r[3] else None,
+            "updated_by": r[4],
+        } for r in rows]
+        return {"items": items}
+    finally:
+        conn.close()
+
+
+@router.put("/menu-settings")
+def update_menu_setting(req: MenuSettingIn, request: Request) -> dict:
+    """단건 토글 변경. enabled 'Y'/'N' 으로 UPSERT."""
+    _ensure_enabled(req.region)
+    user_id = _get_user_id(request)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE tb_epanet_menu_setting
+               SET enabled = %s, updated_at = NOW(), updated_by = %s
+             WHERE region = %s AND menu_key = %s
+            """,
+            ("Y" if req.enabled else "N", user_id, req.region, req.menu_key),
+        )
+        rc = cur.rowcount
+        conn.commit()
+        cur.close()
+        if rc == 0:
+            raise HTTPException(404, detail=f"menu_key 없음: {req.menu_key}")
+        return {"status": "OK", "menu_key": req.menu_key, "enabled": req.enabled}
+    finally:
+        conn.close()
+
+
+def _menus_disabled(region: str) -> set:
+    """enabled='N' 인 메뉴 키 집합."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT menu_key FROM tb_epanet_menu_setting "
+            "WHERE region = %s AND enabled = 'N'",
+            (region,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+    finally:
+        conn.close()
+
+
+# ===========================================================================
 # E4) 누수 의심 구간 분석 (Phase 3.3b)
 # ===========================================================================
 
@@ -704,6 +789,154 @@ def get_leak_suspicious(
         "threshold_m": threshold_m,
         "hours": hours,
         "sim_id": sim_id,
+    }
+
+
+# ===========================================================================
+# E5) 헤드손실 이상 구간 분석 (Phase 3.3c)
+# ===========================================================================
+
+@router.get("/headloss-anomaly")
+def get_headloss_anomaly(
+    region: str = "R01",
+    z_threshold: float = 2.0,
+) -> dict:
+    """파이프별 단위길이당 headloss 분포에서 z-score 가 임계값 초과인 이상 구간.
+
+    - 단위 손실 (m/100m) = headloss_m / length_m * 100
+    - 그룹: diameter (구경) 군집 — 같은 구경끼리 평균 비교
+    - z = (단위손실 - 그룹 평균) / 그룹 stddev
+    - |z| > z_threshold 면 이상
+
+    응답: items[{pipe_id, diameter, length, headloss, unit_loss, group_mean, z_score, anomaly}]
+    """
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT sim_id, result_data, file_path
+              FROM tb_epanet_simulation_result s
+              JOIN tb_epanet_artifact a ON a.artifact_id = s.artifact_id
+             WHERE s.region = %s AND s.status = 'success'
+             ORDER BY s.created_at DESC LIMIT 1
+            """,
+            (region,),
+        )
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+
+    if not row or not row[1]:
+        return {
+            "items": [], "anomaly_count": 0, "total_pipes": 0,
+            "z_threshold": z_threshold,
+            "warning": "성공한 시뮬이 없습니다. /admin/epanet 에서 [시뮬] 실행 후 다시 시도.",
+        }
+    sim_id = row[0]
+    rd = row[1]
+    inp_path = row[2]
+    pipes_sim = rd.get("pipes") or []
+
+    # INP 파일에서 파이프별 length / diameter / roughness 파싱
+    pipe_meta: dict = {}  # id → {length, diameter, roughness}
+    try:
+        if inp_path and os.path.exists(inp_path):
+            text = open(inp_path, "r", encoding="utf-8", errors="ignore").read()
+            in_pipes = False
+            for line in text.splitlines():
+                ls = line.strip()
+                if ls.startswith("[") and ls.endswith("]"):
+                    in_pipes = (ls.upper() == "[PIPES]")
+                    continue
+                if in_pipes and ls and not ls.startswith(";"):
+                    parts = ls.split()
+                    if len(parts) >= 6:
+                        try:
+                            pipe_meta[parts[0]] = {
+                                "length": float(parts[3]),
+                                "diameter": float(parts[4]),
+                                "roughness": float(parts[5]),
+                            }
+                        except ValueError:
+                            pass
+    except Exception as e:
+        logger.warning(f"INP 파싱 실패 (headloss-anomaly): {e}")
+
+    # 단위 손실 + 그룹화 (diameter 기준)
+    # WNTRSimulator 가 headloss 를 안 채우는 경우 — Hazen-Williams 공식 즉석 계산
+    rows: list = []
+    by_dia: dict = {}
+    for p in pipes_sim:
+        pid = p.get("id")
+        meta = pipe_meta.get(pid)
+        if meta is None:
+            continue
+        length = meta["length"]
+        if length <= 0:
+            continue
+        headloss = p.get("headloss_m")
+        if headloss is None or headloss == 0:
+            # Hazen-Williams: HL = 10.67 * Q^1.852 / (C^1.852 * D^4.87) * L
+            #   Q (m³/s), D (m), L (m), C (HW coeff)
+            flow_lps = p.get("flow_lps") or 0
+            q = abs(float(flow_lps)) / 1000.0  # LPS → m³/s
+            d_m = meta["diameter"] / 1000.0    # mm → m
+            c = meta["roughness"]
+            if q > 0 and d_m > 0 and c > 0:
+                headloss = 10.67 * (q ** 1.852) / (c ** 1.852 * d_m ** 4.87) * length
+            else:
+                headloss = 0.0
+        if headloss <= 0:
+            continue
+        unit_loss = abs(float(headloss)) / length * 100.0  # m / 100m
+        dia = meta["diameter"]
+        # 50mm 단위로 그룹화 (현실적 그룹 수)
+        dia_bucket = round(dia / 50.0) * 50.0
+        rows.append({
+            "id": pid,
+            "diameter": dia,
+            "diameter_bucket": dia_bucket,
+            "length": round(length, 1),
+            "headloss_m": round(float(headloss), 3),
+            "unit_loss_m_per_100m": round(unit_loss, 4),
+            "flow_lps": p.get("flow_lps"),
+            "velocity_mps": p.get("velocity_mps"),
+        })
+        by_dia.setdefault(dia_bucket, []).append(unit_loss)
+
+    # 그룹별 평균/stddev
+    group_stats: dict = {}
+    for d, vals in by_dia.items():
+        if len(vals) < 2:
+            group_stats[d] = (sum(vals) / len(vals), 0.0)
+            continue
+        mean = sum(vals) / len(vals)
+        var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+        group_stats[d] = (mean, var ** 0.5)
+
+    # z-score 계산
+    items: list = []
+    for r in rows:
+        mean, std = group_stats.get(r["diameter_bucket"], (0.0, 0.0))
+        z = ((r["unit_loss_m_per_100m"] - mean) / std) if std > 0 else 0.0
+        items.append({
+            **r,
+            "group_mean_unit_loss": round(mean, 4),
+            "z_score": round(z, 2),
+            "anomaly": bool(abs(z) > z_threshold),
+        })
+    items.sort(key=lambda i: -abs(i["z_score"]))
+    anomaly_count = sum(1 for i in items if i["anomaly"])
+    return {
+        "items": items,
+        "total_pipes": len(items),
+        "anomaly_count": anomaly_count,
+        "z_threshold": z_threshold,
+        "sim_id": sim_id,
+        "diameter_buckets": sorted(by_dia.keys()),
     }
 
 
@@ -899,11 +1132,18 @@ def _check_data_quality(region: str) -> dict:
         "detail": "잔류염소·체류시간 모델 입력 미구현 (Phase 6)",
     }
 
-    # 메뉴별 ready/warning/blocked 분류
+    # 운영자가 명시적으로 비활성화한 메뉴
+    disabled = _menus_disabled(region)
+
+    # 메뉴별 ready/warning/blocked/disabled 분류
     menus_ready: list = []
     menus_warning: list = []
     menus_blocked: list = []
+    menus_disabled_list: list = []
     for menu_key, req in _MENU_REQUIREMENTS.items():
+        if menu_key in disabled:
+            menus_disabled_list.append(menu_key)
+            continue
         required_ok = all(checks.get(k, {}).get("ok", False) for k in req["required"])
         recommended_ok = all(checks.get(k, {}).get("ok", False) for k in req["recommended"])
         if not required_ok:
@@ -918,6 +1158,7 @@ def _check_data_quality(region: str) -> dict:
         "menus_ready": menus_ready,
         "menus_warning": menus_warning,
         "menus_blocked": menus_blocked,
+        "menus_disabled": menus_disabled_list,
     }
 
 
