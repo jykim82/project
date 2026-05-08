@@ -571,6 +571,143 @@ def delete_all_meter_maps(region: str = "R01") -> dict:
 
 
 # ===========================================================================
+# E4) 누수 의심 구간 분석 (Phase 3.3b)
+# ===========================================================================
+
+@router.get("/leak-suspicious")
+def get_leak_suspicious(
+    region: str = "R01",
+    threshold_m: float = 5.0,
+    hours: int = 1,
+) -> dict:
+    """매핑된 센서별로 실측 압력 vs 시뮬 압력 차이를 계산.
+
+    - 실측: tb_tag_raw_data 최근 `hours` 시간 평균 + calibration_offset_m
+    - 시뮬: 가장 최근 success 시뮬의 가장 가까운 노드 (KNN, 좌표 기준)
+    - 의심: |실측 - 시뮬| > threshold_m
+
+    응답 items 정렬: 의심 → 차이 큰 순.
+    """
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # 1) 매핑 조회
+        cur.execute(
+            """
+            SELECT map_id, tag_sn, x, y, calibration_offset_m, label
+              FROM tb_epanet_meter_map
+             WHERE region = %s
+            """,
+            (region,),
+        )
+        maps = cur.fetchall()
+        if not maps:
+            return {
+                "items": [], "suspicious_count": 0, "total_mapped": 0,
+                "threshold_m": threshold_m, "hours": hours,
+                "warning": "센서 매핑이 없습니다. /admin/epanet 에서 매핑 추가 후 다시 시도.",
+            }
+
+        # 2) 가장 최근 시뮬 결과
+        cur.execute(
+            """
+            SELECT sim_id, result_data
+              FROM tb_epanet_simulation_result
+             WHERE region = %s AND status = 'success'
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (region,),
+        )
+        sim_row = cur.fetchone()
+        if not sim_row or not sim_row[1]:
+            cur.close()
+            return {
+                "items": [], "suspicious_count": 0, "total_mapped": len(maps),
+                "threshold_m": threshold_m, "hours": hours,
+                "warning": "성공한 시뮬이 없습니다. /admin/epanet 에서 [시뮬] 실행 후 다시 시도.",
+            }
+        sim_id = sim_row[0]
+        rd = sim_row[1]
+        sim_junctions = rd.get("junctions") or []
+
+        # 3) 매핑별 실측 평균
+        tag_sns = [r[1] for r in maps]
+        cur.execute(
+            """
+            SELECT tagsn, AVG(val) AS avg_v, COUNT(*) AS cnt
+              FROM tb_tag_raw_data
+             WHERE tagsn = ANY(%s)
+               AND logtime > NOW() - (%s || ' hours')::interval
+             GROUP BY tagsn
+            """,
+            (tag_sns, str(hours)),
+        )
+        observed = {row[0]: (float(row[1]) if row[1] is not None else None, int(row[2]))
+                    for row in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
+
+    # 4) 매핑별 KNN 노드 매칭 + diff 계산
+    items: list = []
+    for map_id, tag_sn, x, y, offset, label in maps:
+        x = float(x); y = float(y); offset = float(offset)
+        # KNN — 가장 가까운 sim junction
+        nearest = None
+        nearest_d2 = float("inf")
+        for j in sim_junctions:
+            jx = j.get("x"); jy = j.get("y")
+            if jx is None or jy is None:
+                continue
+            d2 = (x - jx) ** 2 + (y - jy) ** 2
+            if d2 < nearest_d2:
+                nearest_d2 = d2
+                nearest = j
+        sim_p = nearest.get("pressure_m") if nearest else None
+        sim_node_id = nearest.get("id") if nearest else None
+        dist_m = nearest_d2 ** 0.5 if nearest_d2 != float("inf") else None
+
+        raw_avg, sample_count = observed.get(tag_sn, (None, 0))
+        observed_m = (raw_avg + offset) if raw_avg is not None else None
+        diff_m = (abs(observed_m - sim_p)
+                  if observed_m is not None and sim_p is not None else None)
+        suspicious = bool(diff_m is not None and diff_m > threshold_m)
+
+        items.append({
+            "map_id": map_id,
+            "tag_sn": tag_sn,
+            "label": label,
+            "x": x, "y": y,
+            "lng": (nearest.get("lng") if nearest else None),
+            "lat": (nearest.get("lat") if nearest else None),
+            "sim_node_id": sim_node_id,
+            "dist_to_node_m": round(dist_m, 1) if dist_m is not None else None,
+            "observed_m": round(observed_m, 2) if observed_m is not None else None,
+            "observed_count": sample_count,
+            "calibration_offset_m": offset,
+            "sim_pressure_m": round(sim_p, 2) if sim_p is not None else None,
+            "diff_m": round(diff_m, 2) if diff_m is not None else None,
+            "suspicious": suspicious,
+        })
+
+    # 의심 → 차이 큰 순 정렬
+    items.sort(key=lambda i: (
+        -1 if i["suspicious"] else 0,
+        -(i["diff_m"] or 0),
+    ))
+    suspicious_count = sum(1 for i in items if i["suspicious"])
+    return {
+        "items": items,
+        "total_mapped": len(maps),
+        "suspicious_count": suspicious_count,
+        "threshold_m": threshold_m,
+        "hours": hours,
+        "sim_id": sim_id,
+    }
+
+
+# ===========================================================================
 # 0) GET /admin/epanet/data-quality — 메뉴별 데이터 품질 게이트
 # ===========================================================================
 
