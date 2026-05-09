@@ -262,6 +262,18 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-09 — 시계열 누적 + GIS 통합 오버레이
+  · **시계열 누적 (cron)**:
+    - POST `/admin/epanet/sim/cron` — 가장 최근 success artifact 자동 시뮬 (skip_if_recent_minutes 중복 방지)
+    - POST `/admin/epanet/sim/cleanup?days=90&keep_min=30` — 오래된 sim 정리 (최소 보존)
+    - 가이드: `docs/operations/epanet-sim-cron.md` (launchd plist + Linux crontab + 모니터링·트러블슈팅)
+    - 효과: network-aging 추세 정확도 ↑, scenario-diff 평소 vs 변경 비교
+  · **GIS 통합 오버레이**:
+    - `GisLeakSuspiciousLayer` — 매핑 위치 의심(빨강) / 정상(회색) circle + 좌하단 범례
+    - `GisHeadlossAnomalyLayer` — 이상 파이프 line (z-score 그라디언트 황색→빨강) + 우하단 범례
+    - GIS 페이지 상단 툴바에 [누수 의심] (rose) + [헤드손실 이상] (amber) 토글 추가
+    - 기존 [EPANET 시뮬] 토글과 독립 — 3개 동시 활성 가능
+    - 검증 (Playwright tmp/epanet-gis-integrated.png): 3 토글 모두 ON 시 시뮬 #14 (11882 노드) + 매핑 의심 5 + 이상 파이프 340 모두 동시 표시, 콘솔 에러 0
 - 2026-05-08 — Phase 3.3d / 4 / 5 / 6 일괄 구현 완료 (합성 자동 fallback)
   · **합성 자동 fallback**: data-quality 의 HAS_VALVE_DATA / HAS_PUMP_DATA / HAS_WATER_QUALITY_MODEL 모두 ok=true (detail 에 "합성" 표기). 실 SHP/모델 입력 후 자동 전환.
   · **simulator.py `run_what_if(inp_path, remove_links, add_pump_boost, quality_initial, quality_kbulk)`** — 변경 시나리오 즉석 시뮬 (link 제거 / reservoir head boost / 수질 모델)
