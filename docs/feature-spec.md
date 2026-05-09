@@ -619,6 +619,13 @@
 - 검증: flow ±3.4 LPS, 정류 82 / 역류 42 (정류 우세 = 수원→소비처 정합)
 - GenerateRequest 에 default_demand_lps 파라미터 추가 (운영자 조정 가능)
 
+### 18-A.6.6 Phase 3 / 4 / 5 / 6 — 메뉴 활성화 (2026-05-07 ~ 09)
+- 메뉴 토글 인프라 (`tb_epanet_menu_setting`) — 사이트별 10 메뉴 ON/OFF
+- 7 분석 API + 7 페이지 활성화 (placeholder → 실 분석)
+- 합성 자동 fallback (밸브/펌프/수질) — 실 SHP 입력 시 자동 전환
+- 시계열 누적 cron (`/sim/cron` + `/sim/cleanup`) — `docs/operations/epanet-sim-cron.md`
+- GIS 통합: `[누수 의심]` / `[헤드손실 이상]` / `[차단밸브 영향]` / `[관로 파손]` / `[교체 후보]` 토글 추가
+
 ### 18-A.7 Phase 2.6 (2026-05-05 — GIS 페이지 시뮬 오버레이 + 토글)
 - pyproj 의존성 추가 (`EPANET_SHP_CRS=EPSG:5186` default — 당진시 검증)
 - 시뮬 응답에 lng/lat (WGS84) 포함 — junction.lng/lat, pipe.vertices_lnglat, reservoir.lng/lat, bbox_lnglat

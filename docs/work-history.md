@@ -2,6 +2,31 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-09 — EPANET 시계열 누적 + GIS 통합 오버레이) [본 사이클 마무리]
+
+**cron 시뮬 + 분석 결과 GIS 통합**
+
+1. **시계열 누적 (cron)**
+   - 백엔드: POST `/admin/epanet/sim/cron` (skip_if_recent_minutes 중복 방지) + POST `/admin/epanet/sim/cleanup?days=90&keep_min=30`
+   - 가이드 `docs/operations/epanet-sim-cron.md` 신규 (launchd plist + Linux crontab + 모니터링·트러블슈팅)
+   - 효과: network-aging 추세 정확도 ↑, scenario-diff 평소 기준점 풍부, replacement-candidates 일시적 vs 지속 z 구분
+
+2. **GIS 통합 오버레이 (분석 결과)**
+   - `GisLeakSuspiciousLayer` — 매핑 위치 의심 빨강 + glow / 정상 회색 + 범례
+   - `GisHeadlossAnomalyLayer` — 이상 파이프 z-score 그라디언트 (황→주황→빨강) + 범례
+   - GIS 페이지 [누수 의심] / [헤드손실 이상] 토글 추가 (기존 [EPANET 시뮬] 과 독립, 3개 동시 활성 가능)
+
+3. **검증** (Playwright `tmp/epanet-gis-integrated.png`):
+   - 3 토글 모두 ON → 시뮬 #14 (11882 노드) + 의심 5 + 이상 340 동시 표시
+   - 우상단 시뮬 정보 / 좌하단 누수 범례 / 우하단 헤드손실 범례 정상
+   - 콘솔 에러 0
+
+**커밋 체인**: `slm@21ac4c4` + `slm-dashboard@e3e5f43` + `web@707c717`
+
+**EPANET 본 사이클 완성** (Phase 1~6, 시계열 누적, GIS 통합 모두). 후속은 운영 데이터 입력으로 정확도 향상 + 추가 GIS 모드 (밸브/파손/교체) 단계.
+
+---
+
 ### 완료 (2026-05-08 — EPANET Phase 3.3a) [센서 매핑 인프라 — leak-suspicious/network-aging 활성]
 
 **Migration 0069 + 매핑 CRUD + data-quality 자동 갱신 + 프런트 UI**

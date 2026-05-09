@@ -262,6 +262,12 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-09 (후속) — GIS 통합 오버레이 5종 완성
+  · `GisValveImpactLayer` — 밸브 차단 영향 노드 갈색 음영 + 우상단 범례
+  · `GisPipeBreakLayer` — 파손 라인 빨강 + 영향 노드 빨강 + 우회 라인 황색 점선 + 좌상단 범례
+  · `GisReplacementCandidatesLayer` — top 10 파이프 자주색 (1순위 진하게→10순위 옅게) + 우하단 범례
+  · GIS 페이지 토글 추가: [밸브 영향] (yellow) / [관로 파손] (red) / [교체 후보] (purple)
+  · 5개 분석 오버레이 + 1 시뮬 = **6 토글 독립 활성** (운영자 흐름·집중 분석에 따라 조합)
 - 2026-05-09 — 시계열 누적 + GIS 통합 오버레이
   · **시계열 누적 (cron)**:
     - POST `/admin/epanet/sim/cron` — 가장 최근 success artifact 자동 시뮬 (skip_if_recent_minutes 중복 방지)
