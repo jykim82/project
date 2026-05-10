@@ -262,6 +262,28 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-10 — 마스터 토글 + 물흐름 별도 + 메뉴 hidden 정합성
+  · **EpanetMenuToggles 마스터 스위치** — [전체 활성] / [전체 비활성] 버튼 (10 메뉴 일괄)
+    - 백엔드: PUT `/admin/epanet/menu-settings/bulk` (region/enabled bool)
+    - DB 영구 저장 (`tb_epanet_menu_setting`) — backend 재시작·재배포 후에도 유지
+  · **물흐름 화살표 별도 토글 분리**
+    - 신규 `GisFlowArrowLayer` — 옅은 회색 line + 정/역 색상 화살표만
+    - 기존 `GisEpanetSimLayer` 의 화살표 layer 제거
+    - GIS 페이지 `[물흐름 표시]` 토글 (cyan) — **마스터 비활성에 영향받지 않음** (EPANET 메뉴와 별도의 단순 시각화)
+  · **data-quality 캐시 → Zustand store**
+    - `useStore` (byRegion / loadingRegions / fetched) + `invalidateEpanetDataQuality(region)` export
+    - 토글 변경 후 mount 된 모든 컴포넌트 즉시 갱신 (사이드바·탑바·GIS 토글)
+  · **AppTopbar statusOf 필터 추가** — 사이드바와 동일 로직 (탑바 모드에서도 disabled 메뉴 hidden)
+  · **M003-5 GIS 관망도 dataQualityKey 제거** — 기존 메뉴이므로 EPANET 마스터 토글 영향 안 받게 (GIS 페이지 안의 `gis-flow` 토글은 별도)
+  · **자식 모두 disabled 시 상위 그룹 hidden** (AppSidebar / AppTopbar)
+    - 분석 그룹 (M008) 처럼 자식 3개 모두 EPANET 이면 그룹 자체 사라짐
+    - 위기대응·모니터링은 EPANET 외 자식 있어 그룹 유지 (EPANET 자식만 hidden)
+  · 검증 (Playwright):
+    - 마스터 비활성 → 6 그룹 (위기대응/모니터링/트렌드/보고서/관리/구축) — **분석 사라짐**
+    - 마스터 활성 → 7 그룹 (+ 분석)
+    - GIS 페이지: 마스터 OFF 시 [물흐름 표시] 1개만 노출, ON 시 7개 토글 복원
+    - DB 영구성: backend 재시작 후에도 enabled='N' 유지
+
 - 2026-05-09 (후속) — GIS 통합 오버레이 5종 완성
   · `GisValveImpactLayer` — 밸브 차단 영향 노드 갈색 음영 + 우상단 범례
   · `GisPipeBreakLayer` — 파손 라인 빨강 + 영향 노드 빨강 + 우회 라인 황색 점선 + 좌상단 범례

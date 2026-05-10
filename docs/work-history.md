@@ -2,6 +2,34 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-10 — EPANET 메뉴 토글 정합성) [마스터 + 물흐름 분리 + 그룹 hidden]
+
+**관리자 토글 → 사이드바·탑바·GIS 토글 즉시 반영, DB 영구 저장**
+
+1. **마스터 스위치** — `EpanetMenuToggles` 카드 [전체 활성] / [전체 비활성] 버튼 (10 메뉴 일괄)
+   - 백엔드 `PUT /admin/epanet/menu-settings/bulk`
+   - `tb_epanet_menu_setting` DB 영구 저장 (재시작·재배포 후에도 유지)
+
+2. **물흐름 화살표 별도 토글** — 새 `GisFlowArrowLayer` (옅은 회색 line + 정/역 색상 화살표만)
+   - GIS 페이지 [물흐름 표시] 토글 (cyan) — **마스터 비활성에 영향 X**
+
+3. **data-quality 캐시 → Zustand store** — `invalidateEpanetDataQuality(region)` 호출 시 모든 컴포넌트 즉시 갱신
+
+4. **AppTopbar statusOf 필터 추가** — 탑바 모드도 사이드바와 동일하게 disabled 메뉴 hidden
+
+5. **M003-5 GIS 관망도 dataQualityKey 제거** — 기존 메뉴이므로 EPANET 토글 영향 안 받게
+
+6. **자식 모두 disabled → 상위 그룹 hidden** — 분석 그룹 자식 3개 모두 EPANET 이면 그룹 사라짐
+
+**검증** (Playwright tmp/sidebar-after-master-off.png + 다수):
+- 마스터 비활성 → 6 그룹 (분석 사라짐), 활성 → 7 그룹
+- GIS 페이지: 마스터 OFF 시 [물흐름 표시] 1개만, ON 시 7 토글
+- DB 영구성: backend 재시작 후에도 enabled='N' 유지
+
+**커밋 체인**: `slm@dc86922` (bulk API) + `slm-dashboard@9e30317` (마스터 토글·store·필터·hidden) + `web@e4759fc`
+
+---
+
 ### 완료 (2026-05-09 — EPANET 시계열 누적 + GIS 통합 오버레이) [본 사이클 마무리]
 
 **cron 시뮬 + 분석 결과 GIS 통합**
