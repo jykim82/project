@@ -571,6 +571,579 @@ def delete_all_meter_maps(region: str = "R01") -> dict:
 
 
 # ===========================================================================
+# E3.5) 시설 ↔ 실측 유량 태그 매핑 (B-1: Live demand injection)
+# 사양: docs/epanet-flow-injection-spec.md §3
+# ===========================================================================
+
+class FacilityFlowMapIn(BaseModel):
+    region: str = "R01"
+    sitename: str
+    facilitytype: str
+    role: str            # 'outflow' | 'inflow'
+    tagsn: str
+    unit: str            # 'cmh' | 'lps' | 'm3h' | 'lpm' | 'm3s'
+    scale: float = 1.0
+    x: float
+    y: float
+    enabled: Optional[str] = "Y"
+    notes: Optional[str] = None
+
+
+# 단위 → LPS 환산 계수
+_UNIT_TO_LPS = {
+    "lps": 1.0,
+    "lpm": 1.0 / 60.0,
+    "cmh": 1000.0 / 3600.0,
+    "m3h": 1000.0 / 3600.0,
+    "m3s": 1000.0,
+}
+
+
+def _to_lps(value: float, unit: str, scale: float = 1.0) -> float:
+    """단위 환산. unit 미지원 시 lps 로 가정."""
+    factor = _UNIT_TO_LPS.get(unit, 1.0)
+    return value * scale * factor
+
+
+@router.get("/facility-flow-map")
+def list_facility_flow_map(region: str = "R01", limit: int = 500) -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT map_id, region, sitename, facilitytype, role, tagsn, unit,
+                   scale, x, y, enabled, notes, created_at, updated_at, created_by
+              FROM tb_epanet_facility_flow_map
+             WHERE region = %s
+             ORDER BY facilitytype, sitename, role
+             LIMIT %s
+            """,
+            (region, limit),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        items = [{
+            "map_id": r[0], "region": r[1],
+            "sitename": r[2], "facilitytype": r[3], "role": r[4],
+            "tagsn": r[5], "unit": r[6], "scale": float(r[7]),
+            "x": float(r[8]), "y": float(r[9]),
+            "enabled": (r[10] == "Y"), "notes": r[11],
+            "created_at": r[12].isoformat() if r[12] else None,
+            "updated_at": r[13].isoformat() if r[13] else None,
+            "created_by": r[14],
+        } for r in rows]
+        return {"items": items, "total": len(items)}
+    finally:
+        conn.close()
+
+
+@router.post("/facility-flow-map")
+def add_facility_flow_map(req: FacilityFlowMapIn, request: Request) -> dict:
+    _ensure_enabled(req.region)
+    if req.role not in ("outflow", "inflow"):
+        raise HTTPException(400, detail="role 은 'outflow' 또는 'inflow'")
+    if req.unit not in _UNIT_TO_LPS:
+        raise HTTPException(400, detail=f"unit 은 {list(_UNIT_TO_LPS.keys())} 중 하나")
+    user_id = _get_user_id(request)
+    enabled = "Y" if (req.enabled or "Y").upper() == "Y" else "N"
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO tb_epanet_facility_flow_map
+                (region, sitename, facilitytype, role, tagsn, unit, scale,
+                 x, y, enabled, notes, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (region, sitename, facilitytype, role) DO UPDATE
+               SET tagsn = EXCLUDED.tagsn, unit = EXCLUDED.unit,
+                   scale = EXCLUDED.scale, x = EXCLUDED.x, y = EXCLUDED.y,
+                   enabled = EXCLUDED.enabled, notes = EXCLUDED.notes,
+                   updated_at = NOW()
+            RETURNING map_id
+            """,
+            (req.region, req.sitename, req.facilitytype, req.role, req.tagsn,
+             req.unit, req.scale, req.x, req.y, enabled, req.notes, user_id),
+        )
+        mid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        return {"map_id": mid}
+    finally:
+        conn.close()
+
+
+@router.delete("/facility-flow-map/{map_id}")
+def delete_facility_flow_map(map_id: int, region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM tb_epanet_facility_flow_map "
+            "WHERE map_id = %s AND region = %s",
+            (map_id, region),
+        )
+        conn.commit()
+        cur.close()
+        return {"deleted": map_id}
+    finally:
+        conn.close()
+
+
+@router.delete("/facility-flow-map")
+def delete_all_facility_flow_map(region: str = "R01") -> dict:
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM tb_epanet_facility_flow_map WHERE region = %s", (region,)
+        )
+        n = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"deleted_count": n}
+    finally:
+        conn.close()
+
+
+@router.post("/facility-flow-map/auto-suggest")
+def auto_suggest_facility_flow_map(region: str = "R01") -> dict:
+    """`tb_tag_info.datainfo` 패턴 매칭으로 시설별 outflow 태그 후보 제안.
+
+    sitename 은 datainfo 에 포함된 (배)/(가)/(블) 표기를 그대로 사용.
+    좌표는 같은 sitename 의 meter_map 좌표 또는 가장 최근 INP reservoir 좌표
+    를 fallback. 매핑이 없으면 (0, 0) — 운영자가 GIS 에서 보정 필요.
+    """
+    _ensure_enabled(region)
+    suggestions: list = []
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # outflow 후보 — 순시 유량 우선 (적산은 누적이라 평균 의미 없음)
+        cur.execute(
+            """
+            SELECT t.tagsn, t.sitename, t.facilitytype, t.datainfo, t.unit
+              FROM tb_tag_info t
+             WHERE (t.datainfo ILIKE '%유출유량순시%'
+                 OR t.datainfo ILIKE '%유량순시유량%'
+                 OR t.datainfo ILIKE '%토출유량%'
+                 OR (t.datainfo ILIKE '%유입유량순시%'
+                     AND t.facilitytype = '배수지'))
+               AND t.tagtype = 'Analog Input'
+               AND COALESCE(t.alarm_tag_yn, 0) = 0
+               AND t.facilitytype IN ('배수지','가압장','소블록','소소블록')
+               AND t.sitename IS NOT NULL
+             ORDER BY t.facilitytype, t.sitename
+            """
+        )
+        rows = cur.fetchall()
+
+        # 같은 sitename 의 meter_map 좌표 lookup
+        cur.execute(
+            "SELECT label, AVG(x), AVG(y) FROM tb_epanet_meter_map "
+            "WHERE region = %s AND label IS NOT NULL GROUP BY label",
+            (region,),
+        )
+        coord_by_label = {r[0]: (float(r[1]), float(r[2])) for r in cur.fetchall()}
+
+        # 가장 최근 시뮬의 reservoir 좌표 (fallback)
+        cur.execute(
+            "SELECT result_data FROM tb_epanet_simulation_result "
+            "WHERE region = %s AND status = 'success' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (region,),
+        )
+        sim_row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+
+    reservoirs = []
+    if sim_row and sim_row[0]:
+        reservoirs = sim_row[0].get("reservoirs") or []
+
+    # 기존 매핑 (재제안 방지) 조회
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT sitename, facilitytype, role FROM tb_epanet_facility_flow_map "
+            "WHERE region = %s",
+            (region,),
+        )
+        existing = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
+
+    for tagsn, sitename, facilitytype, datainfo, raw_unit in rows:
+        if not sitename or not facilitytype:
+            continue
+        # 유입 vs 유출
+        is_inflow = "유입" in (datainfo or "")
+        role = "inflow" if is_inflow else "outflow"
+        if (sitename, facilitytype, role) in existing:
+            continue
+        # 단위 추정 — 한국 SCADA 관행: 대부분 cmh (m³/h). lpm 표기는 datainfo 에서
+        # "L/min" 나 "lpm" 키워드 있을 때만.
+        unit = "cmh"
+        if raw_unit and "L/min" in raw_unit:
+            unit = "lpm"
+        elif raw_unit and "lps" in (raw_unit or "").lower():
+            unit = "lps"
+        # 좌표
+        x, y = coord_by_label.get(sitename, (0.0, 0.0))
+        if x == 0 and reservoirs:
+            r0 = reservoirs[0]
+            x = float(r0.get("x") or 0)
+            y = float(r0.get("y") or 0)
+        suggestions.append({
+            "sitename": sitename,
+            "facilitytype": facilitytype,
+            "role": role,
+            "tagsn": tagsn,
+            "unit": unit,
+            "scale": 1.0,
+            "x": x, "y": y,
+            "datainfo": datainfo,
+            "needs_coord": (x == 0 and y == 0),
+        })
+
+    return {"items": suggestions, "total": len(suggestions)}
+
+
+def _compute_live_demands(region: str, hours: int = 1) -> list[tuple]:
+    """매핑된 시설별 실측 평균 → demand_points (LPS).
+
+    Returns: list of (x, y, demand_lps, source_label).
+    배수지(reservoir) 는 EPANET 모델에서 reservoir/source 라 junction demand 로
+    주입 안 함. 가압장·블록의 outflow 만 주입.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT map_id, sitename, facilitytype, role, tagsn, unit, scale, x, y
+              FROM tb_epanet_facility_flow_map
+             WHERE region = %s AND enabled = 'Y'
+               AND facilitytype IN ('가압장','소블록','소소블록')
+               AND role = 'outflow'
+            """,
+            (region,),
+        )
+        maps = cur.fetchall()
+        if not maps:
+            cur.close()
+            return []
+        tagsns = [m[4] for m in maps]
+        cur.execute(
+            """
+            SELECT tagsn, AVG(val) AS avg_v, COUNT(*) AS cnt
+              FROM tb_tag_raw_data
+             WHERE tagsn = ANY(%s)
+               AND logtime > NOW() - (%s || ' hours')::interval
+             GROUP BY tagsn
+            """,
+            (tagsns, str(max(1, min(24, hours)))),
+        )
+        observed = {r[0]: (float(r[1]) if r[1] is not None else None, int(r[2]))
+                    for r in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
+
+    out: list = []
+    for map_id, sitename, facilitytype, role, tagsn, unit, scale, x, y in maps:
+        avg, cnt = observed.get(tagsn, (None, 0))
+        if avg is None or cnt < 3:
+            continue  # 데이터 부족 — 스킵
+        lps = _to_lps(avg, unit, float(scale))
+        if lps <= 0:
+            continue
+        out.append((float(x), float(y), float(lps),
+                    f"live:{sitename}:{role}"))
+    return out
+
+
+# ===========================================================================
+# E_FLOW_DEV) 시뮬 vs 실측 유량 차이 (B-2)
+# 사양: docs/epanet-flow-deviation-spec.md §3
+# ===========================================================================
+
+@router.get("/flow-deviation")
+def get_flow_deviation(
+    region: str = "R01",
+    hours: int = 1,
+    threshold_pct: float = 10.0,
+    min_flow_lps: float = 1.0,
+) -> dict:
+    """매핑된 시설별로 실측 유량 vs 시뮬 link 유량 차이를 계산.
+
+    누수의심 (압력 기반) 의 자매 분석. 시뮬 link 매칭은 KNN (좌표 → 가장
+    가까운 link 의 중점). 거리 임계 50m 초과 시 sim_flow_lps=null + 경고.
+    """
+    _ensure_enabled(region)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # 1) 시설 매핑
+        cur.execute(
+            """
+            SELECT map_id, sitename, facilitytype, role, tagsn, unit, scale, x, y
+              FROM tb_epanet_facility_flow_map
+             WHERE region = %s AND enabled = 'Y'
+            """,
+            (region,),
+        )
+        maps = cur.fetchall()
+        if not maps:
+            cur.close()
+            return {
+                "items": [], "total_mapped": 0, "suspicious_count": 0,
+                "threshold_pct": threshold_pct, "hours": hours,
+                "warning": "시설 유량 매핑이 없습니다. /admin/epanet 에서 매핑 추가 후 다시 시도.",
+            }
+
+        # 2) 가장 최근 시뮬 결과
+        cur.execute(
+            """
+            SELECT sim_id, result_data, created_at
+              FROM tb_epanet_simulation_result
+             WHERE region = %s AND status = 'success'
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (region,),
+        )
+        sim_row = cur.fetchone()
+        if not sim_row or not sim_row[1]:
+            cur.close()
+            return {
+                "items": [], "total_mapped": len(maps), "suspicious_count": 0,
+                "threshold_pct": threshold_pct, "hours": hours,
+                "warning": "성공한 시뮬이 없습니다.",
+            }
+        sim_id = sim_row[0]
+        sim_created_at = sim_row[2].isoformat() if sim_row[2] else None
+        rd = sim_row[1]
+        sim_pipes = rd.get("pipes") or []
+        sim_junctions = rd.get("junctions") or []
+        node_xy = {j["id"]: (j.get("x"), j.get("y"), j.get("lng"), j.get("lat"))
+                   for j in sim_junctions if j.get("x") is not None}
+
+        # 3) 매핑별 실측 평균
+        tagsns = [m[4] for m in maps]
+        cur.execute(
+            """
+            SELECT tagsn, AVG(val) AS avg_v, COUNT(*) AS cnt
+              FROM tb_tag_raw_data
+             WHERE tagsn = ANY(%s)
+               AND logtime > NOW() - (%s || ' hours')::interval
+             GROUP BY tagsn
+            """,
+            (tagsns, str(max(1, min(24, hours)))),
+        )
+        observed = {r[0]: (float(r[1]) if r[1] is not None else None, int(r[2]))
+                    for r in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
+
+    # 4) link 중점 좌표 사전 계산 (lng/lat 도 함께)
+    link_centers = []
+    for p in sim_pipes:
+        sxy = node_xy.get(p.get("start_node") or "")
+        exy = node_xy.get(p.get("end_node") or "")
+        if not sxy or not exy:
+            continue
+        sx, sy, slng, slat = sxy
+        ex, ey, elng, elat = exy
+        if sx is None or ex is None:
+            continue
+        cx = (sx + ex) / 2.0
+        cy = (sy + ey) / 2.0
+        clng = ((slng + elng) / 2.0) if (slng is not None and elng is not None) else None
+        clat = ((slat + elat) / 2.0) if (slat is not None and elat is not None) else None
+        link_centers.append({
+            "id": p.get("id"), "cx": cx, "cy": cy,
+            "lng": clng, "lat": clat,
+            "flow_lps": abs(float(p.get("flow_lps") or 0)),
+        })
+
+    # 5) 매핑별 KNN link 매칭 + diff
+    items: list = []
+    for map_id, sitename, facilitytype, role, tagsn, unit, scale, x, y in maps:
+        x = float(x); y = float(y); scale = float(scale)
+        nearest = None; nearest_d2 = float("inf")
+        for lc in link_centers:
+            d2 = (x - lc["cx"]) ** 2 + (y - lc["cy"]) ** 2
+            if d2 < nearest_d2:
+                nearest_d2 = d2
+                nearest = lc
+        dist = nearest_d2 ** 0.5 if nearest else None
+        sim_flow = nearest["flow_lps"] if (nearest and dist is not None and dist <= 50.0) else None
+        sim_link_id = nearest["id"] if nearest else None
+
+        avg, cnt = observed.get(tagsn, (None, 0))
+        observed_lps = _to_lps(avg, unit, scale) if (avg is not None and cnt >= 3) else None
+
+        diff_lps = (abs(observed_lps - sim_flow)
+                    if observed_lps is not None and sim_flow is not None else None)
+        diff_pct = None
+        direction = None
+        suspicious = False
+        if diff_lps is not None and observed_lps is not None and sim_flow is not None:
+            denom = max(observed_lps, sim_flow, 0.001)
+            diff_pct = round(diff_lps / denom * 100, 2)
+            if abs(observed_lps - sim_flow) <= 0.01:
+                direction = "match"
+            elif observed_lps > sim_flow:
+                direction = "observed_higher"
+            else:
+                direction = "sim_higher"
+            if max(observed_lps, sim_flow) >= min_flow_lps and diff_pct > threshold_pct:
+                suspicious = True
+
+        items.append({
+            "map_id": map_id,
+            "sitename": sitename,
+            "facilitytype": facilitytype,
+            "role": role,
+            "tagsn": tagsn,
+            "x": x, "y": y,
+            "lng": (nearest.get("lng") if nearest else None),
+            "lat": (nearest.get("lat") if nearest else None),
+            "observed_lps": round(observed_lps, 2) if observed_lps is not None else None,
+            "observed_count": cnt,
+            "sim_link_id": sim_link_id,
+            "sim_flow_lps": round(sim_flow, 2) if sim_flow is not None else None,
+            "dist_to_link_m": round(dist, 1) if dist is not None else None,
+            "diff_lps": round(diff_lps, 2) if diff_lps is not None else None,
+            "diff_pct": diff_pct,
+            "direction": direction,
+            "suspicious": suspicious,
+        })
+
+    items.sort(key=lambda i: (
+        -1 if i["suspicious"] else 0,
+        -(i["diff_pct"] or 0),
+    ))
+    return {
+        "items": items,
+        "total_mapped": len(maps),
+        "suspicious_count": sum(1 for i in items if i["suspicious"]),
+        "threshold_pct": threshold_pct,
+        "min_flow_lps": min_flow_lps,
+        "hours": hours,
+        "sim_id": sim_id,
+        "sim_created_at": sim_created_at,
+    }
+
+
+@router.get("/flow-deviation/timeseries")
+def get_flow_deviation_timeseries(
+    region: str = "R01",
+    map_id: int = 0,
+    hours: int = 24,
+) -> dict:
+    """단건 시설의 24시간 실측 시계열 + 시뮬 baseline (상수)."""
+    _ensure_enabled(region)
+    if map_id <= 0:
+        raise HTTPException(400, detail="map_id 필수")
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT sitename, facilitytype, role, tagsn, unit, scale, x, y
+              FROM tb_epanet_facility_flow_map
+             WHERE map_id = %s AND region = %s
+            """,
+            (map_id, region),
+        )
+        m = cur.fetchone()
+        if not m:
+            cur.close()
+            raise HTTPException(404, detail="map_id 없음")
+        sitename, facilitytype, role, tagsn, unit, scale, x, y = m
+        scale = float(scale); x = float(x); y = float(y)
+
+        # 시간별 평균 (실측)
+        cur.execute(
+            """
+            SELECT date_trunc('hour', logtime) AS h, AVG(val) AS v, COUNT(*) AS cnt
+              FROM tb_tag_raw_data
+             WHERE tagsn = %s
+               AND logtime > NOW() - (%s || ' hours')::interval
+             GROUP BY h ORDER BY h
+            """,
+            (tagsn, str(max(1, min(48, hours)))),
+        )
+        observed = [
+            {"t": r[0].isoformat(),
+             "lps": round(_to_lps(float(r[1]), unit, scale), 2) if r[1] is not None else None}
+            for r in cur.fetchall()
+        ]
+
+        # 시뮬 baseline (KNN link)
+        cur.execute(
+            """
+            SELECT sim_id, result_data, created_at
+              FROM tb_epanet_simulation_result
+             WHERE region = %s AND status = 'success'
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (region,),
+        )
+        sim_row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+
+    sim_flow = None
+    sim_id = None
+    sim_created_at = None
+    if sim_row and sim_row[1]:
+        sim_id = sim_row[0]
+        sim_created_at = sim_row[2].isoformat() if sim_row[2] else None
+        rd = sim_row[1]
+        sim_pipes = rd.get("pipes") or []
+        sim_junctions = rd.get("junctions") or []
+        node_xy = {j["id"]: (j.get("x"), j.get("y"))
+                   for j in sim_junctions if j.get("x") is not None}
+        nearest_d2 = float("inf")
+        for p in sim_pipes:
+            sxy = node_xy.get(p.get("start_node") or "")
+            exy = node_xy.get(p.get("end_node") or "")
+            if not sxy or not exy:
+                continue
+            cx = (sxy[0] + exy[0]) / 2.0
+            cy = (sxy[1] + exy[1]) / 2.0
+            d2 = (x - cx) ** 2 + (y - cy) ** 2
+            if d2 < nearest_d2:
+                nearest_d2 = d2
+                sim_flow = abs(float(p.get("flow_lps") or 0))
+
+    return {
+        "map_id": map_id,
+        "sitename": sitename,
+        "facilitytype": facilitytype,
+        "role": role,
+        "tagsn": tagsn,
+        "unit": unit,
+        "x": x, "y": y,
+        "sim_flow_lps": round(sim_flow, 2) if sim_flow is not None else None,
+        "sim_id": sim_id,
+        "sim_created_at": sim_created_at,
+        "observed": observed,
+    }
+
+
+# ===========================================================================
 # E_MENU) 메뉴 활성/비활성 토글 (Phase 3.3 후속)
 # ===========================================================================
 
@@ -1537,6 +2110,8 @@ _MENU_REQUIREMENTS = {
                                "recommended": []},
     "water-quality":          {"required": ["HAS_PIPE_NETWORK", "HAS_WATER_QUALITY_MODEL"],
                                "recommended": []},
+    "flow-deviation":         {"required": ["HAS_PIPE_NETWORK", "HAS_LIVE_FLOW"],
+                               "recommended": ["HAS_DEMAND_PROFILE"]},
 }
 
 
@@ -1664,6 +2239,30 @@ def _check_data_quality(region: str) -> dict:
         checks["HAS_METER_MAPPING"] = {
             "ok": False,
             "detail": "tb_epanet_meter_map 비어있음 — /admin/epanet 에서 매핑 추가",
+        }
+    # 7b) HAS_LIVE_FLOW — B-1 시설 유량 매핑 (≥5 충족)
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM tb_epanet_facility_flow_map "
+            "WHERE region = %s AND enabled = 'Y'",
+            (region,),
+        )
+        live_count = cur.fetchone()[0] or 0
+        cur.close()
+        conn.close()
+    except Exception:
+        live_count = 0
+    if live_count >= 5:
+        checks["HAS_LIVE_FLOW"] = {
+            "ok": True,
+            "detail": f"실측 유량 매핑 {live_count}건",
+        }
+    else:
+        checks["HAS_LIVE_FLOW"] = {
+            "ok": False,
+            "detail": f"실측 유량 매핑 {live_count}건 (5건 이상 필요)",
         }
     # 8) HAS_VALVE_DATA — INP 의 [VALVES] 섹션 검사 (가장 최근 artifact)
     # 9) HAS_PUMP_DATA — INP 의 [PUMPS] 섹션 검사
@@ -1834,6 +2433,8 @@ class GenerateRequest(BaseModel):
     use_synthetic_elevation: bool = False         # 시연용 합성 표고 (운영자 입력 전 미리보기)
     use_demand_points: bool = True                # tb_epanet_demand_point 의 입력 수요를 IDW 보간
     use_synthetic_demand: bool = False            # 시연용 합성 demand (도심 고/외곽 저)
+    inject_live_demand: bool = False              # B-1: 실측 유량 매핑을 demand 로 자동 주입
+    inject_live_hours: int = 1                    # 실측 평균 윈도우 (1~24)
 
 
 @router.post("/inp/generate")
@@ -1907,6 +2508,19 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
             finally:
                 conn_e.close()
 
+        # B-1: 실측 유량 주입 — manual 점 ±10m 범위는 기존값 우선
+        live_injected_count = 0
+        if req.inject_live_demand:
+            live_pts = _compute_live_demands(req.region, hours=req.inject_live_hours)
+            existing_xy = [(p[0], p[1]) for p in demand_points]
+            for lx, ly, lps, _label in live_pts:
+                near = any((lx - mx) ** 2 + (ly - my) ** 2 < 100  # 10m^2 = 100
+                           for mx, my in existing_xy)
+                if near:
+                    continue
+                demand_points.append((lx, ly, lps))
+                live_injected_count += 1
+
         result = convert_pipes_to_inp(
             pipe_shp_paths=pipe_paths,
             reservoir_shp_path=reservoir_path,
@@ -1944,6 +2558,7 @@ def generate_inp(req: GenerateRequest, request: Request) -> dict:
             "skipped_records": result.skipped_records,
             "warnings": result.warnings,
             "wntr_validation": validation,
+            "live_injected_count": live_injected_count,
         }
     except Exception as e:
         logger.exception("EPANET .inp 변환 실패")
