@@ -712,18 +712,23 @@ def delete_all_facility_flow_map(region: str = "R01") -> dict:
 
 @router.post("/facility-flow-map/auto-suggest")
 def auto_suggest_facility_flow_map(region: str = "R01") -> dict:
-    """`tb_tag_info.datainfo` 패턴 매칭으로 시설별 outflow 태그 후보 제안.
+    """tb_tag_info + tb_facility_flow_map 결합으로 정밀 매핑 후보 제안.
 
-    sitename 은 datainfo 에 포함된 (배)/(가)/(블) 표기를 그대로 사용.
-    좌표는 같은 sitename 의 meter_map 좌표 또는 가장 최근 INP reservoir 좌표
-    를 fallback. 매핑이 없으면 (0, 0) — 운영자가 GIS 에서 보정 필요.
+    신뢰도 (confidence):
+    - verified: tb_facility_flow_map 에 등장 + 상하류 짝의 일관성 검증됨
+    - probable: tb_facility_flow_map 에 등장 (단방향만 매칭)
+    - weak    : tb_facility_flow_map 에 미등장 (datainfo 패턴만)
+
+    응답:
+    - items: 후보 + confidence + verification 메타
+    - unmapped_facilities: tb_facility_flow_map 에 등장하지만 outflow/inflow
+      태그가 발견 안 된 시설 (운영자 수동 입력 필요)
     """
     _ensure_enabled(region)
-    suggestions: list = []
     conn = get_db()
     try:
         cur = conn.cursor()
-        # outflow 후보 — 순시 유량 우선 (적산은 누적이라 평균 의미 없음)
+        # 1) datainfo 패턴 매칭 후보 (tagsn 별)
         cur.execute(
             """
             SELECT t.tagsn, t.sitename, t.facilitytype, t.datainfo, t.unit
@@ -742,34 +747,17 @@ def auto_suggest_facility_flow_map(region: str = "R01") -> dict:
         )
         rows = cur.fetchall()
 
-        # 같은 sitename 의 meter_map 좌표 lookup
+        # 2) tb_facility_flow_map 상하류 관계
         cur.execute(
-            "SELECT label, AVG(x), AVG(y) FROM tb_epanet_meter_map "
-            "WHERE region = %s AND label IS NOT NULL GROUP BY label",
-            (region,),
+            """
+            SELECT upstream_sitename, upstream_facilitytype,
+                   downstream_sitename, downstream_facilitytype
+              FROM tb_facility_flow_map
+            """
         )
-        coord_by_label = {r[0]: (float(r[1]), float(r[2])) for r in cur.fetchall()}
+        flow_pairs = cur.fetchall()
 
-        # 가장 최근 시뮬의 reservoir 좌표 (fallback)
-        cur.execute(
-            "SELECT result_data FROM tb_epanet_simulation_result "
-            "WHERE region = %s AND status = 'success' "
-            "ORDER BY created_at DESC LIMIT 1",
-            (region,),
-        )
-        sim_row = cur.fetchone()
-        cur.close()
-    finally:
-        conn.close()
-
-    reservoirs = []
-    if sim_row and sim_row[0]:
-        reservoirs = sim_row[0].get("reservoirs") or []
-
-    # 기존 매핑 (재제안 방지) 조회
-    conn = get_db()
-    try:
-        cur = conn.cursor()
+        # 3) 기존 매핑 (재제안 방지)
         cur.execute(
             "SELECT sitename, facilitytype, role FROM tb_epanet_facility_flow_map "
             "WHERE region = %s",
@@ -780,40 +768,131 @@ def auto_suggest_facility_flow_map(region: str = "R01") -> dict:
     finally:
         conn.close()
 
+    # 4) 시설 in/out 등장 집합
+    out_facilities = {(p[0], p[1]) for p in flow_pairs}        # upstream
+    in_facilities  = {(p[2], p[3]) for p in flow_pairs}        # downstream
+    in_flow_map    = out_facilities | in_facilities
+
+    # 5) datainfo 매칭 결과 → 시설별 그룹
+    by_facility: dict = {}  # (sitename, facilitytype) → {"outflow":[...], "inflow":[...]}
     for tagsn, sitename, facilitytype, datainfo, raw_unit in rows:
         if not sitename or not facilitytype:
             continue
-        # 유입 vs 유출
         is_inflow = "유입" in (datainfo or "")
         role = "inflow" if is_inflow else "outflow"
-        if (sitename, facilitytype, role) in existing:
-            continue
-        # 단위 추정 — 한국 SCADA 관행: 대부분 cmh (m³/h). lpm 표기는 datainfo 에서
-        # "L/min" 나 "lpm" 키워드 있을 때만.
         unit = "cmh"
         if raw_unit and "L/min" in raw_unit:
             unit = "lpm"
         elif raw_unit and "lps" in (raw_unit or "").lower():
             unit = "lps"
-        # 좌표
-        x, y = coord_by_label.get(sitename, (0.0, 0.0))
-        if x == 0 and reservoirs:
-            r0 = reservoirs[0]
-            x = float(r0.get("x") or 0)
-            y = float(r0.get("y") or 0)
-        suggestions.append({
-            "sitename": sitename,
-            "facilitytype": facilitytype,
-            "role": role,
-            "tagsn": tagsn,
-            "unit": unit,
-            "scale": 1.0,
-            "x": x, "y": y,
-            "datainfo": datainfo,
-            "needs_coord": (x == 0 and y == 0),
+        key = (sitename, facilitytype)
+        by_facility.setdefault(key, {"outflow": [], "inflow": []})[role].append({
+            "tagsn": tagsn, "unit": unit, "datainfo": datainfo,
         })
 
-    return {"items": suggestions, "total": len(suggestions)}
+    # 6) 신뢰도 + verification 계산
+    suggestions: list = []
+    for (sitename, facilitytype), roles in by_facility.items():
+        # 시설이 tb_facility_flow_map 에 등장하는지
+        in_map = (sitename, facilitytype) in in_flow_map
+        # outflow 짝 검증 — 하류 시설의 inflow 와 unit 일관성
+        downstream = [(p[2], p[3]) for p in flow_pairs
+                      if p[0] == sitename and p[1] == facilitytype]
+        upstream = [(p[0], p[1]) for p in flow_pairs
+                    if p[2] == sitename and p[3] == facilitytype]
+
+        for role in ("outflow", "inflow"):
+            tags = roles[role]
+            if not tags:
+                continue
+            if (sitename, facilitytype, role) in existing:
+                continue
+            # 한 시설에 같은 role 태그가 여러 개면 첫 번째 (datainfo 가 가장 단순한 것
+            # 우선) 사용 — 운영자가 다이얼로그에서 수정 가능
+            tag = tags[0]
+
+            # 검증
+            verification: dict = {"in_flow_map": in_map}
+            if role == "outflow":
+                if downstream:
+                    matches = [
+                        f"{ds[0]}({ds[1]})" for ds in downstream
+                        if (ds[0], ds[1]) in by_facility
+                        and by_facility[(ds[0], ds[1])]["inflow"]
+                    ]
+                    verification["downstream_pairs"] = len(downstream)
+                    verification["downstream_inflow_tagged"] = len(matches)
+                    if matches:
+                        verification["downstream_sample"] = matches[0]
+            else:  # inflow
+                if upstream:
+                    matches = [
+                        f"{us[0]}({us[1]})" for us in upstream
+                        if (us[0], us[1]) in by_facility
+                        and by_facility[(us[0], us[1])]["outflow"]
+                    ]
+                    verification["upstream_pairs"] = len(upstream)
+                    verification["upstream_outflow_tagged"] = len(matches)
+                    if matches:
+                        verification["upstream_sample"] = matches[0]
+
+            # 신뢰도
+            paired = (verification.get("downstream_inflow_tagged", 0)
+                      + verification.get("upstream_outflow_tagged", 0)) > 0
+            if in_map and paired:
+                confidence = "verified"
+            elif in_map:
+                confidence = "probable"
+            else:
+                confidence = "weak"
+
+            suggestions.append({
+                "sitename": sitename,
+                "facilitytype": facilitytype,
+                "role": role,
+                "tagsn": tag["tagsn"],
+                "unit": tag["unit"],
+                "scale": 1.0,
+                "x": 0.0, "y": 0.0,                 # 좌표는 프런트에서 채움
+                "datainfo": tag["datainfo"],
+                "confidence": confidence,
+                "verification": verification,
+                "needs_coord": True,                # 프런트가 채움 (gis-facility-coords.json)
+            })
+
+    # 7) 누락 시설 — tb_facility_flow_map 에 있는데 outflow/inflow 매칭 0건
+    unmapped: list = []
+    for site, ftype in in_flow_map:
+        # facilitytype 정규화 — flow_map 은 "정수장" 도 포함되지만 EPANET demand
+        # 대상이 아니므로 스킵
+        if ftype not in ("배수지", "가압장", "소블록", "소소블록"):
+            continue
+        if (site, ftype, "outflow") in existing:
+            continue
+        cur_tags = by_facility.get((site, ftype), {"outflow": [], "inflow": []})
+        if not cur_tags["outflow"] and not cur_tags["inflow"]:
+            unmapped.append({
+                "sitename": site, "facilitytype": ftype,
+                "reason": "tb_facility_flow_map 에 등장하지만 datainfo 매칭 안 됨",
+            })
+
+    # 정렬: confidence 높은 순 → facilitytype/sitename
+    confidence_order = {"verified": 0, "probable": 1, "weak": 2}
+    suggestions.sort(key=lambda s: (
+        confidence_order.get(s["confidence"], 9),
+        s["facilitytype"], s["sitename"], s["role"],
+    ))
+
+    return {
+        "items": suggestions,
+        "total": len(suggestions),
+        "unmapped_facilities": unmapped,
+        "stats": {
+            "verified": sum(1 for s in suggestions if s["confidence"] == "verified"),
+            "probable": sum(1 for s in suggestions if s["confidence"] == "probable"),
+            "weak":     sum(1 for s in suggestions if s["confidence"] == "weak"),
+        },
+    }
 
 
 def _compute_live_demands(region: str, hours: int = 1) -> list[tuple]:
