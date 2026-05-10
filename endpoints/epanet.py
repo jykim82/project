@@ -610,6 +610,35 @@ def list_menu_settings(region: str = "R01") -> dict:
         conn.close()
 
 
+class MenuBulkIn(BaseModel):
+    region: str = "R01"
+    enabled: bool
+
+
+@router.put("/menu-settings/bulk")
+def update_menu_settings_bulk(req: MenuBulkIn, request: Request) -> dict:
+    """region 의 모든 EPANET 메뉴를 일괄 ON/OFF (마스터 스위치)."""
+    _ensure_enabled(req.region)
+    user_id = _get_user_id(request)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE tb_epanet_menu_setting
+               SET enabled = %s, updated_at = NOW(), updated_by = %s
+             WHERE region = %s
+            """,
+            ("Y" if req.enabled else "N", user_id, req.region),
+        )
+        rc = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "updated_count": rc, "enabled": req.enabled}
+    finally:
+        conn.close()
+
+
 @router.put("/menu-settings")
 def update_menu_setting(req: MenuSettingIn, request: Request) -> dict:
     """단건 토글 변경. enabled 'Y'/'N' 으로 UPSERT."""
