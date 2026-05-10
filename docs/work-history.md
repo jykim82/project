@@ -28,6 +28,19 @@
 
 **커밋 체인**: `slm@dc86922` (bulk API) + `slm-dashboard@9e30317` (마스터 토글·store·필터·hidden) + `web@e4759fc`
 
+**추가 작업 (저녁)**:
+- EPANET 성능 분리 구조 검토 — 이미 Lazy import 구조 (wntr/pyproj/pyshp 모두 함수 내부 import)
+  · 메모리 측정: 시작 310MB / 시뮬 1회 후 2.72GB (+2.3GB) — Python 모듈 unload 불가
+  · 진정한 격리는 사이드카 분리 (단일 사이트엔 현재 구성 충분)
+- EPANET 시뮬 GC 추가 (`simulator.py` run_steady_state / run_what_if 종료 시 del+gc.collect)
+  · 누적 호출 시 메모리 폭증 방지
+- 채팅 슬롯 컨텍스트 누수 fix
+  · 사용자 보고: "경보 누적 TOP 10" 답 0건 — 이전 대화 sitename(석문)/facilitytype(배수지) 자동 적용
+  · `_ALARM_PIE_INTENTS` (FACILITY_ALARM_TOP_COUNT, FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK) 매칭 시 사용자 메시지에 시설 미언급이면 빈 문자열 (전체 조회)
+  · 적용 위치 2곳 (`ai_server.py` line 3293 /ask + 4843 /ask/stream)
+  · 검증: DB SQL 직접 → 10건 정상 (`죽동(배) 탁도계 통신이상 4397건` 1위)
+- 커밋: `slm@fa4c1e6`
+
 ---
 
 ### 완료 (2026-05-09 — EPANET 시계열 누적 + GIS 통합 오버레이) [본 사이클 마무리]

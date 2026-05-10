@@ -262,6 +262,23 @@ INSERT INTO tb_menu VALUES
   · `/admin/epanet` 페이지 변환 작업 카드에 표고 옵션 체크박스 (운영자 입력 / 합성)
   · 검증: 합성 표고 ON → 시뮬 #9 압력 20.01~41.67m / flow ±3.4 LPS, HAS_ELEVATION ok=true
   · 메뉴 분류 변화: warning 5 → 1 (gis-flow / pipe-break / scenario-diff / replacement-candidates 가 ready 로 이동)
+- 2026-05-10 (저녁) — 성능 분리 검토 + EPANET GC + 채팅 슬롯 누수 fix
+  · **EPANET 별도 분리 구조 검토**:
+    - 현재 lazy import 구조 (wntr/pyproj/pyshp 모두 함수 내부) — backend 시작 시 메모리 영향 0
+    - 메모리 측정: 시작 310MB / 시뮬 1회 2.72GB (+2.3GB)
+    - Python 모듈 unload 불가 — 진정한 절대 격리는 사이드카 (slm-epanet 별도 컨테이너) 필요
+    - 분리 옵션 비교 표: 현재 / 사이드카 / 워커 큐 (Celery)
+    - 단일 사이트·1일 1~2회 cron → 현재 구성 충분, 다중 사이트·잦은 시뮬 → 사이드카 권장
+  · **EPANET 시뮬 GC**: `simulator.py` run_steady_state / run_what_if 종료 시 del wn / del results / gc.collect() — 누적 호출 시 메모리 폭증 방지
+  · **물흐름 화살표 방향 기준 명시 (사용자 질의)**:
+    - line geometry: SHP 좌표 (송수관)
+    - start/end 정렬: 배수지 최단 거리 (inp_converter 재정렬)
+    - **화살표 방향: 시뮬 flow_lps 부호** (양수 정류 청록 / 음수 역류 주황)
+    - 실측 센서값 사용 X — 시뮬 결과만 (Phase 4 후속에서 실측-시뮬 차이 시각화 고려)
+  · **채팅 슬롯 컨텍스트 누수 fix** (별도 이슈):
+    - `_ALARM_PIE_INTENTS` 인텐트 매칭 시 사용자 메시지에 시설 미언급이면 세션 컨텍스트 무시 (전체 조회)
+    - 검증: "경보 누적 TOP 10" → 죽동(배) 탁도계 통신이상 4397건 등 정상 반환
+
 - 2026-05-10 — 마스터 토글 + 물흐름 별도 + 메뉴 hidden 정합성
   · **EpanetMenuToggles 마스터 스위치** — [전체 활성] / [전체 비활성] 버튼 (10 메뉴 일괄)
     - 백엔드: PUT `/admin/epanet/menu-settings/bulk` (region/enabled bool)
