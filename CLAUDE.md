@@ -191,6 +191,8 @@ web/
 - `docs/feature-spec.md` — 기능 개괄
 - `docs/gis_plan.md` — EPANET + GIS 관망 고도화 (Phase 1 구현 완료 / Migration 0064 — `slm/epanet/` 모듈 + `/admin/epanet` 페이지)
 - `docs/epanet-menu-spec.md` — EPANET 활용 메뉴 사양 v1 (3 그룹 10 메뉴 트리 + 데이터 품질 게이트 + DataQualityCard UX + Phase 2.7~6 로드맵)
+- `docs/epanet-flow-injection-spec.md` — EPANET 실측 유량 주입 사양 (B-1: 시설별 outflow 매핑 → INP demand IDW 보간, Migration 0071)
+- `docs/epanet-flow-deviation-spec.md` — 시뮬 vs 실측 유량 차이 분석 사양 (B-2: 시설 단위 패널 + GIS 오버레이, Migration 0072 메뉴 등록)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
