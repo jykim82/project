@@ -3291,11 +3291,14 @@ async def _ask_inner(request: AskRequest):
     logger.info(f"INTENT 확정: {intent} (method={classify_method})")
 
     # 경보 순위 인텐트: sitename/facilitytype 선택적 + 카테고리 필터
+    # 2026-05-10 fix: 사용자 메시지에 시설 명시 안 했으면 세션 컨텍스트 무시 (전체 조회 의도)
     _ALARM_PIE_INTENTS = {"FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT"}
     if intent in _ALARM_PIE_INTENTS:
-        if not params.get("sitename") or params.get("sitename") == "%%":
+        _u_sitename = extract_sitename(request.user_question or "")
+        _u_facilitytype = extract_facility_type_from_question(request.user_question or "")
+        if not _u_sitename or not params.get("sitename") or params.get("sitename") == "%%":
             params["sitename"] = ""
-        if not params.get("facilitytype") or params.get("facilitytype") == "%%":
+        if not _u_facilitytype or not params.get("facilitytype") or params.get("facilitytype") == "%%":
             params["facilitytype"] = ""
         # 경보 카테고리 필터 (수위/압력/통신/전원/펌프/밸브/수질/유량)
         clause, label = _extract_alarm_filter(request.user_question or "")
@@ -4837,11 +4840,14 @@ async def ask_stream(request: AskRequest):
         logger.info(f"[SSE] INTENT 확정: {intent} (method={classify_method})")
 
         # 경보 순위 인텐트: sitename/facilitytype 선택적 + 카테고리 필터
+        # 2026-05-10 fix: 사용자 메시지에 시설 명시 안 했으면 세션 컨텍스트 무시
         _ALARM_PIE_INTENTS_SSE = {"FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT"}
         if intent in _ALARM_PIE_INTENTS_SSE:
-            if not params.get("sitename") or params.get("sitename") == "%%":
+            _u_sitename_s = extract_sitename(request.user_question or "")
+            _u_facilitytype_s = extract_facility_type_from_question(request.user_question or "")
+            if not _u_sitename_s or not params.get("sitename") or params.get("sitename") == "%%":
                 params["sitename"] = ""
-            if not params.get("facilitytype") or params.get("facilitytype") == "%%":
+            if not _u_facilitytype_s or not params.get("facilitytype") or params.get("facilitytype") == "%%":
                 params["facilitytype"] = ""
             # 경보 카테고리 필터 (수위/압력/통신/전원/펌프/밸브/수질/유량)
             clause, label = _extract_alarm_filter(request.user_question or "")

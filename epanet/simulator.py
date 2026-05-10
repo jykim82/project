@@ -7,6 +7,7 @@ wntr 미설치 시 ImportError 발생 — 호출 측에서 503 으로 응답.
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import time
@@ -246,6 +247,13 @@ def run_steady_state(inp_path: str | Path) -> SimulationResult:
                 pass
 
         duration_ms = int((time.time() - start) * 1000)
+        # wntr 시뮬 메모리 명시 정리 (큰 INP 시 wn/results 가 수백 MB 차지)
+        try:
+            del results
+            del wn
+            gc.collect()
+        except Exception:
+            pass
         bbox = (
             (round(min(all_xs), 4), round(min(all_ys), 4),
              round(max(all_xs), 4), round(max(all_ys), 4))
@@ -395,6 +403,13 @@ def run_what_if(inp_path: str | Path,
                 pass
 
         duration_ms = int((time.time() - start) * 1000)
+        # what-if 시뮬도 GC 정리
+        try:
+            del results
+            del wn
+            gc.collect()
+        except Exception:
+            pass
         return SimulationResult(
             success=True,
             junctions=junctions,
