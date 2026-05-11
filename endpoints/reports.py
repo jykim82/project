@@ -75,6 +75,7 @@ def _row_to_report(row: dict) -> dict:
         "finalized_by":   row.get("finalized_by"),
         "photo_layout":   row.get("photo_layout"),
         "approval_chain": approval,
+        "responsible_name": row.get("responsible_name"),
         "created_at":     row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at":     row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
@@ -324,6 +325,7 @@ class PatchReportRequest(BaseModel):
     title: Optional[str] = None
     photo_layout: Optional[str] = None
     approval_chain: Optional[dict] = None  # Migration 0059
+    responsible_name: Optional[str] = None  # Migration 0073 — 인쇄 본문 담당자
 
 
 class FinalizeRequest(BaseModel):
@@ -610,6 +612,10 @@ def patch_report(report_id: int, req: PatchReportRequest):
         if req.approval_chain is not None:
             sets.append("approval_chain = %s::jsonb")
             params.append(json.dumps(req.approval_chain, ensure_ascii=False, default=str))
+        if req.responsible_name is not None:
+            # 빈 문자열 → NULL (공란 출력)
+            sets.append("responsible_name = %s")
+            params.append(req.responsible_name.strip() or None)
         if not sets:
             return _row_to_report(report)
         sets.append("updated_at = now()")
