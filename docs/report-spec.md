@@ -55,6 +55,8 @@ updated: 2026-04-28
 | finalized_at | TIMESTAMPTZ | 확정 시각 (NULL = draft) |
 | finalized_by | VARCHAR(50) | 확정자 user_id |
 | photo_layout | VARCHAR(10) DEFAULT `'2up'` | `'1up'` / `'2up'` (CHECK) |
+| approval_chain | JSONB | 결재 도장 이름 `{manager, reviewer, approver}` (Migration 0059) |
+| responsible_name | VARCHAR(100) | 인쇄 본문 담당자 셀 (운영자 직접 입력, NULL=공란, Migration 0073) |
 | created_at | TIMESTAMPTZ DEFAULT now() | |
 | updated_at | TIMESTAMPTZ DEFAULT now() | |
 
