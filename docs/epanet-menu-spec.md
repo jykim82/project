@@ -242,6 +242,18 @@ INSERT INTO tb_menu VALUES
 ---
 
 ## 6. 변경 이력
+- 2026-05-21 — flow-deviation 사후 운영 검증 + 키 버그 fix
+  · simulator.py 는 pipe 결과를 `start`/`end` 키로 저장하는데 flow-deviation
+    백엔드가 `start_node`/`end_node` 로 lookup 해서 sim 매칭 0건 → 키 통일 (`endpoints/epanet.py:1038-1199`)
+  · 검증 (sim_id 17): 70 매핑 중 15건 sim 매칭, 7건 의심 분류 (실측↑ 6 / 시뮬↑ 1)
+  · 발견: 남산 배수지 outflow 293 LPS vs 시뮬 0.1 LPS — 모델 demand 누락 후보
+  · 거리 임계 50m → 운영 환경에선 200m+ 로 확장 권장 (P2)
+- 2026-05-10 — B-1/B-2 신규 메뉴 (M008-4 flow-deviation) + HAS_LIVE_FLOW 게이트
+  · M008-4 "실측 유량 차이" — `tb_menu` (Migration 0072) + sidebar-menus.ts + use-sidebar-menus.ts
+  · 신규 게이트 `HAS_LIVE_FLOW` — `tb_epanet_facility_flow_map.enabled='Y'` ≥ 5
+  · _MENU_REQUIREMENTS 에 flow-deviation 등록 (required: HAS_PIPE_NETWORK + HAS_LIVE_FLOW)
+  · 메뉴 토글에 11번째 (flow-deviation) 추가 — 마스터 [전체 활성/비활성] 적용 대상
+  · 관련 사양: docs/epanet-flow-injection-spec.md (B-1) + docs/epanet-flow-deviation-spec.md (B-2)
 - 2026-05-06 — v1 초안 작성 (사용자 결정: 추천안 채택, 데이터 품질 안내 포함)
 - 2026-05-07 — Phase 2.7 구현 완료
   · Migration 0066 — 메뉴 10건 (M003-9/10, M006-4~7, M008 그룹 + M008-1~3) + 권한 20건

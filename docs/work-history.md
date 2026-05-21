@@ -2,6 +2,84 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-05-21 — 트렌드 비교 지표 P1) [평소 대비 / 향후 전망 통합 + 대시보드 z-score 알람 체계 정합]
+
+**의도 압축** (사용자 정의): ① "지금 평소보다 이상한가?" ② "이대로 가면 문제 생기나?"
+→ 트렌드 종류 (유량/수위/압력/수질) 와 무관한 동일 UI · 데이터 모델 (`ComparisonData`).
+
+**백엔드** — `slm/trend_comparison.py` 신규 모듈:
+- `detect_trend_kind` — intent + label 패턴 매칭 (FACILITY_TREND 도 자동 분류)
+- `_hourly_pattern_baseline` — hour×weekday 평균 + 표준편차 (학습 14일, 외부 ML 없음)
+- `_linear_forecast` — 최근 24샘플 slope+intercept → 24시간 외삽
+- `_lookup_threshold` — trend_kind 별 임계 (수위 `zone_1_height * 0.9` / 압력 `tb_block_info.critical_pressure` / 수질 0.1 mg/L)
+- 상태 판정 — `anomaly_detector.classify_z_level_by_group` 재사용 (대시보드 알람과 100% 통일, A/B/C/D 그룹 임계 적용)
+- 라벨: "정상" / "주의 · 평소보다 N% ↑↓" / "이상 · 평소보다 N% ↑↓" (z 숫자 노출 X)
+- `/ask` + `/ask/stream` 두 경로 모두 통합, `response_builder.py` 의 build_success_response 에 comparison 전달
+
+**프런트** — `PlotChart.tsx`:
+- `ComparisonBadge` — 평소 대비 / 향후 전망 KPI 배지 2개 (status 별 색: emerald/amber/rose)
+- 토글 버튼 2개 `📊 평소 대비` / `⏱ 향후 전망` — 좌상단 헤더 영역
+- ECharts overlay — baseline dashed line + ±2σ band 음영 / forecast dashed + threshold markLine
+- localStorage `trend-overlay-prefs` 영속 (사용자 선호 저장)
+
+**검증 (Playwright)**:
+- "죽동 배수지 수위 트렌드" → 응답에 `comparison.trend_kind: level` ✓
+- 배지: "평소 대비 / 주의 · 평소보다 19.3% ↑" + "향후 전망 / 안전 (24시간+)" ✓
+- 토글 클릭 → ECharts overlay 추가 + localStorage 저장 ✓
+
+**커밋**: `slm@?` (trend_comparison.py + ai_server.py + response_builder.py) +
+`slm-dashboard@?` (PlotChart + chat.ts 타입 + chat-response-mapper) +
+`web@?` (docs/trend-comparison-spec.md)
+
+---
+
+### 완료 (2026-05-21 — EPANET B-1 운영 검증 + flow-deviation 키 버그 fix) [B-1/B-2 첫 실측 검증]
+
+**검증 플로우** (사용자 요청 — 시스템 진짜 작동 확인):
+1. 매핑 70건 등록 (5/11 자동 제안 기반 등록 잔존) — HAS_LIVE_FLOW 충족
+2. 마스터 토글 ON (이전 테스트 잔재로 11개 메뉴 OFF 상태였음)
+3. INP 생성 `inject_live_demand=true&inject_live_hours=1` → **live_injected_count: 39** (가압장/블록만, 배수지 제외 — 사양 §3.3)
+4. 시뮬 sim_id=17 (10.8초, valid)
+5. `/flow-deviation` 호출 → **0/70 sim 매칭** (모두 dist=None)
+
+**키 버그 발견**:
+- `simulator.py:216` 가 pipe 결과를 `"start"/"end"` 키로 저장
+- `endpoints/epanet.py:1038, 1199` 의 flow-deviation 이 `"start_node"/"end_node"` 로 lookup → 매칭 0건
+- 좌표 변환 (lnglatToEpsg5186) 은 정상이었음 — JSON join 실패로 거리 측정도 잘못 나옴
+- Fix: flow-deviation 의 key 를 `"start"/"end"` 로 통일 (시뮬 결과 호환성 유지)
+
+**Fix 후 결과**:
+- 15/70 sim 매칭 (거리 11~43m 정상 범위)
+- 7건 의심 분류 (실측↑ 6 / 시뮬↑ 1)
+- **남산 배수지 outflow 293 LPS vs 시뮬 0.1 LPS** — 실측 발견: 모델 demand 누락 시설
+- 남은 55건 매핑은 50m 임계 초과 — 운영 환경엔 200m+ 임계 권장 (P2)
+
+**커밋**: `slm@?` (flow-deviation 키 fix)
+
+---
+
+### 완료 (2026-05-11 — 보고서 담당자란 분리 + 깨진 사진 정리)
+
+1. **`tb_report.responsible_name` 신규 컬럼** (Migration 0073) — 인쇄 본문 담당자 셀이 `author_id` (작성자 ID) 로 자동 채워지던 것을 별도 NULL 허용 컬럼으로 분리. 빈 칸 시작 + 운영자 직접 입력.
+   - 백엔드: PatchReportRequest 에 responsible_name 추가, 빈 문자열 → NULL 정규화
+   - 프런트: ApprovalEditor 카드 "결재란" → "담당자 / 결재란" 확장 + 인쇄 양식 화면용/PDF 새 창용 모두 교체
+2. **깨진 test-* 사진 정리** — `tb_report_item.photo_urls` JSONB 배열에서 `'%/test-%'` URL 객체만 필터 제거 (5 rows UPDATE, 12 → 5 photo objects, 실제 hash 사진 보존)
+
+**커밋 체인**: `slm@dada94d` + `slm-dashboard@31735c6` + `web@07c26e2` (담당자) / `web@8683ded` (사진 정리)
+
+---
+
+### 완료 (2026-05-10 — EPANET B-1/B-2 사양·구현 + 자동 제안 강화)
+
+1. **사양 작성** — `docs/epanet-flow-injection-spec.md` (B-1) + `docs/epanet-flow-deviation-spec.md` (B-2)
+2. **B-1 구현** — Migration 0071 `tb_epanet_facility_flow_map` + CRUD + auto-suggest + INP inject_live_demand 옵션 + HAS_LIVE_FLOW 게이트
+3. **B-2 구현** — Migration 0072 (M008-4 메뉴) + `/flow-deviation` API + FlowDeviationAnalysis 페이지 + GisFlowDeviationLayer
+4. **자동 제안 강화** — tb_facility_flow_map join 으로 신뢰도 (verified/probable/weak) + `unmapped_facilities` + `gis-facility-coords.json` 좌표 자동 채움 → 당진 R01 74건 100% 좌표 채움
+
+**커밋 체인**: `slm@fed88f1 → 67ac64d` + `slm-dashboard@a0c1a46 → ce2cc57` + `web@d26a2e4 → 8683ded`
+
+---
+
 ### 완료 (2026-05-10 — EPANET 메뉴 토글 정합성) [마스터 + 물흐름 분리 + 그룹 hidden]
 
 **관리자 토글 → 사이드바·탑바·GIS 토글 즉시 반영, DB 영구 저장**
