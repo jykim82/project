@@ -4505,6 +4505,29 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         except Exception as e:
             logger.warning(f"Anomaly zone computation failed: {e}")
 
+    # 트렌드 비교 (평소 대비 / 향후 전망) — docs/trend-comparison-spec.md
+    _comparison = None
+    if graph_type == "plot" and rows and columns:
+        try:
+            from trend_comparison import compute_comparison
+            _tagsn = (params.get("tagsn") or
+                      (intent_def.get("tagsn") if intent_def else None) or
+                      (rows[0][columns.index("tagsn")] if "tagsn" in columns else None))
+            if _tagsn:
+                _tc_conn = get_db_connection()
+                try:
+                    _comparison = compute_comparison(
+                        rows=rows, columns=columns, intent=intent,
+                        sitename=params.get("sitename"),
+                        facilitytype=params.get("facilitytype"),
+                        tagsn=_tagsn,
+                        conn=_tc_conn,
+                    )
+                finally:
+                    _tc_conn.close()
+        except Exception as e:
+            logger.warning(f"Trend comparison computation failed: {e}")
+
     _t_end = time.perf_counter()
     logger.info(
         f"⏱ /ask [{intent}|{classify_method}] "
@@ -4532,6 +4555,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         stddev_stats=_stddev_stats,
         cusum_chart_data=_cusum_chart_data,
         anomaly_zones=_anomaly_zones,
+        comparison=_comparison,
         intent_candidates=intent_candidates,
         site_group_distribution=processed_data.get("site_group_distribution"),
         site_group=processed_data.get("site_group"),
@@ -6015,6 +6039,29 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             except Exception as e:
                 logger.warning(f"Anomaly zone computation failed (SSE): {e}")
 
+        # 트렌드 비교 (평소 대비 / 향후 전망) — docs/trend-comparison-spec.md
+        _comparison = None
+        if graph_type == "plot" and rows and columns:
+            try:
+                from trend_comparison import compute_comparison
+                _tagsn = (params.get("tagsn") or
+                          (intent_def.get("tagsn") if intent_def else None) or
+                          (rows[0][columns.index("tagsn")] if "tagsn" in columns else None))
+                if _tagsn:
+                    _tc_conn = get_db_connection()
+                    try:
+                        _comparison = compute_comparison(
+                            rows=rows, columns=columns, intent=intent,
+                            sitename=params.get("sitename"),
+                            facilitytype=params.get("facilitytype"),
+                            tagsn=_tagsn,
+                            conn=_tc_conn,
+                        )
+                    finally:
+                        _tc_conn.close()
+            except Exception as e:
+                logger.warning(f"Trend comparison computation failed (SSE): {e}")
+
         _t_end = time.perf_counter()
         logger.info(
             f"⏱ /ask/stream [{intent}|{classify_method}] "
@@ -6041,6 +6088,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             stddev_stats=_stddev_stats,
             cusum_chart_data=_cusum_chart_data,
             anomaly_zones=_anomaly_zones,
+        comparison=_comparison,
             intent_candidates=intent_candidates,
             site_group_distribution=processed_data.get("site_group_distribution"),
             site_group=processed_data.get("site_group"),

@@ -1033,10 +1033,11 @@ def get_flow_deviation(
         conn.close()
 
     # 4) link 중점 좌표 사전 계산 (lng/lat 도 함께)
+    # simulator.py 는 'start'/'end' 키 사용 (start_node/end_node 아님)
     link_centers = []
     for p in sim_pipes:
-        sxy = node_xy.get(p.get("start_node") or "")
-        exy = node_xy.get(p.get("end_node") or "")
+        sxy = node_xy.get(p.get("start") or "")
+        exy = node_xy.get(p.get("end") or "")
         if not sxy or not exy:
             continue
         sx, sy, slng, slat = sxy
@@ -1196,8 +1197,8 @@ def get_flow_deviation_timeseries(
                    for j in sim_junctions if j.get("x") is not None}
         nearest_d2 = float("inf")
         for p in sim_pipes:
-            sxy = node_xy.get(p.get("start_node") or "")
-            exy = node_xy.get(p.get("end_node") or "")
+            sxy = node_xy.get(p.get("start") or "")
+            exy = node_xy.get(p.get("end") or "")
             if not sxy or not exy:
                 continue
             cx = (sxy[0] + exy[0]) / 2.0
