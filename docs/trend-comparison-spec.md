@@ -161,6 +161,26 @@ interface ComparisonData {
 | forecast.threshold_label | "최소 운영 압력" |
 | forecast.method | `"moving_avg_slope"` |
 
+### 4.5 비교 의미 없음 — 자동 skip 대상 (2026-05-24 추가)
+
+다음 트렌드 종류는 baseline·forecast 모두 의미가 없으므로 `compute_comparison`
+이 **None 반환** (응답의 `comparison` 에서 omit). 프런트는 자동으로 표시 제외.
+
+| 대상 | 판정 기준 | 이유 |
+|------|----------|------|
+| **적산 유량** | `datainfo` 에 `"적산"` 포함 | 단조증가 — baseline 평균/σ 무의미, forecast 도 항상 상승 (한계 임계 도달 의미 없음) |
+| **디지털 태그** | `tagtype = "Digital Input"` | 0/1 또는 상태값 — 평균·표준편차 무의미 |
+| **누적 단위** | `unit` 이 `"m³"` / `"kWh"` / `"kg"` 등 누적 단위 | 누적 측정값은 baseline 비교 의미 없음 |
+| **샘플 < 24** | 학습 데이터 < 1일 | 패턴 학습 불가능 (기존 규칙) |
+| **상수값** | 학습 윈도우 내 σ ≈ 0 | 변동 없음 → 이격 측정 불가 |
+
+**유량 케이스 예시**:
+- `죽동(배) 유출유량순시` (datainfo) → ✓ 비교 적용
+- `죽동(배) 유출유량적산` (datainfo) → ✗ skip
+- `죽동(배) 유량적산` → ✗ skip
+
+→ 한 차트에 순시+적산이 같이 있어도 순시만 비교 표시.
+
 ### 4.4 수질 (Chlorine / Turbidity)
 
 | 항목 | 값 |
@@ -480,6 +500,51 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
   - `linear` → "최근 24샘플 선형회귀 외삽"
   - `moving_avg_slope` → "이동평균 기울기 외삽" (P2)
 
+### 7.7 다중 tag·이종 trend 처리 — 비교 대상 셀렉터 (2026-05-24 추가)
+
+한 차트에 여러 시리즈가 있을 때 (수위+유량, 다중 시설 동종, 순시+적산 등)
+보조 지표는 **활성 1개 tag** 만 표시. 사용자가 dropdown 으로 전환.
+
+#### 백엔드
+- `/trend/data` 응답의 `comparison: Record<tag_id, ComparisonData>` 이미 다중
+  tag 지원 (단계 변경 없음)
+- §4.5 skip 규칙 적용 결과로 적산·디지털 등은 응답에서 자체 omit
+
+#### 프런트 — 활성 tag 선택 로직
+1. **자동 기본값** (worst-status 우선):
+   - 응답의 `comparison` 객체 중 `baseline.status` 또는 `forecast.status` 가
+     가장 심각한 tag 선택 (alert > warning > normal)
+   - 동률 시 차트 series 순서 (`selectedTags[0]` 우선)
+2. **localStorage 영속**: 키 `trend-overlay-active-tag-{chartKey}` —
+   - `chartKey`: PlotChart = `plot.tag_ids?.[0]` 기반 hash / TrendChart = 첫
+     tag id
+   - 사용자가 직접 선택한 tag 가 다음 진입에서도 유지
+3. **자동 무효화**: 활성 tag 가 새 응답의 `comparison` 에 없으면 (skip 됐거나
+   사라짐) → 워스트 자동 재선택
+
+#### UI — ComparisonHeader 의 셀렉터
+
+```
+[비교 대상: 죽동 수위#1 ▾]  📊 평소 대비 (주의 · 평소보다 4.1% ↓)  ⏱ 향후 전망 (안전 24h+)
+                ├ 죽동 수위#1 [주의]
+                ├ 죽동 수위#2 [정상]
+                ├ 죽동 출수유량순시 [정상]
+                ╰ (죽동 적산유량 — 비교 대상 아님)
+```
+
+- comparison 응답에 있는 tag 만 dropdown 표시 (없는 건 회색 / "비교 대상 아님" 안내)
+- 옵션마다 status 미니 배지 (정상/주의/이상)
+- 단일 tag 면 dropdown 숨김 (현재와 동일)
+
+#### 시각화
+- 활성 tag 의 baseline + forecast overlay 만 표시 (다중 overlay 혼잡 방지)
+- 다른 시리즈는 메인 line 그대로
+- 활성 tag 의 메인 line 색상과 overlay 색상 매칭 (emerald=baseline, orange=forecast)
+
+#### 대안 — "전체 보기" 모드 (P2 검토)
+헤더에 모든 비교 가능 tag 의 status 배지 나열. overlay 는 active 1개만. 운영자가
+한 화면에서 다중 시설 상태 인지하고 싶을 때.
+
 ### 7.6 통일 적용 대상 (2026-05-24)
 
 본 사양의 보조 기능 (평소 대비 / 향후 전망 / causal_hint) 은 **모든 트렌드
@@ -610,6 +675,12 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 
 ## 11. 변경 이력
 
+- 2026-05-24 (심야 4) — 다중 tag·이종 trend 처리 (§4.5 + §7.7 신설)
+  · 의도: "유량순시+적산", "수위+유량", "동종 다중" 같이 한 차트에 여러 시리즈가
+    있을 때 보조 지표가 어떻게 적용되는가 명세
+  · §4.5 — 비교 의미 없는 대상 자동 skip (적산/디지털/누적 단위/상수값)
+  · §7.7 — 활성 tag 선택 로직 (worst-status 자동 + localStorage 영속 +
+    dropdown 셀렉터) + 단일 overlay 정책 (혼잡 방지)
 - 2026-05-24 (심야 3) — xAI: `/trend/explain` LLM 컨텍스트에 comparison 주입
   · 백엔드 `endpoints/trend.py` — `comparison` body 필드 파싱 + `comparison_block`
     프롬프트 섹션 + `comparison_rule` (a/b/c 자연어 설명 규칙) + allowed_numbers
