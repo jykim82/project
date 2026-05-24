@@ -610,6 +610,16 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 
 ## 11. 변경 이력
 
+- 2026-05-24 (심야 3) — xAI: `/trend/explain` LLM 컨텍스트에 comparison 주입
+  · 백엔드 `endpoints/trend.py` — `comparison` body 필드 파싱 + `comparison_block`
+    프롬프트 섹션 + `comparison_rule` (a/b/c 자연어 설명 규칙) + allowed_numbers
+    확장 (deviation_pct / learning_window_days / threshold_value /
+    hours_to_threshold / forecast_hours / causal_hint source 수치)
+  · 응답 메타 `context_used` 에 `comparison.baseline/forecast/causal_hint` 표시
+  · 프런트 `PlotChart.handleExplain` + `TrendChart.handleExplain` — body 에
+    `comparison: plot.comparison` / `comparisonMap[firstAnalog.id]` 추가
+  · 효과: AI 요약이 단순 추세 묘사가 아니라 "기법 + 학습 기간 + 평소 대비 +
+    향후 전망 + 원인 후보" 를 자연어로 풀어 설명 (xAI 자연어 explanation)
 - 2026-05-24 (심야 2) — 계산 기법 hover 툴팁 (§7.5b 신설)
   · ComparisonBadge / 토글 / CausalHintCard 모두 `title` 멀티라인 (기법/학습/임계/판정)
   · ECharts dashed line 의 `series.name` 에 method 라벨 부착 → legend·tooltip 자동 노출
