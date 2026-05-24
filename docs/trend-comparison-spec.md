@@ -397,6 +397,84 @@ series.push({
 영역만 음영. 두 번째 series 의 data 로 `(upper - lower)` 차이 사용 (절대값
 upper 가 아님) 이 핵심.
 
+### 7.5b 계산 기법 툴팁 (2026-05-24 추가)
+
+사용자가 보조 지표가 어떻게 계산됐는지 인지할 수 있도록 모든 진입점에서
+hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
+
+**ComparisonBadge / 토글 버튼** (`title` 속성, 멀티라인):
+- baseline:
+  ```
+  [기법] 같은 시간×요일 평균 (학습 14일)
+  [정상 범위] 평균 ±2σ (음영)
+  [현재 이격] +18.4%
+  [판정] 주의 · 평소보다 +18.4% ↑ (anomaly_detector z-score 그룹 임계 적용)
+  ```
+- forecast:
+  ```
+  [기법] 최근 24샘플 선형회귀 외삽
+  [외삽 윈도우] 24시간
+  [위험 임계] 14.5 (운영 한계 (HH))
+  [판정] 5.2시간 후 한계 도달
+  [도달 예상] 5.2 시간 후
+  ```
+
+**CausalHintCard** (`title`):
+- ```
+  [기법] tb_facility_flow_map 상류 시설 join
+  [조회 윈도우] 최근 6시간
+  [알람] tb_tag_raw_data 의 alarm_tag_yn=1 태그 변화 count
+  [유량 변화] tb_epanet_facility_flow_map outflow 매핑 시설의
+              (최근 6시간 평균 vs 7일 baseline 평균) ±15% 이상만
+  [발동 조건] baseline.status 또는 forecast.status 가 warning/alert
+  ```
+
+**ECharts dashed line** (legend / hover tooltip):
+- `series.name = "평소 패턴 [같은 시간×요일 평균 (학습 14일)]"` 형식
+- `series.name = "향후 전망 [최근 24샘플 선형회귀 외삽, 24h]"` 형식
+- ECharts 의 기본 legend·tooltip 이 method 가 부착된 series 명을 표시
+  → 운영자가 어떤 line 이 무슨 기법인지 한눈에 인지
+
+**메소드 → 한국어 라벨 매핑** (`comparison-overlay.ts` 와 `ComparisonOverlayUI.tsx` 양쪽에 동일 정의):
+- baseline.method:
+  - `hourly_mean` → "같은 시간×요일 평균"
+  - `regression` → "회귀 (HuberRegressor)" (P2)
+  - `nmf_30d` → "야간최소유량 30일 baseline" (P2)
+- forecast.method:
+  - `linear` → "최근 24샘플 선형회귀 외삽"
+  - `moving_avg_slope` → "이동평균 기울기 외삽" (P2)
+
+### 7.6 통일 적용 대상 (2026-05-24)
+
+본 사양의 보조 기능 (평소 대비 / 향후 전망 / causal_hint) 은 **모든 트렌드
+차트에 동일하게 적용**한다. 사용자가 어느 진입점으로 트렌드를 보든 동일한
+배지·토글·overlay·인과 hint 가 표시되어야 한다.
+
+| # | 진입점 | 컴포넌트 | 통합 방식 |
+|---|--------|--------|-----------|
+| 1 | **AI 채팅** 트렌드 응답 | `components/chat/PlotChart.tsx` | `chat-response-mapper` 가 SSE/일반 응답의 `comparison` 필드 PlotData 로 매핑 |
+| 2 | **트렌드 메뉴** (`/trend`) 사용자 트렌드 | `components/trend/TrendChart.tsx` (via `trend-store`) | `fetchTrendData` 응답의 `comparison` 을 `comparisonMap` 으로 store 보관 → page 가 prop 전달 |
+| 3 | **트렌드 메뉴** > 모니터링 (`/monitoring/reservoir`, `/booster`, `/block`) | `MonitoringTrendBlock → TrendChart` | `monitoring-view-store.CatalogTrendData.comparison` 추가 → block 에서 prop 전달 |
+| 4 | **GIS 관망도** 시설 클릭 트렌드 팝업 | `components/gis/GisTrendPopup.tsx → TrendChart` | `fetchTrendData` 응답의 `comparison` 을 로컬 state 로 저장 후 prop 전달 |
+
+**공통 자산** (PlotChart ↔ TrendChart 공유):
+- `lib/chart-options/comparison-overlay.ts` (`applyComparisonOverlay`)
+- `components/chat/ComparisonOverlayUI.tsx` —
+  - `ComparisonHeader` (KPI 배지 + 토글)
+  - `CausalHintCard` (purple chip + sources + chat_intent 트리거)
+  - `loadComparisonPrefs` / `saveComparisonPrefs` (localStorage)
+
+**일관성 원칙**:
+- 동일 라벨 ("정상" / "주의 · 평소보다 N% ↑↓" / "이상 · 평소보다 N% ↑↓" / "안전 (24시간+)" / "N시간 후 한계 접근" / "N시간 후 한계 도달")
+- 동일 색상 (emerald/amber/rose), 동일 z-order, 동일 음영 opacity 0.32
+- 동일 localStorage 키 `trend-overlay-prefs` 영속 — 한 곳에서 켜두면 다른 차트에서도 기본 ON
+- 동일 백엔드 응답 — `/ask` (PlotChart), `/trend/data` (TrendChart/GisTrendPopup) 양쪽 응답 모두 `compute_comparison` 동일 함수 호출
+- causal_hint 도 동일 표시 — 어디서 트렌드를 보든 인과 후보가 같이 노출
+
+**신규 트렌드 차트 추가 시 의무**: 위 4개 외 신규 진입점이 추가되면 동일
+공통 헬퍼·UI 컴포넌트를 사용해야 한다. 별도 차트 컴포넌트 신설 금지 (분기
+필요 시 TrendChart 의 prop 으로 확장).
+
 ---
 
 ## 8. API 응답 변경 예시
@@ -489,6 +567,17 @@ upper 가 아님) 이 핵심.
 
 ## 11. 변경 이력
 
+- 2026-05-24 (심야 2) — 계산 기법 hover 툴팁 (§7.5b 신설)
+  · ComparisonBadge / 토글 / CausalHintCard 모두 `title` 멀티라인 (기법/학습/임계/판정)
+  · ECharts dashed line 의 `series.name` 에 method 라벨 부착 → legend·tooltip 자동 노출
+  · `comparison-overlay.ts` + `ComparisonOverlayUI.tsx` 양쪽에 동일 method→라벨 매핑
+  · 사용자 요청: "보조 지표에 마우스 커서를 오버하면 툴팁으로 어떤 기법으로 계산되었는지 표현"
+- 2026-05-24 (심야) — GIS 관망도 GisTrendPopup 통합 + §7.6 통일 적용 대상 명시
+  · GisTrendPopup 의 `fetchTrendData` 응답에서 `comparison` 추출 → `TrendChart`
+    에 `comparisonMap` prop 전달 — 코드 4줄 추가 (이미 TrendChart 사용 중이라
+    공통 헬퍼 자동 적용)
+  · §7.6 신설 — AI 채팅 / 트렌드 메뉴 / 모니터링 / GIS 팝업 4개 진입점 모두
+    동일 적용 명시 + 신규 차트 추가 시 의무 규정
 - 2026-05-24 (저녁) — B안 적용 + 트렌드 메뉴·모니터링 페이지 통합
   · 백엔드 `slm/trend_comparison.py:compute_causal_hint` 신규 — 상류
     `tb_facility_flow_map` join 으로 알람·outflow 변화 hint 산출 (baseline/forecast
