@@ -105,6 +105,18 @@ interface ComparisonData {
     status_label: string;           // "안전 (24시간+)" / "6시간 후 한계" 등
   };
 
+  // B안 — 인과 후보 hint (baseline/forecast 가 warning/alert 일 때만)
+  causal_hint?: {
+    summary: string;                // "죽동(가압장) 최근 6시간 알람 1857건 / ..."
+    sources: {
+      sitename: string;
+      facilitytype: string;
+      kind: "alarm" | "flow_change";
+      detail: string;               // "최근 6시간 알람 1857건" / "출수량 28% ↓ (7일 평균 대비)"
+    }[];
+    chat_intent?: string;           // 후속 진단 인텐트 (예: FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK)
+  };
+
   // 메타
   trend_kind: "flow" | "level" | "pressure" | "quality";
   computed_at: string;              // ISO timestamp
@@ -294,6 +306,30 @@ trend_kind 별 SQL 조회:
 - `quality`: 상수 (0.1 mg/L, 1.0 NTU)
 
 임계값 조회 실패 시 NULL 반환 (forecast 는 series 만 채움).
+
+### 6.3 `compute_causal_hint` — B안 인과 후보
+
+baseline/forecast 가 warning/alert 일 때만 호출. 상류 시설 (`tb_facility_flow_map`)
+의 운영 변화를 hint 로 산출.
+
+```python
+def compute_causal_hint(
+    conn, sitename, facilitytype, region="R01", hours=6,
+) -> dict | None:
+    """
+    Returns: { summary, sources, chat_intent } 또는 None.
+    """
+```
+
+SQL 흐름:
+1. `tb_facility_flow_map` 에서 사용자 시설이 downstream 인 상류 시설들 조회
+2. 상류별 최근 6시간 알람 count (`tb_tag_raw_data` × `tb_tag_info.alarm_tag_yn=1`)
+3. 상류 outflow 매핑 (`tb_epanet_facility_flow_map.role='outflow'`) 의 최근 6h
+   평균 vs 7일 baseline 평균 — `|pct| >= 15` 만 source 로 추가
+4. summary 문자열 = source 상위 3개 join
+5. chat_intent = "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK" (후속 진단 인텐트)
+
+source 없으면 None 반환 → 응답에서 omit.
 
 ---
 
@@ -525,19 +561,26 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 
 ## 9. 단계 / 범위
 
-### P1 (본 사양 — 1차 출시)
-- 백엔드 `slm/trend_comparison.py` 모듈 — 경량 (hour×weekday 평균) baseline
-  + linear 외삽 + 상태 판정
-- 트렌드 인텐트 화이트리스트 적용 (4가지 trend_kind)
-- 임계값 조회 (시설 마스터 + NMF + 상수)
-- 프런트 PlotChart 에 토글 2 + 배지 2 + ECharts overlay
-- localStorage 사용자 선호 저장
+### P1 (본 사양 — ✅ 1차 출시 완료 2026-05-21~24)
+- ✅ 백엔드 `slm/trend_comparison.py` — hour×weekday baseline + linear 외삽 +
+  상태 판정 (`anomaly_detector.classify_z_level_by_group` 재사용)
+- ✅ 트렌드 인텐트 화이트리스트 + `FACILITY_TREND` label 자동 분류
+- ✅ 임계값 조회 (수위 zone_1_height·압력 critical_pressure·수질 상수)
+- ✅ B안 `compute_causal_hint` — 상류 알람·유량 변화 hint
+- ✅ `/ask` (PlotChart) + `/trend/data` (TrendChart) 양쪽 응답 통합
+- ✅ 공통 추출 `comparison-overlay.ts` + `ComparisonOverlayUI.tsx`
+- ✅ 4개 진입점 (AI 채팅 / 트렌드 메뉴 / 모니터링 / GIS 팝업) 동일 적용
+- ✅ 가시성 강화 (음영 0.32, dashed 2.5px + shadow, z:5)
+- ✅ 계산 기법 hover 툴팁 (배지·토글·causal_hint 카드·ECharts series.name)
+- ✅ localStorage `trend-overlay-prefs` 영속
 
 ### P2 (후속)
 - baseline `regression` 모델 (HuberRegressor) — 정확도 향상
 - 유량 인텐트 CUSUM 통합 mini-bar
 - 외삽 `moving_avg_slope` (linear 부족 시)
 - `docs/iforest.md` IF 도입 (이상 검출 보강)
+- AI 요약 (`/trend/explain`) 의 LLM 프롬프트에 comparison 컨텍스트 주입
+  → 근거 기반 자연어 설명 (xAI)
 
 ### 범위 밖
 - 일간 NMF 시계열 차트 전체 재설계 (`FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS`
