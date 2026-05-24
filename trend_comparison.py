@@ -403,6 +403,40 @@ def _forecast_status(hours_to_threshold: Optional[float]) -> tuple[str, str]:
     return "alert", f"{hours_to_threshold:.1f}시간 후 한계 도달"
 
 
+def _is_skip_target(conn, tagsn: str) -> Optional[str]:
+    """비교 의미 없는 대상 (적산/디지털/누적 단위) 인지 판별.
+
+    사양: docs/trend-comparison-spec.md §4.5
+    Returns: skip 사유 문자열 또는 None.
+    """
+    if not tagsn:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT tagtype, datainfo, unit FROM tb_tag_info WHERE tagsn = %s",
+            (tagsn,),
+        )
+        r = cur.fetchone()
+        cur.close()
+        if not r:
+            return None
+        tagtype, datainfo, unit = (r[0] or ""), (r[1] or ""), (r[2] or "")
+        # 디지털
+        if "Digital" in tagtype:
+            return "digital_input"
+        # 적산 — datainfo 패턴
+        if "적산" in datainfo or "누적" in datainfo or "총량" in datainfo:
+            return "accumulated_flow"
+        # 누적 단위
+        u = unit.strip().lower()
+        if u in ("m³", "m3", "kwh", "kg") or u.endswith("·일"):
+            return "cumulative_unit"
+        return None
+    except Exception:
+        return None
+
+
 def compute_comparison(
     rows: list, columns: list[str],
     intent: str,
@@ -415,12 +449,18 @@ def compute_comparison(
     """트렌드 비교 응답 생성 (ComparisonData dict).
 
     데이터 부족 시 None. baseline 계산 가능하면 baseline 만이라도 반환.
+    적산/디지털/누적 단위 등 비교 의미 없는 대상은 자동 skip (§4.5).
     """
     trend_kind = detect_trend_kind(intent, columns, rows)
     if not trend_kind:
         logger.debug(f"trend_comparison: trend_kind 감지 실패 intent={intent}")
         return None
     if not rows or not columns or not tagsn:
+        return None
+    # §4.5 skip 가드 — 적산/디지털/누적 단위
+    skip_reason = _is_skip_target(conn, tagsn)
+    if skip_reason:
+        logger.debug(f"trend_comparison: skip {tagsn} ({skip_reason})")
         return None
     # log_time / val 컬럼 추출 — dict row / tuple row 모두 지원
     cols_lower = [c.lower() for c in columns]
