@@ -489,6 +489,19 @@ upper 가 아님) 이 핵심.
 
 ## 11. 변경 이력
 
+- 2026-05-24 (저녁) — B안 적용 + 트렌드 메뉴·모니터링 페이지 통합
+  · 백엔드 `slm/trend_comparison.py:compute_causal_hint` 신규 — 상류
+    `tb_facility_flow_map` join 으로 알람·outflow 변화 hint 산출 (baseline/forecast
+    가 warning/alert 일 때만)
+  · `/trend/data` 응답에 `comparison: Record<tag_id, ComparisonData>` 추가
+  · 공통 추출: `lib/chart-options/comparison-overlay.ts` (applyComparisonOverlay) +
+    `components/chat/ComparisonOverlayUI.tsx` (ComparisonHeader/CausalHintCard)
+  · PlotChart (채팅) / TrendChart (트렌드 메뉴 · 모니터링 배수지/가압장/블록)
+    동일 공통 헬퍼 사용
+  · monitoring-view-store 의 `CatalogTrendData` 에 comparison 필드 추가 →
+    MonitoringTrendBlock 이 TrendChart 에 전달
+  · 검증: 죽동 배수지 수위 24h → baseline "주의 · 평소보다 4.1% ↓" +
+    causal_hint "죽동(가압장) 최근 6시간 알람 1857건"
 - 2026-05-24 — 평소 대비 overlay 가시성 강화 (§7.5 신설)
   · stack 음영 로직 버그 fix (변수명 혼동으로 잘못된 영역 계산 → `band_lower` base + `(upper - lower)` stack 으로 교정)
   · 음영 opacity 0.18 → 0.32, baseline line 1.5px → 2.5px + shadow + `#34d399` (밝은 emerald)
