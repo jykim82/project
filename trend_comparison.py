@@ -278,6 +278,121 @@ def _baseline_status(
     return status, label
 
 
+def compute_causal_hint(
+    conn, sitename: Optional[str], facilitytype: Optional[str],
+    region: str = "R01", hours: int = 6,
+) -> Optional[dict]:
+    """이상 신호 발생 시 인과 후보 (B안 — `feedback_remember_completion` 패턴).
+
+    상류 시설 (`tb_facility_flow_map`) 의 최근 N시간 알람·운영 변화를 요약.
+    트렌드 비교에서 baseline.status 가 warning/alert 일 때만 호출 권장.
+
+    Returns: {
+      summary: "전단 신평(가) 알람 3건 / 상류 송악(배) 출수량 -28%",
+      sources: [{sitename, facilitytype, kind: 'alarm'|'flow_change', detail: str}],
+      chat_intent: "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",   # 후속 진단 인텐트
+    } 또는 None (인과 데이터 없음).
+    """
+    if not sitename:
+        return None
+    cur = conn.cursor()
+    try:
+        # 1) 상류 시설 조회 (사용자 시설이 downstream 인 경우)
+        cur.execute(
+            """
+            SELECT DISTINCT upstream_sitename, upstream_facilitytype
+              FROM tb_facility_flow_map
+             WHERE downstream_sitename = %s
+               AND (downstream_facilitytype = %s OR %s IS NULL)
+            """,
+            (sitename, facilitytype, facilitytype),
+        )
+        upstreams = [(r[0], r[1]) for r in cur.fetchall()]
+        if not upstreams:
+            cur.close()
+            return None
+
+        sources: list = []
+        # 2) 상류 시설별 최근 알람 count (tb_tag_raw_data 에서 알람 태그 변화)
+        try:
+            up_sites = [u[0] for u in upstreams]
+            cur.execute(
+                """
+                SELECT t.sitename, COUNT(*) AS alarm_count
+                  FROM tb_tag_raw_data r
+                  JOIN tb_tag_info t ON t.tagsn = r.tagsn
+                 WHERE t.sitename = ANY(%s)
+                   AND COALESCE(t.alarm_tag_yn, 0) = 1
+                   AND r.logtime > NOW() - (%s || ' hours')::interval
+                   AND r.val::numeric > 0
+                 GROUP BY t.sitename
+                """,
+                (up_sites, str(max(1, min(24, hours)))),
+            )
+            for sn, cnt in cur.fetchall():
+                if cnt and cnt > 0:
+                    ft = next((u[1] for u in upstreams if u[0] == sn), "")
+                    sources.append({
+                        "sitename": sn, "facilitytype": ft,
+                        "kind": "alarm",
+                        "detail": f"최근 {hours}시간 알람 {cnt}건",
+                    })
+        except Exception:
+            pass
+
+        # 3) 상류 outflow 운영 변화 (tb_epanet_facility_flow_map 매핑된 시설 한정)
+        try:
+            cur.execute(
+                """
+                SELECT m.sitename, m.facilitytype, m.tagsn, m.unit, m.scale,
+                       AVG(r.val) FILTER (WHERE r.logtime > NOW() - (%s || ' hours')::interval) AS recent_v,
+                       AVG(r.val) FILTER (WHERE r.logtime < NOW() - (%s || ' hours')::interval
+                                          AND r.logtime > NOW() - '7 days'::interval) AS base_v
+                  FROM tb_epanet_facility_flow_map m
+                  JOIN tb_tag_raw_data r ON r.tagsn = m.tagsn
+                 WHERE m.region = %s AND m.enabled = 'Y'
+                   AND (m.sitename, m.facilitytype) = ANY(%s::record[])
+                   AND m.role = 'outflow'
+                 GROUP BY m.sitename, m.facilitytype, m.tagsn, m.unit, m.scale
+                """,
+                (str(hours), str(hours), region,
+                 [(u[0], u[1]) for u in upstreams]),
+            )
+            for sn, ft, _ts, _u, _s, recent_v, base_v in cur.fetchall():
+                if recent_v is None or base_v is None or float(base_v) == 0:
+                    continue
+                pct = (float(recent_v) - float(base_v)) / float(base_v) * 100
+                if abs(pct) >= 15:    # ±15% 이상 변화만
+                    direction = "↑" if pct > 0 else "↓"
+                    sources.append({
+                        "sitename": sn, "facilitytype": ft,
+                        "kind": "flow_change",
+                        "detail": f"출수량 {abs(pct):.0f}% {direction} (7일 평균 대비)",
+                    })
+        except Exception:
+            pass
+
+        cur.close()
+        if not sources:
+            return None
+        # 요약 문자열
+        parts: list[str] = []
+        for s in sources[:3]:
+            parts.append(f"{s['sitename']}({s.get('facilitytype','')}) {s['detail']}")
+        summary = " / ".join(parts)
+        return {
+            "summary": summary,
+            "sources": sources,
+            "chat_intent": "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
+        }
+    except Exception as e:
+        logger.debug(f"causal_hint 실패: {e}")
+        return None
+    finally:
+        try: cur.close()
+        except Exception: pass
+
+
 def _forecast_status(hours_to_threshold: Optional[float]) -> tuple[str, str]:
     if hours_to_threshold is None:
         return "normal", "안전 (24시간+)"
@@ -381,4 +496,13 @@ def compute_comparison(
     # baseline 도 forecast 도 없으면 None
     if "baseline" not in out and "forecast" not in out:
         return None
+
+    # ── causal_hint (B안) — baseline/forecast 가 정상 아닌 경우만 ─
+    b_status = out.get("baseline", {}).get("status")
+    f_status = out.get("forecast", {}).get("status")
+    if b_status in ("warning", "alert") or f_status in ("warning", "alert"):
+        hint = compute_causal_hint(conn, sitename, facilitytype, region="R01")
+        if hint:
+            out["causal_hint"] = hint
+
     return out

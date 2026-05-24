@@ -211,6 +211,160 @@ def _fetch_trend_context(tagsn: Optional[str]) -> dict:
     return ctx
 
 
+# ── P2.3 피어 태그 비교 ────────────────────────────────────────────────────
+#
+# 의도: 같은 facility_type + 같은 측정 카테고리(수위/유량/압력 등)의 다른
+#       현장 태그를 peer로 간주해 30일 baseline을 비교 컨텍스트로 제공한다.
+#       LLM이 "이 태그가 다른 유사 시설 대비 어느 수준인지"를 서술할 수 있게
+#       해 현황 판단의 상대적 기준선을 만든다.
+
+# 카테고리 키워드: datainfo에서 첫 번째로 매칭되는 키워드를 대표로 삼는다.
+# 긴 키워드를 앞에 둬야 "순시유량" > "유량" 순으로 매칭된다.
+_PEER_CATEGORY_KEYWORDS = (
+    "순시유량", "토출압력", "유입압력", "토출유량", "유입유량",
+    "야간최소유량", "수위", "유량", "압력", "전력", "탁도", "잔류염소",
+)
+
+# datainfo에 포함되면 peer 후보에서 제외 (설정값·알람·HH/LL 변수 태그)
+# " H" / " L"은 leading-space만 두어 "수위1 H", "1지 수위 H" 등 꼬리 변수도 잡는다.
+_PEER_EXCLUDE_KEYWORDS = (
+    "설정", "알람", "SET", "상태",
+    "HH", "LL", "H2", "L2", "H3", "L3",
+    " H", " L",
+    "고수위", "저수위",
+)
+
+
+def _extract_peer_category(datainfo: str) -> Optional[str]:
+    """datainfo에서 peer 비교용 카테고리 키워드를 뽑는다.
+
+    반환: 매칭된 첫 키워드 (예: "수위", "토출압력") 또는 None.
+    """
+    if not datainfo:
+        return None
+    for kw in _PEER_CATEGORY_KEYWORDS:
+        if kw in datainfo:
+            return kw
+    return None
+
+
+def _is_peer_candidate_datainfo(datainfo: str) -> bool:
+    """설정값·알람 계열 datainfo를 제외하고 실측 태그만 peer로 허용."""
+    if not datainfo:
+        return False
+    for bad in _PEER_EXCLUDE_KEYWORDS:
+        if bad in datainfo:
+            return False
+    return True
+
+
+def _fetch_peer_context(
+    tagsn: str,
+    limit: int = 5,
+) -> dict:
+    """같은 facility_type + 같은 카테고리 키워드를 가진 다른 현장의 태그
+    baseline을 peer 목록으로 반환한다.
+
+    반환 구조 (peer 없으면 빈 dict):
+      {
+        "peer_category": "수위",
+        "peer_facilitytype": "배수지",
+        "peer_count": 5,
+        "peer_avg_of_avgs": 2.35,
+        "peers": [
+          {"sitename": "신평", "datainfo": "신평(배) 수위",
+           "baseline_avg_30d": 2.18,
+           "baseline_min_30d": 1.9, "baseline_max_30d": 2.6},
+          ...
+        ]
+      }
+    """
+    if not tagsn or _get_db_connection is None:
+        return {}
+
+    meta = _fetch_tag_meta(tagsn)
+    sitename = meta.get("sitename", "")
+    facilitytype = meta.get("facilitytype", "")
+    datainfo = meta.get("datainfo", "")
+    if not sitename or not facilitytype:
+        return {}
+
+    category = _extract_peer_category(datainfo)
+    if not category:
+        return {}
+
+    exclude_clauses = " AND ".join(
+        ["ti.datainfo NOT ILIKE %s"] * len(_PEER_EXCLUDE_KEYWORDS)
+    )
+    exclude_params = [f"%{kw}%" for kw in _PEER_EXCLUDE_KEYWORDS]
+
+    # 후보 peer tagsn + meta 조회 (현재 태그 자신 제외, 실측 필터)
+    # 각 sitename당 1건만 뽑아 여러 현장 비교가 가능하게 DISTINCT ON 사용
+    sql = f"""
+        SELECT DISTINCT ON (ti.sitename)
+               ti.tagsn, ti.sitename, ti.datainfo
+        FROM tb_tag_info ti
+        WHERE ti.facilitytype = %s
+          AND ti.sitename <> %s
+          AND ti.datainfo ILIKE %s
+          AND {exclude_clauses}
+        ORDER BY ti.sitename, ti.tagsn
+        LIMIT %s
+    """
+
+    conn = None
+    candidates: list[tuple[str, str, str]] = []
+    try:
+        conn = _get_db_connection()
+        with conn.cursor() as cur:
+            params = [
+                facilitytype,
+                sitename,
+                f"%{category}%",
+                *exclude_params,
+                limit * 3,  # 일부는 baseline 없을 수 있어 여유롭게
+            ]
+            cur.execute(sql, params)
+            candidates = cur.fetchall() or []
+    except Exception as e:
+        logger.warning(f"peer 후보 조회 실패 ({tagsn}): {e}")
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+    if not candidates:
+        return {}
+
+    # 각 후보에 대해 baseline 조회 (기존 캐시 + cagg 활용)
+    peers: list[dict] = []
+    for peer_tagsn, peer_site, peer_di in candidates:
+        if len(peers) >= limit:
+            break
+        base = _fetch_trend_context(peer_tagsn) or {}
+        if "baseline_avg_30d" not in base:
+            continue
+        peers.append({
+            "sitename": peer_site,
+            "datainfo": peer_di,
+            "baseline_avg_30d": float(base["baseline_avg_30d"]),
+            "baseline_min_30d": float(base.get("baseline_min_30d", 0)),
+            "baseline_max_30d": float(base.get("baseline_max_30d", 0)),
+        })
+
+    if not peers:
+        return {}
+
+    avg_of_avgs = sum(p["baseline_avg_30d"] for p in peers) / len(peers)
+    return {
+        "peer_category": category,
+        "peer_facilitytype": facilitytype,
+        "peer_count": len(peers),
+        "peer_avg_of_avgs": round(avg_of_avgs, 4),
+        "peers": peers,
+    }
+
+
 def _fallback_summary(
     tag_name: str,
     unit: str,
@@ -327,12 +481,18 @@ async def explain_trend(request: Request):
                 th = _fetch_water_level_thresholds(sitename, facilitytype or "배수지")
                 if th:
                     context.update(th)
+        # P2.3 피어 태그 컨텍스트
+        peer_ctx: dict = {}
+        if _context_mode == "on" and tagsn:
+            peer_ctx = _fetch_peer_context(tagsn, limit=5) or {}
         _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
         _context_used: list[str] = []
         if "baseline_avg_30d" in context:
             _context_used.append("baseline_30d")
         if "hh_threshold" in context or "ll_threshold" in context:
             _context_used.append("thresholds")
+        if peer_ctx.get("peers"):
+            _context_used.append("peers")
 
         # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
         # (anomaly_count=0도 포함, 프롬프트 상수 30(일)도 허용)
@@ -347,6 +507,17 @@ async def explain_trend(request: Request):
         for key in ("hh_threshold", "ll_threshold"):
             if key in context:
                 allowed_numbers.append(float(context[key]))
+        # P2.3 peer 수치 허용
+        for peer in peer_ctx.get("peers", []):
+            allowed_numbers.append(peer["baseline_avg_30d"])
+            if peer.get("baseline_min_30d"):
+                allowed_numbers.append(peer["baseline_min_30d"])
+            if peer.get("baseline_max_30d"):
+                allowed_numbers.append(peer["baseline_max_30d"])
+        if "peer_avg_of_avgs" in peer_ctx:
+            allowed_numbers.append(float(peer_ctx["peer_avg_of_avgs"]))
+        if peer_ctx.get("peer_count"):
+            allowed_numbers.append(float(peer_ctx["peer_count"]))
 
         # C안: 비교 컨텍스트 섹션 (baseline 또는 임계값이 있을 때 추가)
         context_lines = []
@@ -373,12 +544,37 @@ async def explain_trend(request: Request):
             + "\n".join(context_lines)
         ) if context_lines else ""
 
+        peer_block = ""
+        if peer_ctx.get("peers"):
+            cat = peer_ctx["peer_category"]
+            ft = peer_ctx["peer_facilitytype"]
+            peer_lines = [
+                f"- {p['sitename']} {ft}: 30일 평균 {p['baseline_avg_30d']:.3g}"
+                for p in peer_ctx["peers"]
+            ]
+            peer_lines.append(
+                f"- 피어 평균: {peer_ctx['peer_avg_of_avgs']:.3g} "
+                f"(n={peer_ctx['peer_count']})"
+            )
+            peer_block = (
+                f"\n\n## 피어 비교 — 같은 {ft} 유형의 다른 현장 '{cat}' 태그\n"
+                + "\n".join(peer_lines)
+            )
+
+        sentence_range = "3~4문장" if peer_block else "2~3문장"
+        peer_rule = (
+            "8. 피어 비교가 제공되면 이번 구간 평균이 다른 현장 동종 태그의 "
+            "30일 평균 대비 어느 수준인지 1문장으로 추가 서술하라 "
+            "(제공된 시설명·수치만 사용).\n"
+            if peer_block else ""
+        )
+
         # 엄격 프롬프트 — "제공된 수치 외 숫자 생성 금지" 명시
         prompt = (
-            "다음 센서 데이터 구간을 분석하여 수치와 패턴을 2~3문장으로 요약하라.\n\n"
+            f"다음 센서 데이터 구간을 분석하여 수치와 패턴을 {sentence_range}으로 요약하라.\n\n"
             "## 절대 규칙\n"
-            "1. 아래 섹션에 제공된 수치(통계·baseline·임계값)만 사용하라.\n"
-            "2. 제공되지 않은 숫자는 절대 언급하지 마라 "
+            "1. 아래 섹션에 제공된 수치(통계·baseline·임계값·피어)만 사용하라.\n"
+            "2. 제공되지 않은 숫자·시설명·태그명은 절대 언급하지 마라 "
             "(시간·구체 수치·표준편차 등 계산하지 마라).\n"
             "3. 권고 사항, 조치 지시, 원인 추측은 포함하지 마라.\n"
             "4. 외부 지식이나 일반적 센서 기준은 추가하지 마라.\n"
@@ -387,7 +583,8 @@ async def explain_trend(request: Request):
             "간단히 비교 서술하라 (예: '30일 평균 대비 높은 편입니다').\n"
             "7. HH/LL 임계값이 있으면 이번 구간 최대값이 HH 대비 어느 수준인지, "
             "최소값이 LL 대비 어느 수준인지 비교 서술하라 "
-            "(예: '최대 3.5m는 HH 임계값 4.0m 대비 주의 범위에 진입').\n\n"
+            "(예: '최대 3.5m는 HH 임계값 4.0m 대비 주의 범위에 진입').\n"
+            f"{peer_rule}\n"
             f"## 태그\n{tag_name}{unit_str}\n\n"
             f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
             "## 통계 (이 값들만 사용)\n"
@@ -396,8 +593,9 @@ async def explain_trend(request: Request):
             f"- 최대: {max_val:.3g}\n"
             f"- 데이터 건수: {count}\n"
             f"- 이상 구간: {anomaly_count}건"
-            f"{context_block}\n\n"
-            "요약 (2문장, 위 수치만 사용, 존댓말 '~습니다' 종결):"
+            f"{context_block}"
+            f"{peer_block}\n\n"
+            f"요약 ({sentence_range}, 위 수치·명칭만 사용, 존댓말 '~습니다' 종결):"
         )
 
         if not _ollama_client:
@@ -421,15 +619,33 @@ async def explain_trend(request: Request):
             None,     # model
             None,     # num_ctx (ai_settings 따름)
             None,     # num_predict (gemma4:26b 호환성 — None=모델 기본값)
-            90.0,     # timeout — Gemma4:26b tail latency 커버 (p99 ~50s)
+            180.0,    # timeout — Gemma4:26b a4b tail latency 커버 (M4 Pro Metal 실측 p95 ~70s)
             3,        # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
         )
         _elapsed = time.perf_counter() - _t0
         _llm_ms = int(_elapsed * 1000)
         summary = (summary or "").strip()
 
+        # 식별자(시설명·태그명·피어 시설명) strip 목록 — 수치 검증 전 제거해 오탐 방지
+        strip_strings: list[str] = []
+        if tag_name:
+            strip_strings.append(tag_name)
+        if sitename:
+            strip_strings.append(sitename)
+        for peer in peer_ctx.get("peers", []):
+            if peer.get("sitename"):
+                strip_strings.append(peer["sitename"])
+            if peer.get("datainfo"):
+                strip_strings.append(peer["datainfo"])
+
         # 할루시네이션 검증 — LLM이 제공되지 않은 숫자를 생성했는지 확인
         ok, violations = _validate_summary_numbers(summary, allowed_numbers)
+        if (not ok) and summary and strip_strings:
+            cleaned = summary
+            for s in sorted(set(strip_strings), key=len, reverse=True):
+                cleaned = cleaned.replace(s, " ")
+            ok, violations = _validate_summary_numbers(cleaned, allowed_numbers)
+
         if not ok or not summary:
             logger.warning(
                 f"트렌드 AI 요약 할루시네이션 감지 → 템플릿 폴백: "
@@ -567,11 +783,52 @@ async def get_trend_data(req: TrendDataRequest):
             td = tag_data.get(tag_id, {})
             series[tag_id] = [td.get(t) for t in times]
 
+        # ── 트렌드 비교 (평소 대비 / 향후 전망) — tag 별 ──────────
+        # docs/trend-comparison-spec.md (B안 — causal_hint 포함)
+        comparison_by_tag: dict = {}
+        try:
+            from trend_comparison import compute_comparison
+            # tagsn → (sitename, facilitytype, datainfo) lookup
+            cur2 = conn.cursor()
+            cur2.execute(
+                "SELECT tagsn, sitename, facilitytype, datainfo FROM tb_tag_info "
+                "WHERE tagsn = ANY(%s)",
+                (req.tag_ids,),
+            )
+            tag_meta = {r[0]: {"sitename": r[1], "facilitytype": r[2], "datainfo": r[3]}
+                        for r in cur2.fetchall()}
+            cur2.close()
+
+            for tag_id in req.tag_ids:
+                vals = series.get(tag_id) or []
+                # (log_time, val) 행렬 만들기 — compute_comparison 입력 형식
+                rows_for_compare = [(times[i], vals[i]) for i in range(len(times))
+                                    if vals[i] is not None]
+                if len(rows_for_compare) < 24:    # 1일 미만 데이터
+                    continue
+                meta = tag_meta.get(tag_id, {})
+                # FACILITY_TREND intent + label 컬럼 시뮬레이션 (datainfo 로 kind 감지)
+                cols = ["log_time", "val", "label"]
+                rows_aug = [(t, v, meta.get("datainfo") or "") for t, v in rows_for_compare]
+                cmp = compute_comparison(
+                    rows=rows_aug, columns=cols,
+                    intent="FACILITY_TREND",
+                    sitename=meta.get("sitename"),
+                    facilitytype=meta.get("facilitytype"),
+                    tagsn=tag_id,
+                    conn=conn,
+                )
+                if cmp:
+                    comparison_by_tag[tag_id] = cmp
+        except Exception as e:
+            logger.warning(f"/trend/data comparison 실패: {e}")
+
         return {
             "status": "OK",
             "data": {"times": times, "series": series},
             "bucket_mins": bucket_mins,
             "total_points": len(times),
+            "comparison": comparison_by_tag,
         }
 
     except Exception as e:
