@@ -344,16 +344,58 @@ export interface PlotData {
 
 ### 7.4 ECharts overlay
 
-`buildPlotChartOption` 에 옵션 인자 `showBaseline` / `showForecast` 추가:
+`PlotChart.tsx` 의 `option` useMemo 내부에서 `showBaseline` / `showForecast`
+에 따라 series 동적 추가:
 
 - `showBaseline=true` →
-  - `series` 에 baseline dashed line 추가
-  - `markArea` 로 band 음영 (band_lower~band_upper)
+  - `series` 에 baseline dashed line + `band_lower~band_upper` 음영
+  - 음영은 ECharts stack 방식: `band_lower` (line opacity 0, areaStyle 없음) +
+    `(band_upper - band_lower)` (line opacity 0, areaStyle 색) 두 series 를
+    같은 stack 으로 묶어 결과적으로 lower~upper 영역만 채움
 - `showForecast=true` →
-  - `series` 에 forecast dashed line 추가 (다른 색)
-  - `markLine` 으로 threshold_value 가로선
-  - `markPoint` 로 hours_to_threshold 위치 annotation
-- 유량 + showBaseline + CUSUM 데이터 있음 → 차트 하단에 mini CUSUM bar (별도 sub-chart)
+  - 외삽 dashed line — x_axis 끝에 `forecast_times` 이어붙이고 기존 series
+    는 `padForecast` (null 배열) 로 길이 보정
+  - `markLine` 으로 `threshold_value` 가로선 (label `threshold_label`)
+- 유량 + showBaseline + CUSUM 데이터 있음 → 차트 하단에 mini CUSUM bar
+  (별도 sub-chart, P2)
+
+### 7.5 Overlay 시각 스타일 가이드 (2026-05-24 강화)
+
+**원칙**: 다크모드 차트 배경에서 baseline·forecast 가 메인 line 과 명확히
+구분되고 정상 범위 음영이 한눈에 보여야 한다.
+
+| 요소 | 스타일 |
+|------|--------|
+| 정상 범위 음영 (areaStyle) | `rgba(16, 185, 129, 0.32)` (이전 0.18 → 0.32) |
+| baseline line | dashed / `width 2.5` (이전 1.5) / `color #34d399` (이전 `#10b981`) |
+| baseline shadow | `shadowBlur 4, shadowColor rgba(52, 211, 153, 0.5)` |
+| baseline z-order | `z: 5` (메인 line 위에 떠서 비교 직관 — 이전 z:2) |
+| baseline smooth | `true` (부드러운 dashed) |
+| forecast line | dashed / `width 2.5` / `color #fb923c` |
+| forecast shadow | `shadowBlur 4, shadowColor rgba(251, 146, 60, 0.5)` |
+| forecast z-order | `z: 5` |
+| threshold markLine | dashed `width 1.5` / `color #ef4444` / label `fontWeight bold` |
+
+**stack 음영 구현 (중요 — 변수명 혼동 주의)**:
+```typescript
+// (1) base: 하한 line (invisible)
+series.push({ data: b.band_lower, lineStyle: { opacity: 0 }, stack: "baseline-band", silent: true });
+// (2) stack on top: (upper - lower) 차이 + areaStyle
+series.push({
+  data: b.band_upper.map((upper, i) => {
+    const lower = b.band_lower[i];
+    return upper != null && lower != null ? upper - lower : null;
+  }),
+  lineStyle: { opacity: 0 },
+  stack: "baseline-band",
+  areaStyle: { color: "rgba(16, 185, 129, 0.32)" },
+  silent: true,
+});
+```
+
+→ 결과: `lower` 위에 `(upper - lower)` 가 쌓여 최종적으로 `lower~upper`
+영역만 음영. 두 번째 series 의 data 로 `(upper - lower)` 차이 사용 (절대값
+upper 가 아님) 이 핵심.
 
 ---
 
@@ -447,5 +489,20 @@ export interface PlotData {
 
 ## 11. 변경 이력
 
+- 2026-05-24 — 평소 대비 overlay 가시성 강화 (§7.5 신설)
+  · stack 음영 로직 버그 fix (변수명 혼동으로 잘못된 영역 계산 → `band_lower` base + `(upper - lower)` stack 으로 교정)
+  · 음영 opacity 0.18 → 0.32, baseline line 1.5px → 2.5px + shadow + `#34d399` (밝은 emerald)
+  · z-order 2 → 5 (메인 line 위에 떠서 비교 직관)
+  · forecast 동일 강화 (2.5px + shadow + bold threshold 라벨)
+  · 사용자 피드백 "평소 대비 트랜드가 눈에 잘 안띄네" 대응
+  · 커밋: `slm-dashboard@6ffa335`
+- 2026-05-22 — 트렌드 비교 4회 운영 검증 (메모리 영속)
+  · 4 시설 (신평·죽동·합덕·남산 배수지 수위) 채팅 UI 테스트
+  · 합덕 forecast warning "22시간 후 한계 접근" 발견 — 외삽 알고리즘 실 데이터 작동 검증
+  · `memory/project_trend_comparison_v1.md` 신규 (의도·설계·산출물·검증·P2)
 - 2026-05-21 — v1 초안 작성 (사용자 의도 2개 압축 + 토글 2개 통합 설계 +
-  NMF/CUSUM 통합 방향)
+  NMF/CUSUM 통합 방향) + P1 구현 완료 + 4회 백엔드 검증
+  · `slm/trend_comparison.py` 신규 (hourly_mean baseline + linear 외삽)
+  · `anomaly_detector.classify_z_level_by_group` 재사용 — 대시보드 z-score 알람과 통일
+  · PlotChart ComparisonBadge + 토글 + ECharts overlay + localStorage 영속
+  · 커밋: `slm@fc0faba` / `slm-dashboard@82ddab4` / `web@3195456`
