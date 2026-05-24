@@ -451,6 +451,8 @@ async def explain_trend(request: Request):
         avg_val = float(body.get("avg", 0))
         count = int(body.get("count", 0))
         anomaly_count = int(body.get("anomaly_count", 0))
+        # xAI: 트렌드 비교 컨텍스트 (PlotChart/TrendChart 가 plot.comparison 전달)
+        comparison = body.get("comparison") or None
 
         def fmt_ts(ts: str) -> str:
             try:
@@ -493,6 +495,7 @@ async def explain_trend(request: Request):
             _context_used.append("thresholds")
         if peer_ctx.get("peers"):
             _context_used.append("peers")
+        # comparison_used 는 아래 comparison_block 빌딩 시 채워짐 — 빈 리스트로 초기화
 
         # 할루시네이션 방어: 값 주입 강제 + 출력 검증용 허용 수치 목록
         # (anomaly_count=0도 포함, 프롬프트 상수 30(일)도 허용)
@@ -544,6 +547,73 @@ async def explain_trend(request: Request):
             + "\n".join(context_lines)
         ) if context_lines else ""
 
+        # xAI: comparison 컨텍스트 블록 (평소 대비 / 향후 전망 / 인과 후보)
+        comparison_lines: list[str] = []
+        comparison_used: list[str] = []
+        if isinstance(comparison, dict):
+            b = comparison.get("baseline") or {}
+            f = comparison.get("forecast") or {}
+            ch = comparison.get("causal_hint") or {}
+            if b.get("status"):
+                method_label = {
+                    "hourly_mean": "같은 시간×요일 평균",
+                    "regression": "회귀 (HuberRegressor)",
+                    "nmf_30d": "야간최소유량 30일 baseline",
+                }.get(b.get("method"), b.get("method", "?"))
+                comparison_lines.append(
+                    f"- [평소 대비] 판정: {b.get('status_label','?')} "
+                    f"(기법: {method_label}, 학습 {b.get('learning_window_days','?')}일)"
+                )
+                if b.get("deviation_pct") is not None:
+                    comparison_lines.append(
+                        f"- [평소 대비] 현재 이격: {b['deviation_pct']:+.1f}%"
+                    )
+                    allowed_numbers.append(float(b["deviation_pct"]))
+                    allowed_numbers.append(abs(float(b["deviation_pct"])))
+                if b.get("learning_window_days") is not None:
+                    allowed_numbers.append(float(b["learning_window_days"]))
+                comparison_used.append("baseline")
+            if f.get("status"):
+                f_method = {
+                    "linear": "최근 24샘플 선형회귀 외삽",
+                    "moving_avg_slope": "이동평균 기울기 외삽",
+                }.get(f.get("method"), f.get("method", "?"))
+                comparison_lines.append(
+                    f"- [향후 전망] 판정: {f.get('status_label','?')} "
+                    f"(기법: {f_method}, 외삽 {f.get('forecast_hours','?')}시간)"
+                )
+                if f.get("threshold_value") is not None:
+                    comparison_lines.append(
+                        f"- [향후 전망] 위험 임계: {f['threshold_value']:.3g} "
+                        f"({f.get('threshold_label','임계')})"
+                    )
+                    allowed_numbers.append(float(f["threshold_value"]))
+                if f.get("hours_to_threshold") is not None:
+                    comparison_lines.append(
+                        f"- [향후 전망] 임계 도달 예상: {f['hours_to_threshold']:.1f}시간 후"
+                    )
+                    allowed_numbers.append(float(f["hours_to_threshold"]))
+                if f.get("forecast_hours") is not None:
+                    allowed_numbers.append(float(f["forecast_hours"]))
+                comparison_used.append("forecast")
+            if ch.get("summary"):
+                comparison_lines.append(
+                    f"- [원인 후보] {ch['summary']}"
+                )
+                # source 의 수치도 allowed 에 추가 (예: 알람 1857건)
+                import re as _re
+                for s in (ch.get("sources") or [])[:5]:
+                    for num in _re.findall(r"\d+(?:\.\d+)?", s.get("detail", "")):
+                        try: allowed_numbers.append(float(num))
+                        except Exception: pass
+                comparison_used.append("causal_hint")
+
+        comparison_block = (
+            "\n\n## 트렌드 비교 (평소 대비 / 향후 전망 / 원인 후보 — 판정 근거)\n"
+            + "\n".join(comparison_lines)
+            + "\n  ※ 위 판정은 anomaly_detector z-score 그룹 임계(B그룹 2σ/3σ)와 동일 체계입니다."
+        ) if comparison_lines else ""
+
         peer_block = ""
         if peer_ctx.get("peers"):
             cat = peer_ctx["peer_category"]
@@ -561,12 +631,27 @@ async def explain_trend(request: Request):
                 + "\n".join(peer_lines)
             )
 
-        sentence_range = "3~4문장" if peer_block else "2~3문장"
+        # 문장 수 조정 — comparison/peer 둘 다 있으면 4~5문장
+        if comparison_block and peer_block:
+            sentence_range = "4~5문장"
+        elif comparison_block or peer_block:
+            sentence_range = "3~4문장"
+        else:
+            sentence_range = "2~3문장"
         peer_rule = (
             "8. 피어 비교가 제공되면 이번 구간 평균이 다른 현장 동종 태그의 "
             "30일 평균 대비 어느 수준인지 1문장으로 추가 서술하라 "
             "(제공된 시설명·수치만 사용).\n"
             if peer_block else ""
+        )
+        # xAI: comparison 판정 근거를 자연어로 풀어서 설명하라
+        comparison_rule = (
+            "9. [트렌드 비교] 섹션이 있으면 다음 순서로 1~2문장 자연어로 설명하라:\n"
+            "   (a) 평소 대비 판정 + 사용 기법 (예: '같은 시간·요일 14일 평균 대비 ↑/↓')\n"
+            "   (b) 향후 전망 (안전 / N시간 후 한계 접근 / 도달)\n"
+            "   (c) 원인 후보가 제공되면 1문장으로 인과 관계 시사 (단정 금지, '~ 의심')\n"
+            "   ※ 수치는 [트렌드 비교] 섹션에 제공된 값만 사용. 새 수치 생성 금지.\n"
+            if comparison_block else ""
         )
 
         # 엄격 프롬프트 — "제공된 수치 외 숫자 생성 금지" 명시
@@ -584,7 +669,8 @@ async def explain_trend(request: Request):
             "7. HH/LL 임계값이 있으면 이번 구간 최대값이 HH 대비 어느 수준인지, "
             "최소값이 LL 대비 어느 수준인지 비교 서술하라 "
             "(예: '최대 3.5m는 HH 임계값 4.0m 대비 주의 범위에 진입').\n"
-            f"{peer_rule}\n"
+            f"{peer_rule}"
+            f"{comparison_rule}\n"
             f"## 태그\n{tag_name}{unit_str}\n\n"
             f"## 기간\n{fmt_ts(from_ts)} ~ {fmt_ts(to_ts)}\n\n"
             "## 통계 (이 값들만 사용)\n"
@@ -594,9 +680,14 @@ async def explain_trend(request: Request):
             f"- 데이터 건수: {count}\n"
             f"- 이상 구간: {anomaly_count}건"
             f"{context_block}"
-            f"{peer_block}\n\n"
+            f"{peer_block}"
+            f"{comparison_block}\n\n"
             f"요약 ({sentence_range}, 위 수치·명칭만 사용, 존댓말 '~습니다' 종결):"
         )
+
+        # comparison 컨텍스트가 활용됐다면 context_used 에 표시 (응답 메타)
+        for tag in comparison_used:
+            _context_used.append(f"comparison.{tag}")
 
         if not _ollama_client:
             # 결정적 폴백 — LLM 불가 시에도 안전한 템플릿 요약 반환
