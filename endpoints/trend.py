@@ -547,7 +547,7 @@ async def explain_trend(request: Request):
             + "\n".join(context_lines)
         ) if context_lines else ""
 
-        # xAI: comparison 컨텍스트 블록 (평소 대비 / 향후 전망 / 인과 후보)
+        # xAI: comparison 컨텍스트 블록 — 경량 (5~6줄 → 3줄 핵심만, 2026-05-26)
         comparison_lines: list[str] = []
         comparison_used: list[str] = []
         if isinstance(comparison, dict):
@@ -555,63 +555,40 @@ async def explain_trend(request: Request):
             f = comparison.get("forecast") or {}
             ch = comparison.get("causal_hint") or {}
             if b.get("status"):
-                method_label = {
-                    "hourly_mean": "같은 시간×요일 평균",
-                    "regression": "회귀 (HuberRegressor)",
-                    "nmf_30d": "야간최소유량 30일 baseline",
-                }.get(b.get("method"), b.get("method", "?"))
-                comparison_lines.append(
-                    f"- [평소 대비] 판정: {b.get('status_label','?')} "
-                    f"(기법: {method_label}, 학습 {b.get('learning_window_days','?')}일)"
-                )
-                if b.get("deviation_pct") is not None:
-                    comparison_lines.append(
-                        f"- [평소 대비] 현재 이격: {b['deviation_pct']:+.1f}%"
-                    )
-                    allowed_numbers.append(float(b["deviation_pct"]))
-                    allowed_numbers.append(abs(float(b["deviation_pct"])))
+                # 1줄로 압축: 판정 + 이격%
+                dev = b.get("deviation_pct")
+                dev_str = f", 이격 {dev:+.1f}%" if dev is not None else ""
+                comparison_lines.append(f"- 평소 대비: {b.get('status_label','?')}{dev_str}")
+                if dev is not None:
+                    allowed_numbers.append(float(dev))
+                    allowed_numbers.append(abs(float(dev)))
                 if b.get("learning_window_days") is not None:
                     allowed_numbers.append(float(b["learning_window_days"]))
                 comparison_used.append("baseline")
             if f.get("status"):
-                f_method = {
-                    "linear": "최근 24샘플 선형회귀 외삽",
-                    "moving_avg_slope": "이동평균 기울기 외삽",
-                }.get(f.get("method"), f.get("method", "?"))
-                comparison_lines.append(
-                    f"- [향후 전망] 판정: {f.get('status_label','?')} "
-                    f"(기법: {f_method}, 외삽 {f.get('forecast_hours','?')}시간)"
-                )
-                if f.get("threshold_value") is not None:
-                    comparison_lines.append(
-                        f"- [향후 전망] 위험 임계: {f['threshold_value']:.3g} "
-                        f"({f.get('threshold_label','임계')})"
-                    )
-                    allowed_numbers.append(float(f["threshold_value"]))
+                # 1줄로 압축: 판정 + 임계
+                thr = f.get("threshold_value")
+                thr_str = f", 임계 {thr:.3g}" if thr is not None else ""
+                comparison_lines.append(f"- 향후 전망: {f.get('status_label','?')}{thr_str}")
+                if thr is not None:
+                    allowed_numbers.append(float(thr))
                 if f.get("hours_to_threshold") is not None:
-                    comparison_lines.append(
-                        f"- [향후 전망] 임계 도달 예상: {f['hours_to_threshold']:.1f}시간 후"
-                    )
                     allowed_numbers.append(float(f["hours_to_threshold"]))
                 if f.get("forecast_hours") is not None:
                     allowed_numbers.append(float(f["forecast_hours"]))
                 comparison_used.append("forecast")
             if ch.get("summary"):
-                comparison_lines.append(
-                    f"- [원인 후보] {ch['summary']}"
-                )
-                # source 의 수치도 allowed 에 추가 (예: 알람 1857건)
+                comparison_lines.append(f"- 원인 후보: {ch['summary']}")
                 import re as _re
-                for s in (ch.get("sources") or [])[:5]:
+                for s in (ch.get("sources") or [])[:3]:
                     for num in _re.findall(r"\d+(?:\.\d+)?", s.get("detail", "")):
                         try: allowed_numbers.append(float(num))
                         except Exception: pass
                 comparison_used.append("causal_hint")
 
         comparison_block = (
-            "\n\n## 트렌드 비교 (평소 대비 / 향후 전망 / 원인 후보 — 판정 근거)\n"
+            "\n\n## 트렌드 판정 (z-score 임계 적용)\n"
             + "\n".join(comparison_lines)
-            + "\n  ※ 위 판정은 anomaly_detector z-score 그룹 임계(B그룹 2σ/3σ)와 동일 체계입니다."
         ) if comparison_lines else ""
 
         peer_block = ""
@@ -704,14 +681,17 @@ async def explain_trend(request: Request):
             }
 
         _t0 = time.perf_counter()
+        # AI 요약 가속 (2026-05-26):
+        # - timeout 180→60s — 그 이상은 폴백 (UX 우선)
+        # - num_predict=350 — 5~6 문장 충분, 응답 길이 cap 으로 latency 안정
         summary = await asyncio.to_thread(
             _ollama_client.generate,
             prompt,
             None,     # model
             None,     # num_ctx (ai_settings 따름)
-            None,     # num_predict (gemma4:26b 호환성 — None=모델 기본값)
-            180.0,    # timeout — Gemma4:26b a4b tail latency 커버 (M4 Pro Metal 실측 p95 ~70s)
-            3,        # backoff_seconds — 사용자 클릭 UX에 맞게 짧게 (cascading 회피)
+            350,      # num_predict — 5~6 문장 충분 (latency cap)
+            60.0,     # timeout — UX 우선. 60초 초과 → 폴백 명확
+            3,        # backoff_seconds
         )
         _elapsed = time.perf_counter() - _t0
         _llm_ms = int(_elapsed * 1000)
@@ -761,6 +741,11 @@ async def explain_trend(request: Request):
                 "source": "fallback",
                 "llm_rejected": True,
                 "violations": violations,
+                "user_notice": (
+                    "AI 응답이 검증을 통과하지 못해 자동 템플릿으로 대체했습니다."
+                    if violations else
+                    "AI 응답이 비어있어 자동 템플릿으로 대체했습니다."
+                ),
                 "context_used": _context_used,
                 "context_fetch_ms": _context_fetch_ms,
                 "context_mode": _context_mode,
@@ -796,8 +781,32 @@ async def explain_trend(request: Request):
         }
 
     except Exception as e:
+        msg = str(e)
+        is_timeout = "timeout" in msg.lower() or "timed out" in msg.lower()
         logger.error(f"트렌드 AI 요약 실패: {e}")
-        return {"error": f"AI 요약 중 오류가 발생했습니다: {str(e)}"}
+        # Timeout 시에도 폴백 summary 반환 (사용자 UX 우선) + 명확한 안내
+        try:
+            fb = _fallback_summary(
+                body.get("tag_name","태그") if isinstance(body, dict) else "태그",
+                body.get("unit","") if isinstance(body, dict) else "",
+                float(body.get("min", 0)) if isinstance(body, dict) else 0,
+                float(body.get("avg", 0)) if isinstance(body, dict) else 0,
+                float(body.get("max", 0)) if isinstance(body, dict) else 0,
+                int(body.get("count", 0)) if isinstance(body, dict) else 0,
+                int(body.get("anomaly_count", 0)) if isinstance(body, dict) else 0,
+            )
+            return {
+                "summary": fb,
+                "source": "fallback",
+                "llm_timeout": is_timeout,
+                "user_notice": (
+                    "AI 요약 응답이 60초를 초과해 자동 템플릿으로 대체했습니다."
+                    if is_timeout else
+                    f"AI 요약 중 오류가 발생해 자동 템플릿으로 대체했습니다."
+                ),
+            }
+        except Exception:
+            return {"error": f"AI 요약 중 오류가 발생했습니다: {msg}"}
     finally:
         if conn:
             conn.close()
