@@ -347,7 +347,14 @@ SQL 흐름:
 3. 상류 outflow 매핑 (`tb_epanet_facility_flow_map.role='outflow'`) 의 최근 6h
    평균 vs 7일 baseline 평균 — `|pct| >= 15` 만 source 로 추가
 4. summary 문자열 = source 상위 3개 join
-5. chat_intent = "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK" (후속 진단 인텐트)
+5. **chat_intent 신뢰도 보장 (2026-06-02)**:
+   - alarm source 중 detail 의 N건 추출 후 **≥10건** 인 source 가 있을 때만
+     `chat_intent = "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK"` 부여
+   - flow_change 만 있는 경우 (전용 인텐트 미존재) → chat_intent omit
+   - 이유: 후속 진단 인텐트의 SQL 윈도우 (24h) 와 본 hint 윈도우 (6h) 불일치
+     로 인해 인텐트 응답이 "조회된 데이터 없음" 되는 케이스 방지
+   - 프런트 `CausalHintCard` 는 `chat_intent` 없으면 "→ 상세 원인 진단 →"
+     버튼을 hide (사용자 혼선 방지)
 
 source 없으면 None 반환 → 응답에서 omit.
 
