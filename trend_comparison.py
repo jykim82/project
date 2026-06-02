@@ -380,11 +380,26 @@ def compute_causal_hint(
         for s in sources[:3]:
             parts.append(f"{s['sitename']}({s.get('facilitytype','')}) {s['detail']}")
         summary = " / ".join(parts)
-        return {
-            "summary": summary,
-            "sources": sources,
-            "chat_intent": "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK",
-        }
+
+        # chat_intent 신뢰도 보장 (2026-06-02):
+        # FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK 인텐트는 SQL 윈도우가 24시간이므로,
+        # 6시간 윈도우인 본 hint 에서 alarm 건수가 충분히 많을 때만 제공.
+        # - 알람 ≥10건 인 source 가 있으면 신뢰 (인텐트도 결과 응답 가능)
+        # - flow_change 만 있는 경우 → chat_intent omit (전용 인텐트 미존재)
+        import re as _re
+        has_diagnosable_alarm = False
+        for s in sources:
+            if s.get("kind") != "alarm":
+                continue
+            m = _re.search(r"(\d+)건", s.get("detail", ""))
+            if m and int(m.group(1)) >= 10:
+                has_diagnosable_alarm = True
+                break
+
+        result: dict = {"summary": summary, "sources": sources}
+        if has_diagnosable_alarm:
+            result["chat_intent"] = "FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK"
+        return result
     except Exception as e:
         logger.debug(f"causal_hint 실패: {e}")
         return None
