@@ -187,8 +187,52 @@ export interface SidebarMenuChildDef {
 ### 모듈별 특이 사항
 - **B2 Vision**: GPU 자동 감지 + 모델 다운로드 상태 표시 권장 (활성 전 사전 체크)
 - **B3 RAG**: 매뉴얼 업로드 UI + embeddings 빌드 진행률 (admin/equipment-manuals 활용)
+  → **Phase 1 구현 완료 (2026-06-08)** — `MANUAL_RAG_ENABLED` 마스터 토글,
+    Vision Agent 가드, /admin/site-settings 카드. Migration 0078.
 - **B4 트렌드 비교**: 데이터 누적 14일 후 자동 활성 옵션 (시간 게이트)
 - **B5 보고서**: 자체 양식 사용 고객 위해 분리
+
+---
+
+## 5. B3 매뉴얼·고장 케이스 RAG 마스터 토글 — Phase 1 구현 (2026-06-08)
+
+### 5.1 데이터 모델
+- `tb_comm_code(region, 'SITE_SETTING', 'MANUAL_RAG_ENABLED').use_yn`
+- 기본 'N' (Migration 0078)
+
+### 5.2 동작
+| 상태 | Vision Agent 동작 |
+|------|-------------------|
+| OFF (기본) | `_retrieve_manual_excerpts` + `_retrieve_fault_cases` skip → 응답 manuals_retrieved=[], fault_cases=[] |
+| ON | 정상 RAG 검색 → 매뉴얼 인용 + 유사 고장 케이스 N건 응답 |
+
+### 5.3 vision_agent.py 가드
+```python
+_rag_on = is_manual_rag_enabled()  # 60초 캐시
+if _rag_on and equipment_guess and ...:
+    manual_excerpts_raw = _retrieve_manual_excerpts(...)
+if _rag_on and (equipment_type != "기타" or observed_state):
+    fault_cases_raw = _retrieve_fault_cases(...)
+```
+
+### 5.4 백엔드 `/auth/me` features
+```json
+{ "features": { "epanet": false, "manual_rag": false } }
+```
+→ 프론트가 활용 (예: 채팅 응답 카드 표시 분기)
+
+### 5.5 운영자 UX — `/admin/site-settings`
+"매뉴얼·고장 케이스 RAG" 카드 추가 (purple Waves 아이콘) — ON 시 "고장 케이스
+관리 페이지로 이동" 빠른 링크 노출.
+
+### 5.6 검증 (Playwright 6회 토글)
+6/6 PASS — DB use_yn ↔ /auth/me features.manual_rag 양방향 정합. 마지막 OFF
+복원으로 기본 정책 유지.
+
+### 5.7 후속 권고
+- 채팅 응답 카드에 features.manual_rag=false 안내 ("RAG OFF — 매뉴얼·고장 케이스 미인용")
+- 매뉴얼 PDF 업로드 + embeddings 빌드 UI (`/admin/equipment-manuals` 보강)
+- B2 (Vision Agent 자체) 마스터 토글도 동일 패턴 추가 가능
 
 ---
 
