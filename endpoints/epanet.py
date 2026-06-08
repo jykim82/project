@@ -2382,8 +2382,17 @@ def _check_data_quality(region: str) -> dict:
         "detail": "합성 (잔류염소 초기 0.5 mg/L, 1차 반응)",
     }
 
-    # 운영자가 명시적으로 비활성화한 메뉴
+    # 운영자가 명시적으로 비활성화한 메뉴 (개별 토글)
     disabled = _menus_disabled(region)
+
+    # 마스터 OFF (SITE_SETTING.EPANET_ENABLED='N') 시 모든 EPANET 메뉴를
+    # disabled 로 처리 (feature-sku-spec.md §3). 단 gis-flow-arrow 는 마스터
+    # 토글과 독립 (epanet-menu-spec.md 2026-05-10 정책 유지).
+    if not is_enabled(region):
+        for key in _MENU_REQUIREMENTS.keys():
+            if key == "gis-flow-arrow":
+                continue
+            disabled.add(key)
 
     # 메뉴별 ready/warning/blocked/disabled 분류
     menus_ready: list = []

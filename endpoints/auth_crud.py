@@ -438,12 +438,21 @@ async def get_me(current_user: dict = Depends(_get_current_user)):
                     for r in cur.fetchall()
                 ]
 
+        # 모듈 feature flags (feature-sku-spec.md §3) — Phase 1 EPANET 만.
+        # 후속 모듈 (Vision/RAG/Trend 비교 등) 은 동일 패턴으로 추가.
+        try:
+            from epanet import is_enabled as _epanet_enabled
+            features = {"epanet": _epanet_enabled(region)}
+        except Exception:
+            features = {"epanet": False}
+
         return {
             "user_id": user_id,
             "user_nm": user_nm,
             "region": region,
             "auth_idn": auth_idn,
             "menus": allowed_menus,
+            "features": features,
         }
     except Exception as e:
         logger.error(f"[auth] /me 오류: {e}")
