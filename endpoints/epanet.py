@@ -2192,6 +2192,8 @@ _MENU_REQUIREMENTS = {
                                "recommended": []},
     "flow-deviation":         {"required": ["HAS_PIPE_NETWORK", "HAS_LIVE_FLOW"],
                                "recommended": ["HAS_DEMAND_PROFILE"]},
+    # 운영자 토글 전용 (데이터 품질 게이트 없음, 단순 시각화 노출 제어)
+    "gis-flow-arrow":         {"required": [], "recommended": []},
 }
 
 
