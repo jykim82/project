@@ -45,6 +45,13 @@
 - **검증:** Playwright 로 localhost 환경 3+분 머물러도 reload 0회 (애초에
   미발생). 사용자 환경 LAN IP 에서 cert 재발급 + frontend 재기동 후 정상.
 - **커밋:** `slm-dashboard@037700f`, `slm-dashboard@705fe23`
+- **후속 (2026-06-08):** `/admin/menus` 메뉴 트리 탭의 숨김 토글이 localStorage
+  기반이라 엔진 재기동 시 무효화 — `tb_menu.use_yn` DB 기반으로 전환.
+  `MenuTreeView` 가 mount 시 `fetchMenuPermissions()` 로 DB 상태 동기화 +
+  토글 시 `updateMenuVisibility(menu_idn, use_yn)` 호출. 백엔드 인프라는
+  이미 존재 (auth_crud.py:818 PUT `/api/auth/menu-visibility`, `/auth/me`
+  의 `m.use_yn='Y'` 필터). 별건 사양: 정적 `sidebarMenus` ↔ `tb_menu`
+  정합 스크립트 추가 권고 (M200-15 누락 등).
 
 ---
 
