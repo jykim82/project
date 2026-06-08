@@ -86,10 +86,10 @@ tb_comm_code:
 | M008-4 | 실측 유량 차이 | /monitoring/flow-deviation | flow-deviation |
 | (분석 그룹 M008) | 분석 | (자식 모두 hidden 시 그룹 자체 hide — 기존 정책) | — |
 
-#### admin 페이지 (1개) — **유지** (복구 경로)
-| menu_idn | label | path | 비고 |
-|----------|-------|------|------|
-| M100-12 | EPANET 시뮬레이션 | /admin/epanet | OFF 상태에서도 사이드바 노출. 마스터 토글 ON 진입점. |
+#### admin 페이지 (1개) — **hide 적용** (사용자 결정 2026-06-08)
+| menu_idn | label | path | menu_key | 비고 |
+|----------|-------|------|----------|------|
+| M100-12 | EPANET 시뮬레이션 | /admin/epanet | `epanet-admin` | 마스터 OFF 시 사이드바 hide. 복구 경로: `/admin/site-settings` (항상 노출). |
 
 #### GIS 페이지 내부 토글 (6개) — `data-quality menus_disabled` 자동 포함
 EPANET 시뮬 / 누수 의심 / 헤드손실 이상 / 밸브 영향 / 관로 파손 / 교체 후보 / 실측 유량 차이.
@@ -122,8 +122,9 @@ EPANET 시뮬 / 누수 의심 / 헤드손실 이상 / 밸브 영향 / 관로 파
 ### 3.4 복구 경로
 
 master 가 실수로 끄거나, 신규 사이트에서 활성화 필요 시:
-1. `/admin/menus` 또는 `/admin/site-settings` URL 직접 진입 (사이드바에 항상 노출 — adminOnly 보호)
-2. 토글 ON
+1. `/admin/site-settings` 진입 (사이드바 항상 노출 — adminOnly 보호)
+2. **관망수리분석** 토글 ON
+3. 즉시 사이드바·GIS·`/admin/epanet` 메뉴 복원
 
 ### 3.5 백엔드 변경
 
