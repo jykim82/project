@@ -2194,6 +2194,9 @@ _MENU_REQUIREMENTS = {
                                "recommended": ["HAS_DEMAND_PROFILE"]},
     # 운영자 토글 전용 (데이터 품질 게이트 없음, 단순 시각화 노출 제어)
     "gis-flow-arrow":         {"required": [], "recommended": []},
+    # /admin/epanet 관리 페이지 — 마스터 OFF 시 함께 hide (사용자 요구 2026-06-08)
+    # 복구 경로: /admin/site-settings 의 관망수리분석 토글 (항상 노출)
+    "epanet-admin":           {"required": [], "recommended": []},
 }
 
 
