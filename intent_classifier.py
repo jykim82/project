@@ -377,6 +377,17 @@ class IntentClassifier:
         Stage 2: 카테고리 내 구체적 INTENT 분류
         반환: (intent_name or None, method)
         """
+        # 키워드 단축: 비상연락처/긴급 연락 — 카테고리 무관 최우선
+        # (UPS/정전/네트워크/펌프/밸브/압력 등 + 연락처/전화 키워드)
+        # 사양: docs/emergency-contact-spec.md
+        _contact_trigger_kws = (
+            "비상연락", "비상 연락", "긴급 연락", "긴급연락", "연락처", "연락망",
+            "어디로 전화", "어디 연락", "누구한테 전화", "누구한테 연락",
+            "업체 전화", "업체 연락", "출동 업체",
+        )
+        if any(kw in question for kw in _contact_trigger_kws):
+            return "EMERGENCY_CONTACT_QUERY", "keyword"
+
         # 키워드 단축: 수위 + 이유/원인/왜 → RESERVOIR_LEVEL_CAUSE_ANALYSIS
         _cause_kws = ("이유", "원인", "왜")
         if "수위" in question and any(kw in question for kw in _cause_kws):

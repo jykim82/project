@@ -62,13 +62,19 @@
           "prefix": "•",
           "icon": "truck",
           "text": "원차 진입 · {water_truck_access_label}",
-          "pill": { "text": "{water_truck_access_pill}", "tone": "{water_truck_access_tone}" }
+          "pill": {
+            "text": "{water_truck_access_pill}",
+            "tone": "{water_truck_access_tone}"
+          }
         },
         {
           "prefix": "•",
           "icon": "ban",
           "text": "출차 회차 · {water_truck_turn_label}",
-          "pill": { "text": "{water_truck_turn_pill}", "tone": "{water_truck_turn_tone}" }
+          "pill": {
+            "text": "{water_truck_turn_pill}",
+            "tone": "{water_truck_turn_tone}"
+          }
         }
       ],
       "reference": {
@@ -1908,7 +1914,10 @@
           "prefix": "•",
           "icon": "droplet",
           "text": "야간최소유량 · {current_val}{unit}",
-          "pill": {"text": "{nmf_pill_text}", "tone": "{nmf_pill_tone}"}
+          "pill": {
+            "text": "{nmf_pill_text}",
+            "tone": "{nmf_pill_tone}"
+          }
         }
       ],
       "reference": {
@@ -4503,5 +4512,37 @@
       }
     },
     "graph_type": "none"
+  },
+  {
+    "intent": "EMERGENCY_CONTACT_QUERY",
+    "questions": [
+      "비상연락처 알려줘",
+      "비상연락망 보여줘",
+      "긴급 연락처 목록",
+      "장비 고장 시 어디로 전화해?",
+      "UPS 고장났는데 어디에 연락해?",
+      "UPS 업체 연락처",
+      "정전 났을 때 연락처는?",
+      "정전 비상연락망 알려줘",
+      "네트워크 장애 어디로 연락해?",
+      "통신 이상 업체 전화번호",
+      "밸브 고장 업체 전화",
+      "펌프 이상 업체 연락처",
+      "압력 이상 누구한테 전화해?",
+      "수질 이상 비상 연락처",
+      "현장 출동 업체 연락처"
+    ],
+    "sql": "SELECT category, company, phone, COALESCE(description, '') AS description, sort_order FROM tb_alarm_contact ORDER BY category, sort_order",
+    "graph_type": "table",
+    "answer_template": {
+      "summary": "등록된 비상연락처 {total_count}건입니다. 알람·고장 발생 시 해당 카테고리 업체에 직접 연락하세요.",
+      "table_columns": [
+        "분류",
+        "업체",
+        "전화",
+        "설명"
+      ],
+      "reference": "등록·수정·삭제: /setup/alarm-contacts (구축 > 비상연락처)"
+    }
   }
 ]

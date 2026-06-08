@@ -65,7 +65,7 @@ def _row_to_dict(row) -> dict:
 # ── 엔드포인트 ───────────────────────────────────────────────────────────────
 
 @router.get("/categories")
-def list_categories(region: str = "water"):
+def list_categories(region: str = "R01"):
     """등록된 카테고리 목록 조회"""
     conn = _get_conn()
     try:
@@ -82,7 +82,7 @@ def list_categories(region: str = "water"):
 
 
 @router.get("")
-def list_contacts(region: str = "water", category: Optional[str] = None):
+def list_contacts(region: str = "R01", category: Optional[str] = None):
     """연락처 목록 조회 (category 미지정 시 전체)"""
     conn = _get_conn()
     try:
@@ -108,7 +108,7 @@ def list_contacts(region: str = "water", category: Optional[str] = None):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_contact(body: AlarmContactCreate, region: str = "water"):
+def create_contact(body: AlarmContactCreate, region: str = "R01"):
     """연락처 추가"""
     conn = _get_conn()
     try:
