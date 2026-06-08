@@ -291,6 +291,22 @@ INSERT INTO tb_menu VALUES
     - `_ALARM_PIE_INTENTS` 인텐트 매칭 시 사용자 메시지에 시설 미언급이면 세션 컨텍스트 무시 (전체 조회)
     - 검증: "경보 누적 TOP 10" → 죽동(배) 탁도계 통신이상 4397건 등 정상 반환
 
+- 2026-06-08 — 물흐름 표시 토글 가시성 제어 (gis-flow-arrow menu_key 신규)
+  · 배경: 2026-05-10 사양상 [물흐름 표시] 버튼은 마스터 토글과 분리되어 GIS 페이지에
+    항상 노출. 사이트 정책상 노출 자체를 숨기길 원하는 운영자 요구 발생.
+  · 해결: EPANET 메뉴 토글 인프라 재사용. `_MENU_REQUIREMENTS["gis-flow-arrow"]` =
+    `{"required": [], "recommended": []}` — 데이터 품질 게이트 없음, 항상 ready.
+    `enabled='N'` 일 때만 토글 자체가 GIS 페이지에서 hidden.
+  · DB: Migration 0074 — `tb_epanet_menu_setting` 에 `gis-flow-arrow` row seed
+    (label='물흐름 표시 (GIS)', enabled='Y' default).
+  · 프론트: `/monitoring/gis` 의 [물흐름 표시] 버튼을 `{isEpanetEnabled("gis-flow-arrow") && (...)}`
+    로 감쌈. `DataQualityCard.MENU_LABEL` 에 라벨 매핑 추가.
+  · 마스터 토글 독립성 원칙 유지 — 마스터 OFF 여도 본 토글이 ON 이면 [물흐름 표시] 노출.
+  · 운영 UX: `/admin/epanet` → "메뉴 활성화 설정" 카드에서 토글 (11 → 12개 메뉴).
+  · 검증 (Playwright): 토글 OFF → GIS 페이지 button.length === 0 / ON 복원 → 정상 표시.
+  · 비고: `gis-flow` (EPANET 시뮬 토글) / `flow-deviation` (실측 유량 차이 메뉴+토글) 은
+    이미 기존 인프라로 동일 제어 가능 — 별도 작업 불필요.
+
 - 2026-05-10 — 마스터 토글 + 물흐름 별도 + 메뉴 hidden 정합성
   · **EpanetMenuToggles 마스터 스위치** — [전체 활성] / [전체 비활성] 버튼 (10 메뉴 일괄)
     - 백엔드: PUT `/admin/epanet/menu-settings/bulk` (region/enabled bool)

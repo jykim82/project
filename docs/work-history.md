@@ -2,6 +2,41 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-06-08 — GIS [물흐름 표시] 가시성 토글 + Migration 0074)
+
+**배경**: 2026-05-10 사양으로 [물흐름 표시] 버튼은 마스터 토글과 독립되어 GIS 페이지에
+항상 노출됨. 사이트 정책상 운영자가 노출 자체를 숨기길 원함.
+
+**해결**: 기존 EPANET 메뉴 토글 인프라 재사용 — 신규 `menu_key='gis-flow-arrow'`.
+
+**백엔드**:
+- `slm/endpoints/epanet.py` `_MENU_REQUIREMENTS` 에 `gis-flow-arrow` 추가
+  (required/recommended 빈 배열 → 데이터 품질 게이트 없음, 항상 ready)
+- 동작 흐름: `_check_data_quality()` 가 enabled='N' 이면 `menus_disabled` 에 포함 →
+  프론트 `isEpanetEnabled("gis-flow-arrow") === false` → 버튼 hidden.
+
+**DB**: `db/migrations/0074_epanet_gis_flow_arrow_menu.sql`
+- `tb_epanet_menu_setting` 에 region별 row seed (`label='물흐름 표시 (GIS)'`, `enabled='Y'`)
+- 적용 후 R01 확인됨.
+
+**프론트** (submodule):
+- `src/app/(dashboard)/monitoring/gis/page.tsx` line 268 — [물흐름 표시] 버튼을
+  `{isEpanetEnabled("gis-flow-arrow") && (...)}` 로 감쌈.
+- `src/components/epanet/DataQualityCard.tsx` MENU_LABEL 에
+  `"gis-flow-arrow": "물흐름 표시 (GIS)"` 추가.
+
+**검증 (Playwright)**:
+- `/admin/epanet` → "메뉴 활성화 설정" 카드에 "물흐름 표시 (GIS)" 토글 노출 (12개로 증가)
+- 토글 OFF → `/monitoring/gis` 에서 [물흐름 표시] 버튼 사라짐 (button.length === 0)
+- 토글 ON 복원 → 버튼 재노출
+
+**비고**: `gis-flow` (EPANET 시뮬), `flow-deviation` (실측 유량 차이) 는 이미 기존
+인프라로 동일 제어 가능 — 별도 작업 불필요.
+
+**문서**: `docs/epanet-menu-spec.md` 변경 이력 §2026-06-08 추가.
+
+---
+
 ### 완료 (2026-05-21 — 트렌드 비교 지표 P1) [평소 대비 / 향후 전망 통합 + 대시보드 z-score 알람 체계 정합]
 
 **의도 압축** (사용자 정의): ① "지금 평소보다 이상한가?" ② "이대로 가면 문제 생기나?"
