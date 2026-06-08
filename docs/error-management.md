@@ -8,6 +8,46 @@
 
 ---
 
+### [E-034] LAN IP 접속 시 화면 자동 reload (~70초 주기) — HMR ws + Next.js strict origin
+
+- **날짜:** 2026-06-08
+- **증상:** 사용자가 `https://192.168.219.105:3000/admin/menus` 등 LAN IP 로
+  접속 시 약 70~90초 주기로 페이지 전체 reload + 스크롤 위치 초기화.
+  Chrome/Edge 동일. localhost 접속 시 발생 안 함.
+- **원인 (2 중 복합):**
+  1. **`next.config.ts` `allowedDevOrigins` 에 LAN IP 누락** — Next.js 16
+     strict origin 정책. NEXTAUTH_URL host 와 다른 origin 에서 `/_next/*`
+     리소스 요청 (HMR ws 포함) 차단. 콘솔 경고: "Blocked cross-origin
+     request from 127.0.0.1 to /_next/* resource."
+  2. **HTTPS 자기서명 cert SAN 에 LAN IP 누락** — `localhost` 만 포함.
+     브라우저는 페이지 cert 경고는 무시 가능하나 wss reconnect 마다 검증
+     실패 → Turbopack HMR ws 끊김 반복 → stale chunk 감지 시 페이지
+     전체 reload.
+  3. (부가) `NEXTAUTH_URL=https://localhost:3000` 고정 → LAN IP 와 callback
+     URL 미스매치. SessionProvider 가 callback-url 쿠키 재발급 시도.
+- **해결:**
+  1. `next.config.ts` `allowedDevOrigins` 에 사설 IP 대역 와일드카드 등록:
+     `"127.0.0.1"`, `"192.168.*.*"`, `"10.*.*.*"`, `"172.16~31.*.*"`.
+     (commit slm-dashboard@037700f)
+  2. cert 재발급 — `mkcert` 로 호스트 모든 LAN IP 를 SAN 에 포함.
+     `cd certs/ && mkcert -key-file localhost-key.pem -cert-file localhost.pem
+     localhost 127.0.0.1 ::1 192.168.x.x 10.x.x.x` (호스트 IP 로 교체).
+     자세한 가이드: `certs/README.md`.
+  3. `src/app/api/auth/[...nextauth]/route.ts` 가 request host 헤더 로
+     NEXTAUTH_URL 런타임 오버라이드 + `useSecureCookies: true`.
+     (commit slm-dashboard@705fe23)
+- **재발 방지:**
+  - 신규 머신 셋업 시 `certs/README.md` §"신규 머신 셋업" 따라 LAN IP
+    포함하여 cert 발급.
+  - 호스트 IP 변경 시 (DHCP / VPN 등) cert 재발급 필요 — frontend 재기동.
+  - `allowedDevOrigins` 와일드카드는 사설망에 한정 (공인 IP 노출 환경에서는
+    명시적 IP 화이트리스트 권장).
+- **검증:** Playwright 로 localhost 환경 3+분 머물러도 reload 0회 (애초에
+  미발생). 사용자 환경 LAN IP 에서 cert 재발급 + frontend 재기동 후 정상.
+- **커밋:** `slm-dashboard@037700f`, `slm-dashboard@705fe23`
+
+---
+
 ### [E-033] 트렌드 쿼리 "카탈로그 미등록" — tb_trend_catalog 데이터 누락
 
 - **날짜:** 2026-04-23

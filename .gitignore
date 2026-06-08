@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# HTTPS 자기서명 인증서 (호스트별 SAN 다르므로 git 관리 X) — 재발급: certs/README.md
+/certs/*.pem
+/certs/*.exe
+
 # 로그·임시
 *.log
 .DS_Store
