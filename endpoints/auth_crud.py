@@ -438,13 +438,26 @@ async def get_me(current_user: dict = Depends(_get_current_user)):
                     for r in cur.fetchall()
                 ]
 
-        # 모듈 feature flags (feature-sku-spec.md §3) — Phase 1 EPANET 만.
-        # 후속 모듈 (Vision/RAG/Trend 비교 등) 은 동일 패턴으로 추가.
+        # 모듈 feature flags (feature-sku-spec.md §3, §4)
+        # B1 EPANET / B3 매뉴얼·고장 케이스 RAG — 동일 패턴
+        features = {"epanet": False, "manual_rag": False}
         try:
             from epanet import is_enabled as _epanet_enabled
-            features = {"epanet": _epanet_enabled(region)}
+            features["epanet"] = _epanet_enabled(region)
         except Exception:
-            features = {"epanet": False}
+            pass
+        try:
+            # B3 — tb_comm_code(SITE_SETTING.MANUAL_RAG_ENABLED) 조회
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT use_yn FROM tb_comm_code WHERE region=%s "
+                    "AND grp_cd='SITE_SETTING' AND comm_cd='MANUAL_RAG_ENABLED'",
+                    (region,),
+                )
+                row = cur.fetchone()
+                features["manual_rag"] = bool(row and row[0] == "Y")
+        except Exception:
+            pass
 
         return {
             "user_id": user_id,

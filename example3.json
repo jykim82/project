@@ -4544,5 +4544,96 @@
       ],
       "reference": "등록·수정·삭제: /setup/alarm-contacts (구축 > 비상연락처)"
     }
+  },
+  {
+    "intent": "EMERGENCY_CONTACT_UPS",
+    "questions": [
+      "UPS 고장났는데 어디에 연락해?",
+      "UPS 업체 연락처",
+      "UPS 비상연락처",
+      "UPS 출동 업체",
+      "UPS 점검 업체 전화",
+      "UPS 이상 누구한테 전화"
+    ],
+    "sql": "SELECT category, company, phone, COALESCE(description, '') AS description, sort_order FROM tb_alarm_contact WHERE category = 'UPS' ORDER BY sort_order",
+    "graph_type": "table",
+    "answer_template": {
+      "summary": "UPS 관련 비상연락처 {total_count}건입니다. 우선순위 순으로 전화하세요.",
+      "table_columns": [
+        "분류",
+        "업체",
+        "전화",
+        "설명"
+      ],
+      "reference": "전체 카테고리: /setup/alarm-contacts"
+    }
+  },
+  {
+    "intent": "EMERGENCY_CONTACT_POWER",
+    "questions": [
+      "정전 났을 때 연락처는?",
+      "정전 비상연락망 알려줘",
+      "정전 업체 전화",
+      "전원 이상 누구한테 연락",
+      "단전 비상 연락처",
+      "정전 출동 업체"
+    ],
+    "sql": "SELECT category, company, phone, COALESCE(description, '') AS description, sort_order FROM tb_alarm_contact WHERE category = '정전' ORDER BY sort_order",
+    "graph_type": "table",
+    "answer_template": {
+      "summary": "정전 관련 비상연락처 {total_count}건입니다.",
+      "table_columns": [
+        "분류",
+        "업체",
+        "전화",
+        "설명"
+      ],
+      "reference": "전체 카테고리: /setup/alarm-contacts"
+    }
+  },
+  {
+    "intent": "EMERGENCY_CONTACT_NETWORK",
+    "questions": [
+      "네트워크 장애 어디로 연락해?",
+      "통신 이상 업체 전화번호",
+      "통신 장애 비상연락",
+      "네트워크 출동 업체",
+      "모뎀 고장 연락처",
+      "LTE 통신 업체"
+    ],
+    "sql": "SELECT category, company, phone, COALESCE(description, '') AS description, sort_order FROM tb_alarm_contact WHERE category IN ('네트워크', '통신') ORDER BY sort_order",
+    "graph_type": "table",
+    "answer_template": {
+      "summary": "네트워크·통신 관련 비상연락처 {total_count}건입니다.",
+      "table_columns": [
+        "분류",
+        "업체",
+        "전화",
+        "설명"
+      ],
+      "reference": "전체 카테고리: /setup/alarm-contacts"
+    }
+  },
+  {
+    "intent": "EMERGENCY_CONTACT_VALVE",
+    "questions": [
+      "밸브 고장 업체 전화",
+      "밸브 이상 업체 연락처",
+      "밸브 액추에이터 점검 업체",
+      "밸브 비상 연락처",
+      "밸브 출동 업체"
+    ],
+    "sql": "SELECT category, company, phone, COALESCE(description, '') AS description, sort_order FROM tb_alarm_contact WHERE category = '밸브' ORDER BY sort_order",
+    "graph_type": "table",
+    "answer_template": {
+      "summary": "밸브 관련 비상연락처 {total_count}건입니다.",
+      "table_columns": [
+        "분류",
+        "업체",
+        "전화",
+        "설명"
+      ],
+      "reference": "전체 카테고리: /setup/alarm-contacts"
+    }
   }
 ]

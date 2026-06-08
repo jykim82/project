@@ -382,10 +382,22 @@ class IntentClassifier:
         # 사양: docs/emergency-contact-spec.md
         _contact_trigger_kws = (
             "비상연락", "비상 연락", "긴급 연락", "긴급연락", "연락처", "연락망",
-            "어디로 전화", "어디 연락", "누구한테 전화", "누구한테 연락",
+            "어디로 전화", "어디로 연락", "어디 전화", "어디 연락",
+            "누구한테 전화", "누구한테 연락",
             "업체 전화", "업체 연락", "출동 업체",
         )
         if any(kw in question for kw in _contact_trigger_kws):
+            # v2: 카테고리 키워드 동시 매칭 시 카테고리별 인텐트 분기
+            q_upper = question.upper()
+            if "UPS" in q_upper:
+                return "EMERGENCY_CONTACT_UPS", "keyword"
+            if "정전" in question or "단전" in question or "전원 이상" in question:
+                return "EMERGENCY_CONTACT_POWER", "keyword"
+            if "네트워크" in question or "통신" in question or "모뎀" in question or "LTE" in q_upper:
+                return "EMERGENCY_CONTACT_NETWORK", "keyword"
+            if "밸브" in question:
+                return "EMERGENCY_CONTACT_VALVE", "keyword"
+            # 카테고리 미매칭 → 전체 반환
             return "EMERGENCY_CONTACT_QUERY", "keyword"
 
         # 키워드 단축: 수위 + 이유/원인/왜 → RESERVOIR_LEVEL_CAUSE_ANALYSIS

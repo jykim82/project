@@ -80,8 +80,10 @@ FAULT_CASE_EMBEDDINGS_DIR = os.environ.get(
 )
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "snowflake-arctic-embed2:latest")
 
-DB_HOST = os.environ.get("DB_HOST", "timescaledb")
-DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+# vision_agent 는 호스트 네이티브 실행 (Metal GPU 가속) — default 를 호스트
+# 환경으로 (localhost:5433). 컨테이너 배포 시 DB_HOST/DB_PORT env 로 override.
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = int(os.environ.get("DB_PORT", "5433"))
 DB_NAME = os.environ.get("DB_NAME", "slm")
 DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "slm_dev_1234")
@@ -91,6 +93,42 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# [B3 Phase 1] 매뉴얼·고장 케이스 RAG 마스터 토글 (60초 캐시)
+# 사양: docs/feature-sku-spec.md §4 B3
+# DB: tb_comm_code(SITE_SETTING.MANUAL_RAG_ENABLED) — 기본 'N'
+# ─────────────────────────────────────────────────────────────────────
+_RAG_ENABLED_CACHE: dict = {"value": False, "expires_at": 0.0}
+_RAG_CACHE_TTL_S = 60
+
+
+def is_manual_rag_enabled(region: str = "R01") -> bool:
+    """매뉴얼·고장 케이스 RAG 활성 여부 (60초 캐시)."""
+    now = time.time()
+    if _RAG_ENABLED_CACHE["expires_at"] > now:
+        return _RAG_ENABLED_CACHE["value"]
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT use_yn FROM tb_comm_code "
+            "WHERE region=%s AND grp_cd='SITE_SETTING' AND comm_cd='MANUAL_RAG_ENABLED'",
+            (region,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        enabled = bool(row and row[0] == "Y")
+    except Exception:
+        enabled = False
+    _RAG_ENABLED_CACHE["value"] = enabled
+    _RAG_ENABLED_CACHE["expires_at"] = now + _RAG_CACHE_TTL_S
+    return enabled
 
 # ─────────────────────────────────────────────────────────────────────
 # FastAPI 앱
@@ -475,7 +513,9 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
     manual_excerpts_raw: list[dict] = []
     # [P3-F] 고장 케이스 RAG — 매뉴얼보다 우선. equipment_type 이 기타여도 증상 기반으로 일부 매치 가능.
     fault_cases_raw: list[dict] = []
-    if equipment_guess and equipment_guess != "식별 실패" and equipment_type != "기타":
+    # [B3 Phase 1] 마스터 OFF 시 두 RAG 모두 skip — feature-sku-spec.md §4
+    _rag_on = is_manual_rag_enabled()
+    if _rag_on and equipment_guess and equipment_guess != "식별 실패" and equipment_type != "기타":
         manual_excerpts_raw = _retrieve_manual_excerpts(
             equipment_guess=equipment_guess,
             equipment_type=equipment_type,
@@ -484,7 +524,7 @@ def diagnose(req: DiagnoseRequest) -> DiagnoseResponse:
             user_text=req.user_text,
             top_k=3,
         )
-    if equipment_type != "기타" or observed_state:
+    if _rag_on and (equipment_type != "기타" or observed_state):
         fault_cases_raw = _retrieve_fault_cases(
             equipment_type=equipment_type,
             brand=brand,
