@@ -97,7 +97,9 @@ EPANET 시뮬 / 누수 의심 / 헤드손실 이상 / 밸브 영향 / 관로 파
 
 #### EPANET 무관 (유지)
 - M003-5 GIS 관망도 (시설 마커·SHP 관망 표시 — EPANET 시뮬 무관)
-- M003-5 안의 [물흐름 표시] 토글 (`gis-flow-arrow`) — EPANET 시뮬과 독립
+- M003-5 안의 [물흐름 표시] 토글 (`gis-flow-arrow`) — **2026-06-09 정책 변경**:
+  데이터 source 가 EPANET 시뮬 결과 의존이므로 마스터 OFF 시 함께 hide
+  (옵션 A). epanet-menu-spec.md 2026-06-09 참조.
 
 ### 3.3 동작 흐름
 
@@ -134,7 +136,8 @@ master 가 실수로 끄거나, 신규 사이트에서 활성화 필요 시:
 disabled = _menus_disabled(region)  # 기존: tb_epanet_menu_setting enabled='N'
 if not is_enabled(region):           # 신규: 마스터 OFF 시 11 menu_key 모두 추가
     for key in _MENU_REQUIREMENTS.keys():
-        if key == "gis-flow-arrow":  # 마스터 독립 — 제외
+        # 2026-06-09: gis-flow-arrow 도 EPANET 시뮬 의존이라 포함 (예외 제거)
+        if False:  # was: key == "gis-flow-arrow"
             continue
         disabled.add(key)
 ```

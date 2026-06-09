@@ -307,6 +307,17 @@ INSERT INTO tb_menu VALUES
   · 비고: `gis-flow` (EPANET 시뮬 토글) / `flow-deviation` (실측 유량 차이 메뉴+토글) 은
     이미 기존 인프라로 동일 제어 가능 — 별도 작업 불필요.
 
+- 2026-06-09 — 물흐름 표시 마스터 의존 통일 (옵션 A)
+  · **변경**: 2026-05-10 "물흐름 표시 마스터 비활성에 영향받지 않음" 정책 **폐지**.
+  · **이유**: 데이터 source 가 EPANET 시뮬 결과 (`p.flow_lps`) 의존 →
+    마스터 OFF 시 시뮬 결과 503 → 토글 ON 해도 빈 화면 (사양 ↔ 실 동작 미스매치).
+  · **수정**: `_check_data_quality` 의 gis-flow-arrow 예외 제거. 마스터 OFF 시
+    13개 EPANET menu_key 모두 menus_disabled 자동 포함.
+  · **결과**: 마스터 OFF → 사이드바 11 + GIS 토글 7 + **물흐름 표시 1 = 모두 hide**.
+    ON → 한 번에 노출.
+  · 검증 (6회 ON/OFF): arrow=ready ↔ disabled 일관, gis-flow 등 다른 메뉴와 동일.
+  · 사양: feature-sku-spec.md §3.2 영향 메뉴 12개 (gis-flow-arrow 포함).
+
 - 2026-05-10 — 마스터 토글 + 물흐름 별도 + 메뉴 hidden 정합성
   · **EpanetMenuToggles 마스터 스위치** — [전체 활성] / [전체 비활성] 버튼 (10 메뉴 일괄)
     - 백엔드: PUT `/admin/epanet/menu-settings/bulk` (region/enabled bool)
