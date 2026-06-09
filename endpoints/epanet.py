@@ -2389,12 +2389,11 @@ def _check_data_quality(region: str) -> dict:
     disabled = _menus_disabled(region)
 
     # 마스터 OFF (SITE_SETTING.EPANET_ENABLED='N') 시 모든 EPANET 메뉴를
-    # disabled 로 처리 (feature-sku-spec.md §3). 단 gis-flow-arrow 는 마스터
-    # 토글과 독립 (epanet-menu-spec.md 2026-05-10 정책 유지).
+    # disabled 로 처리 (feature-sku-spec.md §3). 2026-06-09 정책 변경:
+    # gis-flow-arrow (물흐름 표시) 도 EPANET 시뮬 결과 의존이라 함께 disable.
+    # (epanet-menu-spec.md 2026-05-10 "마스터 독립" 정책 폐지)
     if not is_enabled(region):
         for key in _MENU_REQUIREMENTS.keys():
-            if key == "gis-flow-arrow":
-                continue
             disabled.add(key)
 
     # 메뉴별 ready/warning/blocked/disabled 분류
