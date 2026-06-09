@@ -157,6 +157,16 @@ class SessionManager:
         q = question.strip()
         if not q:
             return False
+
+        # 새 질문 자체에 강한 트리거 키워드가 있으면 follow-up 거부 → 신규 분류
+        # (예: "비상연락처 알려줘" 9자 — 직전 EMERGENCY_CONTACT_UPS 상속 방지)
+        # 사양: docs/emergency-contact-spec.md
+        _strong_new_triggers = (
+            "연락처", "비상연락", "비상 연락", "긴급 연락", "긴급연락", "연락망",
+        )
+        if any(t in q for t in _strong_new_triggers):
+            return False
+
         if len(q) < 10:
             return True
         if len(q) < 20 and _has_followup_signal(q):
