@@ -104,7 +104,8 @@ services:
       LOCAL_DB_NAME: ${DB_NAME:-slm}
       LOCAL_DB_USER: ${DB_USER:-slm_dev}
       LOCAL_DB_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
-      LOCAL_REGION: ${DEV_TAG_INGEST_REGION:-KW}
+      # 다른 테이블과 region 통일 (2026-06-09) — 단일 지자체 운영
+      LOCAL_REGION: ${DEV_TAG_INGEST_REGION:-R01}
       # 원격 운영 DB (외부)
       REMOTE_DB_HOST: ${REMOTE_DB_HOST:-112.166.183.65}
       REMOTE_DB_PORT: ${REMOTE_DB_PORT:-25479}
