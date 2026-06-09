@@ -109,7 +109,28 @@ ORDER BY category, sort_order
 
 ---
 
+## 4.2 Follow-up 상속 차단
+
+`session_manager.is_short_followup` 기존 로직: 10자 미만 질문은 자동 follow-up
+→ 직전 인텐트 그대로 상속. EMERGENCY_CONTACT 류 질문 (예: "비상연락처 알려줘"
+9자) 이 직전 UPS 인텐트 상속하여 응답이 UPS 만 나오는 버그 발생.
+
+**수정 (2026-06-09)**: 새 질문에 강한 트리거 키워드 ("연락처" / "비상연락" /
+"긴급 연락" / "연락망") 가 있으면 follow-up 거부 → 신규 분류 강제.
+
+```python
+_strong_new_triggers = (
+    "연락처", "비상연락", "비상 연락", "긴급 연락", "긴급연락", "연락망",
+)
+if any(t in q for t in _strong_new_triggers):
+    return False
+```
+
+다른 짧은 이어말 ("오늘 것도" / "그 다음은") 은 기존대로 follow-up 동작.
+
 ## 5. 변경 이력
 
 - 2026-06-08 v1 — 초안. region 'water'→'R01' 통일 (Migration 0077),
   프론트 apiClient 패턴 전환, AI 채팅 인텐트 EMERGENCY_CONTACT_QUERY 신규.
+- 2026-06-09 v1.1 — 카테고리 자동 분기 (UPS/POWER/NETWORK/VALVE 4 인텐트
+  신규). Follow-up 상속 차단 (강한 트리거 키워드 있으면 신규 분류 강제).
