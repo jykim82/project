@@ -239,6 +239,72 @@ if _rag_on and (equipment_type != "기타" or observed_state):
 
 ---
 
-## 5. 변경 이력
+## 6. B2 / B4 / B5 마스터 토글 — Phase 1 구현 (2026-06-10)
 
+### 6.1 데이터 모델 (Migration 0082)
+
+| flag 키 | use_yn 기본값 | 이유 |
+|---------|---------------|------|
+| `VISION_AGENT_ENABLED` (B2) | **'N'** | GPU 필수 (Metal/CUDA) + Ollama gemma4:26b ~19GB. 데이터 미구축 사이트 비활성. |
+| `TREND_COMPARISON_ENABLED` (B4) | **'Y'** | 데이터 누적 자동 활성. 기존 `/trend` 페이지에 영향 적음. |
+| `REPORT_AUTOMATION_ENABLED` (B5) | **'Y'** | 작업·점검 기록 누적이 전제. 기본 운영 모듈. 자체 양식 사용 고객만 OFF. |
+
+Migration 0082 — `INSERT … SELECT DISTINCT region` 로 모든 region 동시 시드.
+롤백 시 `DELETE FROM tb_comm_code WHERE grp_cd='SITE_SETTING' AND comm_cd IN
+('VISION_AGENT_ENABLED','TREND_COMPARISON_ENABLED','REPORT_AUTOMATION_ENABLED')`.
+
+### 6.2 백엔드 변경
+
+#### `endpoints/admin.py`
+`GET /admin/site-settings` 응답에 3 flag 추가 (`vision_agent_enabled`,
+`trend_comparison_enabled`, `report_automation_enabled`). `PUT` 도 동일 키 수용.
+
+`_sku_map` 으로 한국어 라벨 통일 (`AI 멀티모달 진단 (B2)` 등 — `comm_nm` 채움).
+
+#### `endpoints/auth_crud.py` `/auth/me`
+`features` 객체에 6개 flag 노출:
+```json
+{
+  "features": {
+    "epanet": false, "manual_rag": false, "alarm_popup": true,
+    "vision_agent": false, "trend_comparison": true, "report_automation": true
+  }
+}
+```
+`SITE_SETTING` 쿼리는 `IN (…)` 으로 단일 호출로 묶음 (N+1 회피).
+
+### 6.3 프론트 변경 (`/admin/site-settings`)
+
+3 신규 카드 추가 (pink/blue/emerald 아이콘):
+- **AI 멀티모달 진단 (B2)** — 사진 기반 설비 진단. GPU 필수.
+- **트렌드 비교 분석 (B4)** — 평소 대비 / 향후 전망. 14일+ 히스토리 필요.
+- **보고서 자동 생성 (B5)** — 장애 조치 / 일 점검 자동 양식.
+
+`handleSkuToggle(key, current)` — generic 핸들러. 토글 후
+`window.dispatchEvent('slm:features-invalidate')` 로 AlarmCrisisModal 캐시 즉시 무효화
+(20절 invalidate event 재사용).
+
+### 6.4 검증 (Playwright 6회 토글)
+
+```
+iter 1: vision_agent ON  → actual: true,  pass: true
+iter 2: vision_agent OFF → actual: false, pass: true
+iter 3: trend_comparison OFF → actual: false, pass: true
+iter 4: trend_comparison ON  → actual: true,  pass: true
+iter 5: report_automation OFF → actual: false, pass: true
+iter 6: report_automation ON  → actual: true,  pass: true
+```
+6/6 PASS — DB use_yn ↔ /auth/me features 양방향 정합. 마지막 상태로 기본값 정책 유지.
+
+### 6.5 후속 권고
+- B2 활성 전 GPU 자동 감지 + 모델 다운로드 진행률 카드 (현재는 단순 토글)
+- B4 데이터 누적 14일 충족 자동 활성 시간 게이트 (현재 default 'Y' 로 즉시 활성)
+- B5 자체 양식 사용 고객용 양식 import API (PDF 템플릿 업로드)
+
+---
+
+## 7. 변경 이력
+
+- 2026-06-10 v1.2 — B2 / B4 / B5 마스터 토글 Phase 1 구현. Migration 0082 + admin.py + auth_crud.py + /admin/site-settings 3 카드. 6/6 PASS.
+- 2026-06-08 v1.1 — B3 매뉴얼·고장 케이스 RAG 마스터 토글 Phase 1 구현. Migration 0078.
 - 2026-06-08 v1 — 초안. EPANET (B1) Phase 1 구현. 후속 모듈 B2~B5 예고.
