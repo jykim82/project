@@ -84,8 +84,11 @@
 - 운영자가 조치 내용 추가 → 저장
 
 #### 액션 #3 — 📊 알람 분석
-- `/crisis/alarm-analysis?tagsn={tagsn}&from={alarm_start_time}` 이동
-- 원인 진단 카드 + 유사 알람 이력 + 패턴 분석
+- `/crisis/alarm-dashboard?tagsn={tagsn}&start={alarm_start_time}` 이동
+- 페이지 mount 시 URL 파라미터 감지 → `openAlarmDetail()` 자동 호출 →
+  **"경보 분석 상세" 모달 자동 open** (운영자가 click 한 것과 동일)
+- 발생원인 / 대응방안 / 알람값 / 경보등급 등 표시
+- 1회만 자동 open (autoOpenedRef 가드 — 같은 URL 머무는 동안 모달 닫으면 재오픈 안 함)
 
 #### 액션 #4 — ✓ 확인
 - 단순 dismiss + `markAsChecked()` 호출 → lastCheckedAt 갱신
