@@ -197,6 +197,7 @@ web/
 - `docs/feature-sku-spec.md` — 기능 SKU·feature flag (v1, B1 EPANET Phase 1 구현 + B2~B5 예고)
 - `docs/emergency-contact-spec.md` — 비상연락처 (관리 UI + AI 채팅 EMERGENCY_CONTACT_QUERY 인텐트, region 'water'→'R01' 통일)
 - `docs/alarm-popup-spec.md` — 알람 발생 시 위기대응 모달 (경고 모달 / 주의 toast / 종합 카드 + SITE_SETTING.ALARM_POPUP_ENABLED 마스터 토글)
+- `docs/performance/alarm-notifications-index.md` — 알람 폴링·인덱스 최적화 (features fetch 5분 + invalidate event + dynamic import + Migration 0081 부분 인덱스)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
