@@ -83,12 +83,16 @@
 - 알람 메타데이터 사전 채워짐 (시설, 알람 메시지, 발생 시각)
 - 운영자가 조치 내용 추가 → 저장
 
-#### 액션 #3 — 📊 알람 분석
-- `/crisis/alarm-dashboard?tagsn={tagsn}&start={alarm_start_time}` 이동
-- 페이지 mount 시 URL 파라미터 감지 → `openAlarmDetail()` 자동 호출 →
-  **"경보 분석 상세" 모달 자동 open** (운영자가 click 한 것과 동일)
-- 발생원인 / 대응방안 / 알람값 / 경보등급 등 표시
-- 1회만 자동 open (autoOpenedRef 가드 — 같은 URL 머무는 동안 모달 닫으면 재오픈 안 함)
+#### 액션 #3 — 📊 알람 분석 (2026-06-10 사양 변경)
+- **인라인 모달 전환** — 페이지 이동 없이 같은 위치에서 모달만 전환
+- 동작:
+  1) 위기대응 모달 닫기 + `markAsChecked()`
+  2) `fetchAlarmAnalysisDetail(tagsn, alarm_start_time)` 호출 (loading state)
+  3) 새 다이얼로그 "경보 분석 상세" open — `<AlarmAnalysisDetail report={...} />`
+- 발생원인 / 대응방안 / 알람값 / 경보등급 등 표시 (alarm-dashboard 의 분석 다이얼로그와 동일)
+- 사용자가 현재 페이지 (예: 대시보드/트렌드/GIS) 를 벗어나지 않음
+- 보조 경로: 직접 `/crisis/alarm-dashboard?tagsn=…&start=…` URL 진입 시에도 자동 open
+  (alarm-dashboard 페이지의 autoOpenedRef 로 1회 보장)
 
 #### 액션 #4 — ✓ 확인
 - 단순 dismiss + `markAsChecked()` 호출 → lastCheckedAt 갱신
@@ -104,8 +108,8 @@
 ```
 - sonner toast (우상단)
 - 자동 닫힘 8초
-- **"분석 상세"** → `/crisis/alarm-dashboard?tagsn={tagsn}&start={alarm_start_time}` →
-  경보 분석 상세 모달 자동 open (단일 알람 모달의 액션 #3 과 동일 동작)
+- **"분석 상세"** → `handleAnalyze(alarm)` 호출 (페이지 이동 없이 인라인 모달
+  open — 2026-06-10 사양 변경. 이전: URL navigate)
 
 ### 3.3 종합 카드 (5건 이상)
 
@@ -121,9 +125,14 @@
 └──────────────────────────────────────────────┘
 ```
 - 모달 형태 (경고 1건 이상 포함 시) 또는 toast (주의만)
-- **각 행** → Link wrap, hover 강조 + chevron 아이콘 (>) — 클릭 시 분석 상세 모달 자동 open
+- **각 행** → 클릭 시 위기대응 모달 닫고 인라인 경보 분석 상세 모달 전환
+  (페이지 이동 없음 — 2026-06-10 사양). hover 강조 + chevron 아이콘 (>) 표시
 - "전체 알람 보기" → `/crisis/alarm-dashboard` (필터 없이 전체 목록)
 - 안내 텍스트 (💡) — 행 클릭 가능 명시
+
+#### 행 클릭 동작 (2026-06-10)
+종합 카드 행 = `<button>` 으로 변경 (Link 아님). 클릭 시 단일 모달의
+액션 #3 과 동일한 `handleAnalyze(alarm)` 호출 → 페이지 이동 없이 분석 모달 open.
 
 ---
 
