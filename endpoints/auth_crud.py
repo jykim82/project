@@ -438,9 +438,12 @@ async def get_me(current_user: dict = Depends(_get_current_user)):
                     for r in cur.fetchall()
                 ]
 
-        # 모듈 feature flags (feature-sku-spec.md §3, §4 / alarm-popup-spec.md)
-        # B1 EPANET / B3 매뉴얼·고장 케이스 RAG / 알람 팝업 — 동일 패턴
-        features = {"epanet": False, "manual_rag": False, "alarm_popup": True}
+        # 모듈 feature flags (feature-sku-spec.md §3~§6 / alarm-popup-spec.md)
+        # B1 EPANET / B2 Vision / B3 RAG / B4 Trend / B5 Report / 알람 팝업
+        features = {
+            "epanet": False, "manual_rag": False, "alarm_popup": True,
+            "vision_agent": False, "trend_comparison": True, "report_automation": True,
+        }
         try:
             from epanet import is_enabled as _epanet_enabled
             features["epanet"] = _epanet_enabled(region)
@@ -452,14 +455,21 @@ async def get_me(current_user: dict = Depends(_get_current_user)):
                 cur.execute(
                     "SELECT comm_cd, use_yn FROM tb_comm_code "
                     "WHERE region=%s AND grp_cd='SITE_SETTING' "
-                    "AND comm_cd IN ('MANUAL_RAG_ENABLED','ALARM_POPUP_ENABLED')",
+                    "AND comm_cd IN ('MANUAL_RAG_ENABLED','ALARM_POPUP_ENABLED',"
+                    "'VISION_AGENT_ENABLED','TREND_COMPARISON_ENABLED','REPORT_AUTOMATION_ENABLED')",
                     (region,),
                 )
+                _map = {
+                    "MANUAL_RAG_ENABLED": "manual_rag",
+                    "ALARM_POPUP_ENABLED": "alarm_popup",
+                    "VISION_AGENT_ENABLED": "vision_agent",
+                    "TREND_COMPARISON_ENABLED": "trend_comparison",
+                    "REPORT_AUTOMATION_ENABLED": "report_automation",
+                }
                 for cd, yn in cur.fetchall():
-                    if cd == "MANUAL_RAG_ENABLED":
-                        features["manual_rag"] = (yn == "Y")
-                    elif cd == "ALARM_POPUP_ENABLED":
-                        features["alarm_popup"] = (yn == "Y")
+                    key = _map.get(cd)
+                    if key:
+                        features[key] = (yn == "Y")
         except Exception:
             pass
 

@@ -527,6 +527,12 @@ async def get_site_settings():
                 settings["manual_rag_enabled"] = use_yn == "Y"
             elif comm_cd == "ALARM_POPUP_ENABLED":
                 settings["alarm_popup_enabled"] = use_yn == "Y"
+            elif comm_cd == "VISION_AGENT_ENABLED":
+                settings["vision_agent_enabled"] = use_yn == "Y"
+            elif comm_cd == "TREND_COMPARISON_ENABLED":
+                settings["trend_comparison_enabled"] = use_yn == "Y"
+            elif comm_cd == "REPORT_AUTOMATION_ENABLED":
+                settings["report_automation_enabled"] = use_yn == "Y"
 
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
@@ -538,6 +544,12 @@ async def get_site_settings():
             settings["manual_rag_enabled"] = False
         if "alarm_popup_enabled" not in settings:
             settings["alarm_popup_enabled"] = True  # 기본 ON
+        if "vision_agent_enabled" not in settings:
+            settings["vision_agent_enabled"] = False
+        if "trend_comparison_enabled" not in settings:
+            settings["trend_comparison_enabled"] = True
+        if "report_automation_enabled" not in settings:
+            settings["report_automation_enabled"] = True
 
         # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
         settings["db"] = {
@@ -665,6 +677,26 @@ async def update_site_settings(request: Request):
                 (use_yn, use_yn),
             )
             conn.commit()
+
+        # SKU B2/B4/B5 (feature-sku-spec.md §6, Migration 0082)
+        _sku_map = {
+            "vision_agent_enabled":      ("VISION_AGENT_ENABLED", "AI 멀티모달 진단 (B2)"),
+            "trend_comparison_enabled":  ("TREND_COMPARISON_ENABLED", "트렌드 비교 분석 (B4)"),
+            "report_automation_enabled": ("REPORT_AUTOMATION_ENABLED", "보고서 자동 생성 (B5)"),
+        }
+        for body_key, (comm_cd, comm_nm) in _sku_map.items():
+            if body_key in body:
+                use_yn = "Y" if body[body_key] else "N"
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', %s, %s, %s)
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET use_yn = %s
+                    """,
+                    (comm_cd, comm_nm, use_yn, use_yn),
+                )
+                conn.commit()
 
         # AI 파라미터 변경 (서버 재시작 없이 즉시 반영 + DB 영속 저장)
         # tb_comm_code(SITE_SETTING/AI_*)에 comm_val 로 UPSERT (migration 0055)
