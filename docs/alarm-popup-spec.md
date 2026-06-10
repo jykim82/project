@@ -41,9 +41,10 @@
 | `severityFilter` | `["경고"]` | 모달 강제 발생 severity (체크 안 한 건 toast) |
 | `dismissTimeoutS` | `0` (수동) | 0 = 사용자가 닫아야 함, >0 = 자동 닫힘 |
 | `groupThreshold` | `5` | N건 이상 동시 발생 시 종합 카드로 묶음 |
-| `soundEnabled` | `false` | 경고 알람 시 사운드 (Phase 2) |
 
 > Phase 1 은 마스터 ON/OFF 만. 위 세부 옵션은 사양 v2 에 정의.
+> **사운드 알림은 사양에서 제외** (2026-06-10 사용자 결정 — SCADA 운영자
+> 대부분 외부 경광등·사이렌 별도 운영, 브라우저 사운드 중복).
 
 ---
 
@@ -209,15 +210,21 @@ function getNewItems(): NotificationAlarm[] {
 
 ## 8. 향후 (Phase 2 / v2)
 
-- 사용자 세부 옵션 (severityFilter / dismissTimeoutS / groupThreshold / soundEnabled)
+- 사용자 세부 옵션 (severityFilter / dismissTimeoutS / groupThreshold) —
+  Tweaks 패널 통합 또는 별도 사용자 옵션 페이지
 - 브라우저 Notification API (탭 백그라운드 알림)
-- 사운드 알림 (경고 알람 시 alert)
 - SSE 실시간 push (30초 지연 제거)
 - 알람 → 작업 등록 자동 매핑 (작업관리 사전 폼)
-- 카테고리별 비상연락처 자동 다이얼 (deep link)
+- 카테고리별 비상연락처 자동 다이얼 (deep link, 모바일 `tel:` link)
+
+> **사운드 알림 제외** (2026-06-10) — SCADA 운영자 환경에서 외부 경광등·
+> 사이렌과 중복. 브라우저 사운드 별도 가치 낮음.
 
 ---
 
 ## 9. 변경 이력
 
 - 2026-06-10 v1 — 초안. Phase 1 (모달 + toast + 종합 카드 + SKU 토글) 구현 사양.
+- 2026-06-10 v1.1 — 인라인 모달 전환 (§3 / §3.2 / §3.3 갱신). 사운드 알림
+  사양 제외 (§2.2 / §8). Tweaks 패널 (이미 구현 완료) 와 사용자 세부 옵션
+  관계 명시.
