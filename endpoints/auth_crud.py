@@ -438,24 +438,28 @@ async def get_me(current_user: dict = Depends(_get_current_user)):
                     for r in cur.fetchall()
                 ]
 
-        # 모듈 feature flags (feature-sku-spec.md §3, §4)
-        # B1 EPANET / B3 매뉴얼·고장 케이스 RAG — 동일 패턴
-        features = {"epanet": False, "manual_rag": False}
+        # 모듈 feature flags (feature-sku-spec.md §3, §4 / alarm-popup-spec.md)
+        # B1 EPANET / B3 매뉴얼·고장 케이스 RAG / 알람 팝업 — 동일 패턴
+        features = {"epanet": False, "manual_rag": False, "alarm_popup": True}
         try:
             from epanet import is_enabled as _epanet_enabled
             features["epanet"] = _epanet_enabled(region)
         except Exception:
             pass
         try:
-            # B3 — tb_comm_code(SITE_SETTING.MANUAL_RAG_ENABLED) 조회
+            # SITE_SETTING 기반 feature 일괄 조회
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT use_yn FROM tb_comm_code WHERE region=%s "
-                    "AND grp_cd='SITE_SETTING' AND comm_cd='MANUAL_RAG_ENABLED'",
+                    "SELECT comm_cd, use_yn FROM tb_comm_code "
+                    "WHERE region=%s AND grp_cd='SITE_SETTING' "
+                    "AND comm_cd IN ('MANUAL_RAG_ENABLED','ALARM_POPUP_ENABLED')",
                     (region,),
                 )
-                row = cur.fetchone()
-                features["manual_rag"] = bool(row and row[0] == "Y")
+                for cd, yn in cur.fetchall():
+                    if cd == "MANUAL_RAG_ENABLED":
+                        features["manual_rag"] = (yn == "Y")
+                    elif cd == "ALARM_POPUP_ENABLED":
+                        features["alarm_popup"] = (yn == "Y")
         except Exception:
             pass
 

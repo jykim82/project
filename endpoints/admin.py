@@ -525,6 +525,8 @@ async def get_site_settings():
                 settings["epanet_enabled"] = use_yn == "Y"
             elif comm_cd == "MANUAL_RAG_ENABLED":
                 settings["manual_rag_enabled"] = use_yn == "Y"
+            elif comm_cd == "ALARM_POPUP_ENABLED":
+                settings["alarm_popup_enabled"] = use_yn == "Y"
 
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
@@ -534,6 +536,8 @@ async def get_site_settings():
             settings["epanet_enabled"] = False
         if "manual_rag_enabled" not in settings:
             settings["manual_rag_enabled"] = False
+        if "alarm_popup_enabled" not in settings:
+            settings["alarm_popup_enabled"] = True  # 기본 ON
 
         # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
         settings["db"] = {
@@ -641,6 +645,20 @@ async def update_site_settings(request: Request):
                 """
                 INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
                 VALUES ('R01', 'SITE_SETTING', 'MANUAL_RAG_ENABLED', '매뉴얼·고장 케이스 RAG (B3)', %s)
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET use_yn = %s
+                """,
+                (use_yn, use_yn),
+            )
+            conn.commit()
+
+        # 알람 팝업 (위기대응 모달) 활성화 — alarm-popup-spec.md, Migration 0080
+        if "alarm_popup_enabled" in body:
+            use_yn = "Y" if body["alarm_popup_enabled"] else "N"
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'ALARM_POPUP_ENABLED', '알람 팝업 (위기대응 모달)', %s)
                 ON CONFLICT (region, grp_cd, comm_cd)
                 DO UPDATE SET use_yn = %s
                 """,
