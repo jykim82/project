@@ -181,6 +181,7 @@ web/
 ## 사양 (`docs/*-spec.md` 및 관련)
 - `docs/slm-api-contract-final.md` — Python ↔ Next.js API 규약 (56개 인텐트)
 - `docs/slm-setup-phase-spec.md` — 기초정보 구축 + 컬럼 잠금
+- `docs/tag-monitoring-spec.md` — 태그 모니터링 (모니터링 그룹 — 현재값 컬럼 + 이상 카테고리 9종 필터 + 컬럼 정렬 + 우클릭 트랜드 보기, CSV·태그추가 제외, 4 Phase)
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉
 - `docs/chat-feedback-telemetry-spec.md` — 오답 피드백 루프 텔레메트리
