@@ -22,6 +22,8 @@ router = APIRouter()
 
 # ai_server.py에서 주입
 _get_db_connection = None
+_get_scan_cache = None      # () -> (scan_cache_dict|None, cache_time)
+_get_balance_cache = None   # () -> list[edge]|None
 
 # DB 직접 연결용 (커넥션 풀 바이패스)
 DB_HOST = os.environ.get("DB_HOST", "localhost")
@@ -31,10 +33,12 @@ DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 
 
-def init(get_db_connection_fn):
-    """ai_server.py에서 DB 커넥션 팩토리 함수를 주입받는다."""
-    global _get_db_connection
+def init(get_db_connection_fn, get_scan_cache_fn=None, get_balance_cache_fn=None):
+    """ai_server.py에서 DB 커넥션 팩토리 + 이상감지 캐시 getter 를 주입받는다."""
+    global _get_db_connection, _get_scan_cache, _get_balance_cache
     _get_db_connection = get_db_connection_fn
+    _get_scan_cache = get_scan_cache_fn
+    _get_balance_cache = get_balance_cache_fn
 
 
 # =============================================================================
@@ -162,6 +166,96 @@ _MONITORING_SORT_COLS = {
     "logtime": "l.logtime",
 }
 
+# 이상 카테고리 9종 — 코드→라벨 + 적용 단위(scope)
+_ANOMALY_LABELS = {
+    "sensor_dead": "센서 무응답",
+    "data_holding": "데이터홀딩",
+    "data_missing": "데이터없음",
+    "cross_invalid": "교차검증 이상",
+    "equip_fault": "설비고장",
+    "power_fault": "전원이상",
+    "network_down": "네트워크단절",
+    "comm_error": "통신이상",
+    "flow_imbalance": "물수지 불균형",
+}
+_ANOMALY_CODES = set(_ANOMALY_LABELS)
+# data_quality issue_type(한글) → 카테고리 코드
+_DQ_ISSUE_TO_CODE = {
+    "센서무응답": "sensor_dead",
+    "데이터홀딩": "data_holding",
+    "데이터없음": "data_missing",
+}
+
+
+def _build_anomaly_maps():
+    """이상감지 캐시(5분 anomaly_scan + 30분 flow_balance)에서
+    태그/시설 단위 카테고리 맵을 구성한다.
+
+    Returns (tag_cats, facility_cats, ready):
+      tag_cats: {tagsn: {code: detail|None}}                태그 직접 이상
+      facility_cats: {(sitename, facilitytype): {code: None}} 시설 전파 이상
+      ready: 캐시 준비 여부 (부팅 직후 False)
+    """
+    tag_cats: dict[str, dict] = {}
+    facility_cats: dict[tuple, dict] = {}
+
+    scan = _get_scan_cache() if _get_scan_cache else None
+    scan_cache = scan[0] if scan else None
+    if not scan_cache:
+        return tag_cats, facility_cats, False
+
+    pd = scan_cache.get("processed_data", {}) or {}
+
+    # 1~3. 데이터 품질 (태그 단위)
+    for issue in pd.get("data_quality_issues", []):
+        code = _DQ_ISSUE_TO_CODE.get(issue.get("issue_type"))
+        if code:
+            tag_cats.setdefault(issue["tagsn"], {})[code] = issue.get("detail")
+
+    # 5~8. 설비 장애 (태그 단위, DI 영향 태그)
+    for imp in pd.get("equipment_failure_impacts", []):
+        code = imp.get("failure_type")
+        if code not in _ANOMALY_CODES:
+            continue
+        for t in imp.get("affected_tags", []):
+            tag_cats.setdefault(t["tagsn"], {})[code] = imp.get("failure_detail")
+
+    # 4. 교차검증 이상 (시설 단위 → 상·하류 시설 전파)
+    for m in pd.get("cross_facility_mismatches", []):
+        for sn_key, ft_key in (("upstream_sitename", "upstream_facilitytype"),
+                               ("downstream_sitename", "downstream_facilitytype")):
+            sn, ft = m.get(sn_key), m.get(ft_key)
+            if sn and ft:
+                facility_cats.setdefault((sn, ft), {})["cross_invalid"] = None
+
+    # 9. 물수지 불균형 (시설 단위 → 상·하류 시설 전파)
+    balance = _get_balance_cache() if _get_balance_cache else None
+    for edge in balance or []:
+        if edge.get("status") != "ok" or edge.get("grade") == "정상":
+            continue
+        up = (edge.get("upstream_sitename"), edge.get("upstream_facilitytype"))
+        if up[0] and up[1]:
+            facility_cats.setdefault(up, {})["flow_imbalance"] = None
+        for d in edge.get("downstream_facilities", []):
+            dk = (d.get("sitename"), d.get("facilitytype"))
+            if dk[0] and dk[1]:
+                facility_cats.setdefault(dk, {})["flow_imbalance"] = None
+
+    return tag_cats, facility_cats, True
+
+
+def _categories_for(tagsn, sitename, facilitytype, tag_cats, facility_cats):
+    """태그 1건의 이상 카테고리 리스트(태그 직접 + 시설 전파)를 만든다."""
+    out = []
+    for code, detail in tag_cats.get(tagsn, {}).items():
+        c = {"code": code, "label": _ANOMALY_LABELS[code], "scope": "tag"}
+        if detail:
+            c["detail"] = detail
+        out.append(c)
+    for code in facility_cats.get((sitename, facilitytype), {}):
+        out.append({"code": code, "label": _ANOMALY_LABELS[code], "scope": "facility"})
+    return out
+
 
 @router.get("/tags/monitoring")
 async def get_tags_monitoring(
@@ -169,15 +263,17 @@ async def get_tags_monitoring(
     facilitytype: str = Query("", description="시설유형 필터"),
     tagtype: str = Query("", description="태그유형 필터"),
     keyword: str = Query("", description="태그SN/설명 검색"),
+    anomaly: str = Query("", description="이상 카테고리 CSV (OR 필터)"),
+    only_anomaly: bool = Query(False, description="이상 있는 태그만"),
     sort_by: str = Query("", description="정렬 컬럼 (화이트리스트)"),
     sort_order: str = Query("asc", description="asc|desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    """태그 마스터 + 현재값(tb_tag_raw_data 최신) 조인 조회.
+    """태그 마스터 + 현재값(tb_tag_raw_data 최신) + 이상 카테고리 조인 조회.
 
-    Phase 1: 현재값/갱신시각 컬럼 + 서버 사이드 정렬/페이지네이션.
-    이상 카테고리(anomaly_categories)는 Phase 2 — 현재 빈 배열 반환.
+    이상 필터/정렬이 없으면 SQL 페이지네이션(빠른 경로), 있으면 필터 결과
+    전체를 받아 이상 카테고리 부착 후 메모리에서 필터·정렬·페이지네이션한다.
     """
     conn = None
     try:
@@ -204,47 +300,46 @@ async def get_tags_monitoring(
             params.extend([kw, kw, kw])
         where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-        cur.execute(f"SELECT count(*) FROM tb_tag_info{where_sql}", params)
-        total = cur.fetchone()[0]
+        anomaly_codes = {c for c in (a.strip() for a in anomaly.split(",")) if c in _ANOMALY_CODES}
+        anomaly_active = bool(anomaly_codes) or only_anomaly or sort_by == "anomaly_count"
 
-        # 정렬 절 (화이트리스트 + NULLS LAST)
+        tag_cats, facility_cats, anomaly_ready = _build_anomaly_maps()
+
+        # 정렬 절 (화이트리스트 + NULLS LAST). anomaly_count 는 SQL 정렬 불가 → 메모리.
         if sort_by in _MONITORING_SORT_COLS:
             direction = "DESC" if sort_order.lower() == "desc" else "ASC"
             order_sql = f"ORDER BY {_MONITORING_SORT_COLS[sort_by]} {direction} NULLS LAST, f.tagsn ASC"
         else:
             order_sql = "ORDER BY f.sitename, f.facilitytype, f.tagsn"
 
-        offset = (page - 1) * page_size
-        # filtered → 현재값 LEFT JOIN (DISTINCT ON 최신, 7일 윈도우 — 데이터없음 경계 일치)
-        cur.execute(
-            f"""
+        cols = ["tagsn", "tagtype", "sitename", "facilitytype", "equipmenttype",
+                "datainfo", "datadesc", "unit", "alarm_tag_yn",
+                "current_value", "logtime"]
+
+        # 현재값은 태그별 LATERAL(인덱스 idx_tag_raw_tagsn_time seek 1회 + LIMIT 1).
+        # DISTINCT ON 은 7일 윈도우 전체(~1500만 행)를 스캔해 8s+ → LATERAL 25ms.
+        select_sql = f"""
             WITH filtered AS (
                 SELECT tagsn, tagtype, sitename, facilitytype, equipmenttype,
                        datainfo, datadesc, unit, alarm_tag_yn
                   FROM tb_tag_info{where_sql}
-            ),
-            latest AS (
-                SELECT DISTINCT ON (tagsn) tagsn, val, logtime
-                  FROM tb_tag_raw_data
-                 WHERE tagsn IN (SELECT tagsn FROM filtered)
-                   AND logtime >= now() - interval '7 days'
-                 ORDER BY tagsn, logtime DESC
             )
             SELECT f.tagsn, f.tagtype, f.sitename, f.facilitytype, f.equipmenttype,
                    f.datainfo, f.datadesc, f.unit, f.alarm_tag_yn,
                    l.val AS current_value, l.logtime
               FROM filtered f
-              LEFT JOIN latest l ON f.tagsn = l.tagsn
+              LEFT JOIN LATERAL (
+                  SELECT val, logtime
+                    FROM tb_tag_raw_data r
+                   WHERE r.tagsn = f.tagsn
+                     AND r.logtime >= now() - interval '7 days'
+                   ORDER BY r.logtime DESC
+                   LIMIT 1
+              ) l ON true
               {order_sql}
-             LIMIT %s OFFSET %s
-            """,
-            params + [page_size, offset],
-        )
-        cols = ["tagsn", "tagtype", "sitename", "facilitytype", "equipmenttype",
-                "datainfo", "datadesc", "unit", "alarm_tag_yn",
-                "current_value", "logtime"]
-        rows = []
-        for row in cur.fetchall():
+        """
+
+        def _hydrate(row):
             r = dict(zip(cols, row))
             if r["alarm_tag_yn"] is not None:
                 r["alarm_tag_yn"] = int(r["alarm_tag_yn"])
@@ -252,8 +347,34 @@ async def get_tags_monitoring(
                 r["current_value"] = float(r["current_value"])
             if r["logtime"] is not None:
                 r["logtime"] = r["logtime"].isoformat()
-            r["anomaly_categories"] = []  # Phase 2
-            rows.append(r)
+            r["anomaly_categories"] = _categories_for(
+                r["tagsn"], r["sitename"], r["facilitytype"], tag_cats, facility_cats)
+            return r
+
+        offset = (page - 1) * page_size
+
+        if not anomaly_active:
+            # 빠른 경로 — SQL 페이지네이션, 페이지 행에만 카테고리 부착
+            cur.execute(f"SELECT count(*) FROM tb_tag_info{where_sql}", params)
+            total = cur.fetchone()[0]
+            cur.execute(select_sql + " LIMIT %s OFFSET %s", params + [page_size, offset])
+            rows = [_hydrate(row) for row in cur.fetchall()]
+        else:
+            # 이상 경로 — 필터 결과 전체 후 메모리 필터·정렬·페이지네이션
+            cur.execute(select_sql, params)
+            all_rows = [_hydrate(row) for row in cur.fetchall()]
+            if only_anomaly:
+                all_rows = [r for r in all_rows if r["anomaly_categories"]]
+            if anomaly_codes:
+                all_rows = [
+                    r for r in all_rows
+                    if any(c["code"] in anomaly_codes for c in r["anomaly_categories"])
+                ]
+            if sort_by == "anomaly_count":
+                rev = sort_order.lower() == "desc"
+                all_rows.sort(key=lambda r: len(r["anomaly_categories"]), reverse=rev)
+            total = len(all_rows)
+            rows = all_rows[offset:offset + page_size]
 
         cur.close()
         return {
@@ -262,6 +383,7 @@ async def get_tags_monitoring(
             "total": total,
             "page": page,
             "page_size": page_size,
+            "anomaly_ready": anomaly_ready,
         }
     except psycopg2.Error as e:
         logger.error(f"태그 모니터링 조회 실패: {e}")

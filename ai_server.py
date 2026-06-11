@@ -2647,16 +2647,16 @@ app.include_router(causal_router)
 init_alarm_crisis(get_db_connection)
 app.include_router(alarm_crisis_router)
 
-# 태그 마스터 엔드포인트 모듈 초기화
-init_tags(get_db_connection)
-app.include_router(tags_router)
-
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
     return (_ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME)
 
 def _get_balance_cache():
     return _FLOW_BALANCE_CACHE
+
+# 태그 엔드포인트 모듈 초기화 (모니터링 이상 카테고리용 캐시 getter 주입)
+init_tags(get_db_connection, _get_scan_cache, _get_balance_cache)
+app.include_router(tags_router)
 
 init_dashboard(get_db_connection, _get_scan_cache, _get_balance_cache)
 app.include_router(dashboard_router)
