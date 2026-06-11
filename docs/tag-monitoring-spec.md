@@ -246,11 +246,15 @@ page, page_size
    Playwright — `센서 무응답` 칩 클릭 시 2,700→62건, URL `?anomaly=sensor_dead`,
    요청 `anomaly=sensor_dead` 반영 확인.
 
-### Phase 3 — 트랜드 보기 컨텍스트 메뉴
-1. `@radix-ui/react-context-menu` + shadcn `context-menu.tsx` 추가.
-2. 우클릭 메뉴 + 트랜드 인라인 모달(`TrendChart` + `addTagFromInfo`).
-3. 모바일 "⋯" 폴백.
-4. 검증: 우클릭→모달 렌더, 기간 토글, 다중 행 연속 진입.
+### Phase 3 — 트랜드 보기 컨텍스트 메뉴 ✅ 완료 (2026-06-11)
+1. shadcn `context-menu.tsx` 추가 (통합 `radix-ui` 패키지 `ContextMenu` 사용 —
+   별도 `@radix-ui/react-context-menu` 설치 불필요).
+2. 우클릭 메뉴 "트랜드 보기" + 트랜드 인라인 모달 `TagTrendDialog`.
+   - 전역 `trend-store` 오염 방지 위해 **로컬 상태로 단일 태그 fetch**
+     (`tagInfoToTrendTag` + `fetchTrendData`), `TrendChart` 렌더. 기간 토글 8종.
+3. 모바일/터치 폴백 — 행 끝 "⋯" `DropdownMenu` 동일 메뉴.
+4. 검증 (Playwright): 우클릭→메뉴→모달 렌더, 24시간→7일 기간 전환 차트 갱신,
+   "⋯" 폴백→모달 진입. 콘솔 에러 0.
 
 ### Phase 4 — 다듬기 (선택)
 - DI 현재값 의미 라벨(0/1→정상/고장), 갱신 지연 시각 강조, 자동 새로고침 토글,
@@ -270,3 +274,5 @@ page, page_size
   신호는 트리거 DI 태그 자체 행에서 확인 가능). §3.0 참조.
 - 2026-06-11 v1.3 — 현재값 비교 필터 추가 (§3.3). 연산자 6종(이상/이하/초과/
   미만/같음/다름) + 기준값. NULL 불일치, full_scan 경로 Python 필터링.
+- 2026-06-11 v1.4 — Phase 3 완료. 우클릭/⋯ 트랜드 보기 컨텍스트 메뉴 +
+  `TagTrendDialog` 인라인 모달(로컬 fetch, 전역 store 비오염). §5 구현 반영.
