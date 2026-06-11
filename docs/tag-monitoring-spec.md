@@ -16,7 +16,7 @@
 
 ### 목표
 - 전체 태그를 한 화면에서 **현재값 + 이상 상태**와 함께 감시
-- **9종 이상 카테고리**로 빠르게 문제 태그 필터링
+- **6종 이상 카테고리**로 빠르게 문제 태그 필터링
 - 컬럼별 정렬로 임의 기준(현장·유형·현재값 등) 우선순위 탐색
 - 행 우클릭 → **트랜드 보기**로 즉시 이력 진단 진입 (페이지 이탈 최소화)
 
@@ -28,7 +28,7 @@
 | 태그 추가 (`TagAddFormFields` + `createTag`) | **제외** |
 | 태그 편집·삭제 | **제외** (조회 전용) |
 | (없음) | **현재값 컬럼 추가** |
-| (없음) | **이상 카테고리 필터 9종 추가** |
+| (없음) | **이상 카테고리 필터 6종 추가** |
 | (없음) | **컬럼별 정렬** |
 | (없음) | **우클릭 → 트랜드 보기** |
 
@@ -62,7 +62,7 @@
 
 ---
 
-## 3. 이상 카테고리 필터 (9종)
+## 3. 이상 카테고리 필터 (6종)
 
 기존 백엔드 감지 로직을 **재사용**한다. 신규 감지 알고리즘은 만들지 않는다.
 
@@ -72,23 +72,43 @@
 | 2 | 데이터홀딩 | `data_holding` | data_quality `issue_type="데이터홀딩"` (flat% 임계 초과) | 태그 |
 | 3 | 데이터없음 | `data_missing` | data_quality `issue_type="데이터없음"` (7일 무수집) | 태그 |
 | 4 | 교차검증 이상 | `cross_invalid` | `anomaly_detector.py` `cross_status` (피어 시설 불일치) | 시설→태그 전파 |
-| 5 | 설비고장 | `equip_fault` | `anomaly_scan.py` 설비 장애 (DI "고장"/"FAULT") | 태그(DI) |
-| 6 | 전원이상 | `power_fault` | DI "UPS"/"정전"/"배터리" | 태그(DI) |
-| 7 | 네트워크단절 | `network_down` | DI "네트워크"/"모뎀" | 태그(DI) |
-| 8 | 통신이상 | `comm_error` | DI "통신이상" | 태그(DI) |
-| 9 | 물수지 불균형 | `flow_imbalance` | `flow_balance.py` (시설 유입/유출 불균형) | 시설→태그 전파 |
+| 5 | 네트워크단절 | `network_down` | `anomaly_scan.py` A소스(`tb_network_status` is_alive=false) → 기기 매핑 태그(`tb_equipment_tag_map`) | 기기→매핑 태그 |
+| 6 | 물수지 불균형 | `flow_imbalance` | `flow_balance.py` (시설 유입/유출 불균형) | 시설→태그 전파 |
+
+### 3.0 제외: 설비고장·전원이상·통신이상 (DI 발) — v1.2 제거
+- 기존 9종 중 `equip_fault`(설비고장)/`power_fault`(전원이상)/`comm_error`(통신이상)
+  3종은 `anomaly_scan.py` **B소스**(DI val=1) 기반으로, 트리거 DI 신호 태그가
+  속한 **현장+시설 전체 측정 태그 중 알파벳 상위 5건**에 전파됐다.
+- 문제: ① 아날로그·디지털이 섞이고 ② 기기 단위가 깨지며 ③ 임의 5건이라
+  같은 시설인데 표시가 들쭉날쭉. → **오해·노이즈**.
+- DI 장애 신호는 **트리거 DI 태그 자체 행**(예: `…VVA_N004 밸브 FAULT`,
+  현재값=1 + `알람` 컬럼)에서 직접 확인되므로 측정 태그 전파는 정보 추가가 아님.
+- 향후 "기기 단위 설비고장"이 필요하면 `tb_equipment_tag_map` 기반으로
+  재설계 후 별도 재도입 (현재 미계획).
 
 ### 3.1 카테고리 적용 단위 차이 (중요)
-- **태그 단위** (1·2·3·5·6·7·8): 해당 태그에 직접 부여.
-- **시설 단위** (4 교차검증 / 9 물수지): 시설(`sitename`+`facilitytype`) 전체에
+- **태그 단위** (1·2·3): 해당 태그에 직접 부여.
+- **기기 매핑** (5 네트워크단절): 장애 기기에 매핑된 태그(`tb_equipment_tag_map`)
+  중 스캔 결과 교차분에 부여. (폐쇄망/로컬에선 전체 is_alive=false → 비활성.)
+- **시설 단위** (4 교차검증 / 6 물수지): 시설(`sitename`+`facilitytype`) 전체에
   부여 → 그 시설에 속한 모든 태그에 전파 표시. Badge 에 "(시설)" 보조 라벨로
   태그 직접 이상과 시각 구분.
 
 ### 3.2 필터 UX
 - 기존 마스터 드롭다운(현장/시설유형/태그유형/키워드)은 **유지**.
-- 이상 카테고리는 **다중 선택 토글 칩**(9개) 추가. 선택 시 OR 조건
+- 이상 카테고리는 **다중 선택 토글 칩**(6개) 추가. 선택 시 OR 조건
   (선택 카테고리 중 하나라도 해당하는 태그). "이상 있는 태그만" 단축 토글 제공.
 - 선택 상태 URL 쿼리 반영(공유·새로고침 유지) — `?anomaly=sensor_dead,data_holding`.
+
+### 3.3 현재값 비교 필터
+- 마스터 필터 옆에 **현재값 비교** 컨트롤 추가 — 연산자 셀렉트 + 기준값 입력.
+- 연산자 6종: 이상(≥, `gte`) / 이하(≤, `lte`) / 초과(>, `gt`) / 미만(<, `lt`)
+  / 같음(=, `eq`) / 다름(≠, `ne`). 기본값 "비교 안 함".
+- 연산자 미선택 시 입력 비활성. 입력이 숫자가 아니면 필터 미적용.
+- **NULL 현재값은 어떤 연산에도 불일치** (값 없는 태그는 비교 결과에서 제외).
+- 현재값은 LATERAL 조인 결과라 fast-path SQL 카운트에서 거를 수 없음 → 이상
+  필터와 동일하게 **전체 조회 경로(full_scan)** 에서 Python 필터링.
+- URL 동기화 비대상(이상 필터와 달리 일시 탐색 용도).
 
 ---
 
@@ -127,6 +147,8 @@
 sitename, facilitytype, tagtype, keyword   # 마스터와 동일
 anomaly        # CSV: sensor_dead,data_holding,... (OR 필터)
 only_anomaly   # bool — 이상 있는 태그만
+value_op       # gte|lte|gt|lt|eq|ne — 현재값 비교 연산자 (§3.3)
+value          # float — 비교 기준값 (value_op 와 함께)
 sort_by        # tagsn|tagtype|sitename|...|current_value|logtime|anomaly_count
 sort_order     # asc|desc
 page, page_size
@@ -154,7 +176,8 @@ page, page_size
    ORDER BY tagsn, logtime DESC` (TimescaleDB 하이퍼테이블, dashboard.py:274 패턴).
 3. 이상 상태: **5분 anomaly_scan 캐시 재사용**으로 tag→categories 맵 구성.
    - `data_quality_issues` (per tagsn) → sensor_dead/data_holding/data_missing
-   - `equipment_failure_impacts` (per tagsn DI) → equip_fault/power_fault/network_down/comm_error
+   - `equipment_failure_impacts` A소스(기기 매핑) → network_down
+     (B소스 DI 발 equip_fault/power_fault/comm_error 는 `_ANOMALY_CODES` 미포함 → 자동 스킵, §3.0)
    - `cross_status` (per 시설) → cross_invalid, 시설 태그 전파
    - flow_balance (per 시설) → flow_imbalance, 시설 태그 전파
 4. 필터/정렬/페이지네이션 적용 후 반환.
@@ -214,7 +237,7 @@ page, page_size
 > 구현 — 기본 조회 ~12ms, 현재값 정렬 최악 ~31ms. PostgreSQL 은 loose index
 > skip-scan 이 없어 LATERAL 이 정석.
 
-### Phase 2 — 이상 카테고리 필터 9종 ✅ 완료 (2026-06-11)
+### Phase 2 — 이상 카테고리 필터 6종 ✅ 완료 (2026-06-11)
 1. 백엔드 anomaly_scan 캐시 → tag→categories 맵 구성 + `anomaly`/`only_anomaly`
    필터 + 이상개수 정렬. (`init_tags` 에 scan/balance 캐시 getter 주입,
    `anomaly_ready` 플래그로 캐시 미준비 안내.)
@@ -242,3 +265,8 @@ page, page_size
 - 2026-06-11 v1 — 초안. 태그 모니터링 페이지 사양 + 4 Phase 구축 계획.
 - 2026-06-11 v1.1 — Phase 1·2 완료. 현재값 조인 LATERAL 성능 개선(8.4s→~12ms),
   이상 카테고리 9종 필터 + Badge 컬럼 + URL 동기화 구현·검증.
+- 2026-06-11 v1.2 — 이상 카테고리 9→6종. DI 발 설비고장·전원이상·통신이상
+  제거 (시설 전체 임의 5건 전파 → 아날로그/디지털 혼재·기기 단위 깨짐·노이즈.
+  신호는 트리거 DI 태그 자체 행에서 확인 가능). §3.0 참조.
+- 2026-06-11 v1.3 — 현재값 비교 필터 추가 (§3.3). 연산자 6종(이상/이하/초과/
+  미만/같음/다름) + 기준값. NULL 불일치, full_scan 경로 Python 필터링.
