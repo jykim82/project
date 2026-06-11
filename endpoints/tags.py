@@ -167,15 +167,15 @@ _MONITORING_SORT_COLS = {
 }
 
 # 이상 카테고리 9종 — 코드→라벨 + 적용 단위(scope)
+# DI 발(發) 설비고장/전원이상/통신이상은 제외 — 시설 전체 임의 5건에 전파돼
+# 아날로그/디지털이 섞이고 기기 단위가 깨짐. 신호는 트리거 DI 태그 자체 행
+# (val=1 + 알람 컬럼)에서 직접 보이므로 전파는 노이즈.
 _ANOMALY_LABELS = {
     "sensor_dead": "센서 무응답",
     "data_holding": "데이터홀딩",
     "data_missing": "데이터없음",
     "cross_invalid": "교차검증 이상",
-    "equip_fault": "설비고장",
-    "power_fault": "전원이상",
     "network_down": "네트워크단절",
-    "comm_error": "통신이상",
     "flow_imbalance": "물수지 불균형",
 }
 _ANOMALY_CODES = set(_ANOMALY_LABELS)
@@ -184,6 +184,16 @@ _DQ_ISSUE_TO_CODE = {
     "센서무응답": "sensor_dead",
     "데이터홀딩": "data_holding",
     "데이터없음": "data_missing",
+}
+
+# 현재값 비교 연산자 (이상/이하/초과/미만/같음/다름). 현재값 NULL 은 어떤 연산도 불일치.
+_VALUE_OPS = {
+    "gte": lambda v, t: v >= t,
+    "lte": lambda v, t: v <= t,
+    "gt": lambda v, t: v > t,
+    "lt": lambda v, t: v < t,
+    "eq": lambda v, t: v == t,
+    "ne": lambda v, t: v != t,
 }
 
 
@@ -265,6 +275,8 @@ async def get_tags_monitoring(
     keyword: str = Query("", description="태그SN/설명 검색"),
     anomaly: str = Query("", description="이상 카테고리 CSV (OR 필터)"),
     only_anomaly: bool = Query(False, description="이상 있는 태그만"),
+    value_op: str = Query("", description="현재값 비교 연산자 (gte|lte|gt|lt|eq|ne)"),
+    value: float | None = Query(None, description="현재값 비교 기준값"),
     sort_by: str = Query("", description="정렬 컬럼 (화이트리스트)"),
     sort_order: str = Query("asc", description="asc|desc"),
     page: int = Query(1, ge=1),
@@ -302,6 +314,9 @@ async def get_tags_monitoring(
 
         anomaly_codes = {c for c in (a.strip() for a in anomaly.split(",")) if c in _ANOMALY_CODES}
         anomaly_active = bool(anomaly_codes) or only_anomaly or sort_by == "anomaly_count"
+        value_fn = _VALUE_OPS.get(value_op) if value is not None else None
+        # 현재값 비교는 LATERAL 조인 결과(current_value) 기준 → 전체 조회 경로에서 처리
+        full_scan = anomaly_active or value_fn is not None
 
         tag_cats, facility_cats, anomaly_ready = _build_anomaly_maps()
 
@@ -353,14 +368,14 @@ async def get_tags_monitoring(
 
         offset = (page - 1) * page_size
 
-        if not anomaly_active:
+        if not full_scan:
             # 빠른 경로 — SQL 페이지네이션, 페이지 행에만 카테고리 부착
             cur.execute(f"SELECT count(*) FROM tb_tag_info{where_sql}", params)
             total = cur.fetchone()[0]
             cur.execute(select_sql + " LIMIT %s OFFSET %s", params + [page_size, offset])
             rows = [_hydrate(row) for row in cur.fetchall()]
         else:
-            # 이상 경로 — 필터 결과 전체 후 메모리 필터·정렬·페이지네이션
+            # 전체 조회 경로 — 필터 결과 전체 후 메모리 필터·정렬·페이지네이션
             cur.execute(select_sql, params)
             all_rows = [_hydrate(row) for row in cur.fetchall()]
             if only_anomaly:
@@ -369,6 +384,11 @@ async def get_tags_monitoring(
                 all_rows = [
                     r for r in all_rows
                     if any(c["code"] in anomaly_codes for c in r["anomaly_categories"])
+                ]
+            if value_fn is not None:
+                all_rows = [
+                    r for r in all_rows
+                    if r["current_value"] is not None and value_fn(r["current_value"], value)
                 ]
             if sort_by == "anomaly_count":
                 rev = sort_order.lower() == "desc"
