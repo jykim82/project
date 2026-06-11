@@ -202,18 +202,26 @@ page, page_size
 
 ## 9. 구축 계획 (Phase)
 
-### Phase 1 — 기본 조회 + 현재값 + 정렬 (MVP)
+### Phase 1 — 기본 조회 + 현재값 + 정렬 (MVP) ✅ 완료 (2026-06-11)
 1. 백엔드 `GET /tags/monitoring` — 마스터 필터 + 현재값 조인 + 서버 정렬/페이지네이션
    (이상 카테고리 **제외**, 빈 배열 반환).
 2. 프론트 페이지 + `TagMonitoringTable`(현재값/갱신시각 컬럼 + 컬럼 정렬).
 3. 메뉴 등록(sidebar + tb_menu 마이그레이션).
 4. 검증: 현재값 정확성(대시보드 값과 대조), 정렬 3-state, region 격리.
 
-### Phase 2 — 이상 카테고리 필터 9종
+> **성능**: 현재값 조인은 `DISTINCT ON` CTE(7일 윈도우 전량 스캔, ~8.4s) 대신
+> `LEFT JOIN LATERAL`(태그별 `idx_tag_raw_tagsn_time` 인덱스 시크 + `LIMIT 1`)로
+> 구현 — 기본 조회 ~12ms, 현재값 정렬 최악 ~31ms. PostgreSQL 은 loose index
+> skip-scan 이 없어 LATERAL 이 정석.
+
+### Phase 2 — 이상 카테고리 필터 9종 ✅ 완료 (2026-06-11)
 1. 백엔드 anomaly_scan 캐시 → tag→categories 맵 구성 + `anomaly`/`only_anomaly`
-   필터 + 이상개수 정렬.
+   필터 + 이상개수 정렬. (`init_tags` 에 scan/balance 캐시 getter 주입,
+   `anomaly_ready` 플래그로 캐시 미준비 안내.)
 2. 프론트 `AnomalyFilterChips` + 이상 Badge 컬럼 + URL 쿼리 동기화.
 3. 검증: 9 카테고리 각각 알려진 케이스로 매칭 확인(시설 단위 전파 포함).
+   Playwright — `센서 무응답` 칩 클릭 시 2,700→62건, URL `?anomaly=sensor_dead`,
+   요청 `anomaly=sensor_dead` 반영 확인.
 
 ### Phase 3 — 트랜드 보기 컨텍스트 메뉴
 1. `@radix-ui/react-context-menu` + shadcn `context-menu.tsx` 추가.
@@ -232,3 +240,5 @@ page, page_size
 
 ## 10. 변경 이력
 - 2026-06-11 v1 — 초안. 태그 모니터링 페이지 사양 + 4 Phase 구축 계획.
+- 2026-06-11 v1.1 — Phase 1·2 완료. 현재값 조인 LATERAL 성능 개선(8.4s→~12ms),
+  이상 카테고리 9종 필터 + Badge 컬럼 + URL 동기화 구현·검증.
