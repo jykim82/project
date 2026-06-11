@@ -146,6 +146,132 @@ async def get_tag_filters():
 
 
 # =============================================================================
+# GET /tags/monitoring — 태그 모니터링 (현재값 + 정렬, Phase 1)
+# =============================================================================
+
+# 정렬 허용 컬럼 화이트리스트 (SQL 인젝션 방지)
+_MONITORING_SORT_COLS = {
+    "tagsn": "f.tagsn",
+    "tagtype": "f.tagtype",
+    "sitename": "f.sitename",
+    "facilitytype": "f.facilitytype",
+    "equipmenttype": "f.equipmenttype",
+    "datainfo": "f.datainfo",
+    "datadesc": "f.datadesc",
+    "current_value": "l.val",
+    "logtime": "l.logtime",
+}
+
+
+@router.get("/tags/monitoring")
+async def get_tags_monitoring(
+    sitename: str = Query("", description="현장명 필터"),
+    facilitytype: str = Query("", description="시설유형 필터"),
+    tagtype: str = Query("", description="태그유형 필터"),
+    keyword: str = Query("", description="태그SN/설명 검색"),
+    sort_by: str = Query("", description="정렬 컬럼 (화이트리스트)"),
+    sort_order: str = Query("asc", description="asc|desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """태그 마스터 + 현재값(tb_tag_raw_data 최신) 조인 조회.
+
+    Phase 1: 현재값/갱신시각 컬럼 + 서버 사이드 정렬/페이지네이션.
+    이상 카테고리(anomaly_categories)는 Phase 2 — 현재 빈 배열 반환.
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+
+        where_clauses = []
+        params: list = []
+        if sitename:
+            where_clauses.append("sitename = %s")
+            params.append(sitename)
+        if facilitytype:
+            where_clauses.append("facilitytype = %s")
+            params.append(facilitytype)
+        if tagtype:
+            where_clauses.append("tagtype = %s")
+            params.append(tagtype)
+        if keyword:
+            where_clauses.append("(tagsn ILIKE %s OR datadesc ILIKE %s OR datainfo ILIKE %s)")
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        cur.execute(f"SELECT count(*) FROM tb_tag_info{where_sql}", params)
+        total = cur.fetchone()[0]
+
+        # 정렬 절 (화이트리스트 + NULLS LAST)
+        if sort_by in _MONITORING_SORT_COLS:
+            direction = "DESC" if sort_order.lower() == "desc" else "ASC"
+            order_sql = f"ORDER BY {_MONITORING_SORT_COLS[sort_by]} {direction} NULLS LAST, f.tagsn ASC"
+        else:
+            order_sql = "ORDER BY f.sitename, f.facilitytype, f.tagsn"
+
+        offset = (page - 1) * page_size
+        # filtered → 현재값 LEFT JOIN (DISTINCT ON 최신, 7일 윈도우 — 데이터없음 경계 일치)
+        cur.execute(
+            f"""
+            WITH filtered AS (
+                SELECT tagsn, tagtype, sitename, facilitytype, equipmenttype,
+                       datainfo, datadesc, unit, alarm_tag_yn
+                  FROM tb_tag_info{where_sql}
+            ),
+            latest AS (
+                SELECT DISTINCT ON (tagsn) tagsn, val, logtime
+                  FROM tb_tag_raw_data
+                 WHERE tagsn IN (SELECT tagsn FROM filtered)
+                   AND logtime >= now() - interval '7 days'
+                 ORDER BY tagsn, logtime DESC
+            )
+            SELECT f.tagsn, f.tagtype, f.sitename, f.facilitytype, f.equipmenttype,
+                   f.datainfo, f.datadesc, f.unit, f.alarm_tag_yn,
+                   l.val AS current_value, l.logtime
+              FROM filtered f
+              LEFT JOIN latest l ON f.tagsn = l.tagsn
+              {order_sql}
+             LIMIT %s OFFSET %s
+            """,
+            params + [page_size, offset],
+        )
+        cols = ["tagsn", "tagtype", "sitename", "facilitytype", "equipmenttype",
+                "datainfo", "datadesc", "unit", "alarm_tag_yn",
+                "current_value", "logtime"]
+        rows = []
+        for row in cur.fetchall():
+            r = dict(zip(cols, row))
+            if r["alarm_tag_yn"] is not None:
+                r["alarm_tag_yn"] = int(r["alarm_tag_yn"])
+            if r["current_value"] is not None:
+                r["current_value"] = float(r["current_value"])
+            if r["logtime"] is not None:
+                r["logtime"] = r["logtime"].isoformat()
+            r["anomaly_categories"] = []  # Phase 2
+            rows.append(r)
+
+        cur.close()
+        return {
+            "status": "OK",
+            "data": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    except psycopg2.Error as e:
+        logger.error(f"태그 모니터링 조회 실패: {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": [], "total": 0}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # GET /tags/groups — 태그 데이터 그룹 현황
 # =============================================================================
 
