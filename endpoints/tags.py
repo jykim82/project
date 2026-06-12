@@ -166,16 +166,20 @@ _MONITORING_SORT_COLS = {
     "logtime": "l.logtime",
 }
 
-# 이상 카테고리 9종 — 코드→라벨 + 적용 단위(scope)
-# DI 발(發) 설비고장/전원이상/통신이상은 제외 — 시설 전체 임의 5건에 전파돼
-# 아날로그/디지털이 섞이고 기기 단위가 깨짐. 신호는 트리거 DI 태그 자체 행
-# (val=1 + 알람 컬럼)에서 직접 보이므로 전파는 노이즈.
+# 이상 카테고리 5종 — 코드→라벨 + 적용 단위(scope). 측정 데이터(L3) 계층 전용.
+# 제외 1: DI 발(發) 설비고장/전원이상/통신이상(L2) — 시설 전체 임의 5건에 전파돼
+#   아날로그/디지털이 섞이고 기기 단위가 깨짐. 신호는 트리거 DI 태그 자체 행
+#   (val=1 + 알람 컬럼)에서 직접 보이므로 전파는 노이즈.
+# 제외 2: network_down(L1 네트워크 진단, tb_network_status ping) — ping 경로와
+#   데이터 경로(TM master/LTE)는 물리적으로 달라 ping 실패해도 데이터는 정상
+#   수신될 수 있음. ping 진단을 측정 태그에 전가하면 신선 데이터 태그가
+#   '네트워크단절'로 오표시됨. L1 은 네트워크 건강 화면 소관 (사양 §3.0.1).
+#   (equipment_failure_impacts 영향분석 로직 자체는 백엔드 보존 — 재사용 여지.)
 _ANOMALY_LABELS = {
     "sensor_dead": "센서 무응답",
     "data_holding": "데이터홀딩",
     "data_missing": "데이터없음",
     "cross_invalid": "교차검증 이상",
-    "network_down": "네트워크단절",
     "flow_imbalance": "물수지 불균형",
 }
 _ANOMALY_CODES = set(_ANOMALY_LABELS)
@@ -222,7 +226,8 @@ def _build_anomaly_maps():
         if code:
             tag_cats.setdefault(issue["tagsn"], {})[code] = issue.get("detail")
 
-    # 5~8. 설비 장애 (태그 단위, DI 영향 태그)
+    # 설비 장애 영향 태그 — 현재 L1(network_down)·L2(DI 발) 모두 _ANOMALY_CODES
+    # 미포함이라 부착 대상 없음(자동 스킵). 기기 단위 카테고리 재도입 시 진입.
     for imp in pd.get("equipment_failure_impacts", []):
         code = imp.get("failure_type")
         if code not in _ANOMALY_CODES:
