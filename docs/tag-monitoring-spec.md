@@ -16,7 +16,7 @@
 
 ### 목표
 - 전체 태그를 한 화면에서 **현재값 + 이상 상태**와 함께 감시
-- **6종 이상 카테고리**로 빠르게 문제 태그 필터링
+- **5종 이상 카테고리**로 빠르게 문제 태그 필터링 (측정 데이터 계층 전용 — §3.0.1)
 - 컬럼별 정렬로 임의 기준(현장·유형·현재값 등) 우선순위 탐색
 - 행 우클릭 → **트랜드 보기**로 즉시 이력 진단 진입 (페이지 이탈 최소화)
 
@@ -28,7 +28,7 @@
 | 태그 추가 (`TagAddFormFields` + `createTag`) | **제외** |
 | 태그 편집·삭제 | **제외** (조회 전용) |
 | (없음) | **현재값 컬럼 추가** |
-| (없음) | **이상 카테고리 필터 6종 추가** |
+| (없음) | **이상 카테고리 필터 5종 추가** |
 | (없음) | **컬럼별 정렬** |
 | (없음) | **우클릭 → 트랜드 보기** |
 
@@ -62,7 +62,7 @@
 
 ---
 
-## 3. 이상 카테고리 필터 (6종)
+## 3. 이상 카테고리 필터 (5종)
 
 기존 백엔드 감지 로직을 **재사용**한다. 신규 감지 알고리즘은 만들지 않는다.
 
@@ -72,8 +72,10 @@
 | 2 | 데이터홀딩 | `data_holding` | data_quality `issue_type="데이터홀딩"` (flat% 임계 초과) | 태그 |
 | 3 | 데이터없음 | `data_missing` | data_quality `issue_type="데이터없음"` (7일 무수집) | 태그 |
 | 4 | 교차검증 이상 | `cross_invalid` | `anomaly_detector.py` `cross_status` (피어 시설 불일치) | 시설→태그 전파 |
-| 5 | 네트워크단절 | `network_down` | `anomaly_scan.py` A소스(`tb_network_status` is_alive=false) → 기기 매핑 태그(`tb_equipment_tag_map`) | 기기→매핑 태그 |
-| 6 | 물수지 불균형 | `flow_imbalance` | `flow_balance.py` (시설 유입/유출 불균형) | 시설→태그 전파 |
+| 5 | 물수지 불균형 | `flow_imbalance` | `flow_balance.py` (시설 유입/유출 불균형) | 시설→태그 전파 |
+
+> 모두 **측정 데이터(L3) 계층**의 이상이다 — 태그 자신의 값/품질 또는 시설 단위
+> 물리적 정합성. 네트워크 진단(L1)·현장 통신 알람(L2)은 §3.0.1 에 따라 제외.
 
 ### 3.0 제외: 설비고장·전원이상·통신이상 (DI 발) — v1.2 제거
 - 기존 9종 중 `equip_fault`(설비고장)/`power_fault`(전원이상)/`comm_error`(통신이상)
@@ -86,17 +88,40 @@
 - 향후 "기기 단위 설비고장"이 필요하면 `tb_equipment_tag_map` 기반으로
   재설계 후 별도 재도입 (현재 미계획).
 
+### 3.0.1 제외: 네트워크단절 (ping 진단 발) — v1.5 제거 + 계층 분리 원칙
+- 기존 6종 중 `network_down`(네트워크단절)은 `anomaly_scan.py` **A소스**
+  (`tb_network_status` is_alive=false) 기반. ping 실패 기기에 매핑된 **모든 측정
+  태그**(`tb_equipment_tag_map`)에 전파됐다(`anomaly_scan.py` A소스 조인 루프).
+- **핵심 구분 — 3개 계층은 서로 다른 진단 주체·경로이며 한 화면에서 섞으면 안 됨**:
+
+  | 계층 | 출처 | 판단 주체 | 의미 |
+  |------|------|-----------|------|
+  | **L1 네트워크 진단** | `tb_network_status` (ping) | AI 서버 → 현장제어반 | 중앙→현장 도달성. ping 경로만 검사 |
+  | **L2 현장 통신 알람** | DI 태그(COMM_ERROR 등) | TM master·통신장비 → DB | 현장에서 판단한 유량계/PLC 통신 알람 |
+  | **L3 측정 데이터** | 아날로그 태그 값·품질 | 스캔(품질/시설 정합) | 태그 자신의 데이터 이상 (본 5종) |
+
+- 문제: ping 경로(L1)와 데이터 경로(L2 TM master/LTE)는 **물리적으로 다른 경로**다.
+  ping 이 죽어도 데이터는 정상 수신될 수 있다(예: 신평2 소블록 유량계 — `plc_37`
+  ping Timeout 이지만 순시/적산 매분 갱신, 현장 통신이상 DI=0, 진행 알람 없음).
+  L1 진단을 L3 측정 태그에 도장처럼 전가하면 **신선 데이터를 받는 태그가
+  '네트워크단절'로 오표시** → 운영자 오판.
+- 따라서 **태그 모니터링 = L3 전용**. ping 진단(L1)은 측정 태그의 이상 배지에서
+  제외한다. L1 의 제자리는 네트워크/설비 건강 화면(별도 진단 뷰)이며, L2 현장
+  통신 알람은 **트리거 DI 태그 자체 행 + `알람` 컬럼**에서 직접 확인된다.
+- A소스 영향분석(`equipment_failure_impacts`) 로직 자체는 백엔드에 **보존** —
+  네트워크 건강 화면 재사용 여지. 다만 태그 모니터링 엔드포인트의
+  `_ANOMALY_CODES` 에서 `network_down` 만 **제거**해 측정 태그 배지에서 분리.
+
 ### 3.1 카테고리 적용 단위 차이 (중요)
 - **태그 단위** (1·2·3): 해당 태그에 직접 부여.
-- **기기 매핑** (5 네트워크단절): 장애 기기에 매핑된 태그(`tb_equipment_tag_map`)
-  중 스캔 결과 교차분에 부여. (폐쇄망/로컬에선 전체 is_alive=false → 비활성.)
-- **시설 단위** (4 교차검증 / 6 물수지): 시설(`sitename`+`facilitytype`) 전체에
+- **시설 단위** (4 교차검증 / 5 물수지): 시설(`sitename`+`facilitytype`) 전체에
   부여 → 그 시설에 속한 모든 태그에 전파 표시. Badge 에 "(시설)" 보조 라벨로
   태그 직접 이상과 시각 구분.
+- (제거됨) ~~기기 매핑 (네트워크단절)~~ — §3.0.1 계층 분리로 제외.
 
 ### 3.2 필터 UX
 - 기존 마스터 드롭다운(현장/시설유형/태그유형/키워드)은 **유지**.
-- 이상 카테고리는 **다중 선택 토글 칩**(6개) 추가. 선택 시 OR 조건
+- 이상 카테고리는 **다중 선택 토글 칩**(5개) 추가. 선택 시 OR 조건
   (선택 카테고리 중 하나라도 해당하는 태그). "이상 있는 태그만" 단축 토글 제공.
 - 선택 상태 URL 쿼리 반영(공유·새로고침 유지) — `?anomaly=sensor_dead,data_holding`.
 
@@ -176,10 +201,11 @@ page, page_size
    ORDER BY tagsn, logtime DESC` (TimescaleDB 하이퍼테이블, dashboard.py:274 패턴).
 3. 이상 상태: **5분 anomaly_scan 캐시 재사용**으로 tag→categories 맵 구성.
    - `data_quality_issues` (per tagsn) → sensor_dead/data_holding/data_missing
-   - `equipment_failure_impacts` A소스(기기 매핑) → network_down
-     (B소스 DI 발 equip_fault/power_fault/comm_error 는 `_ANOMALY_CODES` 미포함 → 자동 스킵, §3.0)
    - `cross_status` (per 시설) → cross_invalid, 시설 태그 전파
    - flow_balance (per 시설) → flow_imbalance, 시설 태그 전파
+   - (제외) `equipment_failure_impacts` A소스(network_down)·B소스(DI 발) 모두
+     `_ANOMALY_CODES` 미포함 → 자동 스킵. network_down 은 §3.0.1 계층 분리,
+     DI 3종은 §3.0 참조. 영향분석 로직 자체는 보존(네트워크 건강 화면 재사용).
 4. 필터/정렬/페이지네이션 적용 후 반환.
    - 이상 카테고리 필터·이상개수 정렬은 캐시 맵 의존 → 후보 집합이 작지 않으면
      캐시 조인 후 메모리 정렬. (태그 수 수천 규모 가정 — 허용. 대규모 시 캐시를
@@ -196,7 +222,7 @@ page, page_size
 - 테이블: `src/components/monitoring/TagMonitoringTable.tsx` 신규
   - shadcn `Table` 기반, 정렬 헤더 + 현재값/갱신시각/이상 Badge 렌더
   - 우클릭 `ContextMenu` 래핑
-- 필터: 마스터 드롭다운 재사용 + `AnomalyFilterChips` 신규(9 토글 칩)
+- 필터: 마스터 드롭다운 재사용 + `AnomalyFilterChips` 신규(5 토글 칩)
 - 트랜드 모달: `TrendChart`(`src/components/trend/TrendChart.tsx`) 인라인 렌더
   + `useTrendStore.addTagFromInfo`
 
@@ -237,12 +263,12 @@ page, page_size
 > 구현 — 기본 조회 ~12ms, 현재값 정렬 최악 ~31ms. PostgreSQL 은 loose index
 > skip-scan 이 없어 LATERAL 이 정석.
 
-### Phase 2 — 이상 카테고리 필터 6종 ✅ 완료 (2026-06-11)
+### Phase 2 — 이상 카테고리 필터 5종 ✅ 완료 (2026-06-11, v1.5 에서 6→5)
 1. 백엔드 anomaly_scan 캐시 → tag→categories 맵 구성 + `anomaly`/`only_anomaly`
    필터 + 이상개수 정렬. (`init_tags` 에 scan/balance 캐시 getter 주입,
    `anomaly_ready` 플래그로 캐시 미준비 안내.)
 2. 프론트 `AnomalyFilterChips` + 이상 Badge 컬럼 + URL 쿼리 동기화.
-3. 검증: 9 카테고리 각각 알려진 케이스로 매칭 확인(시설 단위 전파 포함).
+3. 검증: 각 카테고리 알려진 케이스로 매칭 확인(시설 단위 전파 포함).
    Playwright — `센서 무응답` 칩 클릭 시 2,700→62건, URL `?anomaly=sensor_dead`,
    요청 `anomaly=sensor_dead` 반영 확인.
 
@@ -276,3 +302,9 @@ page, page_size
   미만/같음/다름) + 기준값. NULL 불일치, full_scan 경로 Python 필터링.
 - 2026-06-11 v1.4 — Phase 3 완료. 우클릭/⋯ 트랜드 보기 컨텍스트 메뉴 +
   `TagTrendDialog` 인라인 모달(로컬 fetch, 전역 store 비오염). §5 구현 반영.
+- 2026-06-13 v1.5 — 이상 카테고리 6→5종. `network_down`(네트워크단절) 제거 +
+  **계층 분리 원칙** 도입 (§3.0.1). L1 네트워크 진단(ping, `tb_network_status`)·
+  L2 현장 통신 알람(DI/TM master)·L3 측정 데이터를 구분. ping 진단을 측정 태그에
+  전가하면 신선 데이터 태그가 '네트워크단절'로 오표시(신평2 유량계 사례)되므로
+  태그 모니터링은 L3 전용으로 한정. A소스 영향분석 로직은 백엔드 보존(네트워크
+  건강 화면 재사용). `_ANOMALY_CODES` 에서 `network_down` 만 제거.
