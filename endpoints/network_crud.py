@@ -88,6 +88,57 @@ async def get_network_devices():
             conn.close()
 
 
+@router.get("/network/devices/{equipment_id}/tags")
+async def get_device_tags(equipment_id: str):
+    """장비(L1)에 매핑된 측정 태그(L3) + 현재값 조회.
+
+    네트워크 진단(ping)과 측정 데이터는 별도 계층이므로, ping 장애 장비 뒤에
+    어떤 측정 태그가 매달려 있는지를 네트워크 화면에서 역추적해 보여준다.
+    (태그 모니터링은 측정 데이터 전용 — 사양 tag-monitoring-spec §3.0.1.)
+    현재값은 태그별 LATERAL(idx_tag_raw_tagsn_time seek + LIMIT 1)로 조회.
+    """
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.tagsn, t.tagtype, t.datainfo, t.datadesc, t.unit,
+                   t.alarm_tag_yn, l.val AS current_value, l.logtime
+              FROM tb_equipment_tag_map m
+              JOIN tb_tag_info t ON t.tagsn = m.tagsn
+              LEFT JOIN LATERAL (
+                  SELECT val, logtime
+                    FROM tb_tag_raw_data r
+                   WHERE r.tagsn = t.tagsn
+                     AND r.logtime >= now() - interval '7 days'
+                   ORDER BY r.logtime DESC
+                   LIMIT 1
+              ) l ON true
+             WHERE m.equipment_id = %s
+             ORDER BY t.tagtype, t.datainfo
+        """, (equipment_id,))
+        cols = [
+            "tagsn", "tagtype", "datainfo", "datadesc", "unit",
+            "alarm_tag_yn", "current_value", "logtime",
+        ]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        for row in rows:
+            if row["alarm_tag_yn"] is not None:
+                row["alarm_tag_yn"] = int(row["alarm_tag_yn"])
+            if row["current_value"] is not None:
+                row["current_value"] = float(row["current_value"])
+            if row["logtime"]:
+                row["logtime"] = row["logtime"].isoformat()
+        cur.close()
+        return {"status": "OK", "data": rows}
+    except psycopg2.Error as e:
+        logger.error(f"장비 매핑 태그 조회 실패 ({equipment_id}): {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": []}
+    finally:
+        if conn:
+            conn.close()
+
+
 @router.get("/network/topology")
 async def get_network_topology():
     """토폴로지 그래프 데이터 (nodes + edges) 조회"""
