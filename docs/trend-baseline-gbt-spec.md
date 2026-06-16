@@ -106,12 +106,23 @@
 ### 6.2 기록 테이블 (Migration)
 - `tb_baseline_model_run` — 회차별: region, model_version, trained_at,
   train_window_days, n_tags_trained, n_tags_fallback, overall_mae, overall_rmse,
-  coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status.
+  coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status,
+  **dataset_summary(jsonb)**.
 - `tb_baseline_tag_metric` — 태그별: region, model_version, tagsn, mae, rmse,
   sigma, coverage_pct, n_samples, method.
 
+#### 6.2.1 데이터셋 요약 박제 (`dataset_summary` jsonb, Migration 0087)
+- 회차마다 "이번 학습이 **어떤 데이터로** 됐나"를 동결 기록 → 회차별 추세 확인.
+- `trend_baseline._dataset_summary(conn, df_full)` 가 min-row 필터 **전** 프레임
+  으로 계산: `data_start`/`data_end`/`span_days`, `n_hourly_rows`,
+  `n_tags_frame`/`n_tags_trained`/`n_tags_below_min`(`min_tag_rows` 기준),
+  `by_trend_kind`, `by_facilitytype`(top-8), `skip{digital,accum,unit}`.
+- 기존 회차 행은 NULL — 화면 NULL 안전 처리.
+
 ### 6.3 확인 화면 `/admin/baseline-eval` (경량 지표 뷰)
 - 상단 KPI: 전체 MAE · 커버리지(95% 신호등) · **GBT vs hourly_mean 개선율** · 폴백 비율.
+- **데이터셋 현황 섹션**(최신 회차 박제): 기간·시간집계 행수·학습/전체 태그수·
+  최소 행수 미달 태그수 + 종류별/시설유형별/skip 사유별 분포.
 - 회차 히스토리(버전·시각·지표 추이).
 - 최악 태그 테이블(MAE/커버리지 정렬, method 배지, 검색·필터).
 - 드릴다운 차트는 생략(필요 시 추가). 백엔드 `GET /admin/baseline-eval`.
@@ -147,3 +158,7 @@
     태그 렌더 확인. (운영 60일 학습창에서 커버리지 ≈95% 수렴 기대.)
   - dev 검증용 env 스위치: `BASELINE_WINDOW_DAYS`/`BASELINE_HOLDOUT_DAYS`/
     `BASELINE_MIN_TAG_ROWS`(운영 기본 60/7/336 고정, 데이터 짧은 dev 만 하향).
+- 2026-06-16 데이터셋 현황 박제 — Migration 0087(`dataset_summary` jsonb 컬럼) +
+  `_dataset_summary()`(기간·행수·종류/시설/skip 분포, min-row 필터 전 프레임 계산)
+  → `_persist_metrics`·메타 적재 → `GET /admin/baseline-eval` latest 반환 →
+  화면 "학습 데이터셋 현황" 섹션. dev 검증: 6.6일/132,129행/831 태그 렌더 확인.
