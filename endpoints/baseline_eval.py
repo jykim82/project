@@ -32,8 +32,9 @@ def _get_conn():
 def get_baseline_eval(
     region: str = Query("R01"),
     worst_limit: int = Query(20, ge=1, le=200),
+    kind: Optional[str] = Query(None, description="최악 태그 종류 필터 (flow/level/pressure/quality/other)"),
 ):
-    """최신 회차 KPI + 회차 히스토리 + 최악 태그(MAE 내림차순)."""
+    """최신 회차 KPI + 회차 히스토리 + 최악 태그(MAE 내림차순). kind 로 종류 필터."""
     conn = _get_conn()
     try:
         cur = conn.cursor()
@@ -78,21 +79,41 @@ def get_baseline_eval(
         latest = runs[0]
         latest_version = latest["model_version"]
 
-        # 최악 태그 (최신 회차, MAE 내림차순)
+        # 최신 회차에 존재하는 종류 목록 (필터 드롭다운용)
         cur.execute(
             """
-            SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method
+            SELECT trend_kind, COUNT(*)
               FROM tb_baseline_tag_metric
-             WHERE region = %s AND model_version = %s
+             WHERE region = %s AND model_version = %s AND trend_kind IS NOT NULL
+             GROUP BY trend_kind
+             ORDER BY COUNT(*) DESC
+            """,
+            (region, latest_version),
+        )
+        kinds = [{"kind": r[0], "n": r[1]} for r in cur.fetchall()]
+
+        # 최악 태그 (최신 회차, MAE 내림차순) — kind 필터 선택 시 좁힘
+        params = [region, latest_version]
+        kind_clause = ""
+        if kind:
+            kind_clause = " AND trend_kind = %s"
+            params.append(kind)
+        params.append(worst_limit)
+        cur.execute(
+            f"""
+            SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method, trend_kind
+              FROM tb_baseline_tag_metric
+             WHERE region = %s AND model_version = %s{kind_clause}
              ORDER BY mae DESC NULLS LAST
              LIMIT %s
             """,
-            (region, latest_version, worst_limit),
+            tuple(params),
         )
         worst = [
             {
                 "tagsn": r[0], "mae": r[1], "rmse": r[2], "sigma": r[3],
                 "coverage_pct": r[4], "n_samples": r[5], "method": r[6],
+                "trend_kind": r[7],
             }
             for r in cur.fetchall()
         ]
@@ -103,6 +124,7 @@ def get_baseline_eval(
             "latest": latest,
             "runs": runs,
             "worst_tags": worst,
+            "kinds": kinds,
         }
     finally:
         conn.close()

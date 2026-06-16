@@ -249,6 +249,7 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
                 "tagsn": tagsn, "mae": round(mae, 4), "rmse": round(rmse, 4),
                 "sigma": round(sigma, 4), "coverage_pct": round(cover, 1),
                 "n_samples": int(len(r)), "method": "gbt",
+                "trend_kind": str(grp["trend_kind"].iloc[0]),
             })
         global_sigma = float(np.median(list(tag_sigma.values()))) if tag_sigma else overall_rmse
         coverage_pct = float(np.mean([m["coverage_pct"] for m in tag_metrics])) if tag_metrics else 0.0
@@ -380,7 +381,7 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
         region, version = metrics["region"], metrics["model_version"]
         rows = [
             (region, version, m["tagsn"], m["mae"], m["rmse"], m["sigma"],
-             m["coverage_pct"], m["n_samples"], m["method"])
+             m["coverage_pct"], m["n_samples"], m["method"], m.get("trend_kind"))
             for m in tag_metrics
         ]
         if rows:
@@ -388,8 +389,8 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
                 """
                 INSERT INTO tb_baseline_tag_metric
                   (region, model_version, tagsn, mae, rmse, sigma,
-                   coverage_pct, n_samples, method)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   coverage_pct, n_samples, method, trend_kind)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (region, model_version, tagsn) DO NOTHING
                 """,
                 rows,
