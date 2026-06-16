@@ -14,6 +14,31 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/baseline-eval", tags=["baseline-eval"])
 
+# 저신호(low-signal) 가드: y_scale(=홀드아웃 실측 평균 절대값)이 종류별 바닥값보다
+# 작으면 센서가 사실상 정지/idle 상태라 MAE/y_scale 비율이 폭발해 정확도%가 0%로
+# 클램프된다. 이는 "모델이 못 맞췄다"가 아니라 "신호가 없다"는 뜻이므로 정확도%
+# 표시·평균 집계에서 제외한다. (단위 의존적이라 종류별 바닥값을 분리 — 큰 신호
+# 태그의 진짜 부정확을 가리지 않으려고 MAE≥y_scale 규칙 대신 절대 바닥값 사용)
+LOW_SIGNAL_FLOOR = {
+    "flow": 2.0,
+    "pressure": 0.5,
+    "level": 0.2,
+    "quality": 0.05,
+    "other": 0.5,
+}
+DEFAULT_LOW_SIGNAL_FLOOR = 1.0
+
+
+def _LOWSIG_SQL(prefix: str = "") -> str:
+    """저신호 여부 BOOL — y_scale 이 종류별 바닥값 미만이면 TRUE."""
+    when = " ".join(
+        f"WHEN '{k}' THEN {v}" for k, v in LOW_SIGNAL_FLOOR.items()
+    )
+    return (
+        f"({prefix}y_scale IS NOT NULL AND {prefix}y_scale < "
+        f"CASE {prefix}trend_kind {when} ELSE {DEFAULT_LOW_SIGNAL_FLOOR} END)"
+    )
+
 
 def _ACC_SQL(prefix: str = "") -> str:
     """단위 무관 정확도% = 100 × (1 − MAE/y_scale), [0,100] 클램프. y_scale 결측 시 NULL."""
@@ -110,7 +135,8 @@ def get_baseline_eval(
         cur.execute(
             f"""
             SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method,
-                   trend_kind, lag_avail_pct, y_scale, {_ACC_SQL("")} AS accuracy
+                   trend_kind, lag_avail_pct, y_scale, {_ACC_SQL("")} AS accuracy,
+                   {_LOWSIG_SQL("")} AS low_signal
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s{kind_clause}
              ORDER BY mae DESC NULLS LAST
@@ -124,6 +150,7 @@ def get_baseline_eval(
                 "coverage_pct": r[4], "n_samples": r[5], "method": r[6],
                 "trend_kind": r[7], "lag_avail_pct": r[8], "y_scale": r[9],
                 "accuracy_pct": round(r[10], 1) if r[10] is not None else None,
+                "low_signal": bool(r[11]),
             }
             for r in cur.fetchall()
         ]
@@ -141,18 +168,24 @@ def get_baseline_eval(
                     "mae_max": round(g[4], 4) if g[4] is not None else None,
                     "coverage_avg": round(g[5], 1) if g[5] is not None else None,
                     "lag_avail_avg": round(g[6], 1) if g[6] is not None else None,
+                    "n_low_signal": g[7],
                 }
                 for g in rows
             ]
 
+        # 정확도 평균은 저신호 태그를 제외(FILTER)해 왜곡 방지, n_low_signal 로 노출
         cur.execute(
             f"""
-            SELECT trend_kind, COUNT(*), AVG({_ACC_SQL("")}), AVG(mae), MAX(mae),
-                   AVG(coverage_pct), AVG(lag_avail_pct)
+            SELECT trend_kind, COUNT(*),
+                   AVG({_ACC_SQL("")}) FILTER (WHERE NOT {_LOWSIG_SQL("")}),
+                   AVG(mae), MAX(mae),
+                   AVG(coverage_pct), AVG(lag_avail_pct),
+                   COUNT(*) FILTER (WHERE {_LOWSIG_SQL("")})
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s AND trend_kind IS NOT NULL
              GROUP BY trend_kind
-             ORDER BY AVG({_ACC_SQL("")}) ASC NULLS LAST
+             ORDER BY AVG({_ACC_SQL("")}) FILTER (WHERE NOT {_LOWSIG_SQL("")})
+                      ASC NULLS LAST
             """,
             (region, latest_version),
         )
@@ -162,22 +195,27 @@ def get_baseline_eval(
         cur.execute(
             f"""
             SELECT TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, '')),
-                   COUNT(*), AVG({_ACC_SQL("m.")}), AVG(m.mae), MAX(m.mae),
-                   AVG(m.coverage_pct), AVG(m.lag_avail_pct)
+                   COUNT(*),
+                   AVG({_ACC_SQL("m.")}) FILTER (WHERE NOT {_LOWSIG_SQL("m.")}),
+                   AVG(m.mae), MAX(m.mae),
+                   AVG(m.coverage_pct), AVG(m.lag_avail_pct),
+                   COUNT(*) FILTER (WHERE {_LOWSIG_SQL("m.")})
               FROM tb_baseline_tag_metric m
               JOIN tb_tag_info t ON t.tagsn = m.tagsn
              WHERE m.region = %s AND m.model_version = %s
              GROUP BY TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, ''))
-             ORDER BY AVG({_ACC_SQL("m.")}) ASC NULLS LAST
+             ORDER BY AVG({_ACC_SQL("m.")}) FILTER (WHERE NOT {_LOWSIG_SQL("m.")})
+                      ASC NULLS LAST
             """,
             (region, latest_version),
         )
         by_site = _round_group(cur.fetchall())
 
-        # 전체 정확도(단위 무관) — 최신 회차 전 태그 평균
+        # 전체 정확도(단위 무관) — 최신 회차 전 태그 평균, 저신호 제외
         cur.execute(
             f"""
-            SELECT AVG({_ACC_SQL("")})
+            SELECT AVG({_ACC_SQL("")}) FILTER (WHERE NOT {_LOWSIG_SQL("")}),
+                   COUNT(*) FILTER (WHERE {_LOWSIG_SQL("")})
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s
             """,
@@ -187,6 +225,7 @@ def get_baseline_eval(
         overall_accuracy = (
             round(acc_row[0], 1) if acc_row and acc_row[0] is not None else None
         )
+        overall_low_signal = acc_row[1] if acc_row else 0
 
         cur.close()
         return {
@@ -198,6 +237,7 @@ def get_baseline_eval(
             "kinds": kinds,
             "groups": {"by_kind": by_kind, "by_site": by_site},
             "overall_accuracy_pct": overall_accuracy,
+            "overall_low_signal": overall_low_signal,
         }
     finally:
         conn.close()
@@ -238,7 +278,8 @@ def get_group_tags(
             f"""
             SELECT m.tagsn, t.datadesc, m.trend_kind, m.mae, m.rmse, m.sigma,
                    m.coverage_pct, m.lag_avail_pct, m.n_samples, m.method,
-                   m.y_scale, {_ACC_SQL("m.")} AS accuracy
+                   m.y_scale, {_ACC_SQL("m.")} AS accuracy,
+                   {_LOWSIG_SQL("m.")} AS low_signal
               FROM tb_baseline_tag_metric m
               LEFT JOIN tb_tag_info t ON t.tagsn = m.tagsn
              WHERE m.region = %s AND m.model_version = %s AND {where}
@@ -253,6 +294,7 @@ def get_group_tags(
                 "coverage_pct": r[6], "lag_avail_pct": r[7],
                 "n_samples": r[8], "method": r[9], "y_scale": r[10],
                 "accuracy_pct": round(r[11], 1) if r[11] is not None else None,
+                "low_signal": bool(r[12]),
             }
             for r in cur.fetchall()
         ]
