@@ -137,13 +137,14 @@
   - 절대 MAE 는 단위 큰 종류(유량 LPS·CMH)가 상위 독점 → `kind` 파라미터로
     종류별(유량/수위/압력/수질/기타) 좁혀보기. `tb_baseline_tag_metric.trend_kind`
     + `GET /admin/baseline-eval?kind=flow`, 응답 `kinds`(드롭다운용 종류·개수).
-- **그룹별 성능 테이블**(평균 MAE 내림차순): 종류(trend_kind) / 시설유형
-  (facilitytype) **토글**. 그룹별 태그수·평균 MAE·최대 MAE·평균 커버리지·평균
-  lag확보율. 단일 태그가 아닌 그룹 단위로 모델이 잘/못 맞추는 영역 + 데이터부족
-  기여(lag확보) 를 한눈에 진단. 응답 `groups.by_kind` / `groups.by_facility`.
-  - by_kind 는 `tb_baseline_tag_metric` 집계, by_facility 는 `tb_tag_info` 조인.
-    절대 MAE 는 단위 스케일에 비례하므로 그룹 간 직접 비교보다 그룹 내 추이·
-    lag확보와 묶어 해석.
+- **그룹별 성능 테이블**(평균 MAE 내림차순): 종류(trend_kind) / 시설 **토글**.
+  그룹별 태그수·평균 MAE·최대 MAE·평균 커버리지·평균 lag확보율. 단일 태그가
+  아닌 그룹 단위로 모델이 잘/못 맞추는 영역 + 데이터부족 기여(lag확보) 를 한눈에
+  진단. 응답 `groups.by_kind` / `groups.by_site`.
+  - by_kind 는 `tb_baseline_tag_metric` 집계, by_site 는 `tb_tag_info` 조인 후
+    개별 시설(`sitename + ' ' + facilitytype`, 예: "신평 가압장", "남산11 소블록")
+    단위 집계. 절대 MAE 는 단위 스케일에 비례하므로 그룹 간 직접 비교보다 그룹 내
+    추이·lag확보와 묶어 해석.
 - 드릴다운 차트는 생략(필요 시 추가). 백엔드 `GET /admin/baseline-eval`.
 - 메뉴: `sidebar-menus.ts` + `tb_menu` 등록.
 
@@ -192,7 +193,9 @@
   6.9일이라 lag24 85.6%·lag168 0.0%(7일 미만) → 전 태그 lag_avail_pct=0. 운영
   60일 재학습 시 lag168~100% 로 MAE 감소 여부 직접 대조 가능.
 - 2026-06-16 그룹별 성능 테이블 — `GET /admin/baseline-eval` 응답 `groups`
-  (by_kind = `tb_baseline_tag_metric` 집계, by_facility = `tb_tag_info` 조인).
-  그룹별 태그수·평균/최대 MAE·평균 커버리지·평균 lag확보. 화면 종류/시설유형
-  토글 테이블(평균 MAE 내림차순). 신규 마이그레이션 없음(집계만). dev 검증:
-  종류 5그룹(기타 32.1→수위 0.16)·시설유형 4그룹(소블록 8.58→소소블록 2.08) 렌더 확인.
+  (by_kind = `tb_baseline_tag_metric` 집계, by_site = `tb_tag_info` 조인 후 개별
+  시설 `sitename + facilitytype` 집계). 그룹별 태그수·평균/최대 MAE·평균 커버리지·
+  평균 lag확보. 화면 종류/시설 토글 테이블(평균 MAE 내림차순). 신규 마이그레이션
+  없음(집계만). dev 검증: 종류 5그룹(기타 32.1→수위 0.16)·시설 ~90개(남산11 소블록
+  79.99→가곡 배수지 0.03) 렌더 확인. (시설축은 처음 시설유형으로 구현했다가 사용자
+  의도가 "남산1 소블록"·"신평 가압장" 같은 개별 시설임을 확인해 사이트 단위로 변경.)
