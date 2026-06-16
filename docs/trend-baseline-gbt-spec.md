@@ -109,7 +109,16 @@
   coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status,
   **dataset_summary(jsonb)**.
 - `tb_baseline_tag_metric` — 태그별: region, model_version, tagsn, mae, rmse,
-  sigma, coverage_pct, n_samples, method, **trend_kind(Migration 0088)**.
+  sigma, coverage_pct, n_samples, method, **trend_kind(Migration 0088)**,
+  **lag_avail_pct(Migration 0089)**.
+
+#### 6.2.2 lag 확보율 — 오차의 데이터부족 기여 검증 (Migration 0089)
+- 태그별 `lag_avail_pct` = holdout 행 중 `lag_24h` & `lag_168h` 둘 다 확보한 비율(%).
+  낮으면 모델이 자기 이력 없이 시설유형 prior 로 예측 → 큰 MAE 가 "데이터 부족"
+  기여임을 **검증 가능**. 회차별 `dataset_summary.lag24_avail_pct`/`lag168_avail_pct`
+  (학습 전체 행 기준)도 박제.
+- **검증 절차:** 같은 태그를 회차 간 (lag 확보율↑ vs MAE↓) 로 대조. dev(6.9일)는
+  lag168 0% → 단기 한계 확인용. 운영 60일이면 lag168 ~100% → MAE 변화로 가설 검정.
 
 #### 6.2.1 데이터셋 요약 박제 (`dataset_summary` jsonb, Migration 0087)
 - 회차마다 "이번 학습이 **어떤 데이터로** 됐나"를 동결 기록 → 회차별 추세 확인.
@@ -169,3 +178,9 @@
   + 학습 시 종류 적재 → `GET /admin/baseline-eval?kind=` 필터 + 응답 `kinds` →
   화면 종류 칩(전체/유량/수위/압력/수질/기타). 절대 MAE 가 유량(스케일 큼) 상위
   독점 문제 완화. dev 검증: 압력 필터 시 top MAE 7.09(전체 410.5 대비) 확인.
+- 2026-06-16 lag 확보율(데이터부족 검증) — Migration 0089(`tb_baseline_tag_metric.
+  lag_avail_pct`) + 회차 메타 `dataset_summary.lag24/168_avail_pct`. 태그별 holdout
+  에서 lag_24h & lag_168h 둘 다 확보한 행 비율(%) 적재 → 큰 MAE 가 "자기 이력 부족"
+  기여인지 회차 간 (lag 확보율↑ vs MAE↓) 로 검증. §6.2.2 절차. dev 검증: 학습창
+  6.9일이라 lag24 85.6%·lag168 0.0%(7일 미만) → 전 태그 lag_avail_pct=0. 운영
+  60일 재학습 시 lag168~100% 로 MAE 감소 여부 직접 대조 가능.
