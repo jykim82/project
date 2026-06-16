@@ -32,6 +32,32 @@ DB_NAME = os.environ.get("DB_NAME", "slm")
 DB_USER = os.environ.get("DB_USER", "slm_dev")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 
+# 단일 region dev 기본값 (admin SITE_SETTING 과 동일). 멀티테넌시는 향후 JWT region.
+DEFAULT_REGION = "R01"
+
+# DI 라벨 기본 규칙 — (label_0, label_1). 오버라이드(tb_tag_di_label) 없을 때 적용.
+_DI_DEFAULT_ALARM_LABELS = ("정상", "이상")    # alarm_tag_yn=1 (active-high)
+_DI_DEFAULT_STATUS_LABELS = ("OFF", "ON")       # alarm_tag_yn=0 (중립 상태)
+
+
+def _resolve_di_label(tagtype, current_value, alarm_tag_yn,
+                      ovr_label_0, ovr_label_1, ovr_abnormal):
+    """DI 태그 현재값 → (표시 라벨, 이상 여부). 아날로그/값없음은 (None, None).
+
+    오버라이드 행이 있으면 그 라벨/극성을 쓰고, 없으면 alarm_tag_yn 기반 기본 규칙.
+    abnormal 은 색상·강조용으로 None 이면 중립(상태 표시).
+    """
+    if tagtype != "Digital Input" or current_value is None:
+        return None, None
+    bit = 1 if int(round(current_value)) != 0 else 0
+    if ovr_label_0 is not None and ovr_label_1 is not None:
+        label = ovr_label_1 if bit == 1 else ovr_label_0
+        abnormal = (ovr_abnormal == bit) if ovr_abnormal is not None else None
+        return label, abnormal
+    if alarm_tag_yn == 1:
+        return _DI_DEFAULT_ALARM_LABELS[bit], (bit == 1)
+    return _DI_DEFAULT_STATUS_LABELS[bit], None
+
 
 def init(get_db_connection_fn, get_scan_cache_fn=None, get_balance_cache_fn=None):
     """ai_server.py에서 DB 커넥션 팩토리 + 이상감지 캐시 getter 를 주입받는다."""
@@ -334,7 +360,8 @@ async def get_tags_monitoring(
 
         cols = ["tagsn", "tagtype", "sitename", "facilitytype", "equipmenttype",
                 "datainfo", "datadesc", "unit", "alarm_tag_yn",
-                "current_value", "logtime"]
+                "current_value", "logtime",
+                "di_label_0", "di_label_1", "di_abnormal_value"]
 
         # 현재값은 태그별 LATERAL(인덱스 idx_tag_raw_tagsn_time seek 1회 + LIMIT 1).
         # DISTINCT ON 은 7일 윈도우 전체(~1500만 행)를 스캔해 8s+ → LATERAL 25ms.
@@ -346,7 +373,8 @@ async def get_tags_monitoring(
             )
             SELECT f.tagsn, f.tagtype, f.sitename, f.facilitytype, f.equipmenttype,
                    f.datainfo, f.datadesc, f.unit, f.alarm_tag_yn,
-                   l.val AS current_value, l.logtime
+                   l.val AS current_value, l.logtime,
+                   d.label_0, d.label_1, d.abnormal_value
               FROM filtered f
               LEFT JOIN LATERAL (
                   SELECT val, logtime
@@ -356,6 +384,8 @@ async def get_tags_monitoring(
                    ORDER BY r.logtime DESC
                    LIMIT 1
               ) l ON true
+              LEFT JOIN tb_tag_di_label d
+                     ON d.tagsn = f.tagsn AND d.region = '{DEFAULT_REGION}'
               {order_sql}
         """
 
@@ -369,6 +399,14 @@ async def get_tags_monitoring(
                 r["logtime"] = r["logtime"].isoformat()
             r["anomaly_categories"] = _categories_for(
                 r["tagsn"], r["sitename"], r["facilitytype"], tag_cats, facility_cats)
+            # DI 현재값 라벨 해석 (오버라이드 또는 기본 규칙)
+            ovr_abnormal = r.pop("di_abnormal_value")
+            label, abnormal = _resolve_di_label(
+                r["tagtype"], r["current_value"], r["alarm_tag_yn"],
+                r.pop("di_label_0"), r.pop("di_label_1"),
+                int(ovr_abnormal) if ovr_abnormal is not None else None)
+            r["current_value_label"] = label
+            r["current_value_abnormal"] = abnormal
             return r
 
         offset = (page - 1) * page_size
@@ -413,6 +451,145 @@ async def get_tags_monitoring(
     except psycopg2.Error as e:
         logger.error(f"태그 모니터링 조회 실패: {e}")
         return {"status": "ERROR", "message": "조회에 실패했습니다.", "data": [], "total": 0}
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
+# DI 라벨 오버라이드 — GET/PUT /tags/{tagsn}/di-label
+# =============================================================================
+
+class DiLabelUpdate(BaseModel):
+    label_0: str = Field(..., min_length=1, max_length=50)
+    label_1: str = Field(..., min_length=1, max_length=50)
+    abnormal_value: Optional[int] = Field(None, ge=0, le=1)
+
+
+@router.get("/tags/{tagsn}/di-label")
+async def get_di_label(tagsn: str):
+    """DI 태그의 현재 라벨 설정 조회 — 오버라이드 있으면 그 값, 없으면 기본 규칙.
+
+    다이얼로그 프리필용. is_override 로 사용자 지정 여부를 구분한다.
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tagtype, datainfo, alarm_tag_yn FROM tb_tag_info WHERE tagsn = %s",
+                (tagsn,))
+            tag = cur.fetchone()
+            if not tag:
+                raise HTTPException(status_code=404, detail="태그를 찾을 수 없습니다")
+            tagtype, datainfo, alarm_tag_yn = tag
+            if tagtype != "Digital Input":
+                raise HTTPException(status_code=400, detail="DI 태그만 라벨 설정이 가능합니다")
+            alarm_tag_yn = int(alarm_tag_yn) if alarm_tag_yn is not None else 0
+
+            cur.execute(
+                "SELECT label_0, label_1, abnormal_value FROM tb_tag_di_label "
+                "WHERE region = %s AND tagsn = %s",
+                (DEFAULT_REGION, tagsn))
+            ovr = cur.fetchone()
+
+        if ovr:
+            label_0, label_1, abnormal_value = ovr[0], ovr[1], ovr[2]
+            is_override = True
+        else:
+            if alarm_tag_yn == 1:
+                label_0, label_1 = _DI_DEFAULT_ALARM_LABELS
+                abnormal_value = 1
+            else:
+                label_0, label_1 = _DI_DEFAULT_STATUS_LABELS
+                abnormal_value = None
+            is_override = False
+
+        return {
+            "status": "OK",
+            "data": {
+                "tagsn": tagsn,
+                "datainfo": datainfo,
+                "alarm_tag_yn": alarm_tag_yn,
+                "label_0": label_0,
+                "label_1": label_1,
+                "abnormal_value": int(abnormal_value) if abnormal_value is not None else None,
+                "is_override": is_override,
+            },
+        }
+    except HTTPException:
+        raise
+    except psycopg2.Error as e:
+        logger.error(f"DI 라벨 조회 실패 ({tagsn}): {e}")
+        return {"status": "ERROR", "message": "조회에 실패했습니다."}
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.put("/tags/{tagsn}/di-label")
+async def put_di_label(tagsn: str, body: DiLabelUpdate):
+    """DI 태그 라벨 오버라이드 upsert (예외 지정). DI 가 아니면 400."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tagtype FROM tb_tag_info WHERE tagsn = %s", (tagsn,))
+            tag = cur.fetchone()
+            if not tag:
+                raise HTTPException(status_code=404, detail="태그를 찾을 수 없습니다")
+            if tag[0] != "Digital Input":
+                raise HTTPException(status_code=400, detail="DI 태그만 라벨 설정이 가능합니다")
+
+            cur.execute(
+                """
+                INSERT INTO tb_tag_di_label
+                    (region, tagsn, label_0, label_1, abnormal_value, updated_at)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (region, tagsn) DO UPDATE SET
+                    label_0 = EXCLUDED.label_0,
+                    label_1 = EXCLUDED.label_1,
+                    abnormal_value = EXCLUDED.abnormal_value,
+                    updated_at = now()
+                """,
+                (DEFAULT_REGION, tagsn, body.label_0, body.label_1, body.abnormal_value))
+        conn.commit()
+        return {"status": "OK", "data": {"tagsn": tagsn}}
+    except HTTPException:
+        raise
+    except psycopg2.Error as e:
+        logger.error(f"DI 라벨 저장 실패 ({tagsn}): {e}")
+        return {"status": "ERROR", "message": "저장에 실패했습니다."}
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.delete("/tags/{tagsn}/di-label")
+async def delete_di_label(tagsn: str):
+    """DI 라벨 오버라이드 제거 → 기본 규칙으로 복귀."""
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM tb_tag_di_label WHERE region = %s AND tagsn = %s",
+                (DEFAULT_REGION, tagsn))
+        conn.commit()
+        return {"status": "OK", "data": {"tagsn": tagsn}}
+    except psycopg2.Error as e:
+        logger.error(f"DI 라벨 삭제 실패 ({tagsn}): {e}")
+        return {"status": "ERROR", "message": "삭제에 실패했습니다."}
     finally:
         if conn:
             conn.close()
