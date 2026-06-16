@@ -148,19 +148,21 @@ def get_baseline_eval(
         )
         by_kind = _round_group(cur.fetchall())
 
+        # 개별 시설(사이트명 + 시설유형, 예: "신평 가압장")
         cur.execute(
             """
-            SELECT COALESCE(t.facilitytype, '-'), COUNT(*), AVG(m.mae), MAX(m.mae),
+            SELECT TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, '')),
+                   COUNT(*), AVG(m.mae), MAX(m.mae),
                    AVG(m.coverage_pct), AVG(m.lag_avail_pct)
               FROM tb_baseline_tag_metric m
               JOIN tb_tag_info t ON t.tagsn = m.tagsn
              WHERE m.region = %s AND m.model_version = %s
-             GROUP BY COALESCE(t.facilitytype, '-')
+             GROUP BY TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, ''))
              ORDER BY AVG(m.mae) DESC NULLS LAST
             """,
             (region, latest_version),
         )
-        by_facility = _round_group(cur.fetchall())
+        by_site = _round_group(cur.fetchall())
 
         cur.close()
         return {
@@ -170,7 +172,7 @@ def get_baseline_eval(
             "runs": runs,
             "worst_tags": worst,
             "kinds": kinds,
-            "groups": {"by_kind": by_kind, "by_facility": by_facility},
+            "groups": {"by_kind": by_kind, "by_site": by_site},
         }
     finally:
         conn.close()
