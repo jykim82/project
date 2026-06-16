@@ -193,6 +193,8 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
         if df is None or df.empty:
             raise RuntimeError("학습 데이터 없음")
 
+        df_full = df  # min-row 필터 전 — 데이터셋 요약(박제)용
+
         # 태그별 최소 행수 필터
         counts = df.groupby("tagsn")["y"].transform("count")
         df = df[counts >= MIN_TAG_ROWS].copy()
@@ -271,6 +273,7 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
             "mae_hourly_mean": round(mae_hm, 4),
             "improvement_pct": round(improvement_pct, 1),
             "feature_set": FEATURE_SET, "status": "ok",
+            "dataset_summary": _dataset_summary(conn, df_full),
         }
 
         _save_artifact(region, {
@@ -297,6 +300,57 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
         conn.close()
 
 
+def _dataset_summary(conn, df_full) -> dict:
+    """학습 회차의 데이터셋 요약 — 회차별 박제용 (§2 데이터셋 현황).
+
+    df_full = min-row 필터 전 전체 시간집계 프레임. 회차마다 "어떤 데이터로
+    학습됐나" 를 동결 기록 → 평가 화면에서 추세 확인.
+    """
+    per_tag = df_full.groupby("tagsn")["y"].count()
+    tag_meta = df_full.drop_duplicates("tagsn")
+    by_trend_kind = {k: int(v) for k, v in tag_meta["trend_kind"].value_counts().items()}
+    by_facilitytype = {k: int(v) for k, v in tag_meta["facilitytype"].value_counts().head(8).items()}
+
+    ts_min, ts_max = df_full["ts"].min(), df_full["ts"].max()
+    summary = {
+        "data_start": ts_min.isoformat(),
+        "data_end": ts_max.isoformat(),
+        "span_days": round((ts_max - ts_min).total_seconds() / 86400, 1),
+        "n_hourly_rows": int(len(df_full)),
+        "n_tags_frame": int(per_tag.size),
+        "n_tags_trained": int((per_tag >= MIN_TAG_ROWS).sum()),
+        "n_tags_below_min": int((per_tag < MIN_TAG_ROWS).sum()),
+        "min_tag_rows": MIN_TAG_ROWS,
+        "by_trend_kind": by_trend_kind,
+        "by_facilitytype": by_facilitytype,
+    }
+
+    # skip 사유별 태그 수 (학습 제외 — _load_hourly_frame 의 WHERE 와 동일 규칙)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE t.tagtype LIKE %s) AS digital,
+              COUNT(*) FILTER (WHERE t.tagtype NOT LIKE %s AND (
+                    COALESCE(t.datainfo,'') LIKE %s OR COALESCE(t.datainfo,'') LIKE %s
+                    OR COALESCE(t.datainfo,'') LIKE %s)) AS accum,
+              COUNT(*) FILTER (WHERE t.tagtype NOT LIKE %s
+                    AND lower(COALESCE(t.unit,'')) IN ('m³','m3','kwh','kg')) AS unit
+              FROM tb_tag_info t
+            """,
+            ("%Digital%", "%Digital%", "%적산%", "%누적%", "%총량%", "%Digital%"),
+        )
+        d, a, u = cur.fetchone()
+        summary["skip"] = {"digital": int(d or 0), "accum": int(a or 0), "unit": int(u or 0)}
+    except Exception as e:
+        logger.debug(f"[baseline] skip 집계 건너뜀: {e}")
+        summary["skip"] = {}
+    finally:
+        cur.close()
+    return summary
+
+
 def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
     """회차/태그 지표를 tb_baseline_model_run / tb_baseline_tag_metric 에 적재 (§6.2)."""
     cur = conn.cursor()
@@ -306,19 +360,22 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
             INSERT INTO tb_baseline_model_run
               (region, model_version, trained_at, train_window_days,
                n_tags_trained, n_tags_fallback, overall_mae, overall_rmse,
-               coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status,
+               dataset_summary)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
             ON CONFLICT (region, model_version) DO UPDATE SET
                trained_at=EXCLUDED.trained_at, overall_mae=EXCLUDED.overall_mae,
                overall_rmse=EXCLUDED.overall_rmse, coverage_pct=EXCLUDED.coverage_pct,
                mae_hourly_mean=EXCLUDED.mae_hourly_mean,
-               improvement_pct=EXCLUDED.improvement_pct, status=EXCLUDED.status
+               improvement_pct=EXCLUDED.improvement_pct, status=EXCLUDED.status,
+               dataset_summary=EXCLUDED.dataset_summary
             """,
             (metrics["region"], metrics["model_version"], metrics["trained_at"],
              metrics["train_window_days"], metrics["n_tags_trained"],
              metrics["n_tags_fallback"], metrics["overall_mae"], metrics["overall_rmse"],
              metrics["coverage_pct"], metrics["mae_hourly_mean"],
-             metrics["improvement_pct"], metrics["feature_set"], metrics["status"]),
+             metrics["improvement_pct"], metrics["feature_set"], metrics["status"],
+             json.dumps(metrics.get("dataset_summary") or {}, ensure_ascii=False)),
         )
         region, version = metrics["region"], metrics["model_version"]
         rows = [

@@ -42,7 +42,8 @@ def get_baseline_eval(
             """
             SELECT model_version, trained_at, train_window_days,
                    n_tags_trained, n_tags_fallback, overall_mae, overall_rmse,
-                   coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status
+                   coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status,
+                   dataset_summary
               FROM tb_baseline_model_run
              WHERE region = %s
              ORDER BY trained_at DESC
@@ -64,6 +65,7 @@ def get_baseline_eval(
                 "improvement_pct": r[9],
                 "feature_set": r[10],
                 "status": r[11],
+                "dataset_summary": r[12],
             }
             for r in cur.fetchall()
         ]
