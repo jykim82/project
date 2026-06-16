@@ -133,10 +133,17 @@
 - **데이터셋 현황 섹션**(최신 회차 박제): 기간·시간집계 행수·학습/전체 태그수·
   최소 행수 미달 태그수 + 종류별/시설유형별/skip 사유별 분포.
 - 회차 히스토리(버전·시각·지표 추이).
-- 최악 태그 테이블(절대 MAE 내림차순, method 배지 + **종류 칩 필터**).
+- 최악 태그 테이블(절대 MAE 내림차순, method 배지 + **종류 칩 필터** + lag확보% 컬럼).
   - 절대 MAE 는 단위 큰 종류(유량 LPS·CMH)가 상위 독점 → `kind` 파라미터로
     종류별(유량/수위/압력/수질/기타) 좁혀보기. `tb_baseline_tag_metric.trend_kind`
     + `GET /admin/baseline-eval?kind=flow`, 응답 `kinds`(드롭다운용 종류·개수).
+- **그룹별 성능 테이블**(평균 MAE 내림차순): 종류(trend_kind) / 시설유형
+  (facilitytype) **토글**. 그룹별 태그수·평균 MAE·최대 MAE·평균 커버리지·평균
+  lag확보율. 단일 태그가 아닌 그룹 단위로 모델이 잘/못 맞추는 영역 + 데이터부족
+  기여(lag확보) 를 한눈에 진단. 응답 `groups.by_kind` / `groups.by_facility`.
+  - by_kind 는 `tb_baseline_tag_metric` 집계, by_facility 는 `tb_tag_info` 조인.
+    절대 MAE 는 단위 스케일에 비례하므로 그룹 간 직접 비교보다 그룹 내 추이·
+    lag확보와 묶어 해석.
 - 드릴다운 차트는 생략(필요 시 추가). 백엔드 `GET /admin/baseline-eval`.
 - 메뉴: `sidebar-menus.ts` + `tb_menu` 등록.
 
@@ -184,3 +191,8 @@
   기여인지 회차 간 (lag 확보율↑ vs MAE↓) 로 검증. §6.2.2 절차. dev 검증: 학습창
   6.9일이라 lag24 85.6%·lag168 0.0%(7일 미만) → 전 태그 lag_avail_pct=0. 운영
   60일 재학습 시 lag168~100% 로 MAE 감소 여부 직접 대조 가능.
+- 2026-06-16 그룹별 성능 테이블 — `GET /admin/baseline-eval` 응답 `groups`
+  (by_kind = `tb_baseline_tag_metric` 집계, by_facility = `tb_tag_info` 조인).
+  그룹별 태그수·평균/최대 MAE·평균 커버리지·평균 lag확보. 화면 종류/시설유형
+  토글 테이블(평균 MAE 내림차순). 신규 마이그레이션 없음(집계만). dev 검증:
+  종류 5그룹(기타 32.1→수위 0.16)·시설유형 4그룹(소블록 8.58→소소블록 2.08) 렌더 확인.
