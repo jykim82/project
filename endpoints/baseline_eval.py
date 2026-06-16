@@ -118,6 +118,50 @@ def get_baseline_eval(
             }
             for r in cur.fetchall()
         ]
+
+        # 그룹별 성능 집계 (최신 회차) — 종류(trend_kind) / 시설유형(facilitytype)
+        # 절대 MAE 는 단위 스케일에 비례하므로 그룹 간 직접 비교보다 그룹 내
+        # 회차 추이·lag 확보율과 묶어 해석한다.
+        def _round_group(rows):
+            return [
+                {
+                    "group": g[0],
+                    "n": g[1],
+                    "mae_avg": round(g[2], 4) if g[2] is not None else None,
+                    "mae_max": round(g[3], 4) if g[3] is not None else None,
+                    "coverage_avg": round(g[4], 1) if g[4] is not None else None,
+                    "lag_avail_avg": round(g[5], 1) if g[5] is not None else None,
+                }
+                for g in rows
+            ]
+
+        cur.execute(
+            """
+            SELECT trend_kind, COUNT(*), AVG(mae), MAX(mae),
+                   AVG(coverage_pct), AVG(lag_avail_pct)
+              FROM tb_baseline_tag_metric
+             WHERE region = %s AND model_version = %s AND trend_kind IS NOT NULL
+             GROUP BY trend_kind
+             ORDER BY AVG(mae) DESC NULLS LAST
+            """,
+            (region, latest_version),
+        )
+        by_kind = _round_group(cur.fetchall())
+
+        cur.execute(
+            """
+            SELECT COALESCE(t.facilitytype, '-'), COUNT(*), AVG(m.mae), MAX(m.mae),
+                   AVG(m.coverage_pct), AVG(m.lag_avail_pct)
+              FROM tb_baseline_tag_metric m
+              JOIN tb_tag_info t ON t.tagsn = m.tagsn
+             WHERE m.region = %s AND m.model_version = %s
+             GROUP BY COALESCE(t.facilitytype, '-')
+             ORDER BY AVG(m.mae) DESC NULLS LAST
+            """,
+            (region, latest_version),
+        )
+        by_facility = _round_group(cur.fetchall())
+
         cur.close()
         return {
             "ready": True,
@@ -126,6 +170,7 @@ def get_baseline_eval(
             "runs": runs,
             "worst_tags": worst,
             "kinds": kinds,
+            "groups": {"by_kind": by_kind, "by_facility": by_facility},
         }
     finally:
         conn.close()
