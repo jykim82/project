@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin/baseline-eval", tags=["baseline-eval"])
 
+
+def _ACC_SQL(prefix: str = "") -> str:
+    """단위 무관 정확도% = 100 × (1 − MAE/y_scale), [0,100] 클램프. y_scale 결측 시 NULL."""
+    return (
+        f"GREATEST(0, LEAST(100, 100 * (1 - {prefix}mae / "
+        f"NULLIF({prefix}y_scale, 0))))"
+    )
+
 _get_db_connection: Optional[Callable] = None
 
 
@@ -102,7 +110,7 @@ def get_baseline_eval(
         cur.execute(
             f"""
             SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method,
-                   trend_kind, lag_avail_pct
+                   trend_kind, lag_avail_pct, y_scale, {_ACC_SQL("")} AS accuracy
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s{kind_clause}
              ORDER BY mae DESC NULLS LAST
@@ -114,35 +122,37 @@ def get_baseline_eval(
             {
                 "tagsn": r[0], "mae": r[1], "rmse": r[2], "sigma": r[3],
                 "coverage_pct": r[4], "n_samples": r[5], "method": r[6],
-                "trend_kind": r[7], "lag_avail_pct": r[8],
+                "trend_kind": r[7], "lag_avail_pct": r[8], "y_scale": r[9],
+                "accuracy_pct": round(r[10], 1) if r[10] is not None else None,
             }
             for r in cur.fetchall()
         ]
 
-        # 그룹별 성능 집계 (최신 회차) — 종류(trend_kind) / 시설유형(facilitytype)
-        # 절대 MAE 는 단위 스케일에 비례하므로 그룹 간 직접 비교보다 그룹 내
-        # 회차 추이·lag 확보율과 묶어 해석한다.
+        # 그룹별 성능 집계 (최신 회차) — 종류(trend_kind) / 개별 시설(sitename)
+        # 절대 MAE 는 단위 스케일에 비례하므로 단위 무관 정확도%(=100×(1−MAE/y_scale))
+        # 를 함께 산출해 유량·수위·압력 시설을 같은 척도로 비교 가능하게 한다.
         def _round_group(rows):
             return [
                 {
                     "group": g[0],
                     "n": g[1],
-                    "mae_avg": round(g[2], 4) if g[2] is not None else None,
-                    "mae_max": round(g[3], 4) if g[3] is not None else None,
-                    "coverage_avg": round(g[4], 1) if g[4] is not None else None,
-                    "lag_avail_avg": round(g[5], 1) if g[5] is not None else None,
+                    "accuracy_avg": round(g[2], 1) if g[2] is not None else None,
+                    "mae_avg": round(g[3], 4) if g[3] is not None else None,
+                    "mae_max": round(g[4], 4) if g[4] is not None else None,
+                    "coverage_avg": round(g[5], 1) if g[5] is not None else None,
+                    "lag_avail_avg": round(g[6], 1) if g[6] is not None else None,
                 }
                 for g in rows
             ]
 
         cur.execute(
-            """
-            SELECT trend_kind, COUNT(*), AVG(mae), MAX(mae),
+            f"""
+            SELECT trend_kind, COUNT(*), AVG({_ACC_SQL("")}), AVG(mae), MAX(mae),
                    AVG(coverage_pct), AVG(lag_avail_pct)
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s AND trend_kind IS NOT NULL
              GROUP BY trend_kind
-             ORDER BY AVG(mae) DESC NULLS LAST
+             ORDER BY AVG({_ACC_SQL("")}) ASC NULLS LAST
             """,
             (region, latest_version),
         )
@@ -150,19 +160,33 @@ def get_baseline_eval(
 
         # 개별 시설(사이트명 + 시설유형, 예: "신평 가압장")
         cur.execute(
-            """
+            f"""
             SELECT TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, '')),
-                   COUNT(*), AVG(m.mae), MAX(m.mae),
+                   COUNT(*), AVG({_ACC_SQL("m.")}), AVG(m.mae), MAX(m.mae),
                    AVG(m.coverage_pct), AVG(m.lag_avail_pct)
               FROM tb_baseline_tag_metric m
               JOIN tb_tag_info t ON t.tagsn = m.tagsn
              WHERE m.region = %s AND m.model_version = %s
              GROUP BY TRIM(COALESCE(t.sitename, '') || ' ' || COALESCE(t.facilitytype, ''))
-             ORDER BY AVG(m.mae) DESC NULLS LAST
+             ORDER BY AVG({_ACC_SQL("m.")}) ASC NULLS LAST
             """,
             (region, latest_version),
         )
         by_site = _round_group(cur.fetchall())
+
+        # 전체 정확도(단위 무관) — 최신 회차 전 태그 평균
+        cur.execute(
+            f"""
+            SELECT AVG({_ACC_SQL("")})
+              FROM tb_baseline_tag_metric
+             WHERE region = %s AND model_version = %s
+            """,
+            (region, latest_version),
+        )
+        acc_row = cur.fetchone()
+        overall_accuracy = (
+            round(acc_row[0], 1) if acc_row and acc_row[0] is not None else None
+        )
 
         cur.close()
         return {
@@ -173,6 +197,7 @@ def get_baseline_eval(
             "worst_tags": worst,
             "kinds": kinds,
             "groups": {"by_kind": by_kind, "by_site": by_site},
+            "overall_accuracy_pct": overall_accuracy,
         }
     finally:
         conn.close()

@@ -248,6 +248,9 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
             # 이력 없이 prior 로 예측 → 오차의 데이터부족 기여를 검증 가능하게 박제.
             lag_ok = grp["lag_24h"].notna() & grp["lag_168h"].notna()
             lag_avail = float(lag_ok.mean()) * 100
+            # 실제값 크기(scale) — 단위 무관 정확도 산출용. MAE 를 신호 크기로 나눠
+            # 유량(LPS 수백)·수위(m 한자리)를 같은 정확도% 척도로 비교 가능하게 박제.
+            y_scale = float(np.abs(grp["y"].values).mean())
             tag_sigma[tagsn] = sigma
             tag_metrics.append({
                 "tagsn": tagsn, "mae": round(mae, 4), "rmse": round(rmse, 4),
@@ -255,6 +258,7 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
                 "n_samples": int(len(r)), "method": "gbt",
                 "trend_kind": str(grp["trend_kind"].iloc[0]),
                 "lag_avail_pct": round(lag_avail, 1),
+                "y_scale": round(y_scale, 4),
             })
         global_sigma = float(np.median(list(tag_sigma.values()))) if tag_sigma else overall_rmse
         coverage_pct = float(np.mean([m["coverage_pct"] for m in tag_metrics])) if tag_metrics else 0.0
@@ -391,7 +395,7 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
         rows = [
             (region, version, m["tagsn"], m["mae"], m["rmse"], m["sigma"],
              m["coverage_pct"], m["n_samples"], m["method"], m.get("trend_kind"),
-             m.get("lag_avail_pct"))
+             m.get("lag_avail_pct"), m.get("y_scale"))
             for m in tag_metrics
         ]
         if rows:
@@ -399,8 +403,9 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
                 """
                 INSERT INTO tb_baseline_tag_metric
                   (region, model_version, tagsn, mae, rmse, sigma,
-                   coverage_pct, n_samples, method, trend_kind, lag_avail_pct)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   coverage_pct, n_samples, method, trend_kind, lag_avail_pct,
+                   y_scale)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (region, model_version, tagsn) DO NOTHING
                 """,
                 rows,
