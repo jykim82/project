@@ -201,3 +201,65 @@ def get_baseline_eval(
         }
     finally:
         conn.close()
+
+
+@router.get("/group-tags")
+def get_group_tags(
+    region: str = Query("R01"),
+    axis: str = Query("site", description="그룹 축: kind(종류) | site(시설)"),
+    group: str = Query(..., description="그룹 키 (종류 코드 또는 '사이트명 시설유형')"),
+):
+    """그룹(종류/시설)에 속한 학습 태그 상세 리스트 (최신 회차, MAE 내림차순).
+
+    그룹별 정확도 행을 펼쳐 '어떤 태그로 학습됐나'를 확인한다.
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT model_version FROM tb_baseline_model_run "
+            "WHERE region = %s ORDER BY trained_at DESC LIMIT 1",
+            (region,),
+        )
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            return {"region": region, "axis": axis, "group": group, "tags": []}
+        version = row[0]
+
+        if axis == "kind":
+            where = "m.trend_kind = %s"
+        else:
+            where = (
+                "TRIM(COALESCE(t.sitename, '') || ' ' || "
+                "COALESCE(t.facilitytype, '')) = %s"
+            )
+        cur.execute(
+            f"""
+            SELECT m.tagsn, t.datadesc, m.trend_kind, m.mae, m.rmse, m.sigma,
+                   m.coverage_pct, m.lag_avail_pct, m.n_samples, m.method,
+                   m.y_scale, {_ACC_SQL("m.")} AS accuracy
+              FROM tb_baseline_tag_metric m
+              LEFT JOIN tb_tag_info t ON t.tagsn = m.tagsn
+             WHERE m.region = %s AND m.model_version = %s AND {where}
+             ORDER BY m.mae DESC NULLS LAST
+            """,
+            (region, version, group),
+        )
+        tags = [
+            {
+                "tagsn": r[0], "datadesc": r[1], "trend_kind": r[2],
+                "mae": r[3], "rmse": r[4], "sigma": r[5],
+                "coverage_pct": r[6], "lag_avail_pct": r[7],
+                "n_samples": r[8], "method": r[9], "y_scale": r[10],
+                "accuracy_pct": round(r[11], 1) if r[11] is not None else None,
+            }
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        return {
+            "region": region, "axis": axis, "group": group,
+            "model_version": version, "tags": tags,
+        }
+    finally:
+        conn.close()
