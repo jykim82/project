@@ -109,7 +109,7 @@
   coverage_pct, mae_hourly_mean, improvement_pct, feature_set, status,
   **dataset_summary(jsonb)**.
 - `tb_baseline_tag_metric` — 태그별: region, model_version, tagsn, mae, rmse,
-  sigma, coverage_pct, n_samples, method.
+  sigma, coverage_pct, n_samples, method, **trend_kind(Migration 0088)**.
 
 #### 6.2.1 데이터셋 요약 박제 (`dataset_summary` jsonb, Migration 0087)
 - 회차마다 "이번 학습이 **어떤 데이터로** 됐나"를 동결 기록 → 회차별 추세 확인.
@@ -124,7 +124,10 @@
 - **데이터셋 현황 섹션**(최신 회차 박제): 기간·시간집계 행수·학습/전체 태그수·
   최소 행수 미달 태그수 + 종류별/시설유형별/skip 사유별 분포.
 - 회차 히스토리(버전·시각·지표 추이).
-- 최악 태그 테이블(MAE/커버리지 정렬, method 배지, 검색·필터).
+- 최악 태그 테이블(절대 MAE 내림차순, method 배지 + **종류 칩 필터**).
+  - 절대 MAE 는 단위 큰 종류(유량 LPS·CMH)가 상위 독점 → `kind` 파라미터로
+    종류별(유량/수위/압력/수질/기타) 좁혀보기. `tb_baseline_tag_metric.trend_kind`
+    + `GET /admin/baseline-eval?kind=flow`, 응답 `kinds`(드롭다운용 종류·개수).
 - 드릴다운 차트는 생략(필요 시 추가). 백엔드 `GET /admin/baseline-eval`.
 - 메뉴: `sidebar-menus.ts` + `tb_menu` 등록.
 
@@ -162,3 +165,7 @@
   `_dataset_summary()`(기간·행수·종류/시설/skip 분포, min-row 필터 전 프레임 계산)
   → `_persist_metrics`·메타 적재 → `GET /admin/baseline-eval` latest 반환 →
   화면 "학습 데이터셋 현황" 섹션. dev 검증: 6.6일/132,129행/831 태그 렌더 확인.
+- 2026-06-16 최악 태그 종류 필터 — Migration 0088(`tb_baseline_tag_metric.trend_kind`)
+  + 학습 시 종류 적재 → `GET /admin/baseline-eval?kind=` 필터 + 응답 `kinds` →
+  화면 종류 칩(전체/유량/수위/압력/수질/기타). 절대 MAE 가 유량(스케일 큼) 상위
+  독점 문제 완화. dev 검증: 압력 필터 시 top MAE 7.09(전체 410.5 대비) 확인.
