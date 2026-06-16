@@ -110,6 +110,7 @@ from endpoints.fault_case import router as fault_case_router, init as init_fault
 from endpoints.alarm_fault_correlation import router as afc_router, init as init_afc
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
+from endpoints.baseline_eval import router as baseline_eval_router, init as init_baseline_eval
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
 from endpoints.alarm_calendar import router as alarm_calendar_router, init as init_alarm_calendar
@@ -2626,6 +2627,10 @@ app.include_router(flow_map_crud_router)
 # CSV 일괄 가져오기 엔드포인트 모듈 초기화
 init_csv_import(get_db_connection)
 app.include_router(csv_import_router)
+
+# 트렌드 GBT baseline 성능 평가 조회 엔드포인트 모듈 초기화
+init_baseline_eval(get_db_connection)
+app.include_router(baseline_eval_router)
 
 # 트렌드 엔드포인트 모듈 초기화
 init_trend(get_db_connection, ollama_client)

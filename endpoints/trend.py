@@ -555,10 +555,14 @@ async def explain_trend(request: Request):
             f = comparison.get("forecast") or {}
             ch = comparison.get("causal_hint") or {}
             if b.get("status"):
-                # 1줄로 압축: 판정 + 이격%
+                # 1줄로 압축: 판정 + 이격% + 기대값 산출 방식
                 dev = b.get("deviation_pct")
                 dev_str = f", 이격 {dev:+.1f}%" if dev is not None else ""
-                comparison_lines.append(f"- 평소 대비: {b.get('status_label','?')}{dev_str}")
+                if b.get("method") == "gbt":
+                    base_str = " (정상 기대값=그래디언트 부스팅, 캘린더·계절 반영)"
+                else:
+                    base_str = " (정상 기대값=시간대 평균)"
+                comparison_lines.append(f"- 평소 대비: {b.get('status_label','?')}{dev_str}{base_str}")
                 if dev is not None:
                     allowed_numbers.append(float(dev))
                     allowed_numbers.append(abs(float(dev)))

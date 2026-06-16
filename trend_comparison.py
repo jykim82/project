@@ -150,6 +150,19 @@ def _hourly_pattern_baseline(
         cur.close()
 
 
+def _gbt_baseline_or_none(conn, tagsn: str, target_times: list[datetime]):
+    """GBT 정상 기대값 baseline. 모델/데이터 없거나 오류 시 None → 호출부 폴백.
+
+    Returns (series, band_upper, band_lower, mean_sigma, model_version) 또는 None.
+    """
+    try:
+        import trend_baseline
+        return trend_baseline.gbt_baseline(conn, tagsn, target_times)
+    except Exception as e:  # 모델 미설치/로드 실패 등 — 폴백 안전
+        logger.debug(f"trend_comparison: GBT baseline 폴백 ({e})")
+        return None
+
+
 def _lookup_site_group(conn, sitename: str, facilitytype: str) -> str:
     """tb_site_anomaly_profile 의 site_group (A/B/C/D). 없으면 'B'."""
     if not sitename:
@@ -503,9 +516,20 @@ def compute_comparison(
                  "computed_at": datetime.now(timezone.utc).isoformat()}
 
     # ── baseline ─────────────────────────────────────────
-    bres = _hourly_pattern_baseline(conn, tagsn, times, learning_days)
+    # GBT(정상 기대값) 우선, 실패/데이터부족 시 hourly_mean 폴백 (사양 §4).
+    method = "hourly_mean"
+    model_version: Optional[str] = None
+    bres = _gbt_baseline_or_none(conn, tagsn, times)
     if bres:
-        b_series, b_upper, b_lower, mean_sigma = bres
+        b_series, b_upper, b_lower, mean_sigma, model_version = bres
+        method = "gbt"
+    else:
+        hm = _hourly_pattern_baseline(conn, tagsn, times, learning_days)
+        if hm:
+            b_series, b_upper, b_lower, mean_sigma = hm
+        else:
+            b_series = None  # type: ignore[assignment]
+    if b_series is not None:
         # 최근 6 샘플 평균
         recent_pairs = [(b, v) for b, v in zip(b_series[-6:], vals[-6:])
                         if b is not None and v is not None]
@@ -520,7 +544,8 @@ def compute_comparison(
                 "series": b_series,
                 "band_upper": b_upper,
                 "band_lower": b_lower,
-                "method": "hourly_mean",
+                "method": method,
+                "model_version": model_version,
                 "learning_window_days": learning_days,
                 "status": status,
                 "status_label": label,
