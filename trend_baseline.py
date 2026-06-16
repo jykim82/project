@@ -244,12 +244,17 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
             mae = float(np.mean(np.abs(r)))
             rmse = float(np.sqrt(np.mean(r ** 2)))
             cover = float(np.mean(np.abs(r) <= 2 * sigma)) * 100 if sigma > 0 else 0.0
+            # 자기 과거(lag) 피처 확보율 — 둘 다 있는 행 비율. 낮으면 모델이 자기
+            # 이력 없이 prior 로 예측 → 오차의 데이터부족 기여를 검증 가능하게 박제.
+            lag_ok = grp["lag_24h"].notna() & grp["lag_168h"].notna()
+            lag_avail = float(lag_ok.mean()) * 100
             tag_sigma[tagsn] = sigma
             tag_metrics.append({
                 "tagsn": tagsn, "mae": round(mae, 4), "rmse": round(rmse, 4),
                 "sigma": round(sigma, 4), "coverage_pct": round(cover, 1),
                 "n_samples": int(len(r)), "method": "gbt",
                 "trend_kind": str(grp["trend_kind"].iloc[0]),
+                "lag_avail_pct": round(lag_avail, 1),
             })
         global_sigma = float(np.median(list(tag_sigma.values()))) if tag_sigma else overall_rmse
         coverage_pct = float(np.mean([m["coverage_pct"] for m in tag_metrics])) if tag_metrics else 0.0
@@ -274,7 +279,11 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
             "mae_hourly_mean": round(mae_hm, 4),
             "improvement_pct": round(improvement_pct, 1),
             "feature_set": FEATURE_SET, "status": "ok",
-            "dataset_summary": _dataset_summary(conn, df_full),
+            "dataset_summary": {
+                **_dataset_summary(conn, df_full),
+                "lag24_avail_pct": round(float(df["lag_24h"].notna().mean()) * 100, 1),
+                "lag168_avail_pct": round(float(df["lag_168h"].notna().mean()) * 100, 1),
+            },
         }
 
         _save_artifact(region, {
@@ -381,7 +390,8 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
         region, version = metrics["region"], metrics["model_version"]
         rows = [
             (region, version, m["tagsn"], m["mae"], m["rmse"], m["sigma"],
-             m["coverage_pct"], m["n_samples"], m["method"], m.get("trend_kind"))
+             m["coverage_pct"], m["n_samples"], m["method"], m.get("trend_kind"),
+             m.get("lag_avail_pct"))
             for m in tag_metrics
         ]
         if rows:
@@ -389,8 +399,8 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
                 """
                 INSERT INTO tb_baseline_tag_metric
                   (region, model_version, tagsn, mae, rmse, sigma,
-                   coverage_pct, n_samples, method, trend_kind)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   coverage_pct, n_samples, method, trend_kind, lag_avail_pct)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (region, model_version, tagsn) DO NOTHING
                 """,
                 rows,

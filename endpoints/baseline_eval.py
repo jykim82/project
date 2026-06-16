@@ -101,7 +101,8 @@ def get_baseline_eval(
         params.append(worst_limit)
         cur.execute(
             f"""
-            SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method, trend_kind
+            SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method,
+                   trend_kind, lag_avail_pct
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s{kind_clause}
              ORDER BY mae DESC NULLS LAST
@@ -113,7 +114,7 @@ def get_baseline_eval(
             {
                 "tagsn": r[0], "mae": r[1], "rmse": r[2], "sigma": r[3],
                 "coverage_pct": r[4], "n_samples": r[5], "method": r[6],
-                "trend_kind": r[7],
+                "trend_kind": r[7], "lag_avail_pct": r[8],
             }
             for r in cur.fetchall()
         ]
