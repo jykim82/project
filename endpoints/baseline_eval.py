@@ -112,6 +112,25 @@ def get_baseline_eval(
         latest = runs[0]
         latest_version = latest["model_version"]
 
+        # 회차별 정확도%(단위 무관, 저신호 제외) — 성능 추이 라인차트용
+        versions = [r["model_version"] for r in runs]
+        cur.execute(
+            f"""
+            SELECT model_version,
+                   AVG({_ACC_SQL("")}) FILTER (WHERE NOT {_LOWSIG_SQL("")})
+              FROM tb_baseline_tag_metric
+             WHERE region = %s AND model_version = ANY(%s)
+             GROUP BY model_version
+            """,
+            (region, versions),
+        )
+        acc_by_version = {
+            r[0]: (round(r[1], 1) if r[1] is not None else None)
+            for r in cur.fetchall()
+        }
+        for r in runs:
+            r["accuracy_pct"] = acc_by_version.get(r["model_version"])
+
         # 최신 회차에 존재하는 종류 목록 (필터 드롭다운용)
         cur.execute(
             """
