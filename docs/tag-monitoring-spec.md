@@ -291,8 +291,8 @@ page, page_size
    "⋯" 폴백→모달 진입. 콘솔 에러 0.
 
 ### Phase 4 — 다듬기 (선택)
-- DI 현재값 의미 라벨(0/1→정상/고장), 갱신 지연 시각 강조, 자동 새로고침 토글,
-  이상 카테고리 요약 KPI 바.
+- ✅ DI 현재값 의미 라벨(0/1→정상/고장, 극성 지정 가능) — §11 참조 (2026-06-16).
+- 갱신 지연 시각 강조, 자동 새로고침 토글, 이상 카테고리 요약 KPI 바. (미착수)
 
 **검증 공통**: 각 Phase 완료 후 Playwright 6회 반복 시나리오 + 기존 마스터
 페이지 회귀 확인. 산출물은 `tmp/`.
@@ -320,3 +320,42 @@ page, page_size
   `GET /network/devices/{id}/tags` + `/network` 장비 상세 패널 "영향 측정 태그"
   섹션(`AffectedTagsSection`). ping 죽은 장비 뒤 측정 태그 현재값 표시로
   "ping 장애 ≠ 데이터 손실" 확인.
+- 2026-06-16 v1.7 — Phase 4 DI 현재값 라벨링 구현(§11). 극성 지정 가능
+  (0=정상/1=이상 또는 반대). 기본 규칙(zero-config) + 예외 전용 오버라이드
+  테이블(`tb_tag_di_label`, Migration 0084) + 우클릭 "DI 라벨 설정" 다이얼로그.
+
+---
+
+## 11. DI 현재값 라벨링 (Phase 4)
+
+Digital Input 태그의 raw `0/1` 을 의미 라벨(정상/이상, 운전/정지 등)로 표시하고,
+어느 값이 "이상"인지 **극성을 지정**한다. 현장마다 `0=정상/1=고장` 일 수도,
+반대(active-low)일 수도 있어 태그별 지정이 필요하다.
+
+### 11.1 모델
+3-요소: `(label_0, label_1, abnormal_value)`. `abnormal_value ∈ {0, 1, null}`.
+- `null` = 중립(색상 강조 없음, 단순 상태 표시).
+- `abnormal_value == 현재 bit` 이면 빨간색(`destructive`) Badge, 아니면 `secondary`.
+
+### 11.2 기본 규칙 (zero-config)
+오버라이드 행이 없는 DI 태그는 백엔드가 자동 라벨링(1,755개 수동 설정 회피):
+- `alarm_tag_yn=1` → `{0:정상, 1:이상}`, 이상값 `1` (기존 active-high 규칙과 일치).
+- `alarm_tag_yn=0` → `{0:OFF, 1:ON}`, 이상값 `null` (중립 상태표시).
+
+### 11.3 오버라이드 (예외 전용)
+- 테이블 `tb_tag_di_label` (Migration 0084) — **행이 있는 태그만** 별도 라벨.
+  `(region, tagsn)` 복합 PK, region 멀티테넌시 유지.
+- 극성 반대거나 라벨을 운전/정지 등으로 바꿀 태그만 기록. 삭제 시 기본 규칙 복귀
+  (데이터 손실 없는 롤백).
+
+### 11.4 API
+- `GET /tags/{tagsn}/di-label` — 해석된 라벨 + `is_override`. 404(없음)/400(DI 아님).
+- `PUT /tags/{tagsn}/di-label` — upsert (`ON CONFLICT (region, tagsn)`).
+- `DELETE /tags/{tagsn}/di-label` — 오버라이드 제거 → 기본 규칙 복귀.
+- `GET /tags/monitoring` 응답에 `current_value_label` / `current_value_abnormal`
+  포함 (`LEFT JOIN tb_tag_di_label` + `_resolve_di_label`).
+
+### 11.5 UX
+- `TagMonitoringTable` 현재값 셀: DI 는 숫자 대신 라벨 Badge(이상=빨강).
+- 우클릭/⋯ 메뉴 "DI 라벨 설정" (DI 행만) → `DiLabelDialog` 인라인 모달:
+  값0/값1 라벨 입력 + 이상값 셀렉트(없음/값0/값1) + 저장/기본값 초기화.
