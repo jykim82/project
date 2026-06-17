@@ -1175,7 +1175,7 @@ def stats_root_causes(
         cur.execute(
             """
             WITH item_codes AS (
-              SELECT t.equipment_id, t.equipmenttype, t.sitename,
+              SELECT t.equipment_id, t.equipmenttype, t.sitename, t.facilitytype,
                      i.item_id, i.occurred_at, rc.code,
                      CASE
                        WHEN i.occurred_at >= now() - interval '1 year'  THEN 1.0
@@ -1190,14 +1190,14 @@ def stats_root_causes(
                  AND t.equipment_id IS NOT NULL
             ),
             weighted AS (
-              SELECT ic.equipment_id, ic.equipmenttype, ic.sitename,
+              SELECT ic.equipment_id, ic.equipmenttype, ic.sitename, ic.facilitytype,
                      COUNT(*) AS cause_count,
                      SUM(tx.weight * ic.time_decay) AS weighted_score,
                      SUM(CASE WHEN ic.time_decay >= 1.0 THEN 1 ELSE 0 END) AS recent_1y,
                      SUM(CASE WHEN ic.time_decay >= 0.5 AND ic.time_decay < 1.0 THEN 1 ELSE 0 END) AS recent_2y
                 FROM item_codes ic
                 JOIN tb_root_cause_taxonomy tx ON tx.code = ic.code
-               GROUP BY ic.equipment_id, ic.equipmenttype, ic.sitename
+               GROUP BY ic.equipment_id, ic.equipmenttype, ic.sitename, ic.facilitytype
             ),
             totals AS (
               SELECT t.equipment_id, COUNT(*) AS total_count
@@ -1208,7 +1208,7 @@ def stats_root_causes(
                  AND t.equipment_id IS NOT NULL
                GROUP BY t.equipment_id
             )
-            SELECT w.equipment_id, w.equipmenttype, w.sitename,
+            SELECT w.equipment_id, w.equipmenttype, w.sitename, w.facilitytype,
                    w.cause_count, COALESCE(t.total_count, 0) AS total_count,
                    ROUND(w.weighted_score::numeric, 2) AS weighted_score,
                    w.recent_1y, w.recent_2y
