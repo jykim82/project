@@ -123,8 +123,8 @@ docker exec slm-backend cat /app/data/models/baseline_gbt_R01_meta.json
 docker exec slm-backend ls -la /app/data/models/
 ```
 
-P2(`/admin/baseline-eval`) 도입 후에는 회차별 지표가 DB(`tb_baseline_model_run`)
-에 적재되어 화면에서 추세를 확인할 수 있습니다.
+P2(`/admin/model-eval?model=baseline`) 도입 후에는 회차별 지표가
+DB(`tb_baseline_model_run`)에 적재되어 화면에서 추세를 확인할 수 있습니다.
 
 ---
 

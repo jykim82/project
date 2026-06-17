@@ -128,7 +128,10 @@
   `by_trend_kind`, `by_facilitytype`(top-8), `skip{digital,accum,unit}`.
 - 기존 회차 행은 NULL — 화면 NULL 안전 처리.
 
-### 6.3 확인 화면 `/admin/baseline-eval` (경량 지표 뷰)
+### 6.3 확인 화면 `/admin/model-eval?model=baseline` (경량 지표 뷰)
+> 통합 "AI 모델 평가" 화면(`/admin/model-eval`)에서 모델 셀렉터로 선택. 구
+> 라우트 `/admin/baseline-eval` 은 redirect. 백엔드 API 경로는 불변
+> (`GET /admin/baseline-eval`).
 - 상단 KPI: **전체 정확도%**(MAE·RMSE 부기) · 커버리지(95% 신호등) ·
   **GBT vs hourly_mean 개선율** · 폴백 비율.
   - 정확도% = 100 × (1 − MAE / y_scale), [0,100] 클램프. y_scale = holdout 실제값
@@ -281,3 +284,8 @@
   별 태그 평균, 저신호 제외) 추가 — 마이그레이션 없음. dev 검증: 배지 "양호 — 운영
   적용 가능"(86.9%, 점검 9곳), 추이 차트 커버리지 변동(41→89%) 가시화, 목표선 라벨
   insideStartTop 으로 우측 클리핑 해소. tsc 신규 에러 0.
+- 2026-06-17 "AI 모델 평가" 통합 화면 — 트렌드·IForest 평가를
+  `/admin/model-eval` 한 화면으로 통합, 상단 셀렉터로 전환(`?model=baseline`).
+  페이지는 `BaselineEvalView` 컴포넌트로 추출, 구 라우트 `/admin/baseline-eval`
+  은 redirect. 메뉴 M100-13 → "AI 모델 평가"(migration 0093). 백엔드 API·로직
+  불변.

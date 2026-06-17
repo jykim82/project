@@ -139,7 +139,11 @@ pkl/테이블에 기록(ON CONFLICT UPSERT).
 `GET /admin/iforest-eval/group-models?region&axis=tier|facilitytype&group=...`
 - 그룹에 속한 모델 상세 리스트(캘리브레이션 내림차순).
 
-## 7. 평가 화면 (`/admin/iforest-eval`, M100-14)
+## 7. 평가 화면 (`/admin/model-eval?model=iforest`, M100-13)
+
+> 통합 "AI 모델 평가" 화면(`/admin/model-eval`)에서 모델 셀렉터로 선택. 구
+> 라우트 `/admin/iforest-eval` 은 redirect. 백엔드 API 경로 불변
+> (`GET /admin/iforest-eval`).
 
 baseline-eval 과 동일 구조·룩앤필:
 1. **종합 판정 배지** — 커버리지·캘리브레이션 기준 우수/양호/주의/미흡 + 점검
@@ -166,3 +170,7 @@ baseline-eval 과 동일 구조·룩앤필:
 
 - 2026-06-17 v1 — 영속화(pkl)+지표 테이블(0091)+CLI/cron+`/admin/iforest-eval`(0092).
   P1(안정성·커버리지) 구현, P2(레이블 기반 검증) 예고.
+- 2026-06-17 "AI 모델 평가" 통합 화면 — 트렌드·IForest 평가를 `/admin/model-eval`
+  한 화면으로 통합, 셀렉터 전환(`?model=iforest`). `IForestEvalView` 컴포넌트로
+  추출, 구 라우트 redirect. 메뉴 M100-14 삭제·M100-13 "AI 모델 평가"로 통합
+  (migration 0093). 백엔드 API·로직 불변.

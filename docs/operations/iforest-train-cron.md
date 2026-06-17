@@ -6,7 +6,8 @@ IForest(Isolation Forest) 설비·태그 이상탐지 모델을 **주 1회** 야
 
 - cron 없이도 탐지는 정상 동작 — 서버 기동 시 디스크 아티팩트를 로드하고,
   주기적 인메모리 재학습 루프가 모델을 갱신합니다. **cron 활성 시** 회차별
-  지표가 누적되어 `/admin/iforest-eval` 화면에서 추세를 확인할 수 있습니다.
+  지표가 누적되어 `/admin/model-eval?model=iforest` 화면에서 추세를 확인할 수
+  있습니다.
 - 비지도 모델이라 "정확도%" 가 아니라 **안정성(calibration_err)·커버리지%**
   로 평가합니다 (정답 레이블 기반 탐지 정밀도는 P2 로 보류).
 - 학습은 30일 롤링 학습창, region 별 1 아티팩트.
@@ -120,8 +121,8 @@ docker exec slm-timescaledb psql -U slm_dev -d slm -c \
      FROM tb_iforest_model_run WHERE region='R01' ORDER BY trained_at DESC LIMIT 5;"
 ```
 
-회차별 지표는 화면 `/admin/iforest-eval` (관리 그룹, MASTER/ADMIN) 에서
-KPI·추세·그룹별 집계·최악 캘리브레이션 모델로 확인합니다.
+회차별 지표는 통합 화면 `/admin/model-eval?model=iforest` (관리 그룹, MASTER/
+ADMIN) 에서 KPI·추세·그룹별 집계·최악 캘리브레이션 모델로 확인합니다.
 
 ---
 
@@ -130,7 +131,7 @@ KPI·추세·그룹별 집계·최악 캘리브레이션 모델로 확인합니�
 | 증상 | 원인 | 조치 |
 |------|------|------|
 | 화면 `학습 회차 없음` (ready=false) | cron/수동 학습 미실행 | §1 명령 1회 실행 |
-| calibration_err 급증 | 학습 데이터 이상·분포 급변 | 해당 그룹 `/admin/iforest-eval` 드릴다운 점검, 원인 설비 확인 |
+| calibration_err 급증 | 학습 데이터 이상·분포 급변 | 해당 그룹 `/admin/model-eval?model=iforest` 드릴다운 점검, 원인 설비 확인 |
 | coverage% 하락 | 적격 설비 대비 모델 미생성 증가(데이터 부족) | tier-2 폴백 태그 데이터 적재 상태 확인 |
 | 지표가 DB 에 안 쌓임 | 지표 테이블 미생성 | migration `0091_iforest_model_metrics.sql` 적용 확인 |
 | `ModuleNotFoundError: sklearn` | backend 이미지 sklearn 누락 | `docker compose build backend` 재빌드 |
