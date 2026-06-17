@@ -196,6 +196,7 @@ web/
 - `docs/epanet-flow-deviation-spec.md` — 시뮬 vs 실측 유량 차이 분석 사양 (B-2: 시설 단위 패널 + GIS 오버레이, Migration 0072 메뉴 등록)
 - `docs/trend-comparison-spec.md` — 트렌드 비교 지표 v1 (평소 대비 / 향후 전망 두 토글 + KPI 배지, anomaly_detector z-score 알람과 통일, NMF/CUSUM 흡수)
 - `docs/trend-baseline-gbt-spec.md` — 트렌드 정상 기대값 GBT baseline v1 (평소 대비의 기대값을 hourly_mean→HistGradientBoosting 으로 고도화, 주1회 학습 cron + hourly_mean 폴백, 성능평가 `/admin/baseline-eval`. forecast/z-score 판정 불변)
+- `docs/iforest-eval-spec.md` — IForest 이상탐지 모델 영속화·평가 v1 (인메모리 → 디스크 .pkl + 지표 DB. 비지도라 calibration_err·coverage% 로 평가(P1), 레이블 기반 정밀도 P2 보류. CLI `python -m anomaly_iforest train` + 주1회 cron + 성능평가 `/admin/iforest-eval`)
 - `docs/feature-sku-spec.md` — 기능 SKU·feature flag (v1, B1 EPANET Phase 1 구현 + B2~B5 예고)
 - `docs/emergency-contact-spec.md` — 비상연락처 (관리 UI + AI 채팅 EMERGENCY_CONTACT_QUERY 인텐트, region 'water'→'R01' 통일)
 - `docs/alarm-popup-spec.md` — 알람 발생 시 위기대응 모달 (경고 모달 / 주의 toast / 종합 카드 + SITE_SETTING.ALARM_POPUP_ENABLED 마스터 토글)
@@ -212,6 +213,7 @@ web/
 - `docs/operations/cron-setup.md` — 근본원인 자동 분류 cron 등록 가이드 (Linux/macOS/Docker)
 - `docs/operations/epanet-sim-cron.md` — EPANET 자동 시뮬 cron (시계열 누적, launchd plist + crontab + 트러블슈팅)
 - `docs/operations/baseline-train-cron.md` — 트렌드 GBT baseline 주1회 재훈련 cron (CLI `python -m trend_baseline train` + launchd/crontab + 롤백)
+- `docs/operations/iforest-train-cron.md` — IForest 이상탐지 모델 주1회 재학습 cron (CLI `python -m anomaly_iforest train` + launchd/crontab + 지표 모니터링)
 - `docs/claude-code-setup-guide.md` — 스킬/에이전트/셋업
 - `docs/migration-to-mac.md` — Windows → Mac 이전 기록 (구조 다이어그램은 이관 시점 스냅샷 — **폴더 구조 정본은 본 CLAUDE.md 의 "📂 디렉토리 구조" 섹션**)
 - `docs/deploy-secrets.md` — 시크릿 관리
