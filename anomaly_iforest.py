@@ -18,11 +18,14 @@ Tier-2 feature vector (기존):
   [approx_avg, hour_of_day, day_of_week, rate_of_change]
 """
 
+import json
 import logging
+import os
+import pickle
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -37,6 +40,12 @@ MIN_FACILITY_TIMESTAMPS = 80    # Tier-1 최소 공동 관측 타임스탬프
 CONTAMINATION = 0.05
 N_ESTIMATORS = 100
 RANDOM_STATE = 42
+
+# ── 영속화·평가 설정 (사양: docs/iforest-eval-spec.md) ────
+DEFAULT_REGION = "R01"
+MODEL_DIR = os.environ.get("IFOREST_MODEL_DIR", "data/models")
+TRAIN_WINDOW_DAYS = 30          # _TRAIN_SQL_* 의 interval '30 days' 과 일치
+FEATURE_SET = "v2"
 
 GROUP_CONTAMINATION = {"A": 0.03, "B": 0.05, "C": 0.08, "D": 0.05}
 
@@ -222,7 +231,8 @@ class IForestManager:
         self.train_all(get_connection_fn, site_profiles=site_profiles)
 
     def train_all(self, get_connection_fn,
-                  site_profiles: Optional[dict] = None) -> None:
+                  site_profiles: Optional[dict] = None,
+                  region: str = DEFAULT_REGION) -> None:
         with self._lock:
             if self._is_training:
                 return
@@ -232,8 +242,10 @@ class IForestManager:
             logger.info("IForest v2 학습 시작 (Tier-1 + Tier-2)...")
             conn = get_connection_fn()
 
-            tier1 = self._train_facility_models(conn, site_profiles)
-            tier2 = self._train_tag_models(conn, site_profiles, covered=set(tier1.keys()))
+            tier1, fmetrics, fac_elig, fac_skip = \
+                self._train_facility_models(conn, site_profiles)
+            tier2, tmetrics, tag_elig, tag_skip = \
+                self._train_tag_models(conn, site_profiles, covered=set(tier1.keys()))
 
             conn.close()
 
@@ -248,17 +260,108 @@ class IForestManager:
                 len(tier1), len(tier2),
             )
 
+            # ── 영속화: 모델 디스크 저장 + 지표 DB 적재 (부가 기능 — 실패해도 학습 성공) ──
+            try:
+                self._save_models(region)
+            except Exception as e:
+                logger.warning("IForest 모델 디스크 저장 건너뜀: %s", e)
+
+            try:
+                run, model_metrics = self._build_metrics(
+                    region, fmetrics + tmetrics,
+                    fac_elig + tag_elig, fac_skip + tag_skip,
+                )
+                pconn = get_connection_fn()
+                try:
+                    _persist_metrics(pconn, run, model_metrics)
+                finally:
+                    pconn.close()
+            except Exception as e:
+                logger.warning("IForest 지표 적재 건너뜀: %s", e)
+
         except Exception as e:
             logger.error("IForest 학습 실패: %s", e)
         finally:
             with self._lock:
                 self._is_training = False
 
+    # ── 영속화 ───────────────────────────────────────────
+
+    def _build_metrics(self, region: str, model_metrics: list[dict],
+                       n_eligible: int, n_skipped: int) -> tuple[dict, list[dict]]:
+        """회차 집계 지표 + 모델별 지표를 산출."""
+        version = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        tier1 = [m for m in model_metrics if m["tier"] == 1]
+        tier2 = [m for m in model_metrics if m["tier"] == 2]
+        total = len(model_metrics)
+
+        def _avg(vals):
+            vals = [v for v in vals if v is not None]
+            return round(float(np.mean(vals)), 4) if vals else None
+
+        run = {
+            "region": region, "model_version": version,
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "train_window_days": TRAIN_WINDOW_DAYS,
+            "tier1_count": len(tier1), "tier2_count": len(tier2),
+            "total_models": total,
+            "n_eligible": n_eligible, "n_skipped": n_skipped,
+            "coverage_pct": round(total / n_eligible * 100, 1) if n_eligible else 0.0,
+            "mean_anomaly_rate": _avg([m["anomaly_rate"] for m in model_metrics]),
+            "mean_contamination": _avg([m["contamination"] * 100 for m in model_metrics]),
+            "calibration_err": _avg([m["calibration_err"] for m in model_metrics]),
+            "mean_score": _avg([m["mean_score"] for m in model_metrics]),
+            "feature_set": FEATURE_SET, "status": "ok",
+        }
+        return run, model_metrics
+
+    def _save_models(self, region: str) -> None:
+        """학습된 모델을 디스크에 원자적 저장 (콜드스타트 해소)."""
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        path = os.path.join(MODEL_DIR, f"iforest_{region}.pkl")
+        tmp = path + ".tmp"
+        with self._lock:
+            payload = {
+                "facility_models": self.facility_models,
+                "tag_models": self.tag_models,
+                "tier1_covered": self._tier1_covered,
+                "last_trained": self.last_trained,
+                "region": region,
+            }
+        with open(tmp, "wb") as f:
+            pickle.dump(payload, f)
+        os.replace(tmp, path)
+        logger.info("IForest 모델 디스크 저장: %s", path)
+
+    def load_from_disk(self, region: str = DEFAULT_REGION) -> bool:
+        """디스크 pkl 에서 모델 복원. 서버 기동 직후 무탐지 사각 제거용."""
+        path = os.path.join(MODEL_DIR, f"iforest_{region}.pkl")
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f)
+            with self._lock:
+                self.facility_models = payload["facility_models"]
+                self.tag_models = payload["tag_models"]
+                self._tier1_covered = payload.get(
+                    "tier1_covered", set(self.facility_models.keys()))
+                self.last_trained = payload.get("last_trained")
+            logger.info(
+                "IForest 디스크 로드: Tier-1 %d개, Tier-2 %d개",
+                len(self.facility_models), len(self.tag_models),
+            )
+            return True
+        except Exception as e:
+            logger.warning("IForest 디스크 로드 실패: %s", e)
+            return False
+
     # ── Tier-1 학습 ──────────────────────────────────────
 
     def _train_facility_models(
         self, conn, site_profiles: Optional[dict]
-    ) -> dict[tuple[str, str], FacilityModel]:
+    ) -> tuple[dict[tuple[str, str], FacilityModel], list[dict], int, int]:
+        """Returns (models, metrics, n_eligible, n_skipped)."""
         cursor = conn.cursor()
         cursor.execute(_TRAIN_SQL_FACILITY)
         rows = cursor.fetchall()
@@ -282,11 +385,15 @@ class IForestManager:
             facility_pivot[(sitename, facilitytype)][str(ts)] = gc_vals
 
         models: dict[tuple, FacilityModel] = {}
+        metrics: list[dict] = []
+        eligible = 0
+        skipped = 0
 
         for (sitename, facilitytype), ts_data in facility_pivot.items():
             schema = FACILITY_SENSOR_SCHEMA.get(facilitytype)
             if schema is None:
                 continue
+            eligible += 1  # 학습 후보 시설 (스키마 보유)
 
             required_list = schema["required"]
             optional_list = schema["optional"]
@@ -299,6 +406,7 @@ class IForestManager:
 
             X = _build_facility_matrix(ts_data, feature_cols, required_set)
             if X is None:
+                skipped += 1
                 logger.debug(
                     "Tier-1 스킵 (%s/%s): 유효 샘플 부족 (필요 %d)",
                     sitename, facilitytype, MIN_FACILITY_TIMESTAMPS,
@@ -321,19 +429,27 @@ class IForestManager:
                 feature_cols=feature_cols,
                 model=model,
             )
+            metrics.append({
+                "tier": 1,
+                "entity_key": f"{sitename}/{facilitytype}",
+                "sitename": sitename, "facilitytype": facilitytype,
+                "n_features": len(feature_cols) + 2,
+                **_model_stats(model, X, contam),
+            })
             logger.debug(
                 "Tier-1 학습 완료: %s/%s  features=%s  N=%d  contam=%.2f",
                 sitename, facilitytype, feature_cols, len(X), contam,
             )
 
-        return models
+        return models, metrics, eligible, skipped
 
     # ── Tier-2 학습 ──────────────────────────────────────
 
     def _train_tag_models(
         self, conn, site_profiles: Optional[dict],
         covered: set[tuple[str, str]],
-    ) -> dict[str, IsolationForest]:
+    ) -> tuple[dict[str, IsolationForest], list[dict], int, int]:
+        """Returns (models, metrics, n_eligible, n_skipped)."""
         cursor = conn.cursor()
         cursor.execute(_TRAIN_SQL_TAG)
         rows = cursor.fetchall()
@@ -347,6 +463,8 @@ class IForestManager:
             tag_site.setdefault(tagsn, (sitename or "", facilitytype or ""))
 
         models: dict[str, IsolationForest] = {}
+        metrics: list[dict] = []
+        eligible = 0
         skipped = 0
 
         for tagsn, data_points in tag_data.items():
@@ -355,6 +473,7 @@ class IForestManager:
             # Tier-1이 커버하는 시설은 Tier-2 학습 생략
             if site_key in covered:
                 continue
+            eligible += 1  # Tier-1 미커버 태그 = Tier-2 학습 후보
 
             X = self._build_tag_features(data_points)
             if X is None or len(X) < MIN_SAMPLES_PER_TAG:
@@ -372,9 +491,16 @@ class IForestManager:
             )
             model.fit(X)
             models[tagsn] = model
+            metrics.append({
+                "tier": 2,
+                "entity_key": tagsn,
+                "sitename": site_key[0], "facilitytype": site_key[1],
+                "n_features": 4,
+                **_model_stats(model, X, contam),
+            })
 
         logger.info("Tier-2 학습 완료: %d개 모델, %d개 스킵", len(models), skipped)
-        return models
+        return models, metrics, eligible, skipped
 
     # ── 예측 ─────────────────────────────────────────────
 
@@ -575,3 +701,153 @@ def _get_contamination(
         return CONTAMINATION
     grp = profile.get("site_group", "B")
     return GROUP_CONTAMINATION.get(grp, CONTAMINATION)
+
+
+def _model_stats(model: IsolationForest, X: np.ndarray, contam: float) -> dict:
+    """학습 표본에 대한 모델 안정성 지표 (비지도 — 정답 레이블 없음).
+
+    관측 이상률이 목표(contamination)에서 벗어난 정도(calibration_err)가
+    핵심 — 0 에 가까울수록 잘 적합됨. 사양 §2.1.
+    """
+    n = len(X)
+    if n == 0:
+        return {"n_samples": 0, "contamination": float(contam),
+                "anomaly_rate": 0.0, "mean_score": None,
+                "score_std": None, "calibration_err": round(contam * 100, 2)}
+    preds = model.predict(X)
+    scores = model.score_samples(X)
+    rate = float((preds == -1).sum()) / n * 100
+    return {
+        "n_samples": int(n),
+        "contamination": float(contam),
+        "anomaly_rate": round(rate, 2),
+        "mean_score": round(float(scores.mean()), 4),
+        "score_std": round(float(scores.std()), 4),
+        "calibration_err": round(abs(rate - contam * 100), 2),
+    }
+
+
+def _persist_metrics(conn, run: dict, model_metrics: list[dict]) -> None:
+    """회차/모델별 지표를 tb_iforest_model_run / tb_iforest_model_metric 에 적재.
+
+    테이블이 없거나 실패해도 학습은 성공으로 간주 (호출부에서 가드).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO tb_iforest_model_run
+              (region, model_version, trained_at, train_window_days,
+               tier1_count, tier2_count, total_models, n_eligible, n_skipped,
+               coverage_pct, mean_anomaly_rate, mean_contamination,
+               calibration_err, mean_score, feature_set, status)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (region, model_version) DO UPDATE SET
+               trained_at=EXCLUDED.trained_at,
+               tier1_count=EXCLUDED.tier1_count, tier2_count=EXCLUDED.tier2_count,
+               total_models=EXCLUDED.total_models, n_eligible=EXCLUDED.n_eligible,
+               n_skipped=EXCLUDED.n_skipped, coverage_pct=EXCLUDED.coverage_pct,
+               mean_anomaly_rate=EXCLUDED.mean_anomaly_rate,
+               mean_contamination=EXCLUDED.mean_contamination,
+               calibration_err=EXCLUDED.calibration_err,
+               mean_score=EXCLUDED.mean_score, status=EXCLUDED.status
+            """,
+            (run["region"], run["model_version"], run["trained_at"],
+             run["train_window_days"], run["tier1_count"], run["tier2_count"],
+             run["total_models"], run["n_eligible"], run["n_skipped"],
+             run["coverage_pct"], run["mean_anomaly_rate"],
+             run["mean_contamination"], run["calibration_err"],
+             run["mean_score"], run["feature_set"], run["status"]),
+        )
+        region, version = run["region"], run["model_version"]
+        rows = [
+            (region, version, m["tier"], m["entity_key"], m["sitename"],
+             m["facilitytype"], m["n_samples"], m["n_features"],
+             m["contamination"], m["anomaly_rate"], m["mean_score"],
+             m["score_std"], m["calibration_err"])
+            for m in model_metrics
+        ]
+        if rows:
+            cur.executemany(
+                """
+                INSERT INTO tb_iforest_model_metric
+                  (region, model_version, tier, entity_key, sitename,
+                   facilitytype, n_samples, n_features, contamination,
+                   anomaly_rate, mean_score, score_std, calibration_err)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (region, model_version, tier, entity_key) DO NOTHING
+                """,
+                rows,
+            )
+        conn.commit()
+    finally:
+        cur.close()
+
+
+# ── CLI / cron ───────────────────────────────────────────
+
+def _connect():
+    import psycopg2
+    return psycopg2.connect(
+        host=os.environ.get("DB_HOST", "localhost"),
+        port=os.environ.get("DB_PORT", "5433"),
+        dbname=os.environ.get("DB_NAME", "slm"),
+        user=os.environ.get("DB_USER", "slm_dev"),
+        password=os.environ.get("DB_PASSWORD", ""),
+    )
+
+
+def _load_site_profiles(conn) -> Optional[dict]:
+    """tb_site_anomaly_profile → {(sitename, facilitytype): {site_group}}.
+
+    서버 학습과 동일한 그룹별 contamination 적용. 테이블 없으면 None(기본값).
+    """
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT sitename, facilitytype, site_group FROM tb_site_anomaly_profile"
+        )
+        profiles = {
+            (sn, ft): {"site_group": sg} for sn, ft, sg in cur.fetchall()
+        }
+        return profiles or None
+    except Exception as e:
+        logger.warning("site_profiles 로드 실패 (기본 contamination 사용): %s", e)
+        return None
+    finally:
+        cur.close()
+
+
+def train(region: str = DEFAULT_REGION) -> dict:
+    """CLI/cron 진입점 — 학습 + 디스크 저장 + 지표 적재. 상태 dict 반환."""
+    conn = _connect()
+    try:
+        profiles = _load_site_profiles(conn)
+    finally:
+        conn.close()
+    mgr = IForestManager()
+    mgr.train_all(_connect, site_profiles=profiles, region=region)
+    return mgr.get_status()
+
+
+def _main():
+    import argparse
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    ap = argparse.ArgumentParser(description="IForest 이상탐지 모델 학습")
+    ap.add_argument("cmd", choices=["train"], help="명령")
+    ap.add_argument("--region", default=DEFAULT_REGION)
+    args = ap.parse_args()
+    if args.cmd == "train":
+        status = train(args.region)
+        print(json.dumps({
+            "region": args.region,
+            "tier1": len(status.get("tier1_facilities", [])),
+            "tier2": status.get("tier2_tag_count"),
+            "total": status.get("total"),
+            "last_trained": status.get("last_trained"),
+        }, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    _main()

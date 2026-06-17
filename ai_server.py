@@ -111,6 +111,7 @@ from endpoints.alarm_fault_correlation import router as afc_router, init as init
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.baseline_eval import router as baseline_eval_router, init as init_baseline_eval
+from endpoints.iforest_eval import router as iforest_eval_router, init as init_iforest_eval
 from endpoints.anomaly_explain import router as anomaly_explain_router, init as init_anomaly_explain
 from endpoints.equipment_mtbf import router as equipment_mtbf_router, init as init_equipment_mtbf
 from endpoints.alarm_calendar import router as alarm_calendar_router, init as init_alarm_calendar
@@ -1037,8 +1038,16 @@ async def _snmp_polling_loop():
 
 
 async def _iforest_training_loop():
-    """백그라운드: 서버 시작 10초 후 첫 실행, 이후 24시간마다 IForest 학습."""
+    """백그라운드: 서버 시작 10초 후 첫 실행, 이후 24시간마다 IForest 학습.
+
+    기동 직후 디스크 pkl 에서 직전 모델을 로드해 무탐지 사각을 제거한다.
+    (사양: docs/iforest-eval-spec.md §3.1)
+    """
     from anomaly_iforest import RETRAIN_INTERVAL_HOURS
+    try:
+        await asyncio.to_thread(iforest_manager.load_from_disk)
+    except Exception as e:
+        logger.warning(f"IForest 디스크 로드 건너뜀: {e}")
     await asyncio.sleep(10)
     while True:
         try:
@@ -2631,6 +2640,10 @@ app.include_router(csv_import_router)
 # 트렌드 GBT baseline 성능 평가 조회 엔드포인트 모듈 초기화
 init_baseline_eval(get_db_connection)
 app.include_router(baseline_eval_router)
+
+# IForest 이상탐지 모델 성능 평가 조회 엔드포인트 모듈 초기화
+init_iforest_eval(get_db_connection)
+app.include_router(iforest_eval_router)
 
 # 트렌드 엔드포인트 모듈 초기화
 init_trend(get_db_connection, ollama_client)
