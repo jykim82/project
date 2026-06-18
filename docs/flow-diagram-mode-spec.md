@@ -340,6 +340,16 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 - `next.config.ts` dev 모드만 `Cache-Control: no-store, must-revalidate` + `Pragma: no-cache`
 - **커밋:** `slm-dashboard@2937f13`
 
+### 7.14 MapLibre attribution 컨트롤 숨김 (2026-06-18)
+- **증상:** 용수 흐름 계통도 우측 하단에 "MapLibre ⓘ" 배지 표시
+- **원인:** `react-map-gl/maplibre` 의 `attributionControl` 기본 활성. GIS 지도
+  (`GisMap.tsx`)는 `attributionControl={false}` 적용했으나 `FlowDiagramMap` 만 누락
+- **라이선스 판단:** MapLibre GL JS 는 BSD-3 라 로고·attribution 표시 **의무 없음**
+  (Mapbox 와 차이). 이 지도는 외부 타일 없는 빈 스타일(`sources:{}`)이라 데이터
+  출처 표기 의무도 0 → 숨겨도 무방 (§6 폐쇄망 빈 캔버스 원칙과 일치)
+- **수정:** `FlowDiagramMap.tsx` `<MapGL>` 에 `attributionControl={false}` 추가
+- **검증:** `/monitoring/flow` 에서 "MapLibre" 텍스트·attribution DOM 제거 확인
+
 ## 8. 결정 필요 사항
 
 사용자 확인 후 Phase 1 시작:
