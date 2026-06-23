@@ -1214,7 +1214,7 @@ def _compute_flow_baselines() -> dict[str, float]:
         if not tagsns:
             return {}
 
-        chunks = _get_chunks_for_range(cur, _from, _to)
+        chunks = get_chunks_for_range(cur, _from, _to)
         if not chunks:
             return {}
 
