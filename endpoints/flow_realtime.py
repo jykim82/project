@@ -47,21 +47,23 @@ _get_db_connection = None
 _get_anomaly_scan_cache = None
 _get_flow_balance_cache = None
 _get_flow_baseline_cache = None
+_get_night_min_flow_cache = None
 _auto_map_equipment_tags_fn = None
 
 
 def init(get_db_connection_fn, get_anomaly_scan_cache_fn,
          get_flow_balance_cache_fn, get_flow_baseline_cache_fn,
-         auto_map_equipment_tags_fn):
+         auto_map_equipment_tags_fn, get_night_min_flow_cache_fn=None):
     """모듈 초기화 — 외부 의존성 주입."""
     global _get_db_connection, _get_anomaly_scan_cache
     global _get_flow_balance_cache, _get_flow_baseline_cache
-    global _auto_map_equipment_tags_fn
+    global _get_night_min_flow_cache, _auto_map_equipment_tags_fn
 
     _get_db_connection = get_db_connection_fn
     _get_anomaly_scan_cache = get_anomaly_scan_cache_fn
     _get_flow_balance_cache = get_flow_balance_cache_fn
     _get_flow_baseline_cache = get_flow_baseline_cache_fn
+    _get_night_min_flow_cache = get_night_min_flow_cache_fn
     _auto_map_equipment_tags_fn = auto_map_equipment_tags_fn
 
 
@@ -242,22 +244,14 @@ async def get_flow_map_realtime():
         reservoir_sites = [sn for sn, ft in node_set if ft == "배수지"]
         if reservoir_sites:
             try:
+                # 야간 최소 유량(NMF)은 7일 창의 느린 지표라 폴링마다 재계산하지 않고
+                # 백그라운드 캐시(_night_min_flow_cache_loop) 값을 사용한다.
+                nmf_cache = _get_night_min_flow_cache() if _get_night_min_flow_cache else {}
                 cur.execute("""
                     SELECT s.sitename, s.total_supply_time, s.supply_time_status, s.supply_time_reason,
-                           v.avg_inflow, v.avg_outflow, v.avg_usage,
-                           nmf.night_min_flow
+                           v.avg_inflow, v.avg_outflow, v.avg_usage
                     FROM tb_service_reservoir_status s
                     LEFT JOIN v_reservoir_info_status v ON s.sitename = v.sitename
-                    LEFT JOIN LATERAL (
-                        SELECT round(MIN(r.val)::numeric, 2) AS night_min_flow
-                        FROM tb_tag_raw_data r
-                        JOIN tb_tag_info ti ON r.tagsn = ti.tagsn
-                        WHERE ti.sitename = s.sitename
-                          AND ti.facilitytype = '배수지'
-                          AND ti.datainfo ILIKE '%%유출%%유량%%순시%%'
-                          AND EXTRACT(HOUR FROM r.logtime) BETWEEN 2 AND 4
-                          AND r.logtime >= now() - interval '7 days'
-                    ) nmf ON true
                     WHERE s.sitename = ANY(%s)
                 """, (reservoir_sites,))
                 for row in cur.fetchall():
@@ -269,7 +263,7 @@ async def get_flow_map_realtime():
                         "avg_inflow": float(row[4]) if row[4] is not None else None,
                         "avg_outflow": float(row[5]) if row[5] is not None else None,
                         "avg_usage": float(row[6]) if row[6] is not None else None,
-                        "night_min_flow": float(row[7]) if row[7] is not None else None,
+                        "night_min_flow": nmf_cache.get(sn),
                     }
             except Exception as e:
                 logger.warning(f"배수지 공급가능시간 조회 실패: {e}")

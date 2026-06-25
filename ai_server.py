@@ -209,6 +209,12 @@ _FLOW_BASELINE_CACHE: dict[str, float] = {}   # tagsn → 7d avg
 _FLOW_BASELINE_CACHE_TIME: Optional[datetime] = None
 _FLOW_BASELINE_CACHE_TTL = 600  # 10분
 
+# ── 배수지 야간 최소 유량(NMF, 7일 02~04시 최소) 캐시 ──────────
+# 7일 창의 느린 지표라 실시간 폴링마다 재계산하지 않고 30분 주기로 갱신한다.
+_NIGHT_MIN_FLOW_CACHE: dict[str, float] = {}   # sitename → 야간 최소 유량
+_NIGHT_MIN_FLOW_CACHE_TIME: Optional[datetime] = None
+_NIGHT_MIN_FLOW_CACHE_TTL = 1800  # 30분
+
 # =============================================================================
 # CSV 내보내기 설정
 # =============================================================================
@@ -1259,6 +1265,53 @@ def _compute_flow_baselines() -> dict[str, float]:
         conn.close()
 
 
+def _compute_night_min_flows() -> dict[str, float]:
+    """배수지별 야간(02~04시) 최소 유출유량을 최근 7일 기준으로 계산.
+
+    실시간 계통도에서 폴링마다 LATERAL 서브쿼리로 7일 하이퍼테이블을 스캔하던 것을
+    분리 — 느리게 변하는 지표이므로 백그라운드에서 1회 집계해 캐시한다.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT ti.sitename, round(MIN(r.val)::numeric, 2) AS night_min_flow
+            FROM tb_tag_raw_data r
+            JOIN tb_tag_info ti ON r.tagsn = ti.tagsn
+            WHERE ti.facilitytype = '배수지'
+              AND ti.datainfo ILIKE '%%유출%%유량%%순시%%'
+              AND EXTRACT(HOUR FROM r.logtime) BETWEEN 2 AND 4
+              AND r.logtime >= now() - interval '7 days'
+            GROUP BY ti.sitename
+        """)
+        return {sn: float(v) for sn, v in cur.fetchall() if v is not None}
+    except Exception as e:
+        logger.error(f"야간 최소유량 계산 실패: {e}")
+        conn.rollback()
+        return {}
+    finally:
+        cur.close()
+        conn.close()
+
+
+async def _night_min_flow_cache_loop():
+    """백그라운드: 서버 시작 150초 후 첫 실행, 이후 30분마다 배수지 NMF 갱신."""
+    global _NIGHT_MIN_FLOW_CACHE, _NIGHT_MIN_FLOW_CACHE_TIME
+    await asyncio.sleep(150)
+    while True:
+        try:
+            t0 = datetime.now()
+            result = await asyncio.to_thread(_compute_night_min_flows)
+            if result:
+                _NIGHT_MIN_FLOW_CACHE = result
+                _NIGHT_MIN_FLOW_CACHE_TIME = datetime.now()
+                logger.info(f"배수지 야간 최소유량 캐시 갱신: {len(result)}개 배수지, "
+                            f"{(datetime.now() - t0).total_seconds():.1f}초")
+        except Exception as e:
+            logger.error(f"배수지 야간 최소유량 캐시 갱신 실패: {e}")
+        await asyncio.sleep(_NIGHT_MIN_FLOW_CACHE_TTL)
+
+
 
 # 이상감지 스캔 → anomaly_scan.py로 분리됨
 
@@ -1570,6 +1623,7 @@ async def lifespan(app: FastAPI):
     _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
     _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
+    _night_min_flow_task = asyncio.create_task(_night_min_flow_cache_loop())
 
     # 누수 CUSUM 알림 스캔 (서버 시작 10분 후 첫 실행, 이후 6시간 주기)
     _leak_cusum_task = asyncio.create_task(_leak_cusum_scan_loop())
@@ -1600,7 +1654,7 @@ async def lifespan(app: FastAPI):
         logger.info("DB 커넥션 풀 정리 완료")
     if _sync_worker:
         _sync_worker.stop()
-    for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _flow_baseline_task, _sync_task):
+    for task in (_cleanup_task, _profiling_task, _snmp_polling_task, _iforest_task, _anomaly_scan_task, _flow_baseline_task, _night_min_flow_task, _sync_task):
         if task:
             task.cancel()
             try:
@@ -2697,9 +2751,13 @@ response_builder.init(
 def _get_baseline_cache():
     return _FLOW_BASELINE_CACHE
 
+def _get_night_min_flow_cache():
+    return _NIGHT_MIN_FLOW_CACHE
+
 init_flow_realtime(
     get_db_connection, _get_scan_cache, _get_balance_cache,
     _get_baseline_cache, _auto_map_equipment_tags,
+    get_night_min_flow_cache_fn=_get_night_min_flow_cache,
 )
 app.include_router(flow_realtime_router)
 
