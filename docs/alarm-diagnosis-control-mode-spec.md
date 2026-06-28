@@ -1,6 +1,6 @@
 ---
 name: 알람 진단 — 펌프 제어모드 게이트 사양
-status: v1 사양 (구현 대기 — Node-RED 진단 파이프라인)
+status: v1 — Phase A 사양 완료 / Phase B 1차(S2 게이트) 배포 완료 (2026-06-29)
 created: 2026-06-29
 updated: 2026-06-29
 ---
@@ -23,10 +23,13 @@ updated: 2026-06-29
 - **생성 주체**: `slm-node-red` 컨테이너의 룰 기반 진단 파이프라인이
   `diagnosed_cause`/`countermeasure`를 생성해 `tb_equipment_alarm_report`에
   UPDATE/INSERT. 제품 백엔드(FastAPI)는 **조회·집계·표시만** 한다.
-- **핵심 노드**: "펌프 조건검토 의사결정 트리(19단계)" — 펌프 미가동 전제로
-  C1/C2(정전·통신)→S1(설정오류)→**S2(가동조건 설정 오류)**→P1(FAULT)→… 분기.
-- **파라미터 수집**: "전체 파라미터 수집 쿼리(v2)" CTE 가 other_pump / comm_status
-  / pump_mode(auto·manual) / run_condition(SET 태그) 만 수집.
+- **두 진단 경로(배선 추적 결과)**:
+  - (가) "펌프 조건검토 의사결정 트리(19단계)" 노드 — C1/C2→S1→S2→P1… cause_code 산출.
+  - (나) **"가동조건 설정 오류로 인한 펌프 미가동"의 실제 생산 경로**: 홀딩/정상 →
+    펌프모드 쿼리 → 수동/자동 switch → 가동조건 쿼리 → **미충족/충족 switch →
+    S2 writer(`d5f8e543ad132d96`)**. ⚠️ 19단계 트리와 **별개 경로**이며, 보고된
+    죽동 오분류는 (나) 경로에서 발생. 트리(가)는 S2 writer 로 연결되지 않음.
+- 최종 `diagnosed_cause` 텍스트는 트리가 아니라 **writer 노드**가 하드코딩해 UPDATE.
 
 ## 3. 결함 (3종)
 
@@ -100,13 +103,38 @@ updated: 2026-06-29
 
 ## 7. 구현 (Node-RED) — Phase B
 
-1. "전체 파라미터 수집 쿼리(v2)" CTE 에
-   `pump_control_mode` / `linked_reservoir_name` / 배수지
-   `current_water_level`·`alarm_high/low_water_level` 수집 추가.
-2. 트리 진입부에 **제어모드 게이트 스위치 노드** 삽입 (§5.1).
-3. "미가동" 노드군 앞에 **실가동 가드** (§5.2).
-4. **백업 절차**: 변경 전 Node-RED `flows` export(JSON) → `dev-data/` 백업.
-   거대 단일 JSON 수기 편집 금지, 에디터 import/배포로 안전 적용.
+### 7.1 1차 배포 완료 (2026-06-29) — S2 writer 게이트
+보고된 죽동 오분류의 생산 경로(§2 (나))인 **S2 writer(`d5f8e543ad132d96`)의
+UPDATE WHERE 에 fail-safe 게이트 SQL**을 추가. 트리/CTE/params 배선 변경 없이
+writer 한 노드만 수정(자기검증형):
+
+```sql
+AND NOT EXISTS (
+    SELECT 1 FROM tb_facility_flow_map f
+    JOIN tb_service_booster_station_status b ON b.sitename = f.upstream_sitename
+    WHERE f.downstream_sitename = '${sitename}'
+      AND f.downstream_facilitytype = '${facilitytype}'
+      AND f.upstream_facilitytype = '가압장'
+      AND (b.pump_control_mode LIKE '%압력%' OR COALESCE(b.running_pump_count,0) > 0)
+)
+```
+- **효과**: 전단 가압장이 압력제어이거나 펌프 실가동 중이면 "가동조건 설정
+  오류로 인한 펌프 미가동"을 **쓰지 않음**(diagnosed_cause 는 빈 채로 두어 수지
+  기반 원인이 채우도록).
+- **fail-safe**: 전단 가압장 토폴로지 매핑(`tb_facility_flow_map`)이 없으면
+  NOT EXISTS=true → **기존 동작 그대로**(과잉 억제 없음).
+- **백업/롤백**: `dev-data/noderered-backups/flows.live.20260629.json`(원본),
+  `flows.patched.20260629.json`(배포본). 롤백 = 원본을 `/data/flows.json`로 복사
+  후 `docker restart slm-node-red`.
+- **검증**: 게이트 SQL DB 검증(죽동 차단 / 행정·신평 유지), 최종 UPDATE 파싱
+  (BEGIN/ROLLBACK, 0행), 배포 후 node-red healthy + "Started flows" + 노드 1040개
+  보존 + 신규 에러 0. **런타임 억제는 신규 죽동 HH 알람 발생 시 확인 필요(모니터링).**
+
+### 7.2 잔여 (후속 Phase)
+1. 같은 게이트를 S1·P1/P2/P4·V1/V2·원인10/11(supply-time 미가동) writer 로 확대.
+2. §5.1a 수위제어 가압장의 임계(pump_start/stop_threshold) 기반 기대상태 계산.
+3. §5.3 경합 제거(허용 원인 화이트리스트/우선순위).
+4. §6 데이터 보강(linked_reservoir_name·토폴로지 매핑 2→23 → 게이트 커버리지 확대).
 
 ## 8. 검증 기준
 
@@ -124,3 +152,6 @@ config·시드 분리. region 기반 격리 유지.
 
 - 2026-06-29 v1 작성 — 죽동 HH 오분류 분석에서 도출. `pump_control_mode`(23/23)
   미사용 결함 + 실가동 미검증 + 경합 3종. Phase A(사양)/B(구현) 분리.
+- 2026-06-29 Phase B 1차 배포 — 배선 추적으로 S2 생산 경로가 19단계 트리가 아닌
+  펌프모드→가동조건 chain 임을 확인(§2 정정). S2 writer 에 fail-safe 게이트 SQL
+  배포(§7.1). 죽동 차단·행정/신평 유지 DB 검증, node-red 무중단 재기동 확인.
