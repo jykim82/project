@@ -2359,7 +2359,7 @@
       "경보가 많이 발생하는 시설은?",
       "알람 빈번한 시설을 보여줘"
     ],
-    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count,\n  COALESCE(string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause), '') AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE alarm_start_time >= {from_ts}\n  AND alarm_start_time < {to_ts}::date + 1\n  AND ('{sitename}' = '' OR sitename = '{sitename}')\n  AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n  {alarm_filter_clause}\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
+    "sql": "SELECT\n  alarm_msg,\n  SUM(cause_count) AS alarm_count,\n  COALESCE(string_agg(\n    CASE WHEN diagnosed_cause IS NOT NULL AND diagnosed_cause <> ''\n         THEN diagnosed_cause || ' (' || cause_count || '건)' END,\n    '; ' ORDER BY cause_count DESC, diagnosed_cause\n  ), '') AS diagnosed_causes\nFROM (\n  SELECT alarm_msg, diagnosed_cause, COUNT(*) AS cause_count\n  FROM tb_equipment_alarm_report\n  WHERE alarm_start_time >= {from_ts}\n    AND alarm_start_time < {to_ts}::date + 1\n    AND ('{sitename}' = '' OR sitename = '{sitename}')\n    AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n    {alarm_filter_clause}\n  GROUP BY alarm_msg, diagnosed_cause\n) t\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
     "answer_template": {
       "summary": "{sitename} {facilitytype} {alarm_label} 경보 발생 누적건수가 높은 순서는 다음과 같습니다.",
       "detail": [
@@ -2405,7 +2405,7 @@
       "행정1-1 소블록 통신 경보 원인 TOP 4는?",
       "가압장 고장 알람 발생원인 진단 순위를 알려줘"
     ],
-    "sql": "SELECT\n  alarm_msg,\n  COUNT(*) AS alarm_count,\n  COALESCE(string_agg(DISTINCT diagnosed_cause, '; ' ORDER BY diagnosed_cause), '') AS diagnosed_causes\nFROM tb_equipment_alarm_report\nWHERE ('{sitename}' = '' OR sitename = '{sitename}')\n  AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n  {alarm_filter_clause}\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
+    "sql": "SELECT\n  alarm_msg,\n  SUM(cause_count) AS alarm_count,\n  COALESCE(string_agg(\n    CASE WHEN diagnosed_cause IS NOT NULL AND diagnosed_cause <> ''\n         THEN diagnosed_cause || ' (' || cause_count || '건)' END,\n    '; ' ORDER BY cause_count DESC, diagnosed_cause\n  ), '') AS diagnosed_causes\nFROM (\n  SELECT alarm_msg, diagnosed_cause, COUNT(*) AS cause_count\n  FROM tb_equipment_alarm_report\n  WHERE ('{sitename}' = '' OR sitename = '{sitename}')\n    AND ('{facilitytype}' = '' OR facilitytype = '{facilitytype}')\n    {alarm_filter_clause}\n  GROUP BY alarm_msg, diagnosed_cause\n) t\nGROUP BY alarm_msg\nORDER BY alarm_count DESC\nLIMIT {limit};",
     "answer_template": {
       "summary": "{sitename} {facilitytype} {alarm_label} 경보 발생원인 진단 순위는 다음과 같습니다.",
       "detail": [
