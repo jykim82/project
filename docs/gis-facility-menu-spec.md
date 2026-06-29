@@ -144,10 +144,29 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 - `docs/inspector-pattern-spec.md`, `docs/metric-trend-panel-spec.md` — UI 패턴.
 - `docs/report-spec.md` 교체 권고 KPI — 2차 교체주기 연계.
 
-## 10. 단계 / 우선순위
-1. **(P1, 현재) 사양 확정** — 본 문서 리뷰·필드 스키마 합의.
-2. 1차 구현: 시설/설비 CRUD + GIS 인스펙터 연동 + config 필드 스키마 + 권한/감사.
-3. 2차 구현: 고장이력 조회 + 교체주기.
+## 10. 단계 / 우선순위 + 구현 현황
+
+> **조사 결과: Phase 1의 백엔드·기본 UI 대부분이 이미 존재.** 신규 구축이 아니라
+> 흩어진 기능을 GIS 관망도 컨텍스트로 통합하는 것이 실제 갭이었음.
+
+**이미 존재 (재사용):**
+- 백엔드 CRUD 라이브: `/equipments`(GET/POST/PUT/DELETE)·`/reservoirs`·`/boosters`·
+  `/pressure-reducing`·`/canvas/equipment-tag-link`·CSV import·매뉴얼 업로드
+  (`endpoints/facility_crud.py`, `facility_types_crud.py`, `canvas_crud.py`, `admin.py`).
+- 프런트: `/setup/equipments`(설비 CRUD 테이블+EquipmentFormDialog), `/setup/reservoir`·
+  `/booster`(시설 CRUD), `/monitoring/gis`(관망도+GisDetailPanel 인스펙터, 읽기전용),
+  `/admin/facility-files`(파일).
+
+**1차 구현 완료 (2026-06-29) — GIS 인스펙터 설비 CRUD 통합:**
+- `GisDetailPanel` 설비 정보 섹션에 추가 버튼 + 행별 수정/삭제 → 기존
+  `EquipmentFormDialog`/`EquipmentDeleteDialog` 재사용(시설 컨텍스트 prefill+잠금).
+- 버그 수정: 설비 목록을 `res.data?.items`(오경로)로 읽어 항상 비어 보이던 것 →
+  `fetchEquipments(res.data)` 로 교체.
+
+**1차 잔여:** 설비 종류별 config 필드 스키마(§5.2) 적용, 시설 일반현황 편집을
+인스펙터에서 직접(현재는 /setup 페이지), 권한/감사 강화.
+
+**2차 구현:** 고장이력 조회 + 교체주기(§6).
 
 ## 11. 이력
 - 2026-06-29 v1 작성 — GIS 관망도 시설 메뉴 고도화 계획. 기존 스키마
@@ -157,3 +176,6 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
   (소블록·소소블록)/감압시설/제어망, 설비=펌프·밸브(유입/유출/토출/송수/흡수정)·
   수위계·압력계·유량계·수질계·UPS·전원·침수센서·PLC·통신장비. §5.2 설비 종류별
   필드 스키마에 밸브·계측기·UPS·침수센서 추가. (블록은 전용 _info 테이블 없음.)
+- 2026-06-29 1차 구현 — 탐색 결과 백엔드 CRUD·setup UI 가 이미 존재함을 확인(§10).
+  실제 갭인 GIS 인스펙터 설비 CRUD 통합을 구현: GisDetailPanel 추가/수정/삭제 +
+  EquipmentFormDialog prefill·잠금 옵션 + 설비목록 빈-표시 버그 수정. (submodule)
