@@ -21,8 +21,8 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 
 ### 1차 고도화 (본 사양 핵심)
 - 시설 **일반정보 CRUD** (배수지·가압장·감압시설): 일반현황·제원·사진·매뉴얼.
-- 시설 내 **설비 CRUD** (PLC, 유량계, 수위계, 펌프, 통신장비 LTE/유선/DSU 등):
-  설치일자·제조사·제원(모델)·상태·설명·명판/외관 사진.
+- 시설 내 **설비 CRUD** (펌프·밸브·수위계·압력계·유량계·수질계·UPS·전원·
+  침수센서·PLC·통신장비 등): 설치일자·제조사·제원(모델)·상태·설명·명판/외관 사진.
 - GIS 관망도 시설 마커 → **인스펙터**에서 일반현황 + 설비 목록 + CRUD 진입.
 
 ### 2차 고도화 (1차 이후)
@@ -35,11 +35,16 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 > 계층을 얹는다**. 부족한 항목만 컬럼·메타 보강.
 
 ### 3.1 시설(facility) 계층
+> 실제 `tb_tag_info.facilitytype` 분포: 배수지(1504) · 가압장(719) · 소블록(470)
+> · 소소블록(7). `tb_equipment_info` 에는 제어망(통신장비 소속)도 존재.
+
 | 시설 유형 | 일반현황 테이블 | 상태/현재값 |
 |---|---|---|
 | 배수지 | `tb_service_reservoir_info` (general_overview jsonb, install_year, zone_N_area/height, *_url 사진·매뉴얼·계통도) | `tb_service_reservoir_status` |
 | 가압장 | `tb_service_booster_station_info` | `tb_service_booster_station_status` (pump_control_mode, pump_start/stop_threshold, linked_reservoir_name …) |
 | 감압시설 | `tb_pressure_reducing_facility_info` | `tb_pressure_reducing_facility_status` |
+| **블록(소블록·소소블록)** | **전용 _info 테이블 없음** — 토폴로지·태그 기반 네트워크 단위. 1차에선 식별·설비 귀속만, 일반현황 필요 시 `meta` 확장 | `tb_facility_flow_map` |
+| 제어망 | (tb_equipment_info 그룹) — 통신장비 소속 시설 | |
 | 별칭/매핑 | `tb_facility_alias`, `tb_facility_flow_map` (토폴로지) | |
 | 파일 | `tb_facility_file`, `tb_file_storage` (위치도·계통도·매뉴얼 PDF) | |
 
@@ -75,15 +80,20 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 ## 4. 계층 구조 (요청 2번 반영)
 
 ```
-시설 (배수지/가압장/감압시설)
+시설 (배수지 / 가압장 / 블록(소블록·소소블록) / 감압시설 / 제어망)
 ├─ 일반현황  (tb_service_*_info: 제원·존별 면적/높이·사진·매뉴얼·계통도)
 ├─ 상태/현재값 (tb_service_*_status)
-└─ 설비들 (tb_equipment_info, 시설 1 : N 설비)
-   ├─ PLC        (commissioned_at, meta.manufacturer/model, 사진, 태그매핑)
-   ├─ 유량계
-   ├─ 수위계
-   ├─ 펌프
-   └─ 통신장비 (LTE / 유선 / DSU / UTM / SSLVPN)
+└─ 설비들 (tb_equipment_info, 시설 1 : N 설비)   ※ equipmenttype = DB 실제 값
+   ├─ 펌프        (가압펌프)
+   ├─ 밸브        (유입밸브 / 유출밸브 / 토출밸브 / 송수밸브 / 흡수정밸브)
+   ├─ 수위계 / 압력계 / 유량계 / 수질계
+   ├─ 수질        (수질계)
+   ├─ UPS / 전원
+   ├─ 침수센서
+   ├─ PLC
+   └─ 통신장비    (네트워크 / LTE / 유선 / DSU / UTM / SSLVPN)
+   (각 설비: commissioned_at=설치일자, meta.manufacturer/model=제조사/제원,
+    사진, tb_equipment_tag_map 태그매핑)
 ```
 
 ## 5. 1차 고도화 상세
@@ -99,10 +109,13 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 ### 5.2 설비 종류별 입력 스키마 (config 분리)
 종류별 권장 메타 키를 `config`(예: `equipment-field-schema`)로 정의 — 하드코딩 금지.
 - 공통: manufacturer, model, serial_no, commissioned_at, status, photo, nameplate.
-- 펌프: capacity(용량), head(양정), power_kw, control_mode.
-- 유량계/수위계: range, unit, output_type, accuracy.
+- 펌프(가압펌프): capacity(용량), head(양정), power_kw, control_mode.
+- 밸브(유입/유출/토출/송수/흡수정): valve_type, size_mm, actuator(전동/수동), open_close_time.
+- 계측기(수위계/압력계/유량계/수질계): range, unit, output_type, accuracy.
+- UPS/전원: capacity_va, battery_type, backup_minutes.
+- 침수센서: detect_type, mount_height.
 - PLC: maker_series, firmware, io_points.
-- 통신장비(LTE/유선/DSU): comm_type(LTE/유선/DSU), carrier, ip_address, modem_model.
+- 통신장비(네트워크/LTE/유선/DSU/UTM/SSLVPN): comm_type, carrier, ip_address, modem_model.
 
 ### 5.3 권한·감사
 - `tb_auth_menu` 권한 기반 접근. 등록/수정/삭제는 감사 로그(작성자·시각).
@@ -140,3 +153,7 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 - 2026-06-29 v1 작성 — GIS 관망도 시설 메뉴 고도화 계획. 기존 스키마
   (tb_equipment_info.meta·commissioned_at, tb_equipment_lifespan, tb_service_*_info)
   재사용 전제. 1차(CRUD)/2차(고장이력·교체주기) 분리. 사양 작업 1순위.
+- 2026-06-29 v1.1 — 계층 구조를 DB 실제 값으로 확정. 시설=배수지/가압장/블록
+  (소블록·소소블록)/감압시설/제어망, 설비=펌프·밸브(유입/유출/토출/송수/흡수정)·
+  수위계·압력계·유량계·수질계·UPS·전원·침수센서·PLC·통신장비. §5.2 설비 종류별
+  필드 스키마에 밸브·계측기·UPS·침수센서 추가. (블록은 전용 _info 테이블 없음.)
