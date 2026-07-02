@@ -11,7 +11,8 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
+from endpoints.audit import get_actor, write_audit
 from pydantic import BaseModel
 
 logger = logging.getLogger("slm")
@@ -194,7 +195,7 @@ async def get_next_equipment_id(prefix: str = Query(..., min_length=1)):
 
 
 @router.post("/equipments")
-async def create_equipment(req: EquipmentCreateRequest):
+async def create_equipment(req: EquipmentCreateRequest, request: Request, actor: dict = Depends(get_actor)):
     """설비 추가 (equipment_id 자동 생성)."""
     conn = None
     try:
@@ -248,6 +249,14 @@ async def create_equipment(req: EquipmentCreateRequest):
                 logger.warning(f"tb_equipment_image INSERT 실패 ({kind}): {e}")
         conn.commit()
         cur.close()
+        write_audit(
+            conn, actor=actor, action="create", target_type="equipment",
+            target_key=equipment_id,
+            summary=f"설비 추가 {equipment_id} ({req.sitename.strip()} {req.facilitytype} · {req.equipmenttype})",
+            detail={"sitename": req.sitename.strip(), "facilitytype": req.facilitytype,
+                    "equipmenttype": req.equipmenttype, "status": req.status},
+            request=request,
+        )
         return {
             "status": "OK",
             "equipment_id": equipment_id,
@@ -264,7 +273,7 @@ async def create_equipment(req: EquipmentCreateRequest):
 
 
 @router.put("/equipments/{equipment_id}")
-async def update_equipment(equipment_id: str, req: EquipmentUpdateRequest):
+async def update_equipment(equipment_id: str, req: EquipmentUpdateRequest, request: Request, actor: dict = Depends(get_actor)):
     """설비 수정 (equipment_id는 불변)."""
     conn = None
     try:
@@ -308,6 +317,15 @@ async def update_equipment(equipment_id: str, req: EquipmentUpdateRequest):
         conn.commit()
         updated = cur.rowcount
         cur.close()
+        if updated:
+            changed = [s.split(" = ")[0] for s in set_parts]
+            write_audit(
+                conn, actor=actor, action="update", target_type="equipment",
+                target_key=equipment_id,
+                summary=f"설비 수정 {equipment_id} — {', '.join(changed)}",
+                detail={"changed_fields": changed},
+                request=request,
+            )
         return {"status": "OK", "updated": updated}
     except Exception as e:
         if conn:
@@ -320,7 +338,7 @@ async def update_equipment(equipment_id: str, req: EquipmentUpdateRequest):
 
 
 @router.delete("/equipments/{equipment_id}")
-async def delete_equipment(equipment_id: str, dry_run: bool = Query(False)):
+async def delete_equipment(equipment_id: str, request: Request, dry_run: bool = Query(False), actor: dict = Depends(get_actor)):
     """설비 삭제 (dry_run=true → cascade 영향만 확인)."""
     conn = None
     try:
@@ -346,6 +364,14 @@ async def delete_equipment(equipment_id: str, dry_run: bool = Query(False)):
         conn.commit()
         deleted = cur.rowcount
         cur.close()
+        if deleted:
+            write_audit(
+                conn, actor=actor, action="delete", target_type="equipment",
+                target_key=equipment_id,
+                summary=f"설비 삭제 {equipment_id}",
+                detail={"cascade": cascade},
+                request=request,
+            )
         return {"status": "OK", "deleted": deleted, "cascade": cascade}
     except Exception as e:
         if conn:
