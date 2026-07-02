@@ -2663,6 +2663,11 @@ app.include_router(facility_crud_router)
 init_facility_types_crud(get_db_connection)
 app.include_router(facility_types_crud_router)
 
+# 감사 로그 조회 (관리) — Migration 0094
+from endpoints.audit import router as audit_router, init as init_audit
+init_audit(get_db_connection)
+app.include_router(audit_router)
+
 # 네트워크 CRUD 엔드포인트 모듈 초기화
 init_network_crud(get_db_connection, snmp_poller=snmp_poller_instance)
 app.include_router(network_crud_router)

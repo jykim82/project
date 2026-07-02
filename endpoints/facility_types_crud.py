@@ -9,7 +9,8 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
+from endpoints.audit import get_actor, write_audit
 from pydantic import BaseModel
 
 logger = logging.getLogger("slm")
@@ -207,7 +208,7 @@ async def get_reservoir_detail(sitename: str):
 
 
 @router.post("/reservoirs")
-async def create_reservoir(request: Request):
+async def create_reservoir(request: Request, actor: dict = Depends(get_actor)):
     """배수지 추가 (info + status 양쪽 INSERT)."""
     conn = None
     try:
@@ -260,6 +261,8 @@ async def create_reservoir(request: Request):
 
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="create", target_type="reservoir",
+                    target_key=sitename, summary=f"배수지 추가 {sitename}", request=request)
         return {"status": "OK", "sitename": sitename}
     except Exception as e:
         if conn:
@@ -272,7 +275,7 @@ async def create_reservoir(request: Request):
 
 
 @router.put("/reservoirs/{sitename}")
-async def update_reservoir(sitename: str, request: Request):
+async def update_reservoir(sitename: str, request: Request, actor: dict = Depends(get_actor)):
     """배수지 수정 (info UPDATE + status UPSERT)."""
     conn = None
     try:
@@ -325,6 +328,8 @@ async def update_reservoir(sitename: str, request: Request):
 
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="update", target_type="reservoir",
+                    target_key=sitename, summary=f"배수지 수정 {sitename}", request=request)
         return {"status": "OK", "updated": 1}
     except Exception as e:
         if conn:
@@ -337,7 +342,7 @@ async def update_reservoir(sitename: str, request: Request):
 
 
 @router.delete("/reservoirs/{sitename}")
-async def delete_reservoir(sitename: str, dry_run: bool = Query(False)):
+async def delete_reservoir(sitename: str, request: Request, dry_run: bool = Query(False), actor: dict = Depends(get_actor)):
     """배수지 삭제 (dry_run=true → 영향만 확인)."""
     conn = None
     try:
@@ -356,6 +361,9 @@ async def delete_reservoir(sitename: str, dry_run: bool = Query(False)):
         conn.commit()
         deleted = cur.rowcount
         cur.close()
+        if deleted:
+            write_audit(conn, actor=actor, action="delete", target_type="reservoir",
+                        target_key=sitename, summary=f"배수지 삭제 {sitename}", request=request)
         return {"status": "OK", "deleted": deleted}
     except Exception as e:
         if conn:
@@ -528,7 +536,7 @@ async def get_booster_detail(sitename: str):
 
 
 @router.post("/boosters")
-async def create_booster(request: Request):
+async def create_booster(request: Request, actor: dict = Depends(get_actor)):
     """가압장 추가."""
     conn = None
     try:
@@ -575,6 +583,8 @@ async def create_booster(request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="create", target_type="booster",
+                    target_key=sitename, summary=f"가압장 추가 {sitename}", request=request)
         return {"status": "OK", "sitename": sitename}
     except Exception as e:
         if conn:
@@ -587,7 +597,7 @@ async def create_booster(request: Request):
 
 
 @router.put("/boosters/{sitename}")
-async def update_booster(sitename: str, request: Request):
+async def update_booster(sitename: str, request: Request, actor: dict = Depends(get_actor)):
     """가압장 수정."""
     conn = None
     try:
@@ -644,6 +654,8 @@ async def update_booster(sitename: str, request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="update", target_type="booster",
+                    target_key=sitename, summary=f"가압장 수정 {sitename}", request=request)
         return {"status": "OK", "updated": 1}
     except Exception as e:
         if conn:
@@ -656,7 +668,7 @@ async def update_booster(sitename: str, request: Request):
 
 
 @router.delete("/boosters/{sitename}")
-async def delete_booster(sitename: str, dry_run: bool = Query(False)):
+async def delete_booster(sitename: str, request: Request, dry_run: bool = Query(False), actor: dict = Depends(get_actor)):
     """가압장 삭제."""
     conn = None
     try:
@@ -672,6 +684,9 @@ async def delete_booster(sitename: str, dry_run: bool = Query(False)):
         conn.commit()
         deleted = cur.rowcount
         cur.close()
+        if deleted:
+            write_audit(conn, actor=actor, action="delete", target_type="booster",
+                        target_key=sitename, summary=f"가압장 삭제 {sitename}", request=request)
         return {"status": "OK", "deleted": deleted}
     except Exception as e:
         if conn:
@@ -817,7 +832,7 @@ async def get_pressure_detail(sitename: str):
 
 
 @router.post("/pressure-reducing")
-async def create_pressure(request: Request):
+async def create_pressure(request: Request, actor: dict = Depends(get_actor)):
     """감압시설 추가."""
     conn = None
     try:
@@ -856,6 +871,8 @@ async def create_pressure(request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="create", target_type="pressure_reducing",
+                    target_key=sitename, summary=f"감압시설 추가 {sitename}", request=request)
         return {"status": "OK", "sitename": sitename}
     except Exception as e:
         if conn:
@@ -868,7 +885,7 @@ async def create_pressure(request: Request):
 
 
 @router.put("/pressure-reducing/{sitename}")
-async def update_pressure(sitename: str, request: Request):
+async def update_pressure(sitename: str, request: Request, actor: dict = Depends(get_actor)):
     """감압시설 수정."""
     conn = None
     try:
@@ -910,6 +927,8 @@ async def update_pressure(sitename: str, request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="update", target_type="pressure_reducing",
+                    target_key=sitename, summary=f"감압시설 수정 {sitename}", request=request)
         return {"status": "OK", "updated": 1}
     except Exception as e:
         if conn:
@@ -922,7 +941,7 @@ async def update_pressure(sitename: str, request: Request):
 
 
 @router.delete("/pressure-reducing/{sitename}")
-async def delete_pressure(sitename: str, dry_run: bool = Query(False)):
+async def delete_pressure(sitename: str, request: Request, dry_run: bool = Query(False), actor: dict = Depends(get_actor)):
     """감압시설 삭제."""
     conn = None
     try:
@@ -938,6 +957,9 @@ async def delete_pressure(sitename: str, dry_run: bool = Query(False)):
         conn.commit()
         deleted = cur.rowcount
         cur.close()
+        if deleted:
+            write_audit(conn, actor=actor, action="delete", target_type="pressure_reducing",
+                        target_key=sitename, summary=f"감압시설 삭제 {sitename}", request=request)
         return {"status": "OK", "deleted": deleted}
     except Exception as e:
         if conn:
@@ -1104,7 +1126,7 @@ async def get_block_detail(sitename: str):
 
 
 @router.post("/blocks")
-async def create_block(request: Request):
+async def create_block(request: Request, actor: dict = Depends(get_actor)):
     """블록 추가."""
     conn = None
     try:
@@ -1149,6 +1171,8 @@ async def create_block(request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="create", target_type="block",
+                    target_key=sitename, summary=f"블록 추가 {sitename}", request=request)
         return {"status": "OK", "sitename": sitename}
     except Exception as e:
         if conn:
@@ -1161,7 +1185,7 @@ async def create_block(request: Request):
 
 
 @router.put("/blocks/{sitename}")
-async def update_block(sitename: str, request: Request):
+async def update_block(sitename: str, request: Request, actor: dict = Depends(get_actor)):
     """블록 수정."""
     conn = None
     try:
@@ -1213,6 +1237,8 @@ async def update_block(sitename: str, request: Request):
         ))
         conn.commit()
         cur.close()
+        write_audit(conn, actor=actor, action="update", target_type="block",
+                    target_key=sitename, summary=f"블록 수정 {sitename}", request=request)
         return {"status": "OK", "updated": 1}
     except Exception as e:
         if conn:
@@ -1225,7 +1251,7 @@ async def update_block(sitename: str, request: Request):
 
 
 @router.delete("/blocks/{sitename}")
-async def delete_block(sitename: str, dry_run: bool = Query(False)):
+async def delete_block(sitename: str, request: Request, dry_run: bool = Query(False), actor: dict = Depends(get_actor)):
     """블록 삭제."""
     conn = None
     try:
@@ -1241,6 +1267,9 @@ async def delete_block(sitename: str, dry_run: bool = Query(False)):
         conn.commit()
         deleted = cur.rowcount
         cur.close()
+        if deleted:
+            write_audit(conn, actor=actor, action="delete", target_type="block",
+                        target_key=sitename, summary=f"블록 삭제 {sitename}", request=request)
         return {"status": "OK", "deleted": deleted}
     except Exception as e:
         if conn:
