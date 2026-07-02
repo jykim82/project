@@ -124,7 +124,10 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
   `endpoints/audit.py` — `get_actor`(JWT sub/region 비파괴 추출, 토큰 없으면 unknown) +
   `write_audit`(예외 삼킴 → 감사 실패가 CRUD 를 깨지 않음). 프록시가 Authorization 전달 →
   UI 액션은 `actor=user_id`. 설비 create/update(변경필드)/delete 기록.
-  **잔여**: 시설 CRUD(reservoir/booster/pressure/block)로 확대(2단계), 감사 조회 UI.
+- **감사 2단계 완료 (Migration 0094~0095)**: 시설 CRUD(배수지/가압장/감압/블록)
+  12개 함수로 확대 + **감사 조회 화면** `/admin/audit-logs`(M100-15) — 필터
+  (대상유형·액션·기간·작성자) + 페이징. `GET /admin/audit-logs`.
+  검증: 설비/시설 create/update/delete → actor=user_id/region 기록·조회 정상.
 
 ## 6. 2차 고도화 상세 (1차 이후)
 
