@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 13 · AI 채팅 스트리밍 응답</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#a78bfa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 20px;color:#71717a;font-size:13px;max-width:720px}
+  .chat{max-width:600px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px;min-height:360px}
+  .msg{display:flex;gap:10px;max-width:88%}
+  .msg.me{align-self:flex-end;flex-direction:row-reverse}
+  .av{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:14px}
+  .av.ai{background:rgba(167,139,250,.16);color:#a78bfa}.av.me{background:#27272a}
+  .bub{background:#1f1f22;border-radius:12px;padding:11px 14px;font-size:14px;line-height:1.6}
+  .msg.me .bub{background:#2b3a67}
+  .think{display:inline-flex;gap:4px;align-items:center;color:#71717a;font-size:13px}
+  .think .d{width:6px;height:6px;border-radius:50%;background:#71717a;animation:blink 1.2s infinite}
+  .think .d:nth-child(2){animation-delay:.2s}.think .d:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+  .cursor{display:inline-block;width:7px;height:15px;background:#a78bfa;margin-left:1px;vertical-align:text-bottom;animation:cur .9s step-end infinite}
+  @keyframes cur{50%{opacity:0}}
+  .card{margin-top:8px;background:#0f0f11;border:1px solid #27272a;border-radius:10px;padding:10px 12px;font-size:12px;color:#a1a1aa;
+        opacity:0;transform:translateY(6px);transition:.4s}
+  .card.in{opacity:1;transform:none}
+  .card b{color:#fafafa}
+  .in-row{display:flex;gap:10px;margin-top:6px}
+  input{flex:1;background:#0f0f11;border:1px solid #27272a;border-radius:10px;color:#fff;padding:10px 12px;outline:0;font-size:14px}
+  button{background:var(--accent);border:0;color:#1a0f2e;padding:0 16px;border-radius:10px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+  <h1>시안 13 — AI 채팅 스트리밍 응답 (SSE 토큰 스트리밍)</h1>
+  <p class="sub">채팅 AI 진단. thinking 점 → 토큰이 한 글자씩 흘러나오는 타이핑 커서 → 완료 후 근거 카드(시각화)가 페이드-인. 실제 SSE(token→answer_complete→visual→done)와 동일한 연출.</p>
+  <div class="chat" id="chat">
+    <div class="msg me"><div class="av me">🧑</div><div class="bub">죽동 배수지 수위 HH 알람 원인 분석해줘</div></div>
+  </div>
+  <div class="in-row"><input id="q" value="신평 가압장 펌프 상태는?" onkeydown="if(event.key==='Enter')send()"/><button onclick="send()">전송</button></div>
+<script>
+  const ANSWER="죽동 배수지 수위#1 HH는 최근 1년 850건 발생했습니다. 지배적 원인은 ‘배수지 유출량 감소추세로 유입량이 유출량보다 많음’(745건, 88%)이며, 전단 가압장이 압력제어 방식이라 ‘펌프 미가동’ 진단은 부적합합니다. 유입/유출 수지를 점검하세요.";
+  const chat=document.getElementById('chat');
+  function bubble(){const m=document.createElement('div');m.className='msg';
+    m.innerHTML='<div class="av ai">🤖</div><div class="bub"></div>';chat.appendChild(m);chat.scrollTop=1e9;return m.querySelector('.bub');}
+  function send(){
+    const q=document.getElementById('q').value.trim()||ANSWER;
+    const me=document.createElement('div');me.className='msg me';me.innerHTML=`<div class="av me">🧑</div><div class="bub">${q}</div>`;chat.appendChild(me);
+    const b=bubble();b.innerHTML='<span class="think"><span class="d"></span><span class="d"></span><span class="d"></span> 분석 중</span>';
+    setTimeout(()=>stream(b,ANSWER),900);
+  }
+  function stream(b,text){
+    b.innerHTML='<span class="tx"></span><span class="cursor"></span>';const tx=b.querySelector('.tx');let i=0;
+    (function type(){if(i<=text.length){tx.textContent=text.slice(0,i);i+=Math.random()<.3?2:1;chat.scrollTop=1e9;setTimeout(type,18);}
+      else{b.querySelector('.cursor').remove();
+        const c=document.createElement('div');c.className='card';
+        c.innerHTML='📊 근거 · <b>유출량 감소추세 745건</b> · 가동조건 오류 96건 · 미정지 6건 <span style="color:#52525b">(DB 집계)</span>';
+        b.appendChild(c);requestAnimationFrame(()=>setTimeout(()=>c.classList.add('in'),50));chat.scrollTop=1e9;}})();
+  }
+  setTimeout(()=>{const b=bubble();b.innerHTML='<span class="think"><span class="d"></span><span class="d"></span><span class="d"></span> 분석 중</span>';
+    setTimeout(()=>stream(b,ANSWER),900);},400);
+</script>
+</body>
+</html>

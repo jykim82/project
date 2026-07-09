@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 14 · 타임라인 스크러버 재생</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 22px;color:#71717a;font-size:13px;max-width:720px}
+  .stage{max-width:820px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px}
+  .time{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .time small{font-size:13px;color:var(--muted);font-weight:500;margin-left:8px}
+  .nodes{display:flex;gap:14px;margin:18px 0;flex-wrap:wrap}
+  .n{flex:1;min-width:130px;background:#0f0f11;border:1px solid #27272a;border-radius:12px;padding:14px;transition:.3s}
+  .n .nm{font-size:12px;color:var(--muted)}.n .lv{font-size:20px;font-weight:700;margin-top:6px;transition:color .3s}
+  .n .st{height:5px;border-radius:3px;background:#27272a;margin-top:10px;overflow:hidden}
+  .n .st i{display:block;height:100%;background:var(--accent);transition:width .35s}
+  .ctrl{display:flex;align-items:center;gap:14px;margin-top:8px}
+  .play{width:44px;height:44px;border-radius:12px;background:var(--accent);color:#06131f;border:0;font-size:16px;cursor:pointer;display:grid;place-items:center}
+  .track{flex:1;position:relative;height:34px;display:flex;align-items:center}
+  .rail{position:absolute;left:0;right:0;height:6px;background:#27272a;border-radius:3px}
+  .fill{position:absolute;left:0;height:6px;background:var(--accent);border-radius:3px}
+  .knob{position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translateX(-50%)}
+  .marks{position:absolute;inset:0;pointer-events:none}
+  .ev{position:absolute;top:-2px;width:10px;height:10px;border-radius:50%;background:#f87171;transform:translateX(-50%);border:2px solid #161618}
+  input[type=range]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+  .speed{font-size:12px;color:var(--muted);cursor:pointer;user-select:none;background:#27272a;padding:5px 10px;border-radius:8px}
+</style>
+</head>
+<body>
+  <h1>시안 14 — 타임라인 스크러버 재생 (과거 상태 재생)</h1>
+  <p class="sub">타임라인 계통도. 지난 24h를 재생/스크럽하며 수위·유량이 시점에 맞춰 변함. 알람 이벤트는 트랙에 붉은 점으로 표시, 배속 조절. (실시간↔타임라인 모드 전환)</p>
+  <div class="stage">
+    <div class="time"><span id="clock">00:00</span><small id="date">2026-07-08</small><span class="speed" style="float:right" onclick="cycleSpeed()" id="spd">▶ 1×</span></div>
+    <div class="nodes" id="nodes"></div>
+    <div class="ctrl">
+      <button class="play" id="play" onclick="toggle()">▶</button>
+      <div class="track">
+        <div class="rail"></div><div class="fill" id="fill"></div><div class="knob" id="knob"></div>
+        <div class="marks" id="marks"></div>
+        <input type="range" id="rng" min="0" max="1440" value="0" oninput="seek(this.value)"/>
+      </div>
+    </div>
+  </div>
+<script>
+  const NODES=[{nm:'죽동 배수지',u:'m',base:2.8,amp:.9,c:'#38bdf8'},{nm:'신평 가압장',u:'kgf',base:5.2,amp:1.2,c:'#a78bfa'},
+    {nm:'남산2 배수지',u:'m',base:3.0,amp:.7,c:'#34d399'},{nm:'갈산 가압장',u:'A',base:36,amp:8,c:'#fbbf24'}];
+  const EVENTS=[380,720,1010,1250];// 분 단위 알람
+  let t=0,playing=false,speed=1,timer=null;
+  const nodesEl=document.getElementById('nodes');
+  NODES.forEach(n=>{const el=document.createElement('div');el.className='n';el.style.setProperty('--accent',n.c);
+    el.innerHTML=`<div class="nm">${n.nm}</div><div class="lv"><span class="v">0</span> <small style="font-size:12px;color:#a1a1aa">${n.u}</small></div><div class="st"><i style="background:${n.c}"></i></div>`;
+    nodesEl.appendChild(el);n.el=el;});
+  const marks=document.getElementById('marks');
+  EVENTS.forEach(m=>{const e=document.createElement('div');e.className='ev';e.style.left=(m/1440*100)+'%';e.title='알람';marks.appendChild(e);});
+  function val(n,min){return n.base+n.amp*Math.sin(min/120+n.base)+Math.sin(min/17)*n.amp*.2;}
+  function apply(min){
+    t=+min;const hh=String(Math.floor(min/60)).padStart(2,'0'),mm=String(Math.floor(min%60)).padStart(2,'0');
+    document.getElementById('clock').textContent=`${hh}:${mm}`;
+    const p=min/1440*100;document.getElementById('fill').style.width=p+'%';document.getElementById('knob').style.left=p+'%';document.getElementById('rng').value=min;
+    NODES.forEach(n=>{const v=val(n,min);n.el.querySelector('.v').textContent=v.toFixed(n.u==='A'?1:2);
+      const near=EVENTS.some(e=>Math.abs(e-min)<15);n.el.querySelector('.lv').style.color=near?'#f87171':'#fafafa';
+      n.el.querySelector('.st i').style.width=Math.min(100,Math.max(5,(v/(n.base+n.amp))*100))+'%';});
+  }
+  function toggle(){playing=!playing;document.getElementById('play').textContent=playing?'⏸':'▶';
+    if(playing){timer=setInterval(()=>{t+=2*speed;if(t>=1440){t=0;}apply(t);},60);}else clearInterval(timer);}
+  function seek(v){apply(v);}
+  function cycleSpeed(){speed=speed===1?2:speed===2?4:1;document.getElementById('spd').textContent=`▶ ${speed}×`;}
+  apply(0);
+</script>
+</body>
+</html>

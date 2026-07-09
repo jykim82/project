@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 20 · 장애 조치 워크플로 스텝퍼</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#34d399; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 26px;color:#71717a;font-size:13px;max-width:720px}
+  .wrap{max-width:720px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:26px}
+  .steps{display:flex;align-items:flex-start;position:relative}
+  .step{flex:1;text-align:center;position:relative;z-index:2}
+  .bead{width:40px;height:40px;border-radius:50%;margin:0 auto;display:grid;place-items:center;font-size:15px;font-weight:700;
+        background:#1f1f22;border:2px solid #3f3f46;color:#71717a;transition:.4s}
+  .step.done .bead{background:var(--accent);border-color:var(--accent);color:#04160f}
+  .step.active .bead{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 5px rgba(52,211,153,.15);animation:pulse 1.6s infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 9px rgba(52,211,153,.05)}}
+  .lbl{font-size:12.5px;margin-top:10px;color:#a1a1aa}.step.done .lbl,.step.active .lbl{color:#fafafa}
+  .sub2{font-size:11px;color:#52525b;margin-top:3px}
+  .barwrap{position:absolute;top:20px;left:12%;right:12%;height:3px;background:#27272a;z-index:1;border-radius:2px;overflow:hidden}
+  .bar{height:100%;width:0;background:var(--accent);transition:width .5s}
+  .panel{margin-top:26px;background:#0f0f11;border:1px solid #27272a;border-radius:12px;padding:16px 18px;min-height:70px;font-size:13px;color:#a1a1aa}
+  .panel b{color:#fafafa}
+  .btns{display:flex;gap:10px;margin-top:20px;justify-content:flex-end}
+  button{padding:9px 18px;border-radius:9px;font-size:13px;cursor:pointer;border:1px solid #3f3f46;background:#27272a;color:#e4e4e7}
+  button.primary{background:var(--accent);border:0;color:#04160f;font-weight:600}
+  button:disabled{opacity:.4;cursor:not-allowed}
+</style>
+</head>
+<body>
+  <h1>시안 20 — 장애 조치 워크플로 스텝퍼</h1>
+  <p class="sub">장애 발생 → 진단 → 조치 → 완료(보고서) 단방향 플로우를 시각화. 완료 단계는 채워지고 현재 단계는 맥동. 상태 전이가 명확해 누락 방지. (점검→장애관리→알람관리 플로우)</p>
+  <div class="wrap">
+    <div class="steps" id="steps">
+      <div class="barwrap"><div class="bar" id="bar"></div></div>
+    </div>
+    <div class="panel" id="panel"></div>
+    <div class="btns"><button id="prev" onclick="go(-1)">이전</button><button class="primary" id="next" onclick="go(1)">다음 단계 →</button></div>
+  </div>
+<script>
+  const STEPS=[
+    ['🔔','알람 발생','죽동 배수지 수위#1 HH','자동 알람 감지 · 진행중으로 등록됨. 담당자 배정 대기.'],
+    ['🔍','현장 확인·진단','원인 분류','현장 확인 결과 유입>유출 수지 이상. 분류: <b>이상</b>(현장 고장 아님). AI 참고 의견 첨부.'],
+    ['🔧','조치','펌프 운영대수 조정','전단 가압장 운영대수 점검·조정. 조치 이력 기록, 사진 첨부.'],
+    ['✅','완료·보고','일 점검 보고서','조치 완료 → 알람 해제. 장애 조치 보고서 초안 자동 생성 → 담당자 확정.'],
+  ];
+  let cur=0;const steps=document.getElementById('steps');
+  STEPS.forEach((s,i)=>{const el=document.createElement('div');el.className='step';el.id='s'+i;
+    el.innerHTML=`<div class="bead">${i+1}</div><div class="lbl">${s[1]}</div><div class="sub2">${s[2]}</div>`;steps.appendChild(el);});
+  function render(){
+    STEPS.forEach((s,i)=>{const el=document.getElementById('s'+i);el.className='step'+(i<cur?' done':i===cur?' active':'');
+      el.querySelector('.bead').textContent=i<cur?'✓':i+1;});
+    document.getElementById('bar').style.width=(cur/(STEPS.length-1)*100)+'%';
+    document.getElementById('panel').innerHTML=`<b style="font-size:14px">${STEPS[cur][0]} ${STEPS[cur][1]}</b><br/><span style="display:block;margin-top:8px">${STEPS[cur][3]}</span>`;
+    document.getElementById('prev').disabled=cur===0;
+    document.getElementById('next').textContent=cur===STEPS.length-1?'✓ 완료됨':'다음 단계 →';
+    document.getElementById('next').disabled=cur===STEPS.length-1;
+  }
+  function go(d){cur=Math.max(0,Math.min(STEPS.length-1,cur+d));render();}
+  render();
+</script>
+</body>
+</html>

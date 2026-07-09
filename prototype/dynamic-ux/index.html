@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>SLM · 역동적 UI 기법 시안 10선</title>
+<title>SLM · 역동적 UI 기법 시안 20선</title>
 <style>
   :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
   *{box-sizing:border-box}
@@ -21,6 +21,8 @@
   .prev iframe{width:200%;height:400px;border:0;transform:scale(.5);transform-origin:top left;pointer-events:none}
   .prev .num{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.55);border:1px solid #3f3f46;font-size:11px;
              font-weight:700;padding:3px 9px;border-radius:7px;color:#e4e4e7;z-index:2}
+  .prev .rec{position:absolute;top:10px;right:10px;background:rgba(52,211,153,.16);border:1px solid rgba(52,211,153,.4);
+             font-size:10px;font-weight:700;padding:3px 8px;border-radius:7px;color:#6ee7b7;z-index:2}
   .body{padding:16px 18px}
   .t{font-size:15px;font-weight:600}
   .d{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.55}
@@ -31,10 +33,10 @@
 </head>
 <body>
   <header>
-    <h1>역동적 UI 기법 시안 <span style="color:var(--accent)">10선</span></h1>
+    <h1>역동적 UI 기법 시안 <span style="color:var(--accent)">20선</span></h1>
     <p class="sub">개발 중인 <b>SLM 물관리 대시보드</b>에 적용할 수 있는 동적·인터랙션 기법 시안입니다.
-       각 카드를 클릭하면 전체 화면으로 열립니다. 모두 <b>자체 완결형 HTML</b>(외부 의존성 없음)이라 그대로 참고·이식 가능합니다.
-       실제 적용은 프로덕션에서 <b>ECharts / CSS transition / IntersectionObserver</b> 등으로 구현하시면 됩니다.</p>
+       01–10은 기본 시각화·모션, <b style="color:#6ee7b7">11–20(추천 ●)</b>은 SLM 실제 기능(GIS·AI 채팅 SSE·타임라인 계통도·알람 캘린더·트렌드 비교·per-user 설정·장애 조치 플로우)에 직결되는 추천 기법입니다.
+       각 카드 클릭 시 전체 화면. 모두 <b>자체 완결형 HTML</b>(외부 의존성 없음)이라 그대로 참고·이식 가능합니다.</p>
   </header>
   <div class="grid" id="grid"></div>
   <footer>
@@ -44,21 +46,31 @@
   </footer>
 <script>
   const ITEMS=[
-    ['01-kpi-countup.html','KPI 카운트업 + 변화 플래시','로드 시 0→목표값 이징 카운트업, 갱신 때 카드 하이라이트.','대시보드 종합현황판'],
-    ['02-live-pulse.html','실시간 LIVE 펄스 & 값 하이라이트','심장박동 링 + 값 변경 순간 점멸·테두리 발광.','실시간 계통도·태그 모니터링'],
-    ['03-pipe-flow.html','관로 유량 흐름 애니메이션','흐르는 점선으로 방향·세기 표현, 불균형은 붉게.','GIS 관망도·계통도'],
-    ['04-reservoir-wave.html','배수지 수위 웨이브 게이지','물이 차오르고 표면이 출렁, HH/LL 기준선.','배수지 인스펙터·시설 카드'],
-    ['05-radial-gauge.html','라디얼 게이지 (압력·유량)','값이 부드럽게 채워지고 임계 색 전환.','Q/H/P 요약·가압장 카드'],
-    ['06-alarm-attention.html','알람 어텐션 (펄스·글로우)','경고는 은은한 글로우, 신규는 슬라이드+셰이크.','경보 목록·위기대응'],
-    ['07-skeleton-shimmer.html','스켈레톤 시머 → 데이터 전환','시머 후 데이터 페이드-인, 레이아웃 점프 없음.','모든 조회 화면 공통'],
-    ['08-live-sparkline.html','실시간 스파크라인 & 스트리밍','우측에서 흘러드는 매끄러운 스트리밍 라인.','태그 모니터링·트렌드'],
-    ['09-scroll-reveal.html','스크롤 스태거 리빌','섹션·카드가 순차 페이드-업(IntersectionObserver).','긴 대시보드·보고서'],
-    ['10-water-hero.html','워터 파티클 · 웨이브 히어로','물 입자·파도 배경 + 그라디언트 문구 연출.','시작·랜딩 페이지'],
+    ['01-kpi-countup.html','KPI 카운트업 + 변화 플래시','로드 시 0→목표값 이징 카운트업, 갱신 때 카드 하이라이트.','대시보드 종합현황판',0],
+    ['02-live-pulse.html','실시간 LIVE 펄스 & 값 하이라이트','심장박동 링 + 값 변경 순간 점멸·테두리 발광.','실시간 계통도·태그 모니터링',0],
+    ['03-pipe-flow.html','관로 유량 흐름 애니메이션','흐르는 점선으로 방향·세기 표현, 불균형은 붉게.','GIS 관망도·계통도',0],
+    ['04-reservoir-wave.html','배수지 수위 웨이브 게이지','물이 차오르고 표면이 출렁, HH/LL 기준선.','배수지 인스펙터·시설 카드',0],
+    ['05-radial-gauge.html','라디얼 게이지 (압력·유량)','값이 부드럽게 채워지고 임계 색 전환.','Q/H/P 요약·가압장 카드',0],
+    ['06-alarm-attention.html','알람 어텐션 (펄스·글로우)','경고는 은은한 글로우, 신규는 슬라이드+셰이크.','경보 목록·위기대응',0],
+    ['07-skeleton-shimmer.html','스켈레톤 시머 → 데이터 전환','시머 후 데이터 페이드-인, 레이아웃 점프 없음.','모든 조회 화면 공통',0],
+    ['08-live-sparkline.html','실시간 스파크라인 & 스트리밍','우측에서 흘러드는 매끄러운 스트리밍 라인.','태그 모니터링·트렌드',0],
+    ['09-scroll-reveal.html','스크롤 스태거 리빌','섹션·카드가 순차 페이드-업(IntersectionObserver).','긴 대시보드·보고서',0],
+    ['10-water-hero.html','워터 파티클 · 웨이브 히어로','물 입자·파도 배경 + 그라디언트 문구 연출.','시작·랜딩 페이지',0],
+    ['11-command-palette.html','커맨드 팔레트 (⌘K 빠른 이동)','시설·태그·메뉴로 키보드 즉시 이동/실행. 화면 많은 SCADA에 강력.','전역 (헤더/단축키)',1],
+    ['12-toast-stack.html','토스트 알림 스택','액션 피드백·알람 통지를 우상단 스택+진행바+자동소멸.','전역 · 알람 통지',1],
+    ['13-chat-streaming.html','AI 채팅 스트리밍 응답','thinking 점 → 토큰 타이핑 → 근거 카드 페이드. SSE 그대로.','AI 채팅 진단',1],
+    ['14-timeline-scrubber.html','타임라인 스크러버 재생','지난 24h를 재생/스크럽, 시점별 수위·유량 변화 + 알람 마커.','타임라인 계통도',1],
+    ['15-inspector-drawer.html','인스펙터 슬라이드 드로어','시설 클릭 → 우측 드로어 슬라이드 + 백드롭 블러 + 섹션 순차 등장.','GIS·계통도 인스펙터',1],
+    ['16-compare-slider.html','비교 슬라이더 (평소 대비)','손잡이로 평소 기대값↔현재 실측을 가르는 before/after.','트렌드 비교·유량 수지',1],
+    ['17-alarm-heatmap.html','알람 캘린더 히트맵','1년 365일 알람 밀도를 색 농도로. 폭주일·계절 패턴 파악.','알람 캘린더',1],
+    ['18-map-spotlight.html','맵 마커 스포트라이트 & 리플','커서 스포트라이트로 집중, 알람 시설 리플 맥동, 선택 하이라이트.','GIS 관망도',1],
+    ['19-draggable-widgets.html','드래그 위젯 재배치','위젯을 끌어 개인 순서로. per-user 설정과 연계 저장.','개인화 대시보드',1],
+    ['20-workflow-stepper.html','장애 조치 워크플로 스텝퍼','발생→진단→조치→완료 단방향 플로우, 현재 단계 맥동.','장애관리·보고서',1],
   ];
   const grid=document.getElementById('grid');
   ITEMS.forEach((it,i)=>{
     const a=document.createElement('a');a.className='card';a.href=it[0];a.target='_blank';
-    a.innerHTML=`<div class="prev"><span class="num">시안 ${String(i+1).padStart(2,'0')}</span><iframe loading="lazy" src="${it[0]}" scrolling="no"></iframe></div>
+    a.innerHTML=`<div class="prev"><span class="num">시안 ${String(i+1).padStart(2,'0')}</span>${it[4]?'<span class="rec">추천</span>':''}<iframe loading="lazy" src="${it[0]}" scrolling="no"></iframe></div>
       <div class="body"><div class="t">${it[1]}</div><div class="d">${it[2]}</div>
       <div class="where">적용 예: <span>${it[3]}</span></div></div>`;
     grid.appendChild(a);

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 17 · 알람 캘린더 히트맵</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 22px;color:#71717a;font-size:13px;max-width:720px}
+  .wrap{max-width:840px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px}
+  .cal{display:grid;grid-template-columns:repeat(53,1fr);grid-auto-rows:1fr;gap:3px;grid-auto-flow:column;grid-template-rows:repeat(7,1fr)}
+  .cell{width:100%;aspect-ratio:1;border-radius:3px;background:#1a1a1d;transition:transform .12s;cursor:pointer;position:relative}
+  .cell:hover{transform:scale(1.35);z-index:2;outline:1px solid #fff}
+  .months{display:grid;grid-template-columns:repeat(12,1fr);font-size:10px;color:#52525b;margin-bottom:6px;padding-left:2px}
+  .legend{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin-top:14px;justify-content:flex-end}
+  .legend .b{width:12px;height:12px;border-radius:3px}
+  .tip{position:fixed;background:#000;border:1px solid #3f3f46;border-radius:8px;padding:6px 10px;font-size:12px;pointer-events:none;opacity:0;transition:.1s;z-index:9}
+  .row{display:flex;gap:26px;margin-top:16px;font-size:12px;color:var(--muted)}
+  .row b{color:#fafafa;font-size:16px;display:block}
+</style>
+</head>
+<body>
+  <h1>시안 17 — 알람 캘린더 히트맵 (연간 밀도)</h1>
+  <p class="sub">알람 캘린더. 1년 365일을 색 농도로. 알람 폭주일이 한눈에, 호버 시 상세. 요일·계절 패턴 파악에 유리. (GitHub contribution 스타일)</p>
+  <div class="wrap">
+    <div class="months"><span>1월</span><span>2월</span><span>3월</span><span>4월</span><span>5월</span><span>6월</span><span>7월</span><span>8월</span><span>9월</span><span>10월</span><span>11월</span><span>12월</span></div>
+    <div class="cal" id="cal"></div>
+    <div class="legend">적음<span class="b" style="background:#1a1a1d"></span><span class="b" style="background:#164e63"></span><span class="b" style="background:#0e7490"></span><span class="b" style="background:#f59e0b"></span><span class="b" style="background:#ef4444"></span>많음</div>
+    <div class="row"><div>연간 알람 <b>4,182건</b></div><div>최다일 <b>07-08 · 63건</b></div><div>일평균 <b>11.5건</b></div><div>무알람일 <b>27일</b></div></div>
+  </div>
+  <div class="tip" id="tip"></div>
+<script>
+  const cal=document.getElementById('cal'),tip=document.getElementById('tip');
+  const COLORS=['#1a1a1d','#164e63','#0e7490','#f59e0b','#ef4444'];
+  for(let d=0;d<371;d++){
+    const season=Math.sin(d/58)*.5+.5; // 여름 폭주
+    const r=Math.random();const v=Math.max(0,Math.min(4,Math.round(season*3 + (r<.06?4:r<.2?2:r<.5?1:0) - (r>.9?2:0))));
+    const cnt=v===0?Math.floor(r*3):v*8+Math.floor(r*12);
+    const c=document.createElement('div');c.className='cell';c.style.background=COLORS[v];
+    const day=(d%365)+1;c.dataset.info=`${Math.ceil(day/30)}월 · 알람 ${cnt}건`;
+    c.onmousemove=e=>{tip.textContent=c.dataset.info;tip.style.left=(e.clientX+12)+'px';tip.style.top=(e.clientY+12)+'px';tip.style.opacity=1;};
+    c.onmouseleave=()=>tip.style.opacity=0;
+    cal.appendChild(c);
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 15 · 인스펙터 슬라이드 드로어</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px;overflow-x:hidden}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 22px;color:#71717a;font-size:13px;max-width:640px}
+  .list{max-width:520px;display:flex;flex-direction:column;gap:10px}
+  .row{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:.2s}
+  .row:hover{border-color:#3f6d8f}
+  .row .dot{width:9px;height:9px;border-radius:50%;background:var(--c)}
+  .row .go{margin-left:auto;color:#52525b}
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(3px);opacity:0;pointer-events:none;transition:.3s;z-index:40}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100vh;width:min(400px,92vw);background:#111113;border-left:1px solid #2b2b30;
+          transform:translateX(100%);transition:transform .35s cubic-bezier(.3,.9,.3,1);z-index:41;box-shadow:-20px 0 60px rgba(0,0,0,.5);overflow:auto}
+  .drawer.show{transform:none}
+  .dh{padding:18px 20px;border-bottom:1px solid #27272a;display:flex;align-items:center;gap:10px;position:sticky;top:0;background:#111113}
+  .dh .nm{font-size:16px;font-weight:600}.dh .x{margin-left:auto;cursor:pointer;color:#71717a;font-size:16px}
+  .dbody{padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+  .sec .l{font-size:12px;color:var(--muted);margin-bottom:8px}
+  .metric{display:flex;justify-content:space-between;background:#0f0f11;border:1px solid #27272a;border-radius:10px;padding:12px 14px}
+  .metric .v{font-size:18px;font-weight:700;color:var(--accent)}
+  .eq{font-size:13px;padding:8px 0;border-bottom:1px solid #1f1f22;display:flex;justify-content:space-between}
+  .eq small{color:#52525b}
+  .stagger>*{opacity:0;transform:translateY(10px);transition:.4s}
+  .drawer.show .stagger>*{opacity:1;transform:none}
+</style>
+</head>
+<body>
+  <h1>시안 15 — 인스펙터 슬라이드 드로어 (백드롭 블러)</h1>
+  <p class="sub">GIS/계통도에서 시설 클릭 → 우측 드로어가 슬라이드 인, 배경 블러. 내부 섹션은 순차 등장. ESC/바깥 클릭으로 닫힘. (인스펙터 패턴)</p>
+  <div class="list" id="list"></div>
+
+  <div class="scrim" id="scrim" onclick="close_()"></div>
+  <aside class="drawer" id="drawer">
+    <div class="dh"><span class="dot" style="width:10px;height:10px;border-radius:50%;background:var(--c)"></span>
+      <span class="nm" id="dnm">—</span><span class="x" onclick="close_()">✕</span></div>
+    <div class="dbody stagger">
+      <div class="sec" style="transition-delay:.05s"><div class="l">실시간 지표</div>
+        <div style="display:flex;gap:10px"><div class="metric" style="flex:1"><span>수위</span><span class="v" id="m1">3.2m</span></div>
+        <div class="metric" style="flex:1"><span>유출</span><span class="v" id="m2">1403</span></div></div></div>
+      <div class="sec" style="transition-delay:.12s"><div class="l">설비</div>
+        <div class="eq"><span>PLC</span><small id="e1">plc_15 · 운영중</small></div>
+        <div class="eq"><span>유량계</span><small>fm_8 · 운영중</small></div>
+        <div class="eq"><span>수위계</span><small>lt_3 · 운영중</small></div></div>
+      <div class="sec" style="transition-delay:.19s"><div class="l">최근 알람</div>
+        <div class="eq"><span style="color:#f87171">경고</span><small>수위#1 HH · 방금</small></div>
+        <div class="eq"><span style="color:#fbbf24">주의</span><small>탁도 상승 · 12분 전</small></div></div>
+    </div>
+  </aside>
+<script>
+  const SITES=[['죽동 배수지','#38bdf8'],['신평 가압장','#a78bfa'],['남산2 배수지','#34d399'],['갈산 가압장','#fbbf24'],['행정 배수지','#f87171']];
+  const list=document.getElementById('list');
+  SITES.forEach(s=>{const el=document.createElement('div');el.className='row';el.style.setProperty('--c',s[1]);
+    el.innerHTML=`<span class="dot"></span>${s[0]}<span class="go">인스펙터 ›</span>`;el.onclick=()=>open_(s);list.appendChild(el);});
+  function open_(s){document.getElementById('dnm').textContent=s[0];document.getElementById('drawer').style.setProperty('--c',s[1]);
+    document.getElementById('m1').textContent=(2+Math.random()*2).toFixed(2)+'m';document.getElementById('m2').textContent=Math.round(800+Math.random()*900);
+    document.getElementById('drawer').classList.add('show');document.getElementById('scrim').classList.add('show');}
+  function close_(){document.getElementById('drawer').classList.remove('show');document.getElementById('scrim').classList.remove('show');}
+  addEventListener('keydown',e=>{if(e.key==='Escape')close_();});
+</script>
+</body>
+</html>

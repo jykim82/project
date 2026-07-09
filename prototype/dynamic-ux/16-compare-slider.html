@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 16 · 비교 슬라이더 (평소 대비)</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 22px;color:#71717a;font-size:13px;max-width:720px}
+  .wrap{max-width:760px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:22px}
+  .cmp{position:relative;height:280px;border-radius:12px;overflow:hidden;background:#0d0d0f;user-select:none;cursor:ew-resize}
+  .layer{position:absolute;inset:0}
+  .layer canvas{width:100%;height:100%;display:block}
+  .clip{clip-path:inset(0 0 0 var(--x))}
+  .handle{position:absolute;top:0;bottom:0;width:2px;background:#fff;left:var(--px);transform:translateX(-1px);box-shadow:0 0 12px rgba(255,255,255,.4)}
+  .handle .grip{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;background:#fff;color:#111;
+                display:grid;place-items:center;font-size:14px;font-weight:700}
+  .tag{position:absolute;top:12px;padding:4px 10px;border-radius:7px;font-size:12px;font-weight:600}
+  .tag.a{left:12px;background:rgba(56,189,248,.16);color:#7dd3fc}
+  .tag.b{right:12px;background:rgba(248,113,113,.16);color:#fca5a5}
+  .foot{display:flex;justify-content:space-between;margin-top:16px;font-size:13px}
+  .kpi{background:#0f0f11;border:1px solid #27272a;border-radius:10px;padding:12px 16px;flex:1;margin:0 5px;text-align:center}
+  .kpi .l{font-size:11px;color:var(--muted)}.kpi .v{font-size:20px;font-weight:700;margin-top:4px}
+</style>
+</head>
+<body>
+  <h1>시안 16 — 비교 슬라이더 (평소 대비 / before-after)</h1>
+  <p class="sub">트렌드 비교·유량 수지. 손잡이를 좌우로 끌면 ‘평소 기대값(파랑)’과 ‘현재 실측(빨강)’이 갈려 보임. 편차가 큰 구간이 직관적으로 드러남.</p>
+  <div class="wrap">
+    <div class="cmp" id="cmp" style="--x:50%;--px:50%">
+      <div class="layer"><canvas id="ca" width="1520" height="560"></canvas><span class="tag a">평소 기대값</span></div>
+      <div class="layer clip"><canvas id="cb" width="1520" height="560"></canvas><span class="tag b">현재 실측</span></div>
+      <div class="handle" id="h"><div class="grip">⇆</div></div>
+    </div>
+    <div class="foot">
+      <div class="kpi"><div class="l">평소 대비</div><div class="v" style="color:#f87171">+18.4%</div></div>
+      <div class="kpi"><div class="l">최대 편차</div><div class="v">14:20</div></div>
+      <div class="kpi"><div class="l">판정</div><div class="v" style="color:#fbbf24">주의</div></div>
+    </div>
+  </div>
+<script>
+  function line(id,col,fn,fill){const c=document.getElementById(id),x=c.getContext('2d'),w=c.width,h=c.height;
+    x.clearRect(0,0,w,h);const pts=[];for(let i=0;i<=120;i++){const px=i/120*w,py=h*0.5-fn(i)*h*0.32;pts.push([px,py]);}
+    x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));
+    x.save();x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,col+'44');g.addColorStop(1,col+'00');x.fillStyle=g;x.fill();x.restore();
+    x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p[0],p[1]):x.moveTo(p[0],p[1]));x.strokeStyle=col;x.lineWidth=3;x.stroke();}
+  line('ca','#38bdf8',i=>Math.sin(i/12)*.5+Math.sin(i/40)*.3);
+  line('cb','#f87171',i=>Math.sin(i/12)*.5+Math.sin(i/40)*.3+ (i>60&&i<90?.35*Math.sin((i-60)/10):0)+.12);
+  const cmp=document.getElementById('cmp');let drag=false;
+  function set(clientX){const r=cmp.getBoundingClientRect();let p=Math.max(0,Math.min(1,(clientX-r.left)/r.width));
+    cmp.style.setProperty('--x',(p*100)+'%');cmp.style.setProperty('--px',(p*100)+'%');}
+  cmp.addEventListener('mousedown',e=>{drag=true;set(e.clientX);});
+  addEventListener('mousemove',e=>{if(drag)set(e.clientX);});addEventListener('mouseup',()=>drag=false);
+  cmp.addEventListener('mousemove',e=>{if(!drag)set(e.clientX);}); // hover 미리보기
+</script>
+</body>
+</html>

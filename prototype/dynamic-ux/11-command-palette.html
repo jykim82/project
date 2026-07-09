@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 11 · 커맨드 팔레트 (⌘K 빠른 이동)</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 20px;color:#71717a;font-size:13px;max-width:720px}
+  .kbd{background:#27272a;border:1px solid #3f3f46;border-bottom-width:2px;border-radius:6px;padding:2px 7px;font-size:12px;color:#e4e4e7}
+  .open{background:#27272a;border:1px solid #3f3f46;color:#e4e4e7;padding:9px 16px;border-radius:9px;font-size:13px;cursor:pointer}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;padding-top:14vh;z-index:50}
+  .overlay.show{display:flex;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .pal{width:min(560px,92vw);background:#101012;border:1px solid #2b2b30;border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden;
+       animation:pop .2s cubic-bezier(.2,.9,.2,1)}
+  @keyframes pop{from{transform:translateY(-10px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
+  .pal input{width:100%;background:transparent;border:0;outline:0;color:#fff;font-size:16px;padding:18px 20px;border-bottom:1px solid #27272a}
+  .res{max-height:340px;overflow:auto;padding:8px}
+  .grp{font-size:11px;color:#52525b;padding:8px 12px 4px}
+  .it{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;cursor:pointer;font-size:14px}
+  .it .i{width:26px;height:26px;border-radius:7px;background:#1e1e22;display:grid;place-items:center;font-size:14px}
+  .it .t small{color:#71717a;font-size:12px;margin-left:8px}
+  .it.sel{background:rgba(56,189,248,.14);outline:1px solid rgba(56,189,248,.3)}
+  .it .go{margin-left:auto;font-size:11px;color:#52525b}
+  .empty{padding:30px;text-align:center;color:#52525b;font-size:13px}
+</style>
+</head>
+<body>
+  <h1>시안 11 — 커맨드 팔레트 (⌘K / Ctrl+K)</h1>
+  <p class="sub">운영자가 시설·태그·메뉴로 즉시 이동/실행. 키보드만으로 검색·↑↓·Enter. 화면이 많은 SCADA에서 이동 시간을 크게 단축. <span class="kbd">⌘</span>+<span class="kbd">K</span> 또는 버튼.</p>
+  <button class="open" onclick="openPal()">⌘K 커맨드 팔레트 열기</button>
+
+  <div class="overlay" id="ov" onclick="if(event.target===this)closePal()">
+    <div class="pal">
+      <input id="q" placeholder="시설·태그·메뉴·명령 검색…  (예: 죽동, 유량, 감사)" oninput="render()" onkeydown="nav(event)"/>
+      <div class="res" id="res"></div>
+    </div>
+  </div>
+<script>
+  const ITEMS=[
+    ['이동','🏞️','죽동 배수지','실시간 계통도'],['이동','🏞️','신평 가압장','설비 상태'],['이동','🏞️','남산2 배수지','수위 트렌드'],
+    ['이동','🗺️','GIS 관망도','/monitoring/gis'],['이동','📈','태그 모니터링','2,700 태그'],['이동','🛡️','감사 로그','관리'],
+    ['명령','⚡','알람 대시보드 열기','위기대응'],['명령','📝','장애 보고서 작성','보고서'],['명령','🤖','AI 채팅으로 진단','사진 업로드'],
+    ['태그','🔷','죽동(배) 유출유량 순시','tagsn 10482'],['태그','🔷','신평(가) 토출압력','tagsn 20931'],
+  ];
+  let sel=0,cur=[];
+  function score(it,q){return (it[2]+it[3]).toLowerCase().includes(q.toLowerCase());}
+  function render(){
+    const q=document.getElementById('q').value.trim();
+    cur=q?ITEMS.filter(i=>score(i,q)):ITEMS;sel=0;
+    const res=document.getElementById('res');
+    if(!cur.length){res.innerHTML='<div class="empty">결과 없음 · 다른 키워드로 검색</div>';return;}
+    const grps={};cur.forEach(i=>{(grps[i[0]]=grps[i[0]]||[]).push(i);});
+    let html='',idx=0;
+    for(const g in grps){html+=`<div class="grp">${g}</div>`;
+      grps[g].forEach(i=>{html+=`<div class="it${idx===sel?' sel':''}" data-i="${idx}" onclick="run(${idx})">
+        <span class="i">${i[1]}</span><span class="t">${i[2]}<small>${i[3]}</small></span><span class="go">↵</span></div>`;idx++;});}
+    res.innerHTML=html;
+  }
+  function nav(e){if(e.key==='ArrowDown'){sel=Math.min(cur.length-1,sel+1);render2();e.preventDefault();}
+    else if(e.key==='ArrowUp'){sel=Math.max(0,sel-1);render2();e.preventDefault();}
+    else if(e.key==='Enter'){run(sel);}else if(e.key==='Escape'){closePal();}}
+  function render2(){[...document.querySelectorAll('.it')].forEach(el=>el.classList.toggle('sel',+el.dataset.i===sel));
+    const s=document.querySelector('.it.sel');if(s)s.scrollIntoView({block:'nearest'});}
+  function run(i){const it=cur[i];if(!it)return;closePal();
+    const t=document.createElement('div');t.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#134e4a;color:#a7f3d0;border:1px solid #0f766e;padding:12px 20px;border-radius:10px;font-size:13px;z-index:60';
+    t.textContent=`→ ${it[2]} (${it[3]}) 이동`;document.body.appendChild(t);setTimeout(()=>t.remove(),1600);}
+  function openPal(){document.getElementById('ov').classList.add('show');const q=document.getElementById('q');q.value='';render();setTimeout(()=>q.focus(),50);}
+  function closePal(){document.getElementById('ov').classList.remove('show');}
+  addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPal();}});
+  render();
+</script>
+</body>
+</html>

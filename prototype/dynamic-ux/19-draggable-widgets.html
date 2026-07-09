@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 19 · 드래그 위젯 재배치</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 20px;color:#71717a;font-size:13px;max-width:720px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;max-width:1000px}
+  .w{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;cursor:grab;transition:transform .2s,box-shadow .2s,opacity .2s;position:relative}
+  .w:active{cursor:grabbing}
+  .w.drag{opacity:.4;border-style:dashed}
+  .w.over{transform:scale(1.03);box-shadow:0 0 0 2px #38bdf8}
+  .w .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+  .w .grip{margin-left:auto;color:#3f3f46;letter-spacing:-2px}
+  .w .v{font-size:28px;font-weight:700;margin-top:10px;font-variant-numeric:tabular-nums}
+  .w .spark{height:34px;margin-top:8px;width:100%}
+  .hint{font-size:12px;color:#52525b;margin-bottom:14px}
+</style>
+</head>
+<body>
+  <h1>시안 19 — 드래그 위젯 재배치 (개인화 대시보드)</h1>
+  <p class="sub">사용자가 위젯을 드래그해 자기 순서로 배치. 방금 만든 <b>per-user 설정</b>과 연계해 배치도 개인별 DB 저장 가능. (운영자마다 중요한 지표가 다름)</p>
+  <p class="hint">↕ 카드를 끌어 순서를 바꿔보세요 (드래그 앤 드롭)</p>
+  <div class="grid" id="grid"></div>
+<script>
+  const W=[['이상 감지','4','#f87171'],['설비 장애','51','#a78bfa'],['정상 시설','279','#34d399'],['유량 불균형','18','#38bdf8'],
+    ['평균 조치','2.4h','#fbbf24'],['교체 권고','3','#fb923c'],['진행 알람','2','#f472b6'],['MTBF','182일','#22d3ee']];
+  const grid=document.getElementById('grid');let dragEl=null;
+  function spark(c){const x=c.getContext('2d'),w=c.width,h=c.height;const a=Array.from({length:20},()=>Math.random());
+    x.clearRect(0,0,w,h);x.beginPath();a.forEach((v,i)=>{const px=i/19*w,py=h-4-v*(h-8);i?x.lineTo(px,py):x.moveTo(px,py);});
+    x.strokeStyle=c.dataset.c;x.lineWidth=2;x.stroke();}
+  W.forEach(d=>{const el=document.createElement('div');el.className='w';el.draggable=true;
+    el.innerHTML=`<div class="h">${d[0]}<span class="grip">⠿⠿</span></div><div class="v" style="color:${d[2]}">${d[1]}</div><canvas class="spark" width="380" height="68" data-c="${d[2]}"></canvas>`;
+    grid.appendChild(el);spark(el.querySelector('canvas'));
+    el.addEventListener('dragstart',()=>{dragEl=el;setTimeout(()=>el.classList.add('drag'),0);});
+    el.addEventListener('dragend',()=>{el.classList.remove('drag');document.querySelectorAll('.w').forEach(x=>x.classList.remove('over'));});
+    el.addEventListener('dragover',e=>{e.preventDefault();if(el!==dragEl)el.classList.add('over');});
+    el.addEventListener('dragleave',()=>el.classList.remove('over'));
+    el.addEventListener('drop',e=>{e.preventDefault();el.classList.remove('over');if(el===dragEl)return;
+      const els=[...grid.children];const di=els.indexOf(dragEl),ti=els.indexOf(el);
+      if(di<ti)el.after(dragEl);else el.before(dragEl);});
+  });
+</script>
+</body>
+</html>
