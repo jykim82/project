@@ -1,12 +1,18 @@
 # Tweaks 패널 + 레이아웃 분기 사양
 
 **작성:** 2026-04-18
-**상태:** P1 완료
+**상태:** P1 완료 / 2026-07 DB site-level 이관
 
 ## 1. 목적
 
-사용자가 개인 환경에 맞춰 **테마·브랜드 컬러·레이아웃**을 선택할 수 있도록 공용 설정 패널 제공.
-localStorage persist → 기기/브라우저 단위로 독립 저장.
+**테마·브랜드 컬러·레이아웃**을 선택하는 공용 설정 패널.
+
+**저장 방식 (2026-07 변경):** 조직 공통 브랜딩을 위해 **DB(`tb_comm_code`
+SITE_SETTING/TWEAKS_BRAND_COLOR·TWEAKS_LAYOUT_MODE·TWEAKS_DEFAULT_THEME, comm_val)
+가 단일 소스**. `/admin/site-settings` GET/PUT 로 조회·저장(화이트리스트 검증).
+`useTweaksApplier`(대시보드 헤더)가 localStorage 즉시 적용(플래시 방지) 후 DB 값으로
+덮어써 적용 → **브라우저·기기·서버 재시작 무관**하게 조직 기본 브랜딩 적용.
+localStorage 는 per-browser 캐시로 강등. (이전: localStorage 단독, 기기별 독립.)
 
 ## 2. Tweaks 패널
 
