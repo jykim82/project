@@ -516,9 +516,16 @@ async def get_site_settings():
         cur.close()
 
         settings = {}
+        tweaks = {}  # 테마·브랜드·레이아웃 (site-level, comm_val)
         for comm_cd, use_yn, comm_val in rows:
             if comm_cd == "DEFAULT_LANDING_PAGE":
                 settings["default_landing_page"] = comm_val or "/dashboard"
+            elif comm_cd == "TWEAKS_BRAND_COLOR":
+                tweaks["brand_color_id"] = comm_val
+            elif comm_cd == "TWEAKS_LAYOUT_MODE":
+                tweaks["layout_mode"] = comm_val
+            elif comm_cd == "TWEAKS_DEFAULT_THEME":
+                tweaks["default_theme"] = comm_val
             elif comm_cd == "LANDING_ENABLED":
                 settings["landing_enabled"] = use_yn == "Y"
             elif comm_cd == "TREND_EXPLAIN_ENABLED":
@@ -538,6 +545,12 @@ async def get_site_settings():
 
         if "default_landing_page" not in settings:
             settings["default_landing_page"] = "/dashboard"
+        # 테마·브랜드·레이아웃 site-level 기본값
+        settings["tweaks"] = {
+            "brand_color_id": tweaks.get("brand_color_id") or "claude-orange",
+            "layout_mode": tweaks.get("layout_mode") or "sidebar",
+            "default_theme": tweaks.get("default_theme") or "dark",
+        }
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
         if "trend_explain_enabled" not in settings:
@@ -630,6 +643,38 @@ async def update_site_settings(request: Request):
                 """,
                 (page,),
             )
+            conn.commit()
+
+        # 테마·브랜드·레이아웃 (site-level, comm_val) — 검증 후 저장
+        if "tweaks" in body and isinstance(body["tweaks"], dict):
+            tw = body["tweaks"]
+            _ALLOWED_BRANDS = {
+                "claude-orange", "amber", "blue", "cyan", "teal",
+                "emerald", "indigo", "violet", "pink", "rose",
+            }
+            _tweak_upserts = []
+            if "brand_color_id" in tw:
+                v = str(tw["brand_color_id"])
+                if v in _ALLOWED_BRANDS:
+                    _tweak_upserts.append(("TWEAKS_BRAND_COLOR", "브랜드 컬러", v))
+            if "layout_mode" in tw:
+                v = str(tw["layout_mode"])
+                if v in {"sidebar", "topbar"}:
+                    _tweak_upserts.append(("TWEAKS_LAYOUT_MODE", "레이아웃 모드", v))
+            if "default_theme" in tw:
+                v = str(tw["default_theme"])
+                if v in {"light", "dark", "system"}:
+                    _tweak_upserts.append(("TWEAKS_DEFAULT_THEME", "기본 테마", v))
+            for comm_cd, comm_nm, comm_val in _tweak_upserts:
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', %s, %s, %s, 'Y')
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET comm_val = EXCLUDED.comm_val
+                    """,
+                    (comm_cd, comm_nm, comm_val),
+                )
             conn.commit()
 
         # 랜딩 페이지 설정
