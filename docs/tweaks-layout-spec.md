@@ -7,12 +7,16 @@
 
 **테마·브랜드 컬러·레이아웃**을 선택하는 공용 설정 패널.
 
-**저장 방식 (2026-07 변경):** 조직 공통 브랜딩을 위해 **DB(`tb_comm_code`
-SITE_SETTING/TWEAKS_BRAND_COLOR·TWEAKS_LAYOUT_MODE·TWEAKS_DEFAULT_THEME, comm_val)
-가 단일 소스**. `/admin/site-settings` GET/PUT 로 조회·저장(화이트리스트 검증).
-`useTweaksApplier`(대시보드 헤더)가 localStorage 즉시 적용(플래시 방지) 후 DB 값으로
-덮어써 적용 → **브라우저·기기·서버 재시작 무관**하게 조직 기본 브랜딩 적용.
-localStorage 는 per-browser 캐시로 강등. (이전: localStorage 단독, 기기별 독립.)
+**저장 방식 (2026-07 변경):** **개인별(per-user) DB 저장 + 사이트 기본값 폴백** 2계층.
+- **개인 설정**: `tb_user.preferences->'tweaks'`(jsonb, Migration 0096). `/me/tweaks`
+  GET/PUT(actor=JWT sub, 인증 필수, 화이트리스트 검증, 부분 병합).
+- **사이트 기본값(폴백)**: `tb_comm_code` SITE_SETTING/TWEAKS_*(comm_val).
+  개인 설정이 없는 항목·사용자는 이 값으로 채워 내려줌.
+- `useTweaksApplier`(대시보드 헤더)가 localStorage 즉시 적용(플래시 방지) 후
+  `/me/tweaks` 값으로 덮어써 적용 → **사용자마다 다른 설정이 내 모든 기기·브라우저·
+  서버 재시작에 적용**. localStorage 는 per-browser 캐시. (이전: localStorage 단독.)
+- 브랜드/레이아웃은 개인값 우선; 테마(light/dark)는 브라우저에 선택 이력 없을 때만
+  개인/사이트 기본 테마 적용(next-themes 는 여전히 per-browser 토글).
 
 ## 2. Tweaks 패널
 
