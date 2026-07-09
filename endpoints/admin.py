@@ -509,15 +509,17 @@ async def get_site_settings():
         conn = _get_db_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT comm_cd, use_yn FROM tb_comm_code "
+            "SELECT comm_cd, use_yn, comm_val FROM tb_comm_code "
             "WHERE region = 'R01' AND grp_cd = 'SITE_SETTING'"
         )
         rows = cur.fetchall()
         cur.close()
 
         settings = {}
-        for comm_cd, use_yn in rows:
-            if comm_cd == "LANDING_ENABLED":
+        for comm_cd, use_yn, comm_val in rows:
+            if comm_cd == "DEFAULT_LANDING_PAGE":
+                settings["default_landing_page"] = comm_val or "/dashboard"
+            elif comm_cd == "LANDING_ENABLED":
                 settings["landing_enabled"] = use_yn == "Y"
             elif comm_cd == "TREND_EXPLAIN_ENABLED":
                 settings["trend_explain_enabled"] = use_yn == "Y"
@@ -534,6 +536,8 @@ async def get_site_settings():
             elif comm_cd == "REPORT_AUTOMATION_ENABLED":
                 settings["report_automation_enabled"] = use_yn == "Y"
 
+        if "default_landing_page" not in settings:
+            settings["default_landing_page"] = "/dashboard"
         if "landing_enabled" not in settings:
             settings["landing_enabled"] = True
         if "trend_explain_enabled" not in settings:
@@ -607,6 +611,26 @@ async def update_site_settings(request: Request):
             ON CONFLICT (region, grp_cd) DO NOTHING
             """
         )
+
+        # 로그인 후 첫 화면(시작 페이지) — 허용 경로만 저장 (comm_val)
+        if "default_landing_page" in body:
+            _ALLOWED_LANDING = {
+                "/dashboard", "/monitoring/gis", "/monitoring/flow",
+                "/monitoring/tags", "/crisis/alarm-dashboard",
+            }
+            page = str(body["default_landing_page"] or "/dashboard")
+            if page not in _ALLOWED_LANDING:
+                page = "/dashboard"
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'DEFAULT_LANDING_PAGE', '로그인 후 첫 화면', %s, 'Y')
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET comm_val = EXCLUDED.comm_val
+                """,
+                (page,),
+            )
+            conn.commit()
 
         # 랜딩 페이지 설정
         if "landing_enabled" in body:
