@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 07 · 스켈레톤 시머 → 데이터 전환</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 24px;color:#71717a;font-size:13px;max-width:720px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;max-width:900px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;min-height:130px}
+  .sk{background:linear-gradient(90deg,#1f1f22 25%,#2a2a2e 37%,#1f1f22 63%);background-size:400% 100%;
+      animation:shimmer 1.3s ease infinite;border-radius:7px}
+  @keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+  .l1{height:12px;width:45%}.l2{height:30px;width:70%;margin-top:14px}.l3{height:10px;width:90%;margin-top:16px}.l4{height:10px;width:60%;margin-top:8px}
+  .real{animation:fadein .5s ease}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .lbl{font-size:12px;color:var(--muted)}.big{font-size:30px;font-weight:700;margin-top:10px;font-variant-numeric:tabular-nums}
+  .row{font-size:12px;color:#a1a1aa;margin-top:14px;display:flex;justify-content:space-between}
+  .row b{color:#fafafa}
+  button{margin-top:24px;background:#27272a;border:1px solid #3f3f46;color:#e4e4e7;padding:9px 16px;border-radius:9px;font-size:13px;cursor:pointer}
+</style>
+</head>
+<body>
+  <h1>시안 07 — 스켈레톤 시머 → 데이터 페이드 전환</h1>
+  <p class="sub">조회 대기 중 빈 화면 대신 시머 스켈레톤을 보여주고, 데이터 도착 시 부드럽게 페이드-인. 체감 로딩 시간이 짧아지고 레이아웃 점프가 없음. (모든 조회 화면 공통)</p>
+  <div class="grid" id="grid"></div>
+  <button onclick="reload()">🔄 다시 로딩</button>
+<script>
+  const DATA=[
+    {t:'설비 장애',v:'51건',a:'PLC 21',b:'가압펌프 12'},
+    {t:'평균 조치시간',v:'2.4h',a:'이번 달',b:'-0.6h'},
+    {t:'교체 권고',v:'3대',a:'1순위 신평 PLC',b:'score 8.0'},
+    {t:'정상 시설',v:'279',a:'가동률',b:'92.4%'},
+  ];
+  const grid=document.getElementById('grid');
+  function reload(){
+    grid.innerHTML='';
+    DATA.forEach(()=>{const c=document.createElement('div');c.className='card';
+      c.innerHTML='<div class="sk l1"></div><div class="sk l2"></div><div class="sk l3"></div><div class="sk l4"></div>';
+      grid.appendChild(c);});
+    setTimeout(()=>{
+      [...grid.children].forEach((c,i)=>{const d=DATA[i];
+        c.innerHTML=`<div class="real"><div class="lbl">${d.t}</div><div class="big">${d.v}</div>
+          <div class="row"><span>${d.a}</span><b>${d.b}</b></div></div>`;});
+    },1600+Math.random()*400);
+  }
+  reload();
+</script>
+</body>
+</html>

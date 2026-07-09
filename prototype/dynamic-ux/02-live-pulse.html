@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 02 · 실시간 LIVE 펄스 & 값 하이라이트</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 26px;color:#71717a;font-size:13px}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:#f87171;
+        background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);padding:5px 11px;border-radius:999px;margin-bottom:20px}
+  .live .beat{width:8px;height:8px;border-radius:50%;background:#f87171;position:relative}
+  .live .beat::after{content:"";position:absolute;inset:0;border-radius:50%;background:#f87171;animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite}
+  @keyframes ping{0%{transform:scale(1);opacity:.7}100%{transform:scale(3.2);opacity:0}}
+  .rows{max-width:640px;display:flex;flex-direction:column;gap:10px}
+  .row{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;
+       display:flex;align-items:center;justify-content:space-between;transition:border-color .4s}
+  .site{font-size:14px}.tag{font-size:11px;color:var(--muted);margin-left:8px;background:#27272a;padding:2px 8px;border-radius:6px}
+  .val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px;transition:color .3s;position:relative}
+  .val small{font-size:12px;color:var(--muted);font-weight:500}
+  .val.upd{color:#38bdf8}
+  .spark{display:inline-block;width:60px;height:22px;margin-right:16px;vertical-align:middle}
+  .glow{border-color:rgba(56,189,248,.4);box-shadow:0 0 0 1px rgba(56,189,248,.15)}
+</style>
+</head>
+<body>
+  <h1>시안 02 — 실시간 LIVE 펄스 & 값 변경 하이라이트</h1>
+  <p class="sub">계통도·태그 모니터링의 실시간 값. 상단 LIVE 심장박동 링, 값이 바뀌는 순간 숫자가 파랗게 점멸하고 행 테두리가 잠깐 발광. (실시간 계통도/태그 모니터링에 적용)</p>
+  <div class="live"><span class="beat"></span>LIVE · 실시간 수신중</div>
+  <div class="rows" id="rows"></div>
+<script>
+  const DATA=[
+    {site:'죽동 배수지',tag:'수위',val:3.17,unit:'m'},
+    {site:'신평 가압장',tag:'토출압력',val:5.46,unit:'kgf'},
+    {site:'남산2 배수지',tag:'유출유량',val:1403,unit:'m³/h'},
+    {site:'갈산 가압장',tag:'펌프전류',val:38.2,unit:'A'},
+    {site:'행정 배수지',tag:'수위',val:2.88,unit:'m'},
+  ];
+  const rows=document.getElementById('rows');
+  DATA.forEach(d=>{
+    const el=document.createElement('div');el.className='row';
+    el.innerHTML=`<div class="site">${d.site}<span class="tag">${d.tag}</span></div>
+      <div><canvas class="spark" width="120" height="44"></canvas>
+      <span class="val"><span class="n">${d.val}</span> <small>${d.unit}</small></span></div>`;
+    rows.appendChild(el);d._el=el;d._hist=Array.from({length:24},()=>d.val*(0.96+Math.random()*.08));
+    drawSpark(el.querySelector('canvas'),d._hist);
+  });
+  function drawSpark(c,arr){
+    const x=c.getContext('2d'),w=c.width,h=c.height,mn=Math.min(...arr),mx=Math.max(...arr)||1;
+    x.clearRect(0,0,w,h);x.beginPath();
+    arr.forEach((v,i)=>{const px=i/(arr.length-1)*w,py=h-6-((v-mn)/((mx-mn)||1))*(h-12);i?x.lineTo(px,py):x.moveTo(px,py);});
+    x.strokeStyle='#38bdf8';x.lineWidth=2;x.stroke();
+    x.lineTo(w,h);x.lineTo(0,h);x.closePath();x.fillStyle='rgba(56,189,248,.12)';x.fill();
+  }
+  function upd(){
+    const d=DATA[Math.floor(Math.random()*DATA.length)];
+    const nv=+(d.val*(0.985+Math.random()*.03)).toFixed(d.unit==='m³/h'?0:2);d.val=nv;
+    d._hist.push(nv);d._hist.shift();
+    const vEl=d._el.querySelector('.val'),nEl=d._el.querySelector('.n');
+    nEl.textContent=nv;drawSpark(d._el.querySelector('canvas'),d._hist);
+    vEl.classList.add('upd');d._el.classList.add('glow');
+    setTimeout(()=>{vEl.classList.remove('upd');d._el.classList.remove('glow');},600);
+  }
+  setInterval(upd,900);
+</script>
+</body>
+</html>

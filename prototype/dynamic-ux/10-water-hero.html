@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 10 · 워터 파티클 · 웨이브 히어로</title>
+<style>
+  :root{ --bg:#06080d; --fg:#eaf2ff; --accent:#38bdf8; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;overflow:hidden;height:100vh}
+  #c{position:fixed;inset:0;z-index:0}
+  .hero{position:relative;z-index:2;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:0 8vw}
+  .tag{font-size:13px;letter-spacing:3px;color:#7dd3fc;text-transform:uppercase;opacity:0;animation:up .8s .1s forwards}
+  h1{font-size:min(7vw,64px);line-height:1.08;margin:14px 0 0;font-weight:800;letter-spacing:-1.5px;
+     background:linear-gradient(120deg,#eaf2ff,#7dd3fc,#eaf2ff);background-size:200%;-webkit-background-clip:text;background-clip:text;color:transparent;
+     opacity:0;animation:up .9s .25s forwards,sheen 6s linear infinite}
+  p.d{font-size:16px;color:#9fb4cf;max-width:520px;margin-top:20px;opacity:0;animation:up .9s .45s forwards}
+  .cta{margin-top:34px;display:flex;gap:12px;opacity:0;animation:up .9s .6s forwards}
+  .btn{padding:12px 22px;border-radius:11px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid transparent}
+  .btn.p{background:var(--accent);color:#06131f}.btn.p:hover{box-shadow:0 8px 30px rgba(56,189,248,.35)}
+  .btn.g{background:transparent;border-color:#1e3a52;color:#cfe4ff}
+  .wave{position:fixed;left:0;right:0;bottom:0;z-index:1;pointer-events:none}
+  @keyframes up{to{opacity:1;transform:none}}
+  .tag,h1,p.d,.cta{transform:translateY(18px)}
+  @keyframes sheen{to{background-position:200%}}
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="hero">
+    <div class="tag">SLM · Supervisory Lifecycle Management</div>
+    <h1>상수도 자산을<br/>살아 숨쉬게 관리하다</h1>
+    <p class="d">실시간 계통도·GIS·AI 진단으로 배수지·가압장·관망을 한 화면에서. 폐쇄망 온프레미스, 로컬 AI.</p>
+    <div class="cta"><button class="btn p">대시보드 열기</button><button class="btn g">GIS 관망도</button></div>
+  </div>
+  <svg class="wave" viewBox="0 0 1440 200" preserveAspectRatio="none" height="180">
+    <path fill="#0b2c47" opacity=".55"><animate attributeName="d" dur="8s" repeatCount="indefinite"
+      values="M0,80 q360,-50 720,0 t720,0 V200 H0Z;M0,80 q360,50 720,0 t720,0 V200 H0Z;M0,80 q360,-50 720,0 t720,0 V200 H0Z"/></path>
+    <path fill="#0e3c60" opacity=".5"><animate attributeName="d" dur="6s" repeatCount="indefinite"
+      values="M0,110 q360,40 720,0 t720,0 V200 H0Z;M0,110 q360,-40 720,0 t720,0 V200 H0Z;M0,110 q360,40 720,0 t720,0 V200 H0Z"/></path>
+  </svg>
+<script>
+  const cv=document.getElementById('c'),x=cv.getContext('2d');let W,H,P=[];
+  function rs(){W=cv.width=innerWidth;H=cv.height=innerHeight;P=Array.from({length:Math.min(90,W/16)},()=>({
+    x:Math.random()*W,y:Math.random()*H,r:Math.random()*2.4+.6,s:Math.random()*.5+.15,o:Math.random()*.5+.2}));}
+  rs();addEventListener('resize',rs);
+  (function loop(){x.clearRect(0,0,W,H);
+    for(const p of P){p.y-=p.s;if(p.y<-5){p.y=H+5;p.x=Math.random()*W;}
+      x.beginPath();x.arc(p.x,p.y,p.r,0,7);x.fillStyle=`rgba(125,211,252,${p.o})`;x.fill();}
+    // faint connecting lines
+    for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){const a=P[i],b=P[j],d=Math.hypot(a.x-b.x,a.y-b.y);
+      if(d<110){x.strokeStyle=`rgba(56,189,248,${.06*(1-d/110)})`;x.beginPath();x.moveTo(a.x,a.y);x.lineTo(b.x,b.y);x.stroke();}}
+    requestAnimationFrame(loop);})();
+</script>
+</body>
+</html>

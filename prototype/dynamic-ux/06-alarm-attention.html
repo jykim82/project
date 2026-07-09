@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 06 · 알람 어텐션 (펄스·글로우·토스트)</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 24px;color:#71717a;font-size:13px;max-width:720px}
+  .list{max-width:560px;display:flex;flex-direction:column;gap:12px}
+  .al{background:var(--card);border:1px solid var(--border);border-left-width:4px;border-radius:12px;padding:14px 16px;display:flex;gap:12px;align-items:center}
+  .al .ic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:15px;flex:0 0 auto}
+  .al .t{font-size:14px}.al .m{font-size:12px;color:var(--muted);margin-top:2px}
+  .al .time{margin-left:auto;font-size:11px;color:#52525b;white-space:nowrap}
+  .warn{border-left-color:#f87171}.warn .ic{background:rgba(248,113,113,.15);color:#f87171}
+  .caution{border-left-color:#fbbf24}.caution .ic{background:rgba(251,191,36,.15);color:#fbbf24}
+  .ok{border-left-color:#34d399}.ok .ic{background:rgba(52,211,153,.15);color:#34d399}
+  .warn.attn{animation:glow 1.6s ease-in-out infinite}
+  @keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,0)}50%{box-shadow:0 0 0 4px rgba(248,113,113,.14)}}
+  .new{animation:slidein .5s cubic-bezier(.2,.9,.2,1)}
+  @keyframes slidein{from{opacity:0;transform:translateY(-12px) scale(.98)}to{opacity:1;transform:none}}
+  .shake{animation:shake .5s}
+  @keyframes shake{10%,90%{transform:translateX(-1px)}30%,70%{transform:translateX(3px)}50%{transform:translateX(-3px)}}
+  button{margin-top:24px;background:#7f1d1d;border:1px solid #b91c1c;color:#fecaca;padding:9px 16px;border-radius:9px;font-size:13px;cursor:pointer}
+</style>
+</head>
+<body>
+  <h1>시안 06 — 알람 어텐션 (심각도별 펄스·글로우·신규 진입)</h1>
+  <p class="sub">경보 목록/위기대응. 경고(warn)는 은은한 붉은 글로우로 시선 유도, 신규 알람은 위에서 슬라이드+셰이크로 진입. 주의/정상은 정적. 과하지 않게.</p>
+  <div class="list" id="list">
+    <div class="al warn attn"><div class="ic">⚠</div><div><div class="t">죽동 배수지 · 수위#1 HH</div><div class="m">가동조건 확인 필요 · 진행중</div></div><div class="time">방금</div></div>
+    <div class="al caution"><div class="ic">◐</div><div><div class="t">송악1 배수지 · 탁도 상승</div><div class="m">주의 임계 근접</div></div><div class="time">7분 전</div></div>
+    <div class="al ok"><div class="ic">✓</div><div><div class="t">신평 가압장 · 펌프#2 복구</div><div class="m">정상 운전 재개</div></div><div class="time">12분 전</div></div>
+  </div>
+  <button onclick="fire()">🚨 신규 경고 발생 시뮬</button>
+<script>
+  const SITES=['갈산 가압장 · 흡수정 LL','남산2 배수지 · 유량 급변','성하리 배수지 · 통신 이상','합덕 가압장 · 토출압 이상'];
+  function fire(){
+    const list=document.getElementById('list');
+    const el=document.createElement('div');el.className='al warn attn new';
+    el.innerHTML=`<div class="ic">⚠</div><div><div class="t">${SITES[Math.floor(Math.random()*SITES.length)]}</div><div class="m">경고 발생 · 즉시 확인</div></div><div class="time">방금</div>`;
+    list.prepend(el);
+    setTimeout(()=>{el.classList.add('shake');},480);
+    setTimeout(()=>el.classList.remove('shake'),1000);
+  }
+</script>
+</body>
+</html>

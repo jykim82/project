@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 09 · 스크롤 스태거 리빌</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif}
+  .top{position:sticky;top:0;padding:16px 40px;background:rgba(10,10,11,.8);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);z-index:5}
+  .top h1{font-size:15px;font-weight:600;color:var(--muted);margin:0}
+  .top p{margin:2px 0 0;color:#71717a;font-size:12px}
+  .wrap{max-width:900px;margin:0 auto;padding:40px}
+  section{margin-bottom:56px}
+  h2{font-size:14px;color:#e4e4e7;margin:0 0 16px;display:flex;align-items:center;gap:8px}
+  h2 .b{width:4px;height:16px;background:var(--accent);border-radius:2px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;
+        opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s cubic-bezier(.2,.9,.2,1)}
+  .card.in{opacity:1;transform:none}
+  .card .l{font-size:12px;color:var(--muted)}.card .v{font-size:26px;font-weight:700;margin-top:8px;font-variant-numeric:tabular-nums}
+  .card .d{font-size:11px;color:#52525b;margin-top:10px}
+  .hint{text-align:center;color:#52525b;font-size:12px;padding:20px}
+</style>
+</head>
+<body>
+  <div class="top"><h1>시안 09 — 스크롤 스태거 리빌</h1><p>스크롤 내려보세요. 섹션·카드가 순차(stagger)로 페이드-업. IntersectionObserver 기반, 성능 가벼움. (긴 대시보드/보고서에 적용)</p></div>
+  <div class="wrap" id="wrap"></div>
+  <div class="hint">↑ 스크롤로 각 카드가 순서대로 나타납니다</div>
+<script>
+  const SECTIONS=[
+    {t:'감시 요약',cards:[['이상 감지','4','복합 0·유량 4'],['교차검증','3','5분 스캔'],['정상 시설','279','92.4%'],['유량 불균형','18','32개 엣지']]},
+    {t:'알람 현황',cards:[['진행중','2','경고 0·주의 1'],['오늘 발생','27','전일 -8'],['평균 조치','2.4h','-0.6h'],['미검지 후보','1','검토 필요']]},
+    {t:'설비 건강성',cards:[['장애','51','PLC 21'],['MTBF','182일','+12'],['교체 권고','3','신평 PLC'],['점검 예정','7','이번 주']]},
+    {t:'관망 분석',cards:[['시뮬 편차','7','시설 단위'],['헤드손실','2','의심'],['누수 의심','5','블록'],['밸브 영향','0','정상']]},
+  ];
+  const wrap=document.getElementById('wrap');
+  SECTIONS.forEach(s=>{
+    const sec=document.createElement('section');
+    sec.innerHTML=`<h2><span class="b"></span>${s.t}</h2><div class="grid"></div>`;
+    const g=sec.querySelector('.grid');
+    s.cards.forEach(c=>{const el=document.createElement('div');el.className='card';
+      el.innerHTML=`<div class="l">${c[0]}</div><div class="v">${c[1]}</div><div class="d">${c[2]}</div>`;g.appendChild(el);});
+    wrap.appendChild(sec);
+  });
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){
+    const cards=[...e.target.querySelectorAll('.card')];
+    cards.forEach((c,i)=>setTimeout(()=>c.classList.add('in'),i*90));
+    io.unobserve(e.target);}});},{threshold:.2});
+  document.querySelectorAll('section').forEach(s=>io.observe(s));
+</script>
+</body>
+</html>

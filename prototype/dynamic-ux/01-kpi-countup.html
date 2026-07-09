@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 01 · KPI 카운트업 + 변화 플래시</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#18181b; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#f59e0b; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1a1206,transparent),var(--bg);color:var(--fg);
+       font-family:Pretendard,system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 28px;color:#71717a;font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;max-width:1100px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px 22px;position:relative;overflow:hidden}
+  .card .label{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .card .dot{width:7px;height:7px;border-radius:50%;background:var(--c)}
+  .num{font-size:40px;font-weight:700;margin-top:12px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .unit{font-size:15px;color:var(--muted);font-weight:500;margin-left:4px}
+  .delta{font-size:12px;margin-top:10px;color:#71717a}
+  .up{color:#f87171}.down{color:#34d399}
+  .flash{animation:flash .7s ease-out}
+  @keyframes flash{0%{background:color-mix(in srgb,var(--c) 22%,transparent)}100%{background:transparent}}
+  .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--c);width:0;transition:width 1.4s cubic-bezier(.2,.9,.2,1)}
+  button{margin-top:26px;background:#27272a;border:1px solid #3f3f46;color:#e4e4e7;padding:9px 16px;border-radius:9px;font-size:13px;cursor:pointer}
+  button:hover{background:#3f3f46}
+</style>
+</head>
+<body>
+  <h1>시안 01 — KPI 카운트업 + 실시간 변화 플래시</h1>
+  <p class="sub">대시보드 상단 지표 카드. 로드 시 0→목표값으로 이징 카운트업, 값 갱신 때 카드가 잠깐 하이라이트. (대시보드 종합현황판에 적용)</p>
+  <div class="grid" id="grid"></div>
+  <button onclick="tick()">🔄 실시간 갱신 시뮬</button>
+<script>
+  const KPI=[
+    {label:'이상 감지',c:'#f87171',val:4,unit:'건',fill:20},
+    {label:'교차검증 이상',c:'#fb923c',val:3,unit:'건',fill:15},
+    {label:'설비 장애',c:'#a78bfa',val:51,unit:'건',fill:64},
+    {label:'유량 불균형',c:'#38bdf8',val:18,unit:'엣지',fill:38},
+    {label:'정상 시설',c:'#34d399',val:279,unit:'',fill:92},
+  ];
+  const grid=document.getElementById('grid');
+  KPI.forEach((k,i)=>{
+    const el=document.createElement('div');el.className='card';el.style.setProperty('--c',k.c);
+    el.innerHTML=`<div class="label"><span class="dot"></span>${k.label}</div>
+      <div class="num"><span class="v">0</span><span class="unit">${k.unit}</span></div>
+      <div class="delta"></div><div class="bar"></div>`;
+    grid.appendChild(el);k._el=el;
+  });
+  function animate(el,to,dur=1300){
+    const node=el.querySelector('.v');const from=+node.textContent.replace(/,/g,'')||0;const t0=performance.now();
+    (function f(t){let p=Math.min(1,(t-t0)/dur);p=1-Math.pow(1-p,3);
+      node.textContent=Math.round(from+(to-from)*p).toLocaleString();
+      if(p<1)requestAnimationFrame(f);})(t0);
+  }
+  function render(first){
+    KPI.forEach(k=>{
+      animate(k._el,k.val);
+      k._el.querySelector('.bar').style.width=k.fill+'%';
+      if(!first){k._el.classList.remove('flash');void k._el.offsetWidth;k._el.classList.add('flash');}
+    });
+  }
+  function tick(){
+    KPI.forEach(k=>{const d=Math.round((Math.random()-.45)*6);const nv=Math.max(0,k.val+d);
+      const dd=nv-k.val;k.val=nv;k.fill=Math.min(100,Math.max(4,k.fill+d));
+      k._el.querySelector('.delta').innerHTML= dd===0?'변화 없음':
+        `<span class="${dd>0?'up':'down'}">${dd>0?'▲':'▼'} ${Math.abs(dd)}</span> · 1분 전 대비`;});
+    render(false);
+  }
+  render(true);
+  setInterval(tick,3500);
+</script>
+</body>
+</html>

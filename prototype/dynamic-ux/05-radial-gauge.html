@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 05 · 라디얼 게이지 (압력·유량)</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 26px;color:#71717a;font-size:13px;max-width:720px}
+  .grid{display:flex;gap:18px;flex-wrap:wrap}
+  .g{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;width:200px;text-align:center;position:relative}
+  .g h3{margin:0 0 6px;font-size:13px;font-weight:600}
+  .ring{transform:rotate(-90deg)}
+  .track{stroke:#27272a;fill:none}
+  .prog{fill:none;stroke-linecap:round;transition:stroke-dashoffset 1.6s cubic-bezier(.3,.9,.3,1)}
+  .center{position:absolute;top:64px;left:0;right:0}
+  .cv{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .cu{font-size:12px;color:var(--muted)}
+  .foot{font-size:11px;color:#71717a;margin-top:10px}
+  button{margin-top:26px;background:#27272a;border:1px solid #3f3f46;color:#e4e4e7;padding:9px 16px;border-radius:9px;font-size:13px;cursor:pointer}
+</style>
+</head>
+<body>
+  <h1>시안 05 — 라디얼 게이지 (압력·유량·가동률)</h1>
+  <p class="sub">Q/H/P 트렌드 요약이나 가압장 카드. 값이 부드럽게 채워지고 임계 구간(경고/위험)에서 색이 전환. 얇은 링이라 카드에 조밀하게 배치 가능.</p>
+  <div class="grid" id="grid"></div>
+  <button onclick="randomize()">🔄 값 갱신</button>
+<script>
+  const R=52,C=2*Math.PI*R;
+  const GA=[
+    {name:'토출압력',unit:'kgf',val:5.4,max:8,warn:6.5},
+    {name:'유출유량',unit:'m³/h',val:1403,max:2000,warn:1700},
+    {name:'펌프 가동률',unit:'%',val:72,max:100,warn:90},
+    {name:'수질 탁도',unit:'NTU',val:0.42,max:1,warn:0.6},
+  ];
+  const grid=document.getElementById('grid');
+  GA.forEach(a=>{
+    const el=document.createElement('div');el.className='g';
+    el.innerHTML=`<h3>${a.name}</h3>
+      <svg width="140" height="140" class="ring">
+        <circle class="track" cx="70" cy="70" r="${R}" stroke-width="10"/>
+        <circle class="prog" cx="70" cy="70" r="${R}" stroke-width="10"
+                stroke-dasharray="${C}" stroke-dashoffset="${C}"/>
+      </svg>
+      <div class="center"><div class="cv">0</div><div class="cu">${a.unit}</div></div>
+      <div class="foot">최대 ${a.max} · 경고 ${a.warn}${a.unit}</div>`;
+    grid.appendChild(el);a._el=el;update(a);
+  });
+  function update(a){
+    const p=Math.min(1,a.val/a.max);
+    const col=a.val>=a.warn?'#f87171':p>.55?'#fbbf24':'#34d399';
+    const prog=a._el.querySelector('.prog');
+    prog.style.stroke=col;prog.style.strokeDashoffset=C*(1-p);
+    const cv=a._el.querySelector('.cv');cv.style.color=col;
+    const from=+cv.textContent.replace(/,/g,'')||0,t0=performance.now();
+    (function f(t){let pr=Math.min(1,(t-t0)/1400);pr=1-Math.pow(1-pr,3);
+      const v=from+(a.val-from)*pr;cv.textContent=(a.unit==='m³/h'?Math.round(v):v.toFixed(a.unit==='NTU'?2:1)).toLocaleString();
+      if(pr<1)requestAnimationFrame(f);})(t0);
+  }
+  function randomize(){GA.forEach(a=>{a.val=+(Math.random()*a.max).toFixed(2);update(a);});}
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>시안 04 · 배수지 수위 웨이브 게이지</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; }
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,sans-serif;min-height:100vh;padding:40px}
+  h1{font-size:15px;font-weight:600;color:var(--muted);margin:0 0 4px}
+  p.sub{margin:0 0 26px;color:#71717a;font-size:13px;max-width:720px}
+  .grid{display:flex;gap:18px;flex-wrap:wrap}
+  .tank{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;width:210px;text-align:center}
+  .tank h3{margin:0 0 12px;font-size:13px;color:#e4e4e7;font-weight:600}
+  .glass{position:relative;height:190px;border-radius:12px;overflow:hidden;background:#0d0d0f;border:1px solid #27272a}
+  .water{position:absolute;left:0;right:0;bottom:0;transition:height 1.6s cubic-bezier(.4,0,.2,1)}
+  .water .fill{position:absolute;inset:0;top:8px;background:linear-gradient(180deg,var(--w),color-mix(in srgb,var(--w) 55%,#000));opacity:.85}
+  .water svg{position:absolute;top:0;left:0;width:200%;height:12px;animation:swell 2.5s linear infinite}
+  @keyframes swell{to{transform:translateX(-50%)}}
+  .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;
+       text-shadow:0 1px 6px rgba(0,0,0,.5);font-variant-numeric:tabular-nums}
+  .marks{position:absolute;inset:0;pointer-events:none}
+  .mark{position:absolute;left:0;right:0;border-top:1px dashed rgba(255,255,255,.12);font-size:9px;color:#71717a;padding-left:6px}
+  .meta{font-size:12px;color:var(--muted);margin-top:10px}
+  .st{font-size:11px;padding:2px 9px;border-radius:6px;font-weight:600}
+</style>
+</head>
+<body>
+  <h1>시안 04 — 배수지 수위 웨이브 게이지</h1>
+  <p class="sub">배수지 인스펙터/시설 카드. 실제 수위에 맞춰 물이 차오르고 표면이 출렁이는 웨이브. HH(상한)·LL(하한) 기준선 표시, 임계 근접 시 색이 변함.</p>
+  <div class="grid" id="grid"></div>
+<script>
+  const TANKS=[
+    {name:'죽동 배수지',pct:64,hh:88,ll:16,w:'#38bdf8'},
+    {name:'행정 배수지',pct:91,hh:88,ll:16,w:'#f87171'},
+    {name:'남산2 배수지',pct:12,hh:88,ll:16,w:'#fb923c'},
+  ];
+  const wave='<svg viewBox="0 0 200 12" preserveAspectRatio="none"><path d="M0,6 q25,-6 50,0 t50,0 t50,0 t50,0 V12 H0 Z" fill="var(--w)" opacity=".9"/></svg>';
+  const g=document.getElementById('grid');
+  TANKS.forEach(t=>{
+    const status=t.pct>=t.hh?['HH 근접','#f87171','rgba(248,113,113,.12)']:t.pct<=t.ll?['LL 근접','#fb923c','rgba(251,146,60,.12)']:['정상','#34d399','rgba(52,211,153,.12)'];
+    const el=document.createElement('div');el.className='tank';el.style.setProperty('--w',t.w);
+    el.innerHTML=`<h3>${t.name}</h3>
+      <div class="glass">
+        <div class="marks">
+          <div class="mark" style="bottom:${t.hh}%">HH</div>
+          <div class="mark" style="bottom:${t.ll}%">LL</div>
+        </div>
+        <div class="water" style="height:0"><div class="fill"></div>${wave}</div>
+        <div class="pct"><span class="p">0</span>%</div>
+      </div>
+      <div class="meta">현재 <b style="color:#fafafa">${(t.pct/100*4).toFixed(2)}m</b> · 용량 4.0m
+        <div style="margin-top:8px"><span class="st" style="color:${status[1]};background:${status[2]}">${status[0]}</span></div>
+      </div>`;
+    g.appendChild(el);
+    requestAnimationFrame(()=>{setTimeout(()=>{
+      el.querySelector('.water').style.height=t.pct+'%';
+      const pEl=el.querySelector('.p');const t0=performance.now();
+      (function f(x){let pr=Math.min(1,(x-t0)/1500);pEl.textContent=Math.round(t.pct*(1-Math.pow(1-pr,3)));if(pr<1)requestAnimationFrame(f);})(t0);
+    },150);});
+  });
+</script>
+</body>
+</html>

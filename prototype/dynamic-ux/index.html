@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>SLM · 역동적 UI 기법 시안 10선</title>
+<style>
+  :root{ --bg:#0a0a0b; --card:#161618; --border:#27272a; --muted:#a1a1aa; --fg:#fafafa; --accent:#38bdf8; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1000px 500px at 80% -10%,#0c1620,transparent),var(--bg);color:var(--fg);
+       font-family:Pretendard,system-ui,sans-serif;padding:44px}
+  header{max-width:1200px;margin:0 auto 30px}
+  h1{font-size:24px;font-weight:800;letter-spacing:-.5px;margin:0}
+  .sub{color:#71717a;font-size:14px;margin-top:8px;max-width:760px;line-height:1.6}
+  .sub b{color:#a1a1aa}
+  .grid{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden;text-decoration:none;color:inherit;
+        transition:transform .2s,border-color .2s,box-shadow .2s;display:flex;flex-direction:column}
+  .card:hover{transform:translateY(-3px);border-color:#3f6d8f;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+  .prev{height:200px;background:#0d0d0f;border-bottom:1px solid var(--border);position:relative;overflow:hidden}
+  .prev iframe{width:200%;height:400px;border:0;transform:scale(.5);transform-origin:top left;pointer-events:none}
+  .prev .num{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.55);border:1px solid #3f3f46;font-size:11px;
+             font-weight:700;padding:3px 9px;border-radius:7px;color:#e4e4e7;z-index:2}
+  .body{padding:16px 18px}
+  .t{font-size:15px;font-weight:600}
+  .d{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.55}
+  .where{font-size:11px;color:#52525b;margin-top:10px}
+  .where span{color:#7dd3fc}
+  footer{max-width:1200px;margin:30px auto 0;color:#52525b;font-size:12px;line-height:1.7}
+</style>
+</head>
+<body>
+  <header>
+    <h1>역동적 UI 기법 시안 <span style="color:var(--accent)">10선</span></h1>
+    <p class="sub">개발 중인 <b>SLM 물관리 대시보드</b>에 적용할 수 있는 동적·인터랙션 기법 시안입니다.
+       각 카드를 클릭하면 전체 화면으로 열립니다. 모두 <b>자체 완결형 HTML</b>(외부 의존성 없음)이라 그대로 참고·이식 가능합니다.
+       실제 적용은 프로덕션에서 <b>ECharts / CSS transition / IntersectionObserver</b> 등으로 구현하시면 됩니다.</p>
+  </header>
+  <div class="grid" id="grid"></div>
+  <footer>
+    권장 적용 순서: ① <b>스켈레톤 시머</b>·<b>KPI 카운트업</b>(체감 성능) → ② <b>실시간 펄스·스파크라인</b>(모니터링 몰입) →
+    ③ <b>수위 웨이브·라디얼 게이지·관로 흐름</b>(도메인 시각화) → ④ <b>알람 어텐션</b>(주의 환기) → ⑤ <b>스크롤 리빌·워터 히어로</b>(연출).<br/>
+    ※ 운영자용 화면은 과한 모션이 피로를 유발하므로 <b>prefers-reduced-motion</b> 존중 + 모션 최소·정보 우선 원칙 권장.
+  </footer>
+<script>
+  const ITEMS=[
+    ['01-kpi-countup.html','KPI 카운트업 + 변화 플래시','로드 시 0→목표값 이징 카운트업, 갱신 때 카드 하이라이트.','대시보드 종합현황판'],
+    ['02-live-pulse.html','실시간 LIVE 펄스 & 값 하이라이트','심장박동 링 + 값 변경 순간 점멸·테두리 발광.','실시간 계통도·태그 모니터링'],
+    ['03-pipe-flow.html','관로 유량 흐름 애니메이션','흐르는 점선으로 방향·세기 표현, 불균형은 붉게.','GIS 관망도·계통도'],
+    ['04-reservoir-wave.html','배수지 수위 웨이브 게이지','물이 차오르고 표면이 출렁, HH/LL 기준선.','배수지 인스펙터·시설 카드'],
+    ['05-radial-gauge.html','라디얼 게이지 (압력·유량)','값이 부드럽게 채워지고 임계 색 전환.','Q/H/P 요약·가압장 카드'],
+    ['06-alarm-attention.html','알람 어텐션 (펄스·글로우)','경고는 은은한 글로우, 신규는 슬라이드+셰이크.','경보 목록·위기대응'],
+    ['07-skeleton-shimmer.html','스켈레톤 시머 → 데이터 전환','시머 후 데이터 페이드-인, 레이아웃 점프 없음.','모든 조회 화면 공통'],
+    ['08-live-sparkline.html','실시간 스파크라인 & 스트리밍','우측에서 흘러드는 매끄러운 스트리밍 라인.','태그 모니터링·트렌드'],
+    ['09-scroll-reveal.html','스크롤 스태거 리빌','섹션·카드가 순차 페이드-업(IntersectionObserver).','긴 대시보드·보고서'],
+    ['10-water-hero.html','워터 파티클 · 웨이브 히어로','물 입자·파도 배경 + 그라디언트 문구 연출.','시작·랜딩 페이지'],
+  ];
+  const grid=document.getElementById('grid');
+  ITEMS.forEach((it,i)=>{
+    const a=document.createElement('a');a.className='card';a.href=it[0];a.target='_blank';
+    a.innerHTML=`<div class="prev"><span class="num">시안 ${String(i+1).padStart(2,'0')}</span><iframe loading="lazy" src="${it[0]}" scrolling="no"></iframe></div>
+      <div class="body"><div class="t">${it[1]}</div><div class="d">${it[2]}</div>
+      <div class="where">적용 예: <span>${it[3]}</span></div></div>`;
+    grid.appendChild(a);
+  });
+</script>
+</body>
+</html>
