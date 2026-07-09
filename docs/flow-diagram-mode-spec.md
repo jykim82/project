@@ -44,6 +44,11 @@
 - 좌표: **논리 좌표** (`computeSankeyLayout()`이 depth 기반 자동 배치)
 - 한 화면 전체 fit-to-view, LOD 없음
 - 노드 클릭 → 상/하류 경로 하이라이트
+- **파이프 흐름 애니 (역동적 UX, 2026-07-09)**: 각 링크에 `.s-flow` 오버레이
+  path(stroke-dashoffset 애니, source→target 방향)로 물 흐름 시각화. motion-safe —
+  `useMotionActive()` 게이트로 감소모션/탭숨김 시 미렌더 + `@media
+  (prefers-reduced-motion)` CSS 억제 이중 안전. `<style>` 주입(Tailwind v4 커스텀
+  클래스 drop 회피). dimmed 링크는 흐름 숨김.
 
 ### 3.2 GIS 관망도 (`/setup/gis`)
 - **`GisMap.tsx`** + MapLibreGL + PMTiles/GeoJSON
