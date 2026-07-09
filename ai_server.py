@@ -2668,6 +2668,11 @@ from endpoints.audit import router as audit_router, init as init_audit
 init_audit(get_db_connection)
 app.include_router(audit_router)
 
+# 사용자별 선호도 (테마·브랜드·레이아웃) — Migration 0096
+from endpoints.user_prefs import router as user_prefs_router, init as init_user_prefs
+init_user_prefs(get_db_connection)
+app.include_router(user_prefs_router)
+
 # 네트워크 CRUD 엔드포인트 모듈 초기화
 init_network_crud(get_db_connection, snmp_poller=snmp_poller_instance)
 app.include_router(network_crud_router)
