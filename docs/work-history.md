@@ -2,6 +2,39 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-07-10 — 프로덕션 배포 경로 + 외부/DDNS 리로드 근본해결 + UX 반응형/팝업)
+
+**리로드 근본해결 (E-034 재발 → 프로덕션 빌드)**
+- 증상: DDNS(`dnhigh98.asuscomm.com:3000`, ASUS)/LAN IP/새 IP 접속 시 ~70~90초
+  주기 전체 리로드(확대·스크롤 초기화). 원인: `next dev` HMR 웹소켓이 자기서명
+  cert SAN·origin 불일치 시 재검증 실패 → stale chunk → 리로드 (E-034).
+- 임시: 호스트 현재 IP(192.168.50.84/10.11) 포함 cert 재발급.
+- **근본**: 프로덕션 빌드(`next build`+`next start`, HMR 없음) → IP/인증서 무관
+  리로드 원천 제거. 산출물: `Dockerfile.prod`, `docker-compose.prod.yml`(전체 스택
+  템플릿), `certs/Caddyfile`(HTTPS:3000 종단), `docs/deploy-production.md`.
+- **무중단 프런트 교체**(현재 가동): db/backend/캐시 유지, 프런트만 prod 교체 —
+  `scripts/switch-frontend-prod.sh`(재빌드=재실행)/`switch-frontend-dev.sh`(복귀).
+  prod 프런트 `web_default`+alias=frontend, `slm-caddy`가 TLS 종단.
+- **자동 재빌드 워처**: `scripts/watch-frontend-prod.sh`(src mtime 폴링+20s 디바운스
+  → 자동 재빌드·재배포, fswatch 불요). 백그라운드 가동.
+- 검증: 프로덕션 HTML HMR 클라이언트 부재, `/_next/webpack-hmr`=404, login 200,
+  프록시 401(backend 도달). 사용자 DDNS 실측 확인.
+- 메모리: `project_prod_frontend_reload_fix.md`, `feedback_frontend_prod_autorebuild.md`.
+
+**채팅 인텐트·성능**
+- 짧은 follow-up 지표 상속 오답 수정("배수지 총유량은?"→유출량 답 재사용)
+  — is_short_followup 지표 명사 가드 (review-items §멀티턴 a-fix).
+- 야간최소유량 트렌드 SSE 28초→5.7초 (사전집계 fast-path + rows 초기화 순서
+  버그 + backfill), E-035. 사전집계 테이블 일 1회 자동 갱신 루프 추가.
+
+**UX**
+- 탑바 좁은 폭 메뉴 2줄 접힘 → 한 줄+폰트 축소+가로 스크롤, 빠른이동/브레드크럼
+  반응형, 아이패드 브레드크럼 flex-nowrap.
+- 팝업 "크게보기" 토글(공용 DialogContent expandable, 96vw×94vh 스크롤 제거).
+- 로딩 스피너·진행 표지 reduced-motion 예외(동작 줄이기 PC에서도 회전).
+
+---
+
 ### 완료 (2026-06-08 — GIS [물흐름 표시] 가시성 토글 + Migration 0074)
 
 **배경**: 2026-05-10 사양으로 [물흐름 표시] 버튼은 마스터 토글과 독립되어 GIS 페이지에
