@@ -79,6 +79,8 @@ def list_categories(region: str = "R01"):
     except Exception as e:
         logger.error("list_categories error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.get("")
@@ -105,6 +107,8 @@ def list_contacts(region: str = "R01", category: Optional[str] = None):
     except Exception as e:
         logger.error("list_contacts error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -126,6 +130,8 @@ def create_contact(body: AlarmContactCreate, region: str = "R01"):
         conn.rollback()
         logger.error("create_contact error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.put("/{contact_id}")
@@ -159,6 +165,8 @@ def update_contact(contact_id: int, body: AlarmContactUpdate):
         conn.rollback()
         logger.error("update_contact error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -180,3 +188,5 @@ def delete_contact(contact_id: int):
         conn.rollback()
         logger.error("delete_contact error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
