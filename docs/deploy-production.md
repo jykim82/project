@@ -72,6 +72,32 @@ docker compose -f docker-compose.prod.yml up -d
 - `docker compose -f docker-compose.prod.yml logs -f frontend` → `✓ Ready` (Turbopack/HMR 로그 없음)
 - 페이지에서 확대/스크롤 후 수 분 대기 → **리로드 없음** 확인.
 
+## 무중단 프런트만 프로덕션 교체 (개발 스택 위에서 — 현재 적용 방식)
+
+리로드(E-034)는 **프런트 전용** 이슈다. 개발 스택(db/backend/node-red)과 그
+캐시(이상감지 스캔 ~200초 등)를 유지한 채 **프런트 레이어만** 프로덕션으로
+바꾸면 backend 재기동 없이 리로드를 제거할 수 있다.
+
+```bash
+scripts/switch-frontend-prod.sh   # dev 프런트 중지 → prod 프런트+Caddy (재빌드 포함)
+scripts/switch-frontend-dev.sh    # 개발(HMR) 복귀
+```
+
+동작:
+1. `next build` 로 `slm-frontend-prod:latest` 이미지 빌드.
+2. dev 프런트(`slm-frontend`) 중지 → `:3000` 과 `frontend` 네트워크 alias 해제.
+3. 프로덕션 프런트를 `web_default` 네트워크에 `--network-alias frontend` 로 기동
+   (내부 전용). 기존 `backend:8000` 을 그대로 프록시.
+4. `slm-caddy`(caddy:2)가 `:3000` HTTPS 종단 → `frontend:3000`.
+
+- **코드 변경 반영(재빌드)**: `scripts/switch-frontend-prod.sh` 재실행.
+- backend/db 는 건드리지 않으므로 이상감지 캐시 등 유지.
+- DDNS(`*.asuscomm.com` 등)·LAN IP·새 IP 어디로 접속해도 HMR 이 없어 리로드 없음.
+- **주의**: 접속 도메인이 cert SAN 에 없으면 브라우저 1회 인증서 경고(리로드와
+  무관, 클릭 통과). 경고 제거는 §인증서 참조.
+
+전체 스택을 프로덕션으로 올리려면(납품 표준) 아래 `docker-compose.prod.yml` 사용.
+
 ## 개발 ↔ 프로덕션 전환
 
 | | 개발 (`docker-compose.dev.yml`) | 프로덕션 (`docker-compose.prod.yml`) |
