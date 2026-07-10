@@ -8,6 +8,33 @@
 
 ---
 
+### [E-036] 설비 건강성 개요 KPI 전부 0 — 비상연락처 커넥션 누수로 DB 풀 고갈
+
+- **날짜:** 2026-07-10
+- **증상:** `/monitoring/equipment-health` 개요 KPI(총 장애/진행중/완료/고장/이상 등)
+  가 실제 데이터가 있는데도 전부 0 표시.
+- **원인 (2중):**
+  1. **커넥션 누수** — `endpoints/alarm_contacts.py` 의 5개 핸들러 전부
+     `conn = _get_conn()` 후 `finally: conn.close()` 누락. 특히 자주 호출되는
+     `list_contacts`(비상연락처 목록, 알람 팝업 등에서 폴링)가 SELECT(암묵적
+     트랜잭션) 후 커밋/반환 없이 종료 → 커넥션이 `idle in transaction` 으로
+     누적. ~2시간에 6개 누수 → DB 풀(max=10) 고갈.
+  2. **프런트 취약성** — equipment-health `load()` 가 `Promise.all` 로 4개
+     엔드포인트를 묶어, 풀 고갈로 `mtbf` 가 500 나면 **전체 reject → summary
+     포함 모두 미설정 → KPI 전부 0**.
+- **해결:**
+  1. alarm_contacts.py 5개 핸들러에 `finally: conn.close()` 추가(누수 차단).
+     uvicorn --reload 로 반영, 누수 커넥션은 워커 재시작 시 해제.
+  2. equipment-health `load()` 를 `Promise.allSettled` 로 변경 — 일부 실패해도
+     나머지 KPI/차트 정상 표출(방어).
+- **검증:** `idle in transaction` 6→0, mtbf 500→200, KPI 총장애 21·진행중 19·
+  완료 2·고장 12·이상 7 정상 표출.
+- **재발 방지:** DB 커넥션을 얻는 모든 핸들러는 반드시 `finally: conn.close()`
+  (또는 컨텍스트 매니저)로 반환. 프런트 다중 병렬 로드는 `Promise.allSettled`
+  로 부분 실패 격리.
+
+---
+
 ### [E-035] 야간최소유량 트렌드 SSE 응답 28초 — 사전집계 미적용 + rows 초기화 덮임
 
 - **날짜:** 2026-07-10
