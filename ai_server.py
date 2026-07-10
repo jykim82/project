@@ -5027,14 +5027,12 @@ async def ask_stream(request: AskRequest):
                         params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
                 except (ValueError, TypeError):
                     pass
-            # fn_night_min_flow_summary는 = 비교이므로 '%%' 와일드카드 대신 '전체' 사용
+            # '%%' 와일드카드 대신 '전체' 사용
             if params.get("sitename") == "%%":
                 params["sitename"] = "전체"
-            sql_combined = (
-                "SELECT * FROM fn_night_min_flow_summary("
-                "'{sitename}', '{facilitytype}', {from_ts}, {to_ts}"
-                ") ORDER BY log_time ASC;"
-            )
+            # NOTE: 실제 사전집계 테이블 조회(rows 채우기)는 아래 "커스텀 핸들러용
+            # rows/columns 초기화"(rows: list = []) 이후에 수행한다. 여기서 채우면
+            # 그 초기화에 덮여 execute_sql(느린 선언 SQL)이 재실행된다. [E-030 후속]
             # answer_template 오버라이드
             _site = params.get("sitename", "")
             _ftype = params.get("facilitytype", "소블록")
@@ -5192,6 +5190,41 @@ async def ask_stream(request: AskRequest):
         # 커스텀 핸들러용 rows/columns 초기화
         rows: list = []
         columns: list = []
+
+        # FACILITY_TREND + 야간최소유량: 사전집계 테이블 tb_night_min_flow_daily
+        # 직접 조회 fast-path. 기존 SSE 는 fn_night_min_flow_summary(원시
+        # 하이퍼테이블 실시간 60분 이동평균)를 호출 → 43만행 대상 약 23초 소요.
+        # 비스트림 /ask 경로(3458-3487)는 이미 인덱스 스캔(<0.5초)로 최적화돼
+        # 있었으나 SSE 만 누락 → 두 경로를 동일 fast-path 로 통일. 반드시 위
+        # rows 초기화 이후에 채워야 execute_sql(선언 SQL) 재실행을 방지한다.
+        if _is_night_min_flow:
+            _nmf_sn = params.get("sitename", "전체")
+            _nmf_ft = params.get("facilitytype", "소블록")
+            _nmf_from = params.get("from_ts", "")
+            _nmf_to = params.get("to_ts", "")
+            try:
+                _nmf_site_list = [_nmf_sn]
+                if extra_sitenames:
+                    _nmf_site_list.extend(extra_sitenames)
+                    extra_sitenames = None  # 이중 처리 방지
+                _all_nmf_rows: list = []
+                _nmf_cols_ref = None
+                for _sn_i in _nmf_site_list:
+                    _r_i, _c_i = await asyncio.to_thread(
+                        _execute_night_min_flow_query, _sn_i, _nmf_ft, _nmf_from, _nmf_to
+                    )
+                    if _r_i:
+                        _all_nmf_rows.extend(_r_i)
+                        if _nmf_cols_ref is None:
+                            _nmf_cols_ref = _c_i
+                rows = _all_nmf_rows
+                columns = _nmf_cols_ref or []
+                if len(_nmf_site_list) > 1:
+                    params["sitename"] = ", ".join(_nmf_site_list)
+                logger.info(f"[SSE] 야간최소유량 사전집계 조회 완료: {len(rows)}행")
+            except Exception as e:
+                logger.warning(f"[SSE] 야간최소유량 테이블 조회 실패: {e}")
+                rows, columns = [], []
 
         # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
         if intent == "ALARM_ABNORMAL_LOCATIONS":
