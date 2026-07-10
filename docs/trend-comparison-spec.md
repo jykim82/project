@@ -682,6 +682,17 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 
 ## 11. 변경 이력
 
+- 2026-07-09 — 역동적 UX 적용 (dynamic-ux 시안 16·24)
+  · **시안 16 CompareSlider** (`components/trend/CompareSlider.tsx` 신규): 평소 대비
+    활성 시 차트 아래 before/after wipe 슬라이더. 손잡이로 좌=평소 기대값(baseline
+    점선 + 정상범위 밴드) / 우=현재 실측을 가름. `ComparisonBaseline.series/band_upper
+    /band_lower/deviation_pct` 실데이터만 사용. EPANET 유량수지는 제외(사용자 지시).
+    TrendChart 에서 `showBaseline && comparison.baseline.series` 조건 렌더.
+  · **시안 24 브러시-줌**: 트렌드 단일 패널 옵션(`plot-chart.ts`)에 toolbox.feature.
+    dataZoom(x축 러버밴드 확대) + restore 추가. 드래그로 구간 박스 확대.
+  · 검증(Playwright): 가곡 수위 평소대비 ON → CompareSlider wipe(clip 300→150)·
+    평소/실측 라인 · toolbox "구간 확대/전체 보기". 커밋 `slm-dashboard@dc964c6`(16)·
+    `de149cd`(24).
 - 2026-05-24 (심야 4) — 다중 tag·이종 trend 처리 (§4.5 + §7.7 신설)
   · 의도: "유량순시+적산", "수위+유량", "동종 다중" 같이 한 차트에 여러 시리즈가
     있을 때 보조 지표가 어떻게 적용되는가 명세
