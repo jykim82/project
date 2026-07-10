@@ -8,6 +8,37 @@
 
 ---
 
+### [E-035] 야간최소유량 트렌드 SSE 응답 28초 — 사전집계 미적용 + rows 초기화 덮임
+
+- **날짜:** 2026-07-10
+- **증상:** "신평 배수지 야간최소유량 트렌드 그래프를 보여줘" 채팅 응답이
+  약 28초(SQL 23.6초) 소요. 진행 스피너가 오래 멈춰 보임.
+- **원인 (2중 복합):**
+  1. **SSE 경로 미최적화** — 비스트림 `/ask` 는 사전집계 테이블
+     `tb_night_min_flow_daily` 인덱스 스캔(<0.5초)으로 최적화됐으나,
+     프런트가 실제 쓰는 `/ask/stream`(SSE) 만 여전히 원시 하이퍼테이블
+     실시간 함수 `fn_night_min_flow_summary`(43만행 60분 이동평균, ~23초)
+     를 호출.
+  2. **rows 초기화 순서 버그** — SSE 에서 NMF 사전집계 조회를 `커스텀
+     핸들러용 rows 초기화(rows: list = [])` **앞**에 두면, 채운 rows 가
+     초기화에 덮여 비워지고 → `if not rows:` 분기에서 선언 SQL
+     (`fn_trend_period_summary`, 전체 3300행)이 재실행됨. `/ask` 는 이
+     초기화 **뒤**에 채워 정상.
+- **해결:**
+  1. SSE NMF 블록을 `_execute_night_min_flow_query`(사전집계 테이블) 조회로
+     전환, `/ask` 와 동일 fast-path 통일.
+  2. 조회 코드를 `rows: list = []` 초기화 **이후**로 이동 (덮임 방지).
+  3. 사전집계 테이블이 2026-03-21 이후 정체(갱신 잡 pg_cron 부재) →
+     `backfill_night_min_flow('2026-03-22', CURRENT_DATE-1)` 로 현재까지 채움.
+- **결과:** SQL 23.6초 → 0ms(사전집계), 합계 28초 → 5.7초(서버), wall-clock
+  27.5초 → 11.2초. rows 3300 → 157(신평 정상).
+- **재발방지:** 신규 커스텀 SQL 핸들러는 반드시 `rows: list = []` 초기화
+  **이후** 채울 것. 사전집계 테이블(`tb_night_min_flow_daily`)은 일 1회
+  `compute_night_min_flow()` 스케줄 필요(현재 pg_cron 부재 → 호스트 cron
+  또는 백엔드 루프 검토 대상, review-items 등록).
+
+---
+
 ### [E-034] LAN IP 접속 시 화면 자동 reload (~70초 주기) — HMR ws + Next.js strict origin
 
 - **날짜:** 2026-06-08

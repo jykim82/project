@@ -122,6 +122,32 @@
 
 ---
 
+## [Perf] 야간최소유량 사전집계 테이블 갱신 스케줄 부재
+
+**현상:** `tb_night_min_flow_daily`(야간최소유량 트렌드/표준편차 fast-path의
+원천)가 2026-03-21 이후 갱신되지 않아 정체. 채팅 야간최소유량 트렌드가
+사전집계 테이블을 쓰는데(→ E-035), 최신 데이터가 누락될 수 있었음.
+
+**원인:** 테이블 갱신은 DB 함수 `compute_night_min_flow(target_date)` /
+`_job_compute_night_min_flow()` 로 설계됐으나, 이를 호출하는 pg_cron 이
+현재 DB(TimescaleDB 컨테이너)에 미설치(`cron.job` relation 없음). 백엔드
+백그라운드 루프도 이 **테이블**은 갱신하지 않음(별도 인메모리 캐시만 갱신).
+
+**조치(임시):** `backfill_night_min_flow('2026-03-22', CURRENT_DATE-1)` 로
+현재까지 채움(2026-07-10 기준 13,502행, max_date=2026-07-09).
+
+**선택지 (결정 필요):**
+- (a) 호스트 crontab/launchd 로 매일 `psql -c "SELECT compute_night_min_flow();"`
+  (기존 baseline/iforest cron 패턴과 동일 — `docs/operations/*-cron.md`)
+- (b) 백엔드 background 루프에 일 1회 `compute_night_min_flow()` 호출 추가
+  (폐쇄망·컨테이너 자족적, 별도 호스트 설정 불필요 → **권장**)
+- (c) DB 에 pg_cron extension 설치 후 `_job_compute_night_min_flow` 스케줄
+
+**결정 필요:** (a)/(b)/(c) 중 채택. 미결 시 테이블 재정체 → 야간최소유량
+트렌드 최신 데이터 누락 재발.
+
+---
+
 ## 히스토리
 
 - 2026-04-15: E-025 P3 매뉴얼 RAG 실구현 직후 7개 항목 등록 (쿼리 튜닝 / master-k OCR / XGR-CPU vs XGK / catalog vs manual / 업로드 UI / is_registered 매칭 / 샘플 이미지 경로)
