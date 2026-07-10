@@ -215,6 +215,11 @@ _NIGHT_MIN_FLOW_CACHE: dict[str, float] = {}   # sitename → 야간 최소 유�
 _NIGHT_MIN_FLOW_CACHE_TIME: Optional[datetime] = None
 _NIGHT_MIN_FLOW_CACHE_TTL = 1800  # 30분
 
+# ── 야간최소유량 일별 사전집계 테이블(tb_night_min_flow_daily) 갱신 주기 ──
+# 야간최소유량 트렌드/표준편차 fast-path 의 원천 테이블. pg_cron 부재 환경에서
+# 정체(2026-03 사례, E-035)를 막기 위해 백엔드 백그라운드 루프로 일 1회 갱신.
+_NIGHT_MIN_FLOW_AGG_TTL = 86400  # 24시간
+
 # =============================================================================
 # CSV 내보내기 설정
 # =============================================================================
@@ -1312,6 +1317,55 @@ async def _night_min_flow_cache_loop():
         await asyncio.sleep(_NIGHT_MIN_FLOW_CACHE_TTL)
 
 
+def _refresh_night_min_flow_daily() -> int:
+    """tb_night_min_flow_daily 사전집계 테이블을 어제까지 최신화한다.
+
+    max(log_date) 이후 ~ 어제(CURRENT_DATE-1) 구간의 공백만 backfill 하여
+    자기치유(백엔드가 며칠 다운돼 있었어도 gap 을 메움). pg_cron 부재 환경
+    대체 스케줄. DB 함수 backfill_night_min_flow(start, end) 는 upsert 로
+    설계돼 재실행 안전. 반환: 새로 채운 일수(0 = 이미 최신).
+    """
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT max(log_date) FROM tb_night_min_flow_daily")
+        _max = cur.fetchone()[0]
+        cur.execute("SELECT (CURRENT_DATE - 1)")
+        _yesterday = cur.fetchone()[0]
+        # 빈 테이블이면 최근 365일부터, 아니면 max+1 부터
+        _start = (_max + timedelta(days=1)) if _max else (_yesterday - timedelta(days=365))
+        if _start > _yesterday:
+            return 0  # 이미 최신
+        cur.execute("SELECT backfill_night_min_flow(%s::date, %s::date)", (_start, _yesterday))
+        conn.commit()
+        return (_yesterday - _start).days + 1
+    finally:
+        cur.close()
+        conn.close()
+
+
+async def _night_min_flow_agg_loop():
+    """백그라운드: 서버 시작 200초 후 첫 실행, 이후 24시간마다 사전집계 갱신.
+
+    야간최소유량 트렌드/표준편차 fast-path 원천인 tb_night_min_flow_daily 를
+    최신 상태로 유지한다 (E-035 재발 방지). 원시 데이터 동기화(_sync_worker,
+    30일 초기 적재)와 프로파일링 이후 실행되도록 200초 지연.
+    """
+    await asyncio.sleep(200)
+    while True:
+        try:
+            t0 = datetime.now()
+            filled = await asyncio.to_thread(_refresh_night_min_flow_daily)
+            elapsed = (datetime.now() - t0).total_seconds()
+            if filled:
+                logger.info(f"야간최소유량 사전집계 테이블 갱신: {filled}일 채움, {elapsed:.1f}초")
+            else:
+                logger.info("야간최소유량 사전집계 테이블 이미 최신 (갱신 불필요)")
+        except Exception as e:
+            logger.error(f"야간최소유량 사전집계 테이블 갱신 실패: {e}")
+        await asyncio.sleep(_NIGHT_MIN_FLOW_AGG_TTL)
+
+
 
 # 이상감지 스캔 → anomaly_scan.py로 분리됨
 
@@ -1624,6 +1678,9 @@ async def lifespan(app: FastAPI):
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
     _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
     _night_min_flow_task = asyncio.create_task(_night_min_flow_cache_loop())
+
+    # 야간최소유량 사전집계 테이블 일 1회 갱신 (200초 후 첫 실행, pg_cron 대체)
+    _night_min_flow_agg_task = asyncio.create_task(_night_min_flow_agg_loop())
 
     # 누수 CUSUM 알림 스캔 (서버 시작 10분 후 첫 실행, 이후 6시간 주기)
     _leak_cusum_task = asyncio.create_task(_leak_cusum_scan_loop())
