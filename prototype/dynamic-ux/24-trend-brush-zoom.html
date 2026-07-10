@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 24 · 트렌드 브러시-줌</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .card{max-width:600px;background:#0e1a2a;border:1px solid #1e2c3f;border-radius:12px;padding:16px}
+  svg{display:block;width:100%;height:220px;touch-action:none;cursor:crosshair}
+  .hint{color:#7c8798;font-size:11px;margin-top:8px}
+  button{margin-top:10px;background:#1e2c3f;color:#e2e8f0;border:1px solid #2e3f56;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style></head>
+<body>
+  <h1>트렌드 브러시-줌 <span class="tag">신규 제안</span></h1>
+  <p class="sub">트렌드 차트에서 <b>드래그로 구간을 선택</b>하면 그 시간 범위로 <b>부드럽게
+    확대</b>된다. 이상 구간을 즉시 집중 분석 → 별도 화면 전환 없이 인터랙션으로 해결.
+    (드래그하여 확대, 더블클릭으로 초기화)</p>
+  <div class="card">
+    <svg id="svg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+    <div class="hint" id="hint">전체 구간 (24h)</div>
+    <button onclick="reset()">↺ 전체 보기</button>
+  </div>
+<script>
+  const N=144, W=600, H=200, PAD=8;
+  const data=[]; let seed=7;
+  for(let i=0;i<N;i++){seed=(seed*9301+49297)%233280;const r=seed/233280;
+    data.push(2.6+Math.sin(i/9)*0.5+Math.sin(i/3)*0.15+r*0.25);}
+  let lo=0,hi=N-1, targetLo=0,targetHi=N-1;
+  const svg=document.getElementById('svg');
+  function xOf(i){return PAD+(i-lo)/(hi-lo)*(W-2*PAD);}
+  function yOf(v){const mn=1.8,mx=3.6;return PAD+(1-(v-mn)/(mx-mn))*(H-2*PAD);}
+  function path(){let d='';for(let i=Math.floor(lo);i<=Math.ceil(hi);i++){d+=(d?'L':'M')+xOf(i).toFixed(1)+','+yOf(data[i]).toFixed(1)+' ';}return d;}
+  let sel=null;
+  function render(){
+    svg.innerHTML=`
+      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#38bdf8" stop-opacity=".25"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></linearGradient></defs>
+      <path d="${path()} L ${xOf(Math.ceil(hi))},${H-PAD} L ${xOf(Math.floor(lo))},${H-PAD} Z" fill="url(#g)"/>
+      <path d="${path()}" fill="none" stroke="#38bdf8" stroke-width="1.6"/>
+      ${sel?`<rect x="${Math.min(sel.a,sel.b)}" y="${PAD}" width="${Math.abs(sel.b-sel.a)}" height="${H-2*PAD}" fill="#38bdf8" opacity=".15" stroke="#7dd3fc" stroke-dasharray="3 2"/>`:''}`;
+  }
+  function animateTo(nl,nh){targetLo=nl;targetHi=nh;
+    const step=()=>{lo+=(targetLo-lo)*0.25;hi+=(targetHi-hi)*0.25;
+      if(Math.abs(targetLo-lo)>0.4||Math.abs(targetHi-hi)>0.4){render();requestAnimationFrame(step);}
+      else{lo=targetLo;hi=targetHi;render();
+        document.getElementById('hint').textContent=`구간: ${Math.round(lo*10)}~${Math.round(hi*10)}분 인덱스 (${(hi-lo).toFixed(0)} pt)`;}};
+    requestAnimationFrame(step);}
+  function px2idx(px){return lo+(px-PAD)/(W-2*PAD)*(hi-lo);}
+  function evx(e){const r=svg.getBoundingClientRect();return (( (e.touches?e.touches[0].clientX:e.clientX)-r.left)/r.width)*W;}
+  svg.addEventListener('pointerdown',e=>{sel={a:evx(e),b:evx(e)};svg.setPointerCapture(e.pointerId);});
+  svg.addEventListener('pointermove',e=>{if(sel){sel.b=evx(e);render();}});
+  svg.addEventListener('pointerup',()=>{if(sel&&Math.abs(sel.b-sel.a)>12){
+    const a=px2idx(Math.min(sel.a,sel.b)),b=px2idx(Math.max(sel.a,sel.b));sel=null;animateTo(a,b);}else{sel=null;render();}});
+  svg.addEventListener('dblclick',reset);
+  function reset(){sel=null;animateTo(0,N-1);}
+  render();
+</script></body></html>

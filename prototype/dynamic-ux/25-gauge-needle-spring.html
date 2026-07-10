@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 25 · 게이지 니들 스프링</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .card{max-width:600px;background:#0e1a2a;border:1px solid #1e2c3f;border-radius:12px;padding:20px;display:flex;gap:24px;flex-wrap:wrap}
+  .g{text-align:center}
+  .g .name{font-size:12px;color:#94a3b8;margin-bottom:4px}
+  .g .rd{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:4px}
+  button{margin-top:18px;background:#1e2c3f;color:#e2e8f0;border:1px solid #2e3f56;border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){.needle{transition:none!important}}
+</style></head>
+<body>
+  <h1>게이지 니들 스프링 <span class="tag">신규 제안</span></h1>
+  <p class="sub">압력·유량 등 <b>계기 바늘이 새 값에 물리 스프링(오버슛)으로 안착</b>한다.
+    딱딱한 숫자 갱신보다 계기판 감각을 주어 아날로그 계측 UX 를 강화. 감소모션에선
+    즉시 이동. 아래 버튼으로 새 계측값 주입.</p>
+  <div class="card" id="card"></div>
+  <button onclick="reread()">🎲 새 계측값</button>
+<script>
+  const G=[
+    {name:'토출압력',unit:'kgf',min:0,max:8,val:4.2,color:'#a78bfa'},
+    {name:'순시유량',unit:'m³/h',min:0,max:600,val:410,color:'#38bdf8'},
+    {name:'배수지 수위',unit:'m',min:0,max:5,val:3.4,color:'#34d399'},
+  ];
+  const R=54,CX=70,CY=70;
+  function ang(g){return -120+((g.val-g.min)/(g.max-g.min))*240;} // -120°~+120°
+  function arc(){const a0=(-120-90)*Math.PI/180,a1=(120-90)*Math.PI/180;
+    const x0=CX+R*Math.cos(a0),y0=CY+R*Math.sin(a0),x1=CX+R*Math.cos(a1),y1=CY+R*Math.sin(a1);
+    return `M${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 1 1 ${x1.toFixed(1)},${y1.toFixed(1)}`;}
+  function draw(){document.getElementById('card').innerHTML=G.map((g,i)=>`
+    <div class="g"><div class="name">${g.name}</div>
+    <svg width="140" height="100" viewBox="0 0 140 100">
+      <path d="${arc()}" fill="none" stroke="#1e2c3f" stroke-width="8" stroke-linecap="round"/>
+      <line class="needle" id="n${i}" x1="${CX}" y1="${CY}" x2="${CX}" y2="${CY-R+8}"
+        stroke="${g.color}" stroke-width="3" stroke-linecap="round"
+        transform="rotate(${ang(g)} ${CX} ${CY})"
+        style="transition:transform 1s cubic-bezier(.34,1.56,.64,1)"/>
+      <circle cx="${CX}" cy="${CY}" r="5" fill="${g.color}"/>
+    </svg>
+    <div class="rd" id="rd${i}" style="color:${g.color}">${g.val.toFixed(g.max>10?0:1)}<span style="font-size:11px;color:#7c8798"> ${g.unit}</span></div></div>`).join('');}
+  function reread(){G.forEach((g,i)=>{
+    g.val=+(g.min+Math.random()*(g.max-g.min)).toFixed(2);
+    document.getElementById('n'+i).setAttribute('transform',`rotate(${ang(g)} ${CX} ${CY})`);
+    document.getElementById('rd'+i).innerHTML=`${g.val.toFixed(g.max>10?0:1)}<span style="font-size:11px;color:#7c8798"> ${g.unit}</span>`;});}
+  draw();
+</script></body></html>

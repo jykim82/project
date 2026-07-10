@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 22 · 데이터 갱신 diff 플래시</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:560px}
+  .kpi{background:#0e1a2a;border:1px solid #1e2c3f;border-radius:10px;padding:12px 14px;position:relative;overflow:hidden;transition:background .5s}
+  .kpi.flash{background:#12233a}
+  .kpi .lbl{font-size:11px;color:#7c8798;margin-bottom:6px}
+  .kpi .val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .kpi .unit{font-size:11px;color:#7c8798;margin-left:3px;font-weight:400}
+  .delta{position:absolute;top:10px;right:12px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;opacity:0;transform:translateY(4px)}
+  .delta.show{animation:pop 1.6s ease-out forwards}
+  .delta.up{color:#f87171}.delta.down{color:#38bdf8}
+  @keyframes pop{0%{opacity:0;transform:translateY(4px)}15%{opacity:1;transform:translateY(0)}70%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style></head>
+<body>
+  <h1>데이터 갱신 diff 플래시 <span class="tag">신규 제안</span></h1>
+  <p class="sub">주기 갱신(60초 데이터 주기)마다 <b>변한 값만 짧게 하이라이트</b>하고
+    <b>증감(▲/▼ 델타)</b>을 띄웠다 사라지게 한다. 단순 카운트업과 달리 <b>"무엇이 얼마나
+    바뀌었나"</b>를 명시 → 다수 지표 중 변화 포착이 쉬움. (데모는 2.5초 주기)</p>
+  <div class="grid" id="grid"></div>
+<script>
+  const K=[
+    {lbl:'죽동 수위',v:3.42,unit:'m',dec:2},{lbl:'매방리 압력',v:4.31,unit:'kgf',dec:2},
+    {lbl:'남산 유량',v:412,unit:'m³/h',dec:0},{lbl:'진행중 알람',v:5,unit:'건',dec:0},
+    {lbl:'이상 감지',v:12,unit:'건',dec:0},{lbl:'교차검증',v:3,unit:'건',dec:0},
+  ];
+  function draw(){document.getElementById('grid').innerHTML=K.map((k,i)=>
+    `<div class="kpi" id="k${i}"><div class="lbl">${k.lbl}</div>
+      <div class="val">${k.v.toFixed(k.dec)}<span class="unit">${k.unit}</span></div>
+      <span class="delta" id="d${i}"></span></div>`).join('');}
+  function update(){
+    K.forEach((k,i)=>{
+      if(Math.random()<0.55){
+        const step=(k.dec===0?Math.round((Math.random()*4-2)):(Math.random()*0.4-0.2));
+        if(step===0)return;
+        k.v=Math.max(0,k.v+step);
+        const kpi=document.getElementById('k'+i),d=document.getElementById('d'+i);
+        kpi.querySelector('.val').innerHTML=`${k.v.toFixed(k.dec)}<span class="unit">${k.unit}</span>`;
+        kpi.classList.add('flash');setTimeout(()=>kpi.classList.remove('flash'),500);
+        d.className='delta '+(step>0?'up':'down');d.textContent=(step>0?'▲+':'▼')+Math.abs(step).toFixed(k.dec);
+        void d.offsetWidth;d.classList.add('show');
+      }
+    });
+  }
+  draw();setInterval(update,2500);
+</script></body></html>

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 26 · 지도 관로 유량 파티클</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .card{max-width:600px;background:#0e1a2a;border:1px solid #1e2c3f;border-radius:12px;padding:8px}
+  canvas{display:block;width:100%;height:340px;border-radius:8px}
+  .legend{display:flex;gap:16px;padding:8px 10px;font-size:11px;color:#94a3b8}
+  .legend b{color:#e2e8f0}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){canvas{opacity:.9}}
+</style></head>
+<body>
+  <h1>지도 관로 유량 파티클 <span class="tag">신규 제안</span></h1>
+  <p class="sub">GIS 관망도 위에서 <b>관로를 따라 흐르는 입자</b>로 유량의 <b>방향과 세기</b>
+    (입자 밀도·속도)를 표현한다. 시안 03(계통도 점선)의 지도판. <b style="color:#f87171">불균형
+    구간은 붉게</b> + 역류/정체를 즉시 인지. 노드 클릭 시 상세로 연결(개념).</p>
+  <div class="card">
+    <canvas id="cv"></canvas>
+    <div class="legend"><span>● <b>정상 흐름</b></span><span style="color:#f87171">● <b>불균형(과다)</b></span><span>속도·밀도 = 유량 세기</span></div>
+  </div>
+<script>
+  const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+  function fit(){const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);}
+  // 노드 좌표(논리) + 엣지(유량 세기, 불균형 여부)
+  const nodes={A:[80,60],B:[80,180],C:[300,120],D:[510,60],E:[510,200],F:[300,290]};
+  const edges=[
+    {a:'A',b:'C',flow:1.0,bad:false},{a:'B',b:'C',flow:0.7,bad:false},
+    {a:'C',b:'D',flow:0.9,bad:false},{a:'C',b:'E',flow:1.3,bad:true},
+    {a:'C',b:'F',flow:0.5,bad:false},
+  ];
+  const parts=[];
+  edges.forEach((e,ei)=>{const cnt=Math.round(6+e.flow*8);for(let i=0;i<cnt;i++)parts.push({e:ei,t:Math.random()});});
+  let raf,last=0;
+  function draw(ts){
+    const w=cv.getBoundingClientRect().width,h=cv.getBoundingClientRect().height;
+    const dt=Math.min(40,ts-last);last=ts;ctx.clearRect(0,0,w,h);
+    // 관로 라인
+    edges.forEach(e=>{const[ax,ay]=nodes[e.a],[bx,by]=nodes[e.b];
+      ctx.strokeStyle=e.bad?'rgba(248,113,113,.35)':'rgba(56,189,248,.22)';
+      ctx.lineWidth=2+e.flow*2;ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();});
+    // 파티클
+    parts.forEach(p=>{const e=edges[p.e];const[ax,ay]=nodes[e.a],[bx,by]=nodes[e.b];
+      p.t+=(e.flow*0.0006)*dt;if(p.t>1)p.t-=1;
+      const x=ax+(bx-ax)*p.t,y=ay+(by-ay)*p.t;
+      ctx.fillStyle=e.bad?'#f87171':'#7dd3fc';ctx.globalAlpha=.9;
+      ctx.beginPath();ctx.arc(x,y,e.bad?2.6:2,0,7);ctx.fill();});
+    ctx.globalAlpha=1;
+    // 노드
+    Object.entries(nodes).forEach(([k,[x,y]])=>{
+      ctx.fillStyle='#0e1a2a';ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(x,y,7,0,7);ctx.fill();ctx.stroke();
+      ctx.fillStyle='#94a3b8';ctx.font='10px sans-serif';ctx.fillText(k,x-3,y-11);});
+    raf=requestAnimationFrame(draw);
+  }
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  fit();addEventListener('resize',fit);
+  if(reduce){requestAnimationFrame(t=>{last=t;draw(t);cancelAnimationFrame(raf);});} // 1프레임만
+  else raf=requestAnimationFrame(draw);
+</script></body></html>

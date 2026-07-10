@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 23 · 설비 상태 전이 애니</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .flow{display:flex;align-items:center;gap:0;max-width:600px;margin-bottom:18px}
+  .step{flex:1;text-align:center;font-size:12px;color:#4b5768;padding:6px 0;border-radius:8px;transition:all .5s}
+  .step.on{color:#e2e8f0;font-weight:700}
+  .arrow{color:#2e3f56;padding:0 6px;transition:color .5s}.arrow.on{color:#38bdf8}
+  .card{max-width:600px;background:#0e1a2a;border:1px solid #1e2c3f;border-radius:12px;padding:16px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-weight:700;font-size:14px;transition:background .6s,color .6s,box-shadow .6s}
+  .s-ok{background:rgba(52,211,153,.15);color:#6ee7b7}
+  .s-anom{background:rgba(251,191,36,.15);color:#fcd34d}
+  .s-fault{background:rgba(239,68,68,.18);color:#fca5a5;box-shadow:0 0 0 3px rgba(239,68,68,.15)}
+  .s-fix{background:rgba(56,189,248,.15);color:#7dd3fc}
+  .dot{width:8px;height:8px;border-radius:50%;background:currentColor;transition:transform .3s}
+  .desc{margin-top:12px;color:#94a3b8;font-size:12px;min-height:32px}
+  button{margin-top:16px;background:#1e2c3f;color:#e2e8f0;border:1px solid #2e3f56;border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style></head>
+<body>
+  <h1>설비 상태 전이 애니 <span class="tag">신규 제안</span></h1>
+  <p class="sub">설비 상태가 <b>정상 → 이상 → 고장 → 조치</b> 단방향으로 흐를 때, 상태 pill
+    이 색·형태로 <b>부드럽게 전이</b>하고 상단 플로우가 현재 단계를 강조한다. E-025
+    노스스타(점검→장애→알람 단방향)와 동일 언어. 아래 버튼으로 단계 진행.</p>
+  <div class="flow" id="flow"></div>
+  <div class="card">
+    <div><span class="pill" id="pill"><span class="dot"></span><span id="ptxt"></span></span></div>
+    <div class="desc" id="desc"></div>
+    <button onclick="next()">▶ 다음 단계</button>
+  </div>
+<script>
+  const S=[
+    {k:'정상',cls:'s-ok',step:0,desc:'매방리 가압장 P-2 인버터 — 정상 운전 중.'},
+    {k:'이상',cls:'s-anom',step:1,desc:'알람 발생: 토출압력 z-score 초과. 자동 분류 "이상".'},
+    {k:'고장',cls:'s-fault',step:2,desc:'현장 확인 결과 베어링 과열 — "고장" 확정, 작업 등록.'},
+    {k:'조치완료',cls:'s-fix',step:3,desc:'부품 교체 완료. 정상 복귀 대기 → 다음 단계에서 정상.'},
+  ];
+  const STEPS=['정상','이상','고장','조치'];
+  let i=0;
+  function render(){
+    const s=S[i];
+    const pill=document.getElementById('pill');
+    pill.className='pill '+s.cls;
+    document.getElementById('ptxt').textContent=s.k;
+    document.getElementById('desc').textContent=s.desc;
+    document.getElementById('flow').innerHTML=STEPS.map((t,k)=>
+      `<div class="step ${k===s.step?'on':''}">${t}</div>`+(k<STEPS.length-1?`<span class="arrow ${k<s.step?'on':''}">→</span>`:'')).join('');
+  }
+  function next(){i=(i+1)%S.length;render();}
+  render();
+</script></body></html>

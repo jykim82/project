@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시안 21 · 알람 에스컬레이션 타이머</title>
+<style>
+  body{margin:0;background:#0a121e;color:#e2e8f0;font-family:'Noto Sans KR',system-ui,sans-serif;padding:24px}
+  h1{font-size:16px;font-weight:700;margin:0 0 4px}.sub{color:#7c8798;font-size:12px;margin:0 0 18px;line-height:1.6}
+  .wrap{max-width:560px}
+  .row{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:8px;border-radius:10px;border:1px solid #1e2c3f;background:#0e1a2a;transition:background .4s,border-color .4s}
+  .row .site{font-weight:600;font-size:13px;min-width:120px}
+  .row .msg{color:#94a3b8;font-size:12px;flex:1}
+  .timer{font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;min-width:64px;text-align:right}
+  .badge{font-size:10px;padding:2px 8px;border-radius:999px;font-weight:600;white-space:nowrap}
+  /* 에스컬레이션 단계 */
+  .lv-notice{border-color:rgba(251,191,36,.3)}
+  .lv-notice .badge{background:rgba(251,191,36,.15);color:#fcd34d}.lv-notice .timer{color:#fcd34d}
+  .lv-warn{border-color:rgba(249,115,22,.4);background:#1a1408}
+  .lv-warn .badge{background:rgba(249,115,22,.18);color:#fdba74}.lv-warn .timer{color:#fdba74}
+  .lv-crit{border-color:rgba(239,68,68,.5);background:#1e0e0e;animation:crit 1.6s ease-in-out infinite}
+  .lv-crit .badge{background:rgba(239,68,68,.2);color:#fca5a5}.lv-crit .timer{color:#fca5a5}
+  @keyframes crit{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 0 3px rgba(239,68,68,.25)}}
+  button{margin-top:14px;background:#1e2c3f;color:#e2e8f0;border:1px solid #2e3f56;border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3);margin-left:6px}
+  @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style></head>
+<body><div class="wrap">
+  <h1>알람 에스컬레이션 타이머 <span class="tag">신규 제안</span></h1>
+  <p class="sub">미조치 알람의 <b>경과 시간을 실시간 카운트</b>하고, 방치될수록 단계가
+    올라간다: <b style="color:#fcd34d">주의(&lt;10s)</b> → <b style="color:#fdba74">경고(10~20s)</b>
+    → <b style="color:#fca5a5">위험(20s+, 맥동)</b>. 운영자가 "얼마나 오래 방치됐나"를
+    한눈에 인지 → 조치 우선순위. (데모는 초 단위로 가속)</p>
+  <div id="list"></div>
+  <button onclick="reset()">↻ 조치 완료(리셋)</button>
+</div>
+<script>
+  const ALARMS=[
+    {site:'죽동 배수지',msg:'수위 상한 초과 (HH)',t:23},
+    {site:'매방리 가압장',msg:'토출압력 이상 상승',t:12},
+    {site:'남산10 소블록',msg:'야간최소유량 급증',t:4},
+    {site:'행정 배수지',msg:'유입유량 홀딩 의심',t:17},
+  ];
+  function fmt(s){const m=String(Math.floor(s/60)).padStart(2,'0');const ss=String(s%60).padStart(2,'0');return m+':'+ss}
+  function level(s){return s>=20?['lv-crit','위험']:s>=10?['lv-warn','경고']:['lv-notice','주의']}
+  function render(){
+    document.getElementById('list').innerHTML=ALARMS.map((a,i)=>{
+      const[cls,lbl]=level(a.t);
+      return `<div class="row ${cls}"><span class="site">${a.site}</span>
+        <span class="msg">${a.msg}</span>
+        <span class="badge">${lbl} · 미조치</span>
+        <span class="timer">${fmt(a.t)}</span></div>`;
+    }).join('');
+  }
+  function tick(){ALARMS.forEach(a=>a.t++);render()}
+  function reset(){ALARMS.forEach(a=>a.t=Math.floor(Math.random()*6));render()}
+  render();setInterval(tick,1000);
+</script></body></html>
