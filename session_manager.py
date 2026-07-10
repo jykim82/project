@@ -140,13 +140,19 @@ class SessionManager:
         조건 (OR):
         - (a) 매우 짧음: 10자 미만
         - (b) 이어말 표지 포함 + 20자 미만
+        단, (a)(b) 모두 "지표 명사"(유량/수위/압력/유출량/총유량 등)를 스스로
+        명시하지 않은 경우에만 상속한다. 지표를 새로 말한 질문은 지표 자체가
+        바뀐 자기완결형 신규 질의이므로 상속하면 다른 지표의 답을 재사용하는
+        오답이 된다.
 
         표지만 있어도 긴 새 질문(예: "다른 시설의 유량 트렌드를 완전히 새로
         보여줘")은 상속하면 오답이므로 20자 상한 유지.
 
         예:
-          "오늘 것도" (5자)            → (a) 상속
-          "그럼 어제 유입량은?" (11자)   → (b) 상속
+          "오늘 것도" (5자)            → (a) 상속 (지표 없음)
+          "가압장은?" (5자)            → (a) 상속 (대상만 전환, 지표 없음)
+          "배수지 총유량은?" (9자)      → 지표(총유량) 명시 → 상속 거부, 재분류
+          "그럼 어제 것도?" (8자)       → (a) 상속
           "신평 배수지 압력 보여줘" (12자) → 표지 없음, 새 인텐트
         """
         if session.last_status != "OK":
@@ -167,9 +173,23 @@ class SessionManager:
         if any(t in q for t in _strong_new_triggers):
             return False
 
-        if len(q) < 10:
+        # 짧아도 "지표 명사"를 스스로 명시한 질문은 자기완결형 신규 질의 →
+        # 상속 금지. 진짜 follow-up 조각("오늘 것도", "그럼 어제는?", "가압장은?")은
+        # 시간/대상만 바꾸고 지표를 새로 말하지 않는다. 반면 "배수지 총유량은?"(9자),
+        # "현재 수위는?"(7자) 은 지표 자체가 바뀌므로 직전 인텐트를 물려받으면
+        # 다른 지표의 답을 재사용하는 오답이 된다.
+        # (예: TODAY_OUTFLOW_ALL_STATUS 직후 "배수지 총유량은?" →
+        #      TODAY_FLOW_ACCUMULATION 로 재분류되어야 함)
+        _standalone_metric_nouns = (
+            "유출량", "유입량", "총유량", "적산", "순시", "유량",
+            "수위", "압력", "공급량", "개도", "잔류염소", "탁도",
+            "유속", "전력량", "전류", "온도",
+        )
+        _has_own_metric = any(m in q for m in _standalone_metric_nouns)
+
+        if len(q) < 10 and not _has_own_metric:
             return True
-        if len(q) < 20 and _has_followup_signal(q):
+        if len(q) < 20 and _has_followup_signal(q) and not _has_own_metric:
             return True
         return False
 
