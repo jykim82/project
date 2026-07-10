@@ -136,15 +136,17 @@
 **조치(임시):** `backfill_night_min_flow('2026-03-22', CURRENT_DATE-1)` 로
 현재까지 채움(2026-07-10 기준 13,502행, max_date=2026-07-09).
 
-**선택지 (결정 필요):**
+**선택지:**
 - (a) 호스트 crontab/launchd 로 매일 `psql -c "SELECT compute_night_min_flow();"`
-  (기존 baseline/iforest cron 패턴과 동일 — `docs/operations/*-cron.md`)
 - (b) 백엔드 background 루프에 일 1회 `compute_night_min_flow()` 호출 추가
-  (폐쇄망·컨테이너 자족적, 별도 호스트 설정 불필요 → **권장**)
+  (폐쇄망·컨테이너 자족적, 별도 호스트 설정 불필요)
 - (c) DB 에 pg_cron extension 설치 후 `_job_compute_night_min_flow` 스케줄
 
-**결정 필요:** (a)/(b)/(c) 중 채택. 미결 시 테이블 재정체 → 야간최소유량
-트렌드 최신 데이터 누락 재발.
+**✅ 해결 (b) 2026-07-10** — `ai_server._night_min_flow_agg_loop` 신규.
+서버 시작 200초 후 첫 실행, 이후 24h 주기. `max(log_date)+1 ~ 어제` 구간만
+`backfill_night_min_flow` 로 채워 자기치유(다운 기간 gap 자동 보정). backfill
+은 upsert 라 재실행 안전. 검증: gap 로직(최신 시 0일) + self-heal 왕복
+(1일 삭제→backfill→86행 복원). E-035 재발방지 항목.
 
 ---
 
