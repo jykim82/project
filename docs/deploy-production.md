@@ -91,6 +91,10 @@ scripts/switch-frontend-dev.sh    # 개발(HMR) 복귀
 4. `slm-caddy`(caddy:2)가 `:3000` HTTPS 종단 → `frontend:3000`.
 
 - **코드 변경 반영(재빌드)**: `scripts/switch-frontend-prod.sh` 재실행.
+- **자동 재빌드 루틴**: `scripts/watch-frontend-prod.sh` 를 백그라운드로 띄우면
+  `src/` 변경을 감지(mtime 폴링 + 20s 디바운스)해 자동으로 재빌드·재배포한다.
+  `nohup scripts/watch-frontend-prod.sh >/tmp/slm-fe-watch.log 2>&1 &`
+  (중지: `pkill -f watch-frontend-prod.sh`). fswatch 불필요.
 - backend/db 는 건드리지 않으므로 이상감지 캐시 등 유지.
 - DDNS(`*.asuscomm.com` 등)·LAN IP·새 IP 어디로 접속해도 HMR 이 없어 리로드 없음.
 - **주의**: 접속 도메인이 cert SAN 에 없으면 브라우저 1회 인증서 경고(리로드와
