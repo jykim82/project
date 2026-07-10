@@ -76,6 +76,16 @@
 - **검증:** Playwright 로 localhost 환경 3+분 머물러도 reload 0회 (애초에
   미발생). 사용자 환경 LAN IP 에서 cert 재발급 + frontend 재기동 후 정상.
 - **커밋:** `slm-dashboard@037700f`, `slm-dashboard@705fe23`
+- **재발 (2026-07-10):** 호스트 LAN IP 가 DHCP 로 `192.168.50.84` 로 변경됐으나
+  cert SAN 은 이전 IP 들만 포함 → 사용자(아이패드/PC) 가 `192.168.50.84:3000`
+  접속 시 wss 재검증 실패 → 리로드 재발. 임시조치: cert 재발급
+  (`mkcert ... localhost 127.0.0.1 ::1 192.168.50.84 192.168.10.11`) + frontend 재기동.
+- **근본 해결 (2026-07-10):** cert SAN 에 IP 추가는 IP 바뀔 때마다 재발급이
+  필요해 납품 부적합. **프로덕션 빌드 경로 구축**으로 근본 제거 —
+  `next dev`(HMR) → `next build`+`next start`. HMR 웹소켓이 없어 인증서/IP 와
+  무관하게 리로드 트리거가 존재하지 않음. 산출물: `Dockerfile.prod`,
+  `docker-compose.prod.yml`, `certs/Caddyfile`, `docs/deploy-production.md`.
+  프로덕션 이미지 빌드·기동 검증 완료(`✓ Ready 227ms`, HMR 로그 없음).
 - **후속 (2026-06-08):** `/admin/menus` 메뉴 트리 탭의 숨김 토글이 localStorage
   기반이라 엔진 재기동 시 무효화 — `tb_menu.use_yn` DB 기반으로 전환.
   `MenuTreeView` 가 mount 시 `fetchMenuPermissions()` 로 DB 상태 동기화 +

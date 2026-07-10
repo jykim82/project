@@ -1,0 +1,131 @@
+# ============================================================
+# SLM 프로덕션(납품) 스택 — docker-compose.prod.yml
+# ============================================================
+# 개발용 docker-compose.dev.yml 과의 핵심 차이:
+#  - frontend: next dev(HMR) → next build + next start (Dockerfile.prod).
+#    HMR 웹소켓이 없어 접속 IP/인증서 SAN 불일치로 인한 ~70~90초 주기
+#    자동 리로드(E-034)가 원천적으로 발생하지 않는다. IP 변경과 무관.
+#  - caddy: 앞단 리버스 프록시가 HTTPS:3000 종단 (next start 는 HTTP 전용).
+#  - 소스 바인드 마운트/HMR 프리워밍/dev-tag-ingest 등 개발 전용 요소 제거.
+#
+# 사용:
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+# 상세: docs/deploy-production.md
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.25.1-pg16
+    container_name: slm-timescaledb
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${DB_NAME:-slm}
+      POSTGRES_USER: ${DB_USER:-slm_dev}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 필수 — .env 로 지정}
+      TZ: Asia/Seoul
+      PGTZ: Asia/Seoul
+    volumes:
+      - ${TIMESCALE_DATA:-timescale-data}:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c shared_preload_libraries=timescaledb
+        -c timezone=Asia/Seoul
+        -c log_timezone=Asia/Seoul
+        -c max_connections=100
+        -c work_mem=16MB
+        -c maintenance_work_mem=256MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-slm_dev} -d ${DB_NAME:-slm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  node-red:
+    image: nodered/node-red
+    container_name: slm-node-red
+    ports:
+      - "1880:1880"
+    volumes:
+      - ${NODERED_DATA:-nodered-data}:/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../slm
+      dockerfile: Dockerfile
+    container_name: slm-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # 파일 저장소(시설 사진·매뉴얼·채팅 첨부)는 영속 필요 → 마운트 유지
+      - ${FILES_DATA:-./files}:/data/files
+    environment:
+      TZ: Asia/Seoul
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-slm}
+      DB_USER: ${DB_USER:-slm_dev}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 필수}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+      VISION_AGENT_URL: ${VISION_AGENT_URL:-http://host.docker.internal:8100}
+      FILES_BASE: /data/files
+      CHAT_ATTACHMENT_DIR: /data/files/chat_attachments
+      FACILITY_FILE_BASE_DIR: /data/files/facility
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: slm-dashboard/slm-dashboard
+      dockerfile: Dockerfile.prod
+    container_name: slm-frontend
+    # 호스트 포트 미공개 — 외부 노출은 caddy(TLS)만. next start 는 HTTP:3000 내부 서비스.
+    expose:
+      - "3000"
+    volumes:
+      # /api/files/... 라우트가 읽을 파일 저장소 (backend 와 동일 경로)
+      - ${FILES_DATA:-./files}:/data/files
+    environment:
+      TZ: Asia/Seoul
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:8000}
+      NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+      # 요청 host 오버라이드(auth route)가 실제 origin 을 잡으므로 기본값이면 충분.
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET 필수 — 강한 랜덤값으로 지정}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://slm_dev:slm_dev_1234@timescaledb:5432/slm}
+      FILE_STORAGE_PATH: /data/files
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    container_name: slm-caddy
+    ports:
+      - "3000:3000"     # 외부 HTTPS 진입점 (https://<host>:3000)
+    volumes:
+      - ./certs/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  backend-venv:
+  timescale-data:
+  nodered-data:
+  caddy-data:
+  caddy-config:

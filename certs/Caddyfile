@@ -1,0 +1,19 @@
+# ============================================================
+# Caddy 리버스 프록시 — 프로덕션 TLS 종단 (docker-compose.prod.yml)
+# ============================================================
+# 프로덕션 프런트(next start)는 HTTP:3000 으로만 서비스한다. Caddy 가
+# 앞단에서 HTTPS:3000 을 종단하고 frontend:3000 으로 프록시한다.
+# reverse_proxy 는 X-Forwarded-Proto/Host 를 자동 추가 → NextAuth route 의
+# 요청 host 오버라이드(E-034 fix#3)가 어떤 IP/도메인이든 올바른 origin 을 잡는다.
+{
+	auto_https disable_redirects
+	admin off
+}
+
+# HTTPS:3000 — 자기서명(또는 고객 제공) 인증서로 종단.
+# 폐쇄망: 고객 도메인+사설 CA 또는 mkcert 로 발급한 cert 를 마운트해 사용.
+:3000 {
+	tls /certs/localhost.pem /certs/localhost-key.pem
+	encode gzip
+	reverse_proxy frontend:3000
+}
