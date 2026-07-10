@@ -556,6 +556,39 @@ def compute_comparison(
     threshold, threshold_label = _lookup_threshold(conn, trend_kind, sitename or "", facilitytype or "")
     f_times, f_vals, slope = _linear_forecast(times, vals, forecast_hours)
     if f_vals:
+        # 향후 전망(선형 외삽)이 물리 한계를 무시하고 폭주하는 것을 방지.
+        # 수위는 배수지 내에서 순환하는 유계 신호라 상승 기울기를 6~24h 선형
+        # 연장하면 만수위(4.2m 등)를 훨씬 초과하는 비현실적 값이 나온다.
+        # trend_kind 별 물리 상·하한으로 클램프한다.
+        _obs = [v for v in vals if v is not None]
+        _obs_max = max(_obs) if _obs else None
+        _obs_min = min(_obs) if _obs else None
+        _span = (_obs_max - _obs_min) if (_obs_max is not None and _obs_min is not None) else 0.0
+        # 상한: 수위는 만수위(=threshold/0.9). 그 외는 관측최대 + 여유(범위 또는 20%)
+        if trend_kind == "level" and threshold is not None:
+            _upper = round(threshold / 0.9, 3)                 # 만수위(탱크 상단)
+        elif _obs_max is not None:
+            _upper = _obs_max + max(_span, abs(_obs_max) * 0.2)
+        else:
+            _upper = None
+        # 하한: 음수 불가 지표(수위/유량/수질/압력)는 0, 그 외 관측최소 - 여유
+        if trend_kind in ("level", "flow", "quality", "pressure"):
+            _lower = 0.0
+        elif _obs_min is not None:
+            _lower = _obs_min - max(_span, abs(_obs_min) * 0.2)
+        else:
+            _lower = None
+
+        def _clamp(v: float) -> float:
+            if _lower is not None:
+                v = max(v, _lower)
+            if _upper is not None:
+                v = min(v, _upper)
+            return round(v, 3)
+
+        if _upper is not None or _lower is not None:
+            f_vals = [_clamp(v) for v in f_vals]
+
         last_val = next((v for v in reversed(vals) if v is not None), None)
         hours_to = None
         if last_val is not None and threshold is not None and slope is not None:
