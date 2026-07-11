@@ -2122,6 +2122,29 @@ def process_sql_result(
         data["cross_anomaly_count"] = len(mismatches)
 
     # -------------------------------------------------
+    # 설비 장애 현황 (EQUIPMENT_FAULT_STATUS)
+    # ANOMALY_SCAN_ALL 캐시의 DI 고장(통신이상·UPS·펌프·전원) 재사용.
+    # 구조화 데이터를 top-level 로 노출 → 프런트 EquipmentFaultList 카드 렌더
+    # (generic build_success_response 가 equipment_failure_impacts kwarg 로 전달).
+    # -------------------------------------------------
+    if intent == "EQUIPMENT_FAULT_STATUS":
+        impacts = params.get("_equipment_failure_impacts", []) or []
+        data["equipment_failure_impacts"] = impacts
+        data["equipment_failure_count"] = len(impacts)
+        # 하위호환/무카드 폴백용 flat detail (프런트 카드 렌더 시 억제) — 평문
+        items: list = []
+        if not impacts:
+            items.append({"prefix": "✓", "text": "현재 설비 장애 없음 — DI 고장 감지 0건"})
+        else:
+            items.append({"prefix": "", "text": f"설비 장애 {len(impacts)}건 감지 (DI 직접)"})
+            for i, imp in enumerate(impacts[:20], 1):
+                site = f"{imp.get('sitename', '')} {imp.get('facilitytype', '')}".strip()
+                detail = imp.get("failure_detail") or imp.get("equipmenttype") or ""
+                items.append({"prefix": f"[{i}]", "text": f"{site} — {detail}"})
+        data["equipment_fault_block"] = _EXPAND_MARKER
+        data["_detail_blocks"]["equipment_fault_block"] = items
+
+    # -------------------------------------------------
     # 물 수지 검증: 상류 유출 vs 하류 합계 비교
     # -------------------------------------------------
     if intent == "ANOMALY_FLOW_BALANCE":

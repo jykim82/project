@@ -339,6 +339,8 @@ class IntentClassifier:
             # 시설간 교차 검증 — 카테고리 SLM 폴백(~10초) 회피용. 인텐트 단계
             # (_classify_intent ANOMALY_CROSS_FACILITY) 키워드와 동일 집합 유지
             "교차 검증", "교차검증", "시설간 불일치", "유량 불일치", "흐름 불일치", "정합성",
+            # 설비 장애 현황(EQUIPMENT_FAULT_STATUS) — SLM 폴백 회피. Stage2 키워드와 동일
+            "설비 장애", "설비장애", "설비 고장", "설비고장", "장비 장애", "장비 고장",
             "표준편차",
             "주소",
             "위치도", "계통도", "초동대응", "매뉴얼",
@@ -617,6 +619,14 @@ class IntentClassifier:
             return "ANOMALY_CROSS_FACILITY", "keyword"
         if "상류" in question and "하류" in question and any(kw in question for kw in ["비교", "검증", "가동률"]):
             return "ANOMALY_CROSS_FACILITY", "keyword"
+
+        # 설비 장애 현황 (EQUIPMENT_FAULT_STATUS) — DI 직접 감지(통신이상·UPS·펌프·전원).
+        # "설비/장비" + "장애/고장" 이되 진단·점검·이력·예측(다른 이상감지 인텐트)은 제외.
+        # FACILITY_ABNORMAL_STATUS_SUMMARY(결측률 기반 "설비 현황")보다 우선.
+        if (("설비" in question or "장비" in question)
+                and any(kw in question for kw in ["장애", "고장"])
+                and not any(kw in question for kw in ["진단", "점검", "이력", "예측", "원인"])):
+            return "EQUIPMENT_FAULT_STATUS", "keyword"
 
         # 이상감지 인텐트 ("이상" 없이도 매칭되는 키워드 우선)
         if any(kw in question for kw in ["위험 예측", "이상 예측", "센서 예측"]):

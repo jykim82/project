@@ -3483,7 +3483,7 @@ async def _ask_inner(request: AskRequest):
             logger.warning(f"FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
     # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
+    _DYNAMIC_SQL_INTENTS = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "EQUIPMENT_FAULT_STATUS", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
     if intent not in _DYNAMIC_SQL_INTENTS and (not sql_combined or not sql_combined.strip()):
         rendered_answer = render_answer_template(answer_template, params)
         rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -3900,6 +3900,15 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             params["_cross_facility_mismatches"] = []
             rows = [["cross_facility_error"]]
             columns = ["status"]
+
+    # EQUIPMENT_FAULT_STATUS: 설비 장애 전용 (ANOMALY_SCAN_ALL 캐시의 DI 고장 재사용)
+    if intent == "EQUIPMENT_FAULT_STATUS":
+        cache = (_ANOMALY_SCAN_CACHE or {}).get("processed_data", {})
+        impacts = cache.get("equipment_failure_impacts") or []
+        params["_equipment_failure_impacts"] = impacts
+        rows = [["equipment_fault_done"]]
+        columns = ["status"]
+        logger.info(f"EQUIPMENT_FAULT_STATUS: 설비 장애 {len(impacts)}건 (스캔 캐시)")
 
     # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용, 인과 인덱스 + 시계열 직접 조회)
     if intent == "ANOMALY_FLOW_BALANCE":
@@ -5054,7 +5063,7 @@ async def ask_stream(request: AskRequest):
                 logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
+        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "EQUIPMENT_FAULT_STATUS", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)
@@ -5480,6 +5489,15 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
                 params["_cross_facility_mismatches"] = []
                 rows = [["cross_facility_error"]]
                 columns = ["status"]
+
+        # EQUIPMENT_FAULT_STATUS: 설비 장애 전용 (ANOMALY_SCAN_ALL 캐시의 DI 고장 재사용)
+        if intent == "EQUIPMENT_FAULT_STATUS":
+            cache = (_ANOMALY_SCAN_CACHE or {}).get("processed_data", {})
+            impacts = cache.get("equipment_failure_impacts") or []
+            params["_equipment_failure_impacts"] = impacts
+            rows = [["equipment_fault_done"]]
+            columns = ["status"]
+            logger.info(f"[SSE] EQUIPMENT_FAULT_STATUS: 설비 장애 {len(impacts)}건 (스캔 캐시)")
 
         # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용)
         if intent == "ANOMALY_FLOW_BALANCE":

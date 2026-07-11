@@ -4635,5 +4635,47 @@
       ],
       "reference": "전체 카테고리: /setup/alarm-contacts"
     }
+  },
+  {
+    "intent": "EQUIPMENT_FAULT_STATUS",
+    "questions": [
+      "설비 장애 현황 보여줘",
+      "설비 고장 현황 보여줘",
+      "설비 장애 목록",
+      "설비 고장 목록 보여줘",
+      "DI 설비 장애 보여줘",
+      "설비 장애 몇 건이야",
+      "통신이상 UPS 펌프 설비 장애 현황",
+      "설비 장애 스캔",
+      "장비 고장 현황"
+    ],
+    "sql": "",
+    "answer_template": {
+      "summary": "설비 DI 신호로 직접 감지된 설비 장애(통신이상·UPS·펌프·전원) 현황입니다.",
+      "detail": [
+        {
+          "prefix": "",
+          "text": "{equipment_fault_block}"
+        }
+      ],
+      "recommend_questions": {
+        "title": "다음은 추천 질의입니다.",
+        "items": [
+          {
+            "prefix": "1.",
+            "text": "전체 이상 스캔해줘"
+          },
+          {
+            "prefix": "2.",
+            "text": "교차 검증 결과 보여줘"
+          },
+          {
+            "prefix": "3.",
+            "text": "진행중인 알람 보여줘"
+          }
+        ]
+      }
+    },
+    "graph_type": "none"
   }
 ]
