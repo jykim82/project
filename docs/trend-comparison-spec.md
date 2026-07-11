@@ -563,6 +563,17 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 헤더에 모든 비교 가능 tag 의 status 배지 나열. overlay 는 active 1개만. 운영자가
 한 화면에서 다중 시설 상태 인지하고 싶을 때.
 
+#### 버그 수정 — 제목 라벨이 첫 tag 표시 (2026-07-11)
+- **증상:** 다중 tag 차트에서 배지/overlay 는 활성 tag(worst/선택)로 정확히
+  계산되나, **차트 제목 옆 보조 라벨만 `selectedTags[0]`(첫 tag)** 를 표시 →
+  "첫 번째 데이터 기준으로만 추정"하는 것처럼 오인. 특히 첫 tag 가 비교 대상이
+  아니고(§4.5 skip) 다른 tag 만 comparison 있는 경우 라벨이 완전히 어긋남.
+  (모든 tag 가 정상이면 worst 동률→첫 tag tiebreak 이라 우연히 일치해 더 헷갈림)
+- **수정:** `TrendChart.tsx` 제목 라벨을 `tagNameMap[activeTagId]`(실제 비교
+  대상)로 변경 + comparison tag 2개↑이면 "· 상단에서 변경" 안내. 배지·overlay·
+  드롭다운(§7.7 UI)과 라벨 일관성 확보. 계산 로직(worst 선택·per-tag)은 정상이라
+  프런트 표기만 수정.
+
 ### 7.6 통일 적용 대상 (2026-05-24)
 
 본 사양의 보조 기능 (평소 대비 / 향후 전망 / causal_hint) 은 **모든 트렌드
