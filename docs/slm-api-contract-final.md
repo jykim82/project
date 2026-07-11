@@ -1210,6 +1210,38 @@ ORDER BY a.ask_seq ASC;
 > - 스피너·활성 스텝은 `.slm-live-*` 로 계속 동작해(§flow-diagram-mode-spec 7.16)
 >   느린 구간에도 "멈춤" 오인을 방지.
 
+### 설비 장애 현황 (EQUIPMENT_FAULT_STATUS)
+
+"설비 장애 현황 보여줘" 등 → DI 신호로 직접 감지된 설비 고장(통신이상·UPS·펌프·
+전원)만 분리 조회. **ANOMALY_SCAN_ALL 백그라운드 캐시(`_ANOMALY_SCAN_CACHE
+.processed_data.equipment_failure_impacts`)를 재사용**(재계산 없음). 대시보드 KPI
+"설비 장애" 카드가 이 인텐트로 연결(이전에는 "전체 센서 이상 스캔"과 동일 질의
+버그 → 2026-07-11 분리).
+
+**응답 top-level 필드:**
+- `equipment_failure_impacts: EquipmentFailureImpact[]` — `{equipment_id,
+  equipmenttype, sitename, facilitytype, failure_type(network_down|comm_error|
+  equip_fault|power_fault), failure_detail, affected_tag_count,
+  anomalous_tag_count, affected_tags[]}`
+- `equipment_failure_count: number`
+
+**프런트 렌더:** `EquipmentFaultList` — 유형 필터 칩 + 현장/설비 계층 + 유형 배지
+(FLT/PWR/NET/COM) + 영향·이상 태그 수 + 더보기. `BotMessage`·`QuickAnalysisDialog`
+공용, flat detail 억제.
+
+**등록 체크리스트(신규 SQL-less 인텐트 공통):**
+1. `example3.json` 인텐트 정의(questions=벡터 인덱스용, sql="", answer_template,
+   graph_type="none")
+2. `intent_classifier`: Stage1 `common_keywords` + Stage2 키워드 규칙(둘 다 —
+   미동기 시 SLM 폴백 ~10초)
+3. `ai_server._DYNAMIC_SQL_INTENTS` **및** `_DYNAMIC_SQL_INTENTS_STREAM` 에 추가
+   (누락 시 SQL-less 특수 분기 스킵 → 빈 결과)
+4. `ai_server` 두 핸들러(비-SSE·SSE)에 데이터 로드 분기 (`_ANOMALY_SCAN_CACHE`는
+   `.get("processed_data")` 로 언랩)
+5. `response_builder.process_sql_result` 분기: 구조화 데이터를 `data[...]` 로
+   노출(generic build_success_response kwarg 로 top-level 전달) + flat detail 폴백
+   (평문 — `_wrap_marker` 는 response_builder 스코프에 없음)
+
 ### 경보 캘린더
 
 | Method | Path | Request | Response | 비고 |
