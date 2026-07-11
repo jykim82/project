@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>교차 검증 결과 · 디자인 개선 목업</title>
+<style>
+  :root{ --bg:#f4f4f5; --card:#ffffff; --border:#e4e4e7; --fg:#18181b; --muted:#71717a;
+    --red:#dc2626; --amber:#f59e0b; --emerald:#10b981; --sky:#0ea5e9; --up:#3b82f6; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,-apple-system,sans-serif;font-size:14px}
+  .wrap{max-width:440px;margin:0 auto;padding:14px}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+  .head{padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  .head h2{margin:0;font-size:15px;font-weight:800}
+  .head h2 b{color:var(--red)}
+  .head .note{font-size:11px;color:var(--muted)}
+  .mm{padding:14px 16px;border-bottom:1px solid var(--border)}
+  .mm:last-child{border-bottom:none}
+  .diag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--red);background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.25);border-radius:999px;padding:3px 10px;margin-bottom:11px}
+  /* 흐름 */
+  .flow{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .node{flex:1;min-width:0;background:#fafafa;border:1px solid var(--border);border-radius:10px;padding:8px 10px;text-align:center}
+  .node .role{font-size:10px;color:var(--muted);font-weight:700}
+  .node .name{font-size:13px;font-weight:700;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .node.up{border-color:#bfdbfe;background:#eff6ff}
+  .node.dn{border-color:#fecaca;background:#fef2f2}
+  .arrow{flex-shrink:0;color:var(--red);font-size:20px;font-weight:900;position:relative}
+  .arrow .x{position:absolute;top:-9px;left:50%;transform:translateX(-50%);font-size:11px}
+  /* 비교 바 */
+  .bars{display:flex;flex-direction:column;gap:7px}
+  .bar-row{display:flex;align-items:center;gap:8px;font-size:12px}
+  .bar-row .lbl{width:64px;flex-shrink:0;color:var(--muted)}
+  .track{flex:1;height:8px;border-radius:999px;background:#f1f1f4;overflow:hidden}
+  .fill{height:100%;border-radius:999px}
+  .fill.up{background:var(--up)} .fill.dn{background:var(--red)}
+  .bar-row .val{width:44px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+  .metric{margin-top:10px;font-size:12px;color:var(--fg);background:#fafafa;border-radius:8px;padding:8px 10px}
+  .metric b{font-variant-numeric:tabular-nums}
+  .metric .to{color:var(--muted);margin:0 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <div class="head">
+      <h2>교차 검증 불일치 <b>2건</b></h2>
+      <span class="note">상류→하류 흐름 일관성</span>
+    </div>
+
+    <!-- 불일치 1 -->
+    <div class="mm">
+      <span class="diag">⚠ 공급 단절 의심</span>
+      <div class="flow">
+        <div class="node up"><div class="role">상류</div><div class="name">남산 배수지</div></div>
+        <div class="arrow"><span class="x">✕</span>▶</div>
+        <div class="node dn"><div class="role">하류</div><div class="name">남산10 소블록</div></div>
+      </div>
+      <div class="bars">
+        <div class="bar-row"><span class="lbl">상류 가동</span><span class="track"><span class="fill up" style="width:100%"></span></span><span class="val">100%</span></div>
+        <div class="bar-row"><span class="lbl">하류 가동</span><span class="track"><span class="fill dn" style="width:2%"></span></span><span class="val" style="color:var(--red)">0%</span></div>
+      </div>
+      <div class="metric">평균 유량 <b>9,546,619</b><span class="to">→</span><b style="color:var(--red)">0</b> (하류 전부 0)</div>
+    </div>
+
+    <!-- 불일치 2 -->
+    <div class="mm">
+      <span class="diag">⚠ 공급 단절 의심</span>
+      <div class="flow">
+        <div class="node up"><div class="role">상류</div><div class="name">성북1리 제1차 가압장</div></div>
+        <div class="arrow"><span class="x">✕</span>▶</div>
+        <div class="node dn"><div class="role">하류</div><div class="name">성북1리 배수지</div></div>
+      </div>
+      <div class="bars">
+        <div class="bar-row"><span class="lbl">상류 가동</span><span class="track"><span class="fill up" style="width:100%"></span></span><span class="val">100%</span></div>
+        <div class="bar-row"><span class="lbl">하류 가동</span><span class="track"><span class="fill dn" style="width:2%"></span></span><span class="val" style="color:var(--red)">0%</span></div>
+      </div>
+      <div class="metric">평균 압력 <b>5.08</b><span class="to">→</span><b style="color:var(--red)">0</b> (하류 전부 0)</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
