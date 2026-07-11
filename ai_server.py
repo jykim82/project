@@ -430,6 +430,60 @@ _GROUP_CHILDREN: dict[str, list[str]] = {}
 _GROUP_CODE_TO_ID: dict[str, int] = {}
 
 
+_COMPARISON_STATUS_PRIORITY = {"alert": 3, "warning": 2, "normal": 1}
+
+
+def _comparison_worst_score(c: dict) -> int:
+    """ComparisonData 의 baseline/forecast status 중 최악 우선순위."""
+    b = _COMPARISON_STATUS_PRIORITY.get((c.get("baseline") or {}).get("status"), 0)
+    f = _COMPARISON_STATUS_PRIORITY.get((c.get("forecast") or {}).get("status"), 0)
+    return max(b, f)
+
+
+def _compute_comparison_map(rows, columns, intent, params, intent_def, get_conn):
+    """다중 tag 플롯의 tag별 트렌드 비교 맵 계산 (docs/trend-comparison-spec.md §7.7).
+
+    - 명시 tagsn(params/intent_def) 있으면 그 tag 만, 없으면 플롯의 모든 distinct tagsn.
+    - 각 tagsn 은 자기 행만 필터해 compute_comparison (다중 tag 값 혼입 방지).
+    반환: (comparison_map{tagsn: ComparisonData}, worst_single). skip/실패 tag 는 제외.
+    """
+    comparison_map: dict = {}
+    if not (rows and columns) or "tagsn" not in columns:
+        return comparison_map, None
+    try:
+        from trend_comparison import compute_comparison
+        ts_idx = columns.index("tagsn")
+        explicit = params.get("tagsn") or (intent_def.get("tagsn") if intent_def else None)
+        # distinct tagsn — 플롯 series 순서 보존
+        distinct = [explicit] if explicit else list(dict.fromkeys(r[ts_idx] for r in rows))
+        for ts in distinct:
+            if not ts:
+                continue
+            tag_rows = [r for r in rows if r[ts_idx] == ts]
+            # tag 마다 독립 커넥션 — 한 tag 의 트랜잭션 abort 가 다른 tag 로 전파되지 않게
+            conn = get_conn()
+            try:
+                c = compute_comparison(
+                    rows=tag_rows, columns=columns, intent=intent,
+                    sitename=params.get("sitename"),
+                    facilitytype=params.get("facilitytype"),
+                    tagsn=ts, conn=conn,
+                )
+                if c:
+                    comparison_map[ts] = c
+            except Exception as e:
+                logger.warning(f"Trend comparison tag={ts} 실패: {e}")
+            finally:
+                conn.close()
+    except Exception as e:
+        logger.warning(f"Trend comparison map computation failed: {e}")
+    # 하위호환 단일 comparison = worst-status tag (첫 tag 편향 제거)
+    worst = None
+    if comparison_map:
+        worst = max(comparison_map.values(), key=_comparison_worst_score)
+    return comparison_map, worst
+
+
 def _build_group_children_cache():
     """TAG_DATA_GROUPS에서 parent→children 매핑을 빌드한다."""
     _GROUP_CHILDREN.clear()
@@ -4659,26 +4713,10 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
 
     # 트렌드 비교 (평소 대비 / 향후 전망) — docs/trend-comparison-spec.md
     _comparison = None
-    if graph_type == "plot" and rows and columns:
-        try:
-            from trend_comparison import compute_comparison
-            _tagsn = (params.get("tagsn") or
-                      (intent_def.get("tagsn") if intent_def else None) or
-                      (rows[0][columns.index("tagsn")] if "tagsn" in columns else None))
-            if _tagsn:
-                _tc_conn = get_db_connection()
-                try:
-                    _comparison = compute_comparison(
-                        rows=rows, columns=columns, intent=intent,
-                        sitename=params.get("sitename"),
-                        facilitytype=params.get("facilitytype"),
-                        tagsn=_tagsn,
-                        conn=_tc_conn,
-                    )
-                finally:
-                    _tc_conn.close()
-        except Exception as e:
-            logger.warning(f"Trend comparison computation failed: {e}")
+    _comparison_map = {}
+    if graph_type == "plot":
+        _comparison_map, _comparison = _compute_comparison_map(
+            rows, columns, intent, params, intent_def, get_db_connection)
 
     _t_end = time.perf_counter()
     logger.info(
@@ -4708,6 +4746,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         cusum_chart_data=_cusum_chart_data,
         anomaly_zones=_anomaly_zones,
         comparison=_comparison,
+        comparison_map=_comparison_map or None,
         intent_candidates=intent_candidates,
         site_group_distribution=processed_data.get("site_group_distribution"),
         site_group=processed_data.get("site_group"),
@@ -6235,26 +6274,10 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
 
         # 트렌드 비교 (평소 대비 / 향후 전망) — docs/trend-comparison-spec.md
         _comparison = None
-        if graph_type == "plot" and rows and columns:
-            try:
-                from trend_comparison import compute_comparison
-                _tagsn = (params.get("tagsn") or
-                          (intent_def.get("tagsn") if intent_def else None) or
-                          (rows[0][columns.index("tagsn")] if "tagsn" in columns else None))
-                if _tagsn:
-                    _tc_conn = get_db_connection()
-                    try:
-                        _comparison = compute_comparison(
-                            rows=rows, columns=columns, intent=intent,
-                            sitename=params.get("sitename"),
-                            facilitytype=params.get("facilitytype"),
-                            tagsn=_tagsn,
-                            conn=_tc_conn,
-                        )
-                    finally:
-                        _tc_conn.close()
-            except Exception as e:
-                logger.warning(f"Trend comparison computation failed (SSE): {e}")
+        _comparison_map = {}
+        if graph_type == "plot":
+            _comparison_map, _comparison = _compute_comparison_map(
+                rows, columns, intent, params, intent_def, get_db_connection)
 
         _t_end = time.perf_counter()
         logger.info(
@@ -6283,6 +6306,7 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             cusum_chart_data=_cusum_chart_data,
             anomaly_zones=_anomaly_zones,
         comparison=_comparison,
+        comparison_map=_comparison_map or None,
             intent_candidates=intent_candidates,
             site_group_distribution=processed_data.get("site_group_distribution"),
             site_group=processed_data.get("site_group"),

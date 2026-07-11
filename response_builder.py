@@ -1074,6 +1074,8 @@ def build_success_response(
         response["anomaly_zones"] = kwargs["anomaly_zones"]
     if kwargs.get("comparison"):
         response["comparison"] = kwargs["comparison"]
+    if kwargs.get("comparison_map"):
+        response["comparison_map"] = kwargs["comparison_map"]
     if kwargs.get("intent_candidates"):
         response["intent_candidates"] = kwargs["intent_candidates"]
     if kwargs.get("site_group_distribution"):
