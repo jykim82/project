@@ -2115,6 +2115,11 @@ def process_sql_result(
         data.update(scan_data)
         data["cross_facility_scan_block"] = _EXPAND_MARKER
         data["_detail_blocks"]["cross_facility_scan_block"] = scan_items
+        # 구조화 데이터를 top-level 응답으로 노출 → 프런트 CrossValidationList 카드 렌더
+        # (기존 flat 텍스트 detail 은 프런트에서 억제; build_success_response 가
+        #  processed_data.get("cross_facility_mismatches") 를 kwarg 로 전달)
+        data["cross_facility_mismatches"] = mismatches
+        data["cross_anomaly_count"] = len(mismatches)
 
     # -------------------------------------------------
     # 물 수지 검증: 상류 유출 vs 하류 합계 비교
