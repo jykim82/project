@@ -1130,6 +1130,20 @@ ORDER BY a.ask_seq ASC;
 }
 ```
 
+**스캔 대상 태그 필터 (ANOMALY_SCAN_ALL SQL `WHERE` — 2026-07-11):**
+z-score 이상탐지는 **실측 아날로그 계측 태그만** 대상으로 한다.
+- `ti.tagtype = 'Analog Input'` — 아날로그 계측만 (DI 신호는 설비 장애 감지로 별도 처리)
+- `ti.datainfo NOT LIKE '%적산%'` — **적산(누적)** 은 단조 증가 누적값이라 z-score 무의미 → 제외
+- `ti.datainfo NOT LIKE '%설정%'` — **설정값·설정압력**(알람 임계치 L/H/HH, 설정 상수)은
+  실측이 아닌 **설정 상수**라 이상탐지 대상 아님 → 제외 (설정 태그 34개)
+- 동일 필터를 z-score 계열 5개 인텐트에 공통 적용: `ANOMALY_SCAN_ALL`,
+  `ANOMALY_FACILITY_DETAIL`, `ANOMALY_PREDICT`, `ANOMALY_COMPARE`, `ANOMALY_PATTERN`
+- **원칙:** 신규 이상탐지 SQL 추가 시 적산·설정 제외 필터를 함께 넣을 것(모니터링
+  실측값만 통계 이상 판정 대상).
+
+> **UI — 시설별 이상 분포(AnomalyScanView):** '영향 센서 N개'(그룹 전체 수)와 목록
+> (상위 3개)이 달라 보이지 않도록 3개 초과 시 '외 M개 더' 표기.
+
 **`summary` 필드 포맷 (Hybrid markdown-lite, 4섹션, `\n\n` 구분):**
 1. `[중요 알람] {LLM 1문장}` — 시설명·태그·수치·카테고리 라벨 포함 (*구 `[가장 위급]` — 2026-04-18 변경*)
 2. `[유형별 현황] 설비 장애 N건 · 교차 검증 M건 · 데이터 품질 K건 · 값 이탈 L건 (총 T건 중)`
