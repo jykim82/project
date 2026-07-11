@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>경보 발생 이력 · 디자인 개선 목업</title>
+<style>
+  :root{
+    --bg:#f4f4f5; --card:#ffffff; --border:#e4e4e7; --fg:#18181b; --muted:#71717a;
+    --net:#3b82f6; --level:#f59e0b; --ups:#8b5cf6; --press:#06b6d4; --flow:#10b981; --power:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,-apple-system,sans-serif;font-size:14px}
+  .wrap{max-width:440px;margin:0 auto;padding:14px}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+  /* 헤더 */
+  .head{padding:14px 16px 12px;border-bottom:1px solid var(--border)}
+  .head h2{margin:0 0 2px;font-size:15px;font-weight:800}
+  .head h2 b{color:var(--power)}
+  .head .sub{color:var(--muted);font-size:12px}
+  /* 분류 필터 칩 */
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;color:var(--fg);cursor:pointer;background:#fafafa}
+  .chip .dot{width:8px;height:8px;border-radius:999px}
+  .chip .n{color:var(--muted);font-weight:700}
+  .chip.on{background:#eef2ff;border-color:#c7d2fe}
+  /* 리스트 */
+  .list{max-height:none}
+  .row{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border);position:relative}
+  .row:last-child{border-bottom:none}
+  .bar{width:3px;border-radius:2px;flex-shrink:0}
+  .row .main{flex:1;min-width:0}
+  .titleline{display:flex;align-items:center;gap:6px}
+  .site{font-weight:700;font-size:13px}
+  .cat{font-size:10px;font-weight:700;border-radius:5px;padding:1px 6px;color:#fff}
+  .msg{color:var(--fg);font-size:13px;margin-top:2px}
+  .msg .sev{font-weight:700}
+  .sev.warn{color:var(--level)} .sev.crit{color:var(--power)} .sev.info{color:var(--muted)}
+  .meta{flex-shrink:0;text-align:right;min-width:56px}
+  .time{font-size:12px;font-weight:600;color:var(--fg)}
+  .time.old{color:var(--muted);font-weight:500}
+  .ago{font-size:10px;color:var(--muted);margin-top:1px}
+  .more{padding:10px;text-align:center;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <div class="head">
+      <h2>진행중 알람 <b>44건</b></h2>
+      <div class="sub">최근 발생순 · 분류를 눌러 필터</div>
+      <div class="chips">
+        <span class="chip on"><span class="dot" style="background:#a1a1aa"></span>전체 <span class="n">44</span></span>
+        <span class="chip"><span class="dot" style="background:var(--net)"></span>네트워크 <span class="n">12</span></span>
+        <span class="chip"><span class="dot" style="background:var(--level)"></span>수위 <span class="n">14</span></span>
+        <span class="chip"><span class="dot" style="background:var(--ups)"></span>UPS <span class="n">13</span></span>
+        <span class="chip"><span class="dot" style="background:var(--press)"></span>압력 <span class="n">4</span></span>
+        <span class="chip"><span class="dot" style="background:var(--flow)"></span>유량 <span class="n">1</span></span>
+      </div>
+    </div>
+
+    <div class="list">
+      <div class="row">
+        <div class="bar" style="background:var(--net)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">죽동 배수지</span><span class="cat" style="background:var(--net)">네트워크</span></div>
+          <div class="msg">죽동(배) 탁도계 <span class="sev info">통신이상</span></div>
+        </div>
+        <div class="meta"><div class="time">방금</div><div class="ago">07-11 18:40</div></div>
+      </div>
+
+      <div class="row">
+        <div class="bar" style="background:var(--level)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">죽동 가압장</span><span class="cat" style="background:var(--level)">수위</span></div>
+          <div class="msg">죽동(가) 흡수정수위 <span class="sev crit">LL 발생</span></div>
+        </div>
+        <div class="meta"><div class="time">12일 전</div><div class="ago">06-29 09:50</div></div>
+      </div>
+
+      <div class="row">
+        <div class="bar" style="background:var(--level)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">죽동 배수지</span><span class="cat" style="background:var(--level)">수위</span></div>
+          <div class="msg">죽동(배) 수위#1 <span class="sev warn">LL 경보</span></div>
+        </div>
+        <div class="meta"><div class="time">15일 전</div><div class="ago">06-26 11:08</div></div>
+      </div>
+
+      <div class="row">
+        <div class="bar" style="background:var(--ups)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">신평2 소블록</span><span class="cat" style="background:var(--ups)">UPS</span></div>
+          <div class="msg">신평2(블) UPS 밧데리 <span class="sev crit">FLT</span></div>
+        </div>
+        <div class="meta"><div class="time">18일 전</div><div class="ago">06-23 16:36</div></div>
+      </div>
+
+      <div class="row">
+        <div class="bar" style="background:var(--level)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">합덕 배수지</span><span class="cat" style="background:var(--level)">수위</span></div>
+          <div class="msg">합덕 LS-201B <span class="sev warn">LL 알람</span></div>
+        </div>
+        <div class="meta"><div class="time old">1개월+</div><div class="ago">06-02 14:59</div></div>
+      </div>
+
+      <div class="row">
+        <div class="bar" style="background:var(--power)"></div>
+        <div class="main">
+          <div class="titleline"><span class="site">난지관광 배수지</span><span class="cat" style="background:var(--power)">UPS</span></div>
+          <div class="msg">난지관광(배) <span class="sev crit">정전</span></div>
+        </div>
+        <div class="meta"><div class="time old">2개월+</div><div class="ago">04-22 10:38</div></div>
+      </div>
+    </div>
+    <div class="more">▾ 나머지 38건 더 보기</div>
+  </div>
+</div>
+</body>
+</html>
