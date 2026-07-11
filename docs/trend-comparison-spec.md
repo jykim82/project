@@ -563,6 +563,24 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 헤더에 모든 비교 가능 tag 의 status 배지 나열. overlay 는 active 1개만. 운영자가
 한 화면에서 다중 시설 상태 인지하고 싶을 때.
 
+#### 채팅 PlotChart 다중 tag 지원 + per-tag 격리 (2026-07-11)
+- **증상:** 채팅 트렌드(PlotChart)는 `/trend`(TrendChart)와 달리 셀렉터가 없고
+  **첫 tag(rows[0]) 하나로만** 비교 → 다중 tag 여도 첫 tag 기준, 전환 불가.
+  게다가 `compute_comparison` 이 rows 를 tagsn 으로 필터하지 않아 **여러 tag 값이
+  섞인 채** 첫 tag baseline 과 비교되던 데이터 혼입 버그도 존재.
+- **원인:** 백엔드가 단일 `comparison`(첫 tagsn)만 응답. 프런트도 `plot.comparison`
+  단일값만 렌더(ComparisonHeader 에 map/셀렉터 미전달).
+- **수정(백엔드):** `_compute_comparison_map` 헬퍼 — 플롯의 distinct tagsn 마다
+  **자기 행만 필터 + tag별 독립 커넥션**으로 compute_comparison → `comparison_map`
+  {tagsn: ComparisonData} 응답. 단일 `comparison` 은 worst-status tag 로(첫 tag 편향
+  제거·하위호환). (tag별 독립 커넥션: 한 tag 의 트랜잭션 abort 가 다른 tag 로
+  전파돼 "transaction is aborted" 로 나머지가 전부 실패하던 것 방지)
+- **수정(프런트):** `PlotChart` 가 `comparison_map` + `tag_ids`↔`series.name` 으로
+  activeTagId(worst 자동) + `ComparisonHeader` 셀렉터(§7.7 UI)를 TrendChart 와 동일
+  하게 렌더. `comparison_map` 없으면 단일 `comparison` 폴백.
+- **검증:** "신평공업 가압장 압력" → 드롭다운(흡입압력·이상 / 토출압력·정상), 배지=
+  worst(흡입 10.4% 이상). 기존 혼입 "주의 7.3%" → tag별 정확값으로 교정.
+
 #### 버그 수정 — 제목 라벨이 첫 tag 표시 (2026-07-11)
 - **증상:** 다중 tag 차트에서 배지/overlay 는 활성 tag(worst/선택)로 정확히
   계산되나, **차트 제목 옆 보조 라벨만 `selectedTags[0]`(첫 tag)** 를 표시 →
