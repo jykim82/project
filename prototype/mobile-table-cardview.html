@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>태그 모니터링 · 모바일 카드 뷰 목업</title>
+<style>
+  :root{
+    --bg:#f4f4f5; --card:#ffffff; --border:#e4e4e7; --fg:#18181b; --muted:#71717a;
+    --primary:#e06d3a; --red:#dc2626; --amber:#f59e0b; --emerald:#10b981; --sky:#0ea5e9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:Pretendard,system-ui,-apple-system,sans-serif;font-size:14px}
+  .wrap{max-width:390px;margin:0 auto;padding:12px}
+  h1{font-size:18px;font-weight:800;margin:4px 2px 2px}
+  .sub{color:var(--muted);font-size:12px;margin:0 2px 12px}
+  .toggle{display:flex;gap:6px;margin:0 2px 12px}
+  .toggle button{flex:1;border:1px solid var(--border);background:var(--card);border-radius:8px;padding:8px;font-size:12px;font-weight:600;color:var(--muted)}
+  .toggle button.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+  /* ── 카드 ── */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .site{font-weight:700;font-size:14px;line-height:1.3}
+  .datainfo{color:var(--muted);font-size:12px;margin-top:1px}
+  .badge{flex-shrink:0;font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;white-space:nowrap}
+  .b-abn{background:rgba(220,38,38,.12);color:var(--red)}
+  .b-hold{background:rgba(245,158,11,.14);color:#b45309}
+  .b-ok{background:rgba(16,185,129,.14);color:#047857}
+
+  .card-mid{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
+  .value{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .value .u{font-size:12px;font-weight:600;color:var(--muted);margin-left:3px}
+  .value.abn{color:var(--red)}
+  .spark{height:28px;flex:1;max-width:120px}
+  .vlabel{font-size:12px;font-weight:700;border-radius:6px;padding:3px 8px;background:rgba(16,185,129,.14);color:#047857}
+  .vlabel.abn{background:rgba(220,38,38,.12);color:var(--red)}
+
+  .card-bot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--border)}
+  .sn{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--muted)}
+  .time{font-size:11px;color:var(--muted)}
+  .time.stale{color:var(--amber);font-weight:600}
+  .pill-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .pill{font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:2px 7px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>태그 모니터링</h1>
+  <p class="sub">전체 2,700건 · 모바일 카드 뷰 (넓은 표를 행→카드로 전환 — 가로 스크롤 없음)</p>
+  <div class="toggle">
+    <button>표 보기</button>
+    <button class="on">카드 보기</button>
+  </div>
+
+  <!-- 카드 1: 이상(홀딩) -->
+  <div class="card">
+    <div class="card-top">
+      <div>
+        <div class="site">남산 배수지</div>
+        <div class="datainfo">남산(배) 탁도</div>
+      </div>
+      <span class="badge b-hold">데이터홀딩</span>
+    </div>
+    <div class="card-mid">
+      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none"><polyline fill="none" stroke="#f59e0b" stroke-width="2" points="0,20 20,20 40,20 60,20 80,20 100,20 120,20"/></svg>
+      <div class="value abn">0.84<span class="u">NTU</span></div>
+    </div>
+    <div class="card-bot">
+      <span class="sn">44270_24100_TBI_N003</span>
+      <span class="time stale">12분 전</span>
+    </div>
+  </div>
+
+  <!-- 카드 2: 정상 아날로그 -->
+  <div class="card">
+    <div class="card-top">
+      <div>
+        <div class="site">합덕일반 배수지</div>
+        <div class="datainfo">합덕일반(배) 생활 유입유량</div>
+      </div>
+      <span class="badge b-ok">정상</span>
+    </div>
+    <div class="card-mid">
+      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none"><polyline fill="none" stroke="#0ea5e9" stroke-width="2" points="0,22 20,14 40,18 60,8 80,16 100,10 120,12"/></svg>
+      <div class="value">312.6<span class="u">㎥/h</span></div>
+    </div>
+    <div class="card-bot">
+      <span class="sn">44270_23802_FRI_O001</span>
+      <span class="time">1분 전</span>
+    </div>
+  </div>
+
+  <!-- 카드 3: 이상(교차검증) + 라벨값 -->
+  <div class="card">
+    <div class="card-top">
+      <div>
+        <div class="site">송악2-1 소블록</div>
+        <div class="datainfo">송악2-1(블) 압력</div>
+      </div>
+      <span class="badge b-abn">교차검증 이상</span>
+    </div>
+    <div class="card-mid">
+      <div class="value abn">9.84<span class="u">z</span></div>
+      <span class="vlabel abn">이상 · 평소보다 ↑</span>
+    </div>
+    <div class="card-bot">
+      <span class="sn">44270_23520_PRI_N021</span>
+      <span class="time">방금</span>
+    </div>
+    <div class="pill-row">
+      <span class="pill">시설: 소블록</span>
+      <span class="pill">장비: 압력계</span>
+    </div>
+  </div>
+
+  <!-- 카드 4: 디지털(밸브) -->
+  <div class="card">
+    <div class="card-top">
+      <div>
+        <div class="site">갈산 가압장</div>
+        <div class="datainfo">갈산(가) 가압펌프1 가동상태</div>
+      </div>
+      <span class="badge b-ok">정상</span>
+    </div>
+    <div class="card-mid">
+      <div class="value">가동중</div>
+      <span class="vlabel">정상 범위</span>
+    </div>
+    <div class="card-bot">
+      <span class="sn">44270_23802_PMB_K103</span>
+      <span class="time">3분 전</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>
