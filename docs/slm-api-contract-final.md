@@ -1171,6 +1171,45 @@ ORDER BY a.ask_seq ASC;
 - 점검 순서 변경 → `CATEGORY_PRIORITY` 리스트 순서 변경 (코드 1줄)
 - 새 카테고리 추가 → 4개 사전(`PRIORITY/LABELS/MEANINGS`) + `_classify_row` 분류 로직 추가
 
+### 시설간 교차 검증 (ANOMALY_CROSS_FACILITY)
+
+"교차 검증 결과 보여줘" 등 → 인과 인덱스(상하류) 기반으로 상류 가동인데 하류가
+정지/급락한 흐름 불일치를 탐지 (SQL 미사용, `cross_facility_check_all`).
+
+**응답 top-level 구조화 필드 (2026-07-11 추가):**
+- `cross_facility_mismatches: CrossFacilityMismatch[]` — 불일치 목록
+  - `upstream_sitename/facilitytype`, `downstream_sitename/facilitytype`
+  - `upstream_active_pct`, `downstream_active_pct` (가동률 %)
+  - `checks: { type, ... }[]` — 판정 근거. `type ∈ {active_ratio, downstream_zero,
+    sudden_drop, recent_inactive, snapshot_zero, direction}`. 각 type 별 부가 필드
+    (예: `downstream_zero → upstream_mean`, `sudden_drop → first/second_half_active_pct`)
+- `cross_anomaly_count: number`
+- 기존 flat 텍스트 `answer.detail`(cross_facility_scan_block)은 하위호환 유지하되
+  프런트가 카드 렌더 시 억제
+
+**프런트 렌더:** `CrossValidationList` — 상류→하류 흐름(✕▶) + 가동률 비교 바 +
+진단 배지(공급 단절/인과 급락/방향 역전/가동률) + 핵심 지표 + 판정 근거 칩.
+`BotMessage`(intent 게이트), `QuickAnalysisDialog`(대시보드 KPI 팝업),
+`AnomalyScanView`(전체 스캔) 3곳 공용. 백엔드는 `process_sql_result` 의 해당
+분기에서 `data["cross_facility_mismatches"]` 노출 → `build_success_response` 가
+기존 kwarg 경로로 top-level 전달.
+
+> **SSE 진행 표시 — 분류 지연 이슈와 해결 (2026-07-11):**
+> - **증상:** "교차 검증 결과" 질의가 분류(classify) 스텝에서 ~10초 멈춘 뒤 나머지
+>   스텝(추출→조회→렌더링)은 순식간에 통과. SSE 진행 표시는 정확했음 —
+>   실제로 분류가 느렸던 것.
+> - **원인:** `_classify_category`(Stage1 카테고리 분류)의 `common_keywords` 목록에
+>   "교차 검증" 계열이 빠져 있어 keyword 단축 실패 → **SLM(gemma4:26b) 카테고리
+>   분류로 폴백해 ~10초 소요**. (인텐트 단계 `_classify_intent` 에는 교차검증
+>   키워드가 있어 조회 자체는 즉시였음 → 카테고리·인텐트 키워드 집합 불일치)
+> - **해결:** `intent_classifier._classify_category` 의 `common_keywords` 에
+>   `교차 검증/교차검증/시설간 불일치/유량 불일치/흐름 불일치/정합성` 추가 →
+>   keyword 로 "공통" 즉시 확정, SLM 폴백 회피. **분류 ~10초 → 0.1~0.4초.**
+> - **일반 원칙:** 새 인텐트 keyword 추가 시 **카테고리(Stage1)와 인텐트(Stage2)
+>   양쪽 키워드 집합을 함께 갱신**해야 SLM 폴백 지연이 생기지 않는다.
+> - 스피너·활성 스텝은 `.slm-live-*` 로 계속 동작해(§flow-diagram-mode-spec 7.16)
+>   느린 구간에도 "멈춤" 오인을 방지.
+
 ### 경보 캘린더
 
 | Method | Path | Request | Response | 비고 |

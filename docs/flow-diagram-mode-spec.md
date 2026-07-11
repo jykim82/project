@@ -255,6 +255,7 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 - **동작:** 노드 클릭 시 해당 좌표로 `flyTo(zoom 14, 800ms)` 이동, lg 상세 뷰로 전환
 - **재클릭 토글:** 같은 노드 재클릭 시 deselect + flyTo 없음
 - **커밋:** `slm-dashboard@0f8e4f2`
+- **후속(§7.15):** reduced-motion 환경에서 flyTo 애니메이션이 생략되던 문제 해결
 
 ### 7.6 노드 간격 40% 축소 (2026-04-17)
 - PARENT_X_GAP 0.055→0.035, CHILD_X_GAP 0.038→0.025, ROW_Y_GAP 0.010→0.006, TREE_Y_GAP 0.025→0.015
@@ -354,6 +355,35 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
   출처 표기 의무도 0 → 숨겨도 무방 (§6 폐쇄망 빈 캔버스 원칙과 일치)
 - **수정:** `FlowDiagramMap.tsx` `<MapGL>` 에 `attributionControl={false}` 추가
 - **검증:** `/monitoring/flow` 에서 "MapLibre" 텍스트·attribution DOM 제거 확인
+
+### 7.15 노드 클릭 부드러운 확대 복원 — reduced-motion 대응 (2026-07-11)
+- **증상:** 용수공급 계통도(FlowDiagramMap)에서 배수지 등 노드 클릭 시 부드러운
+  확대(flyTo)가 사라지고 즉시 점프하는 것처럼 보임. 흐름도(FlowMonitoringGraph)는
+  정상 — 이쪽은 custom rAF 카메라라 무영향
+- **원인:** MapLibre GL 은 OS **동작 줄이기**(`prefers-reduced-motion: reduce`)가
+  켜지면 `flyTo` 애니메이션을 건너뛰고 목적지로 즉시 이동함(라이브러리 기본 동작).
+  §4.1 의 `prefers-reduced-motion` 전역 억제 정책과 별개로, MapLibre 내부 판정임
+- **수정:** `FlowDiagramMap.tsx` handleNodeClick →
+  `mapRef.current.getMap().flyTo({ center, zoom: Math.max(getZoom()+1, 15),
+  duration: 800, essential: true })`
+  - **`essential: true`** — reduced-motion 에서도 애니메이션 유지(로딩 스피너와
+    동일하게 "상태 전달용 필수 모션" 예외. §7.16/globals `.slm-live-*` 와 같은 취지)
+  - **`getMap().flyTo`** — 엣지 렌더가 쓰는 검증된 저수준 API 로 통일(안정성)
+  - **`zoom+1`** — 이미 확대돼 있어도 한 단계 더 들어가 "확대" 체감 보장
+- **검증:** 클릭 후 줌 Lv 15 확대 + 노드 포커스(Playwright)
+- **커밋:** `slm-dashboard` 계통도 클릭 확대 reduced-motion 대응
+
+### 7.16 상시 로딩 인디케이터 reduced-motion 예외 전역화 (2026-07-11)
+- **맥락:** 계통도 KPI(교차검증 이상) → AI 분석 팝업(`QuickAnalysisDialog`)의 로딩
+  스피너가 동작 줄이기 환경에서 1회 후 멈춰 "작업이 멈춘 것"처럼 보임
+- **원인:** `.slm-live-spin`/`.slm-live-pulse`(전역 freeze 예외 규칙)가 채팅
+  `ChatMessageArea` 컴포넌트 스코프 `<style jsx global>` 안에만 정의 → 그 컴포넌트가
+  마운트되지 않은 팝업에선 클래스 자체가 없어 예외가 적용되지 않음
+- **수정:** 예외 키프레임/규칙을 `globals.css` 전역으로 승격(단일 정본). 팝업 로딩
+  스피너·진행 스텝퍼에 `.slm-live-spin`/`.slm-live-pulse` 적용, 로딩 중 진행 스텝퍼
+  상시 노출. 병목 조회(교차검증 수초) 중에도 계속 회전 → 멈춘 것으로 오인 방지
+- **검증:** 전역 `.slm-live-spin` 규칙이 reduced-motion 에서 `animation-iteration-count:
+  infinite` 로 복원됨을 확인(Playwright)
 
 ## 8. 결정 필요 사항
 
