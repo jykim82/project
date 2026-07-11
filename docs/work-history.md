@@ -2,6 +2,39 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-07-11 — 대시보드 KPI 팝업 카드 일관화 + 설비장애 인텐트 + 트렌드 다중tag + 이상탐지 필터)
+
+**대시보드 KPI 팝업(QuickAnalysisDialog) 카드 디자인 일관화**
+- 교차검증 → `CrossValidationList`(상류→하류 흐름+가동률 바+진단 배지). 백엔드
+  ANOMALY_CROSS_FACILITY 구조화 데이터(cross_facility_mismatches) top-level 노출.
+- 물수지/경보이력 → 기존 카드(FlowBalanceInfographic/AlarmHistoryList) 위 중복 flat
+  텍스트 억제. 팝업 VisualRenderer 에 intent 전달로 AlarmHistoryList 활성화.
+- 로딩 스피너 `.slm-live-spin`/`.slm-live-pulse` reduced-motion 예외를 globals.css
+  전역 승격(팝업 스피너 멈춤 해결) + 로딩 중 진행 스텝퍼 상시 표시.
+
+**설비 장애 전용 인텐트 EQUIPMENT_FAULT_STATUS**
+- 이상감지·설비장애 KPI 가 동일 질의('전체 센서 이상 스캔')였던 버그 → DI 설비 고장
+  전용 조회 신설. ANOMALY_SCAN_ALL 캐시(equipment_failure_impacts) 재사용.
+- 프런트 `EquipmentFaultList`(유형 칩+현장/설비+영향태그) + 행 펼치기 태그 드릴다운
+  (affected_tags). 영향/이상 카운트 범례.
+- 이상감지 KPI 는 값이탈 focus(QuickAnalysisContext.focus + AnomalyData.focusMode)로
+  완전 분리 — 겹치는 하위 섹션 숨김 + '전체 이상 스캔 보기(종합)' 별도 버튼.
+
+**트렌드 평소대비/향후전망 다중 tag**
+- /trend 라벨 버그(첫 tag 표시→활성 tag) + 채팅 PlotChart 셀렉터 도입.
+- 백엔드 `_compute_comparison_map`: tag별 자기 행 필터 + 독립 커넥션 → comparison_map.
+  첫 tag 편향·다중 tag 데이터 혼입 버그 동시 해결.
+
+**이상탐지 스캔 태그 필터 — 설정값 제외**
+- z-score 스캔이 '설정값'(알람 임계치, Analog Input) 을 이상으로 잡던 문제 →
+  datainfo NOT LIKE '%설정%' 추가(기존 적산 필터에 이어). 5개 이상탐지 인텐트 공통.
+- 시설별 이상 분포 '영향 센서 N개' vs 표시 3개 불일치 → '외 M개 더' 표기.
+
+**계통도(FlowDiagramMap) 클릭 확대 복원** — flyTo essential:true(reduced-motion 대응).
+
+관련 사양: slm-api-contract-final(교차검증·설비장애·스캔 필터), trend-comparison-spec
+§7.7, flow-diagram-mode-spec §7.15/7.16. 상세 커밋: `docs/dialog_log/2026-07-11.md`.
+
 ### 완료 (2026-07-10 — 프로덕션 배포 경로 + 외부/DDNS 리로드 근본해결 + UX 반응형/팝업)
 
 **리로드 근본해결 (E-034 재발 → 프로덕션 빌드)**
