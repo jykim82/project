@@ -393,6 +393,33 @@ SQL 흐름:
 
 source 없으면 None 반환 → 응답에서 omit.
 
+### 6.4 `/trend/data` 다중 태그 정렬·성능 (모니터링 페이지, 2026-07-11)
+
+모니터링 트렌드 페이지(`MonitoringTrendBlock`)는 한 카탈로그의 **여러 태그를 한 번에**
+`/trend/data` 로 요청하고, 응답의 `comparison[tag]` 를 tag 별 오버레이로 렌더한다.
+
+**① baseline 밴드 정렬 — scatter (버그 수정):**
+- 응답의 공유 `data.times`(x축)는 **가장 촘촘한 태그** 기준(예: 유출순시 1387pt).
+  희소 태그(수위 414pt)는 비결측 시각에만 값이 있다.
+- `compute_comparison` 에 **비결측 행만** 넘기면 baseline series 가 그 태그의 비결측
+  시각에만 정렬돼 **짧아진다**. 프런트가 이를 공유 x축에 인덱스로 그리면 앞부분에
+  **압축**(희소 태그 밴드가 '1일치'만 보이던 버그).
+- **해결:** 비결측으로 계산(빠름) 후 `baseline.series/band_upper/band_lower` 를
+  **전체 times 로 재배치(scatter)** — 비결측 인덱스에 값, 나머지 None. 메인 라인도
+  결측=None 이라 정렬 일치. (전체 times 직접 compute 는 GBT 예측 폭증 69s → scatter.)
+
+**② event loop 블로킹 제거:**
+- `get_trend_data` 는 내부가 전부 블로킹(psycopg2 SQL + `compute_comparison` GBT
+  baseline, 다중 태그×장기간 40s+, `await` 없음)이다. `async def` 로 두면 **event
+  loop 를 막아** 동시 요청(채팅 SSE 등)이 뒤에서 대기 → "채팅 질의가 느려보임"
+  (실측: /trend/data 중 stddev 10.8s).
+- **해결:** `async def` → `def`. FastAPI 가 sync 엔드포인트를 threadpool 에서 실행해
+  loop 를 안 막는다. (검증: /trend/data 중 stddev 10.8s → 0.14s.) 원칙:
+  await 없는 블로킹 엔드포인트는 sync `def`, 유지 필요 시 `await asyncio.to_thread`.
+
+**③ 남은 최적화(과제):** `/trend/data` 자체 40s+ — GBT baseline 을 target_time 마다
+예측. baseline 은 (요일, 시간) 주기라 **168버킷만 계산·매핑**하면 크게 단축 가능.
+
 ---
 
 ## 7. 프런트 — PlotChart 강화
