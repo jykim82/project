@@ -255,19 +255,25 @@ def _linear_forecast(
     ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
     r2 = (1.0 - ss_res / ss_tot) if ss_tot > 1e-9 else 0.0
     r2 = max(0.0, min(1.0, r2))
+    # 추세 가중치(trend_w) — R² 가 충분히 뚜렷할 때만 추세를 투영한다.
+    #   R² ≤ 0.4 : 추세 성분 0 → 최근 평균으로 수렴(수평선). 진동 신호가 순간 기울기
+    #              방향으로 "직선으로 계속 떨어지는" 것을 방지(사용자 지적).
+    #   R² ≥ 0.8 : 추세 그대로 투영(뚜렷한 상승/하강 추세). 그 사이는 선형 램프.
+    trend_w = min(1.0, max(0.0, (r2 - 0.4) / 0.4))
     last_t, last_y = pairs[-1]
-    phi = 0.90  # 평균회귀 감쇠(진동 신호가 최근 평균으로 수렴하는 속도)
+    phi = 0.90  # 평균회귀 감쇠(약한 추세가 최근 평균으로 수렴하는 속도)
     out_times: list[str] = []
     out_vals: list[float] = []
     steps = int(forecast_hours * 60 / step_minutes)
     for i in range(1, steps + 1):
         t = last_t + timedelta(minutes=step_minutes * i)
         dh = (t - last_t).total_seconds() / 3600.0
-        val = (last_y + (slope * r2) * dh
-               + (1.0 - r2) * (mean_y - last_y) * (1.0 - phi ** i))
+        # 추세 성분(신뢰 높을수록) + 최근 평균 회귀 성분(신뢰 낮을수록·수평)
+        val = (last_y + (slope * trend_w) * dh
+               + (mean_y - last_y) * (1.0 - phi ** i) * (1.0 - trend_w))
         out_times.append(t.isoformat())
         out_vals.append(round(val, 3))
-    return out_times, out_vals, round(slope * r2, 4)
+    return out_times, out_vals, round(slope * trend_w, 4)
 
 
 def _hours_to_threshold(
@@ -569,6 +575,7 @@ def compute_comparison(
     # ── forecast ─────────────────────────────────────────
     threshold, threshold_label = _lookup_threshold(conn, trend_kind, sitename or "", facilitytype or "")
     f_times, f_vals, slope = _linear_forecast(times, vals, forecast_hours)
+    fc_method = "linear"
     if f_vals:
         # 향후 전망(선형 외삽)이 물리 한계를 무시하고 폭주하는 것을 방지.
         # 수위는 배수지 내에서 순환하는 유계 신호라 상승 기울기를 6~24h 선형
@@ -623,7 +630,7 @@ def compute_comparison(
         out["forecast"] = {
             "series": f_vals,
             "forecast_times": f_times,
-            "method": "linear",
+            "method": fc_method,
             "forecast_hours": forecast_hours,
             "threshold_value": threshold,
             "threshold_label": threshold_label,
