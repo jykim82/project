@@ -821,8 +821,14 @@ async def explain_trend(request: Request):
 # =============================================================================
 
 @router.post("/trend/data")
-async def get_trend_data(req: TrendDataRequest):
-    """트렌드 시계열 데이터 조회 — time_bucket 집계"""
+def get_trend_data(req: TrendDataRequest):
+    """트렌드 시계열 데이터 조회 — time_bucket 집계.
+
+    성능: 내부가 전부 블로킹(psycopg2 SQL + compute_comparison GBT baseline)이고
+    무거워(다중 태그×장기간 40s+) event loop 를 막으면 다른 질의(채팅 등)까지
+    느려진다. sync `def` 로 두면 FastAPI 가 threadpool 에서 실행해 loop 를 막지
+    않는다(await 없음 확인). 채팅 SSE 등 동시 요청 지연 방지.
+    """
     if not req.tag_ids or len(req.tag_ids) > 15:
         return {"status": "ERROR", "message": "태그는 1~15개 선택 가능합니다."}
 
