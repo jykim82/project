@@ -244,6 +244,13 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 - **방향 인식:** canvas 생성 화살표 아이콘을 엣지에 symbol-placement=line으로 배치 (폐쇄망 대응, 외부 glyph 불필요)
 - **이동 particle 애니메이션:** 엣지 LineString을 따라 circle 점이 상류→하류로 이동 (세그먼트당 2개, 120ms 주기 GeoJSON 갱신). 방향 인식 명확
 - **GIS 데이터 동기:** lg 노드에 배수지 supply_time (공급가능시간/일평균유입/유출/야간최소유량) 추가. GIS 관망도 팝업과 동일 데이터 항목
+- **충전 상태 표기 규칙 (2026-07-12):** 백엔드(Node-RED)는 `net = 유출률 − 유입률 ≤ 0`
+  (유입 ≥ 유출)이면 `supply_time.status='CHARGING'`, `total_supply_time=24h` **고정값**으로
+  저장한다. 24h 는 실제 소진 시간이 아닌 "소진 안 됨" 플레이스홀더라 저수위(≤12%) 게이지
+  옆에 "24.0h" 로 뜨면 공급 여유로 오독될 수 있다. → 프런트는 CHARGING 이면 숫자 대신
+  **"충전 중"** 배지로 표기(저수위면 "⚠ 수위 N% 저수위 주의" 병기). 적용 4곳: GisDetailPanel /
+  GisFacilityCard(마커) / GisFacilityPopup / FlowMonitoringGraph(계통도 툴팁·오버레이).
+  저수위 임계는 WaterLevelGauge 와 동일한 ≤12% 재사용(임계 지어내지 않음).
 - **커밋:** `slm-dashboard@ac8b19e`
 
 ### 7.4 소블록 유량적산/압력 추가 (2026-04-17)
