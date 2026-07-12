@@ -244,26 +244,30 @@ def _linear_forecast(
         return [], [], 0.0
     slope = num / den
     intercept = mean_y - slope * mean_x
-    # 적합도(R²) — 진동/노이즈 신호(수위 등 평균회귀)는 R²가 낮아 선형 외삽 신뢰 불가.
-    # R² 로 기울기를 감쇠(slope_eff = slope·R²)해 진동 신호는 평탄 외삽에 수렴시킨다.
-    # (예: 배수지 수위가 밴드 내 진동인데 최근 하강 기울기를 그대로 24h 연장하면
-    #  비현실적 급락선이 나오던 문제. slope 자체가 아니라 '신뢰할 만큼만' 반영.)
+    # 적합도(R²) — 진동/노이즈 신호(수위 등 평균회귀)는 R²가 낮다.
+    # 순수 선형 외삽은 '지금 오실레이션의 어느 위상인가'를 그대로 연장하므로,
+    # 진동 신호에서 순간 하강/상승 구간을 잡으면 밴드를 벗어나는 급락/급등 직선이 나온다.
+    # → R² 로 [추세 외삽] vs [최근 평균 회귀] 를 블렌딩한다:
+    #   forecast = last_y + (slope·R²)·dh            # 신뢰 높을수록 추세 반영
+    #            + (1-R²)·(mean-last_y)·(1-φ^i)       # 신뢰 낮을수록 최근 평균으로 수렴
+    # 진동(R²↓): 최근 평균으로 평탄 수렴 / 뚜렷한 추세(R²↑): 방향 그대로 외삽(클램프 별도).
     ss_tot = sum((y - mean_y) ** 2 for y in ys)
     ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
     r2 = (1.0 - ss_res / ss_tot) if ss_tot > 1e-9 else 0.0
     r2 = max(0.0, min(1.0, r2))
-    slope_eff = slope * r2
-    # 마지막 실측값에서 감쇠 기울기로 외삽 → 실측선과 이음새 자연스럽게 연결
     last_t, last_y = pairs[-1]
+    phi = 0.90  # 평균회귀 감쇠(진동 신호가 최근 평균으로 수렴하는 속도)
     out_times: list[str] = []
     out_vals: list[float] = []
     steps = int(forecast_hours * 60 / step_minutes)
     for i in range(1, steps + 1):
         t = last_t + timedelta(minutes=step_minutes * i)
         dh = (t - last_t).total_seconds() / 3600.0
+        val = (last_y + (slope * r2) * dh
+               + (1.0 - r2) * (mean_y - last_y) * (1.0 - phi ** i))
         out_times.append(t.isoformat())
-        out_vals.append(round(last_y + slope_eff * dh, 3))
-    return out_times, out_vals, round(slope_eff, 4)
+        out_vals.append(round(val, 3))
+    return out_times, out_vals, round(slope * r2, 4)
 
 
 def _hours_to_threshold(
@@ -599,10 +603,22 @@ def compute_comparison(
         if _upper is not None or _lower is not None:
             f_vals = [_clamp(v) for v in f_vals]
 
+        # 임계 도달 시점 — 블렌딩 forecast 시리즈에서 첫 교차를 직접 스캔(곡선과 일관).
+        # 선형 slope 로 계산하면 평균회귀로 평탄해진 곡선과 어긋나므로 시리즈 기준.
         last_val = next((v for v in reversed(vals) if v is not None), None)
         hours_to = None
-        if last_val is not None and threshold is not None and slope is not None:
-            hours_to = _hours_to_threshold(last_val, slope, threshold, forecast_hours)
+        if last_val is not None and threshold is not None and f_vals and f_times:
+            rising = threshold > last_val
+            _last_t = next((t for t, v in zip(reversed(times), reversed(vals)) if v is not None), None)
+            for i, fv in enumerate(f_vals):
+                if (fv >= threshold) if rising else (fv <= threshold):
+                    try:
+                        _ct = datetime.fromisoformat(f_times[i])
+                        if _last_t is not None:
+                            hours_to = round((_ct - _last_t).total_seconds() / 3600.0, 1)
+                    except (ValueError, TypeError):
+                        hours_to = round((i + 1) * 30 / 60.0, 1)
+                    break
         f_status, f_label = _forecast_status(hours_to)
         out["forecast"] = {
             "series": f_vals,
