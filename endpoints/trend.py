@@ -905,11 +905,12 @@ async def get_trend_data(req: TrendDataRequest):
 
             for tag_id in req.tag_ids:
                 vals = series.get(tag_id) or []
-                # (log_time, val) 행렬 만들기 — compute_comparison 입력 형식
-                rows_for_compare = [(times[i], vals[i]) for i in range(len(times))
-                                    if vals[i] is not None]
-                if len(rows_for_compare) < 24:    # 1일 미만 데이터
+                # 비결측 인덱스 — compute_comparison 은 비결측만(빠름). 결과 series 는
+                # 아래에서 전체 times 로 재배치(scatter)한다.
+                _nn_idx = [i for i in range(len(times)) if vals[i] is not None]
+                if len(_nn_idx) < 24:    # 1일 미만 데이터
                     continue
+                rows_for_compare = [(times[i], vals[i]) for i in _nn_idx]
                 meta = tag_meta.get(tag_id, {})
                 # FACILITY_TREND intent + label 컬럼 시뮬레이션 (datainfo 로 kind 감지)
                 cols = ["log_time", "val", "label"]
@@ -923,6 +924,19 @@ async def get_trend_data(req: TrendDataRequest):
                     conn=conn,
                 )
                 if cmp:
+                    # baseline series 를 전체 times 로 재배치(scatter) — compute_comparison
+                    # 은 비결측 시각에만 정렬돼 있어, 프런트가 공유 x축(가장 촘촘한 태그
+                    # 기준)에 인덱스로 그리면 희소 태그가 앞부분에 압축된다("1일치"만 보임).
+                    # 비결측 인덱스 위치에 값을 흩고 나머지는 None → 메인 라인과 정렬 일치.
+                    bl = cmp.get("baseline")
+                    if bl:
+                        for _key in ("series", "band_upper", "band_lower"):
+                            _src = bl.get(_key)
+                            if isinstance(_src, list) and len(_src) == len(_nn_idx):
+                                _full = [None] * len(times)
+                                for _j, _i in enumerate(_nn_idx):
+                                    _full[_i] = _src[_j]
+                                bl[_key] = _full
                     comparison_by_tag[tag_id] = cmp
         except Exception as e:
             logger.warning(f"/trend/data comparison 실패: {e}")
