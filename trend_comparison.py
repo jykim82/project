@@ -244,16 +244,26 @@ def _linear_forecast(
         return [], [], 0.0
     slope = num / den
     intercept = mean_y - slope * mean_x
-    last_t = pairs[-1][0]
+    # 적합도(R²) — 진동/노이즈 신호(수위 등 평균회귀)는 R²가 낮아 선형 외삽 신뢰 불가.
+    # R² 로 기울기를 감쇠(slope_eff = slope·R²)해 진동 신호는 평탄 외삽에 수렴시킨다.
+    # (예: 배수지 수위가 밴드 내 진동인데 최근 하강 기울기를 그대로 24h 연장하면
+    #  비현실적 급락선이 나오던 문제. slope 자체가 아니라 '신뢰할 만큼만' 반영.)
+    ss_tot = sum((y - mean_y) ** 2 for y in ys)
+    ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
+    r2 = (1.0 - ss_res / ss_tot) if ss_tot > 1e-9 else 0.0
+    r2 = max(0.0, min(1.0, r2))
+    slope_eff = slope * r2
+    # 마지막 실측값에서 감쇠 기울기로 외삽 → 실측선과 이음새 자연스럽게 연결
+    last_t, last_y = pairs[-1]
     out_times: list[str] = []
     out_vals: list[float] = []
     steps = int(forecast_hours * 60 / step_minutes)
     for i in range(1, steps + 1):
         t = last_t + timedelta(minutes=step_minutes * i)
-        x = (t - t0).total_seconds() / 3600.0
+        dh = (t - last_t).total_seconds() / 3600.0
         out_times.append(t.isoformat())
-        out_vals.append(round(intercept + slope * x, 3))
-    return out_times, out_vals, round(slope, 4)
+        out_vals.append(round(last_y + slope_eff * dh, 3))
+    return out_times, out_vals, round(slope_eff, 4)
 
 
 def _hours_to_threshold(
