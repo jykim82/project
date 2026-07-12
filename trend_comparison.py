@@ -230,7 +230,17 @@ def _linear_forecast(
     Returns: (forecast_iso_times, forecast_values, slope_per_hour)
     """
     pairs = [(t, v) for t, v in zip(times, vals) if v is not None]
-    pairs = pairs[-24:]
+    # 추세 적합 창을 '마지막 N개 샘플'이 아니라 '마지막 12시간'으로 고정한다.
+    # 버킷이 작으면(예: 1분) 마지막 24샘플이 수십분~수시간짜리 짧은 구간이 되고,
+    # 그게 오실레이션의 한 위상(단조 하강/상승)이면 R²가 높게 나와 게이트를 통과해
+    # 급락/급등 직선이 나온다. 12h 창은 진동 전체를 포함해 R²를 정상적으로 낮춘다.
+    if pairs:
+        _cut = pairs[-1][0] - timedelta(hours=12)
+        _win = [p for p in pairs if p[0] >= _cut]
+        if len(_win) >= 6:
+            pairs = _win
+        else:
+            pairs = pairs[-24:]      # 12h 내 표본 부족 시 폴백
     if len(pairs) < 6:
         return [], [], None
     t0 = pairs[0][0]
@@ -577,26 +587,27 @@ def compute_comparison(
     f_times, f_vals, slope = _linear_forecast(times, vals, forecast_hours)
     fc_method = "linear"
     if f_vals:
-        # 향후 전망(선형 외삽)이 물리 한계를 무시하고 폭주하는 것을 방지.
-        # 수위는 배수지 내에서 순환하는 유계 신호라 상승 기울기를 6~24h 선형
-        # 연장하면 만수위(4.2m 등)를 훨씬 초과하는 비현실적 값이 나온다.
-        # trend_kind 별 물리 상·하한으로 클램프한다.
+        # 향후 전망을 '같은 기간 실측이 실제로 간 범위(관측 밴드)' 근처로 하드 클램프.
+        # 사용자 검증 원칙: 전망이 표출 기간 실측(min~max)을 크게 벗어나면 비현실적.
+        # 선형 외삽이 오실레이션의 한 위상을 잡아 급락/급등해도 밴드 밖으로 못 나간다.
         _obs = [v for v in vals if v is not None]
         _obs_max = max(_obs) if _obs else None
         _obs_min = min(_obs) if _obs else None
         _span = (_obs_max - _obs_min) if (_obs_max is not None and _obs_min is not None) else 0.0
-        # 상한: 수위는 만수위(=threshold/0.9). 그 외는 관측최대 + 여유(범위 또는 20%)
-        if trend_kind == "level" and threshold is not None:
-            _upper = round(threshold / 0.9, 3)                 # 만수위(탱크 상단)
-        elif _obs_max is not None:
-            _upper = _obs_max + max(_span, abs(_obs_max) * 0.2)
+        # 여유폭: 관측 범위의 15% (최소 절대여유). 밴드를 살짝만 넘게 허용.
+        _margin = max(_span * 0.15,
+                      (abs(_obs_max) * 0.05 if _obs_max is not None else 0.0), 0.05)
+        if _obs_max is not None:
+            _upper = _obs_max + _margin
+            # 수위는 만수위(탱크 상단)를 넘지 않게 추가 상한
+            if trend_kind == "level" and threshold is not None:
+                _upper = min(_upper, round(threshold / 0.9, 3))
         else:
             _upper = None
-        # 하한: 음수 불가 지표(수위/유량/수질/압력)는 0, 그 외 관측최소 - 여유
-        if trend_kind in ("level", "flow", "quality", "pressure"):
-            _lower = 0.0
-        elif _obs_min is not None:
-            _lower = _obs_min - max(_span, abs(_obs_min) * 0.2)
+        if _obs_min is not None:
+            _lower = _obs_min - _margin
+            if trend_kind in ("level", "flow", "quality", "pressure"):
+                _lower = max(_lower, 0.0)          # 음수 불가
         else:
             _lower = None
 
