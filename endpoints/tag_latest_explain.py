@@ -23,6 +23,7 @@ from endpoints.trend import (
     _fetch_tag_meta,
     _fetch_trend_context,
     _fetch_water_level_thresholds,
+    _fetch_peer_context,
     _is_context_enabled,
     _validate_summary_numbers,
 )
@@ -78,6 +79,7 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
     datainfo = meta.get("datainfo", "")
 
     context: dict = {}
+    peer_ctx: dict = {}
     if _context_mode == "on":
         context = _fetch_trend_context(req.tagsn) or {}
         is_level = "수위" in (req.tag_name or "") or "수위" in datainfo
@@ -85,6 +87,8 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
             th = _fetch_water_level_thresholds(sitename, facilitytype or "배수지")
             if th:
                 context.update(th)
+        # P2.3 피어 태그 비교 (같은 시설 유형의 다른 현장 동종 태그)
+        peer_ctx = _fetch_peer_context(req.tagsn, limit=5) or {}
 
     _context_fetch_ms = int((time.perf_counter() - _ctx_t0) * 1000)
     _context_used: list[str] = []
@@ -92,6 +96,8 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
         _context_used.append("baseline_30d")
     if "hh_threshold" in context or "ll_threshold" in context:
         _context_used.append("thresholds")
+    if peer_ctx.get("peers"):
+        _context_used.append("peers")
 
     # 허용 수치
     allowed_numbers = [float(req.current_value), 0.0, 30.0]
@@ -99,6 +105,16 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
                 "hh_threshold", "ll_threshold"):
         if key in context:
             allowed_numbers.append(float(context[key]))
+    # peer 수치도 화이트리스트에 포함
+    for peer in peer_ctx.get("peers", []):
+        allowed_numbers.append(peer["baseline_avg_30d"])
+        if peer.get("baseline_min_30d"):
+            allowed_numbers.append(peer["baseline_min_30d"])
+        if peer.get("baseline_max_30d"):
+            allowed_numbers.append(peer["baseline_max_30d"])
+    if "peer_avg_of_avgs" in peer_ctx:
+        allowed_numbers.append(float(peer_ctx["peer_avg_of_avgs"]))
+    allowed_numbers.append(float(peer_ctx.get("peer_count", 0)))
 
     context_lines = []
     if "baseline_avg_30d" in context:
@@ -113,21 +129,46 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
         "\n\n## Baseline·임계값 (이 값들도 서술에 사용 가능)\n" + "\n".join(context_lines)
     ) if context_lines else ""
 
+    peer_block = ""
+    if peer_ctx.get("peers"):
+        cat = peer_ctx["peer_category"]
+        ft = peer_ctx["peer_facilitytype"]
+        peer_lines = [
+            f"- {p['sitename']} {ft}: 30일 평균 {p['baseline_avg_30d']:.3g}"
+            for p in peer_ctx["peers"]
+        ]
+        peer_lines.append(
+            f"- 피어 평균: {peer_ctx['peer_avg_of_avgs']:.3g} "
+            f"(n={peer_ctx['peer_count']})"
+        )
+        peer_block = (
+            f"\n\n## 피어 비교 — 같은 {ft} 유형의 다른 현장 '{cat}' 태그\n"
+            + "\n".join(peer_lines)
+        )
+
     unit_str = f" ({unit})" if unit else ""
+    peer_rule = (
+        "8. 피어 비교가 제공되면 현재값이 다른 현장 동종 태그의 30일 평균 대비 "
+        "어느 수준인지 1문장으로 추가 서술하라 (시설명·수치는 제공된 값만 사용).\n"
+        if peer_block else ""
+    )
+    sentence_range = "2~3문장" if peer_block else "1~2문장"
     prompt = (
-        "다음 센서의 현재값을 분석하여 1~2문장으로 해석 서술하라.\n\n"
+        f"다음 센서의 현재값을 분석하여 {sentence_range}으로 해석 서술하라.\n\n"
         "## 절대 규칙\n"
-        "1. 아래 제공된 수치만 사용하라 (current, baseline, 임계값).\n"
-        "2. 제공되지 않은 숫자는 절대 언급하지 마라.\n"
+        "1. 아래 제공된 수치만 사용하라 (current, baseline, 임계값, 피어).\n"
+        "2. 제공되지 않은 숫자·시설명·태그명은 절대 언급하지 마라.\n"
         "3. 권고·조치·원인 추측은 포함하지 마라 (상태 서술에 집중).\n"
         "4. 외부 지식이나 일반 기준은 추가하지 마라.\n"
         "5. 존댓말 '~습니다' 종결.\n"
         "6. Baseline이 있으면 현재값이 지난 30일 평균 대비 어떤 수준인지 비교 서술.\n"
-        "7. HH/LL 임계값이 있으면 현재값이 임계값 대비 어느 수준인지 비교 서술.\n\n"
+        "7. HH/LL 임계값이 있으면 현재값이 임계값 대비 어느 수준인지 비교 서술.\n"
+        f"{peer_rule}\n"
         f"## 태그\n{display_name}{unit_str}\n\n"
         f"## 현재값\n- {req.current_value:.3g}"
-        f"{context_block}\n\n"
-        "해석 서술 (1~2문장, 위 수치만 사용, 존댓말):"
+        f"{context_block}"
+        f"{peer_block}\n\n"
+        f"해석 서술 ({sentence_range}, 위 수치·명칭만 사용, 존댓말):"
     )
 
     if not _ollama_client:
@@ -147,7 +188,7 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
             _ollama_client.generate,
             prompt,
             None, None, None,
-            60.0,  # 단일 값이라 짧은 프롬프트 → timeout 더 작게
+            120.0,  # 단일 값이라 짧은 프롬프트지만 gemma4:26b a4b tail latency 대비 2배 마진
             3,
         )
     except Exception as e:
@@ -177,7 +218,27 @@ async def explain_tag_latest(req: TagLatestExplainRequest):
     _llm_ms = int((time.perf_counter() - _t0) * 1000)
     text = (text or "").strip()
 
+    # 식별자(시설명·datainfo 등) strip 목록 — 수치 검증 전 제거해 오탐 방지
+    strip_strings: list[str] = []
+    if display_name:
+        strip_strings.append(display_name)
+    if sitename:
+        strip_strings.append(sitename)
+    if datainfo:
+        strip_strings.append(datainfo)
+    for peer in peer_ctx.get("peers", []):
+        if peer.get("sitename"):
+            strip_strings.append(peer["sitename"])
+        if peer.get("datainfo"):
+            strip_strings.append(peer["datainfo"])
+
     ok, violations = _validate_summary_numbers(text, allowed_numbers)
+    if (not ok) and text and strip_strings:
+        cleaned = text
+        for s in sorted(set(strip_strings), key=len, reverse=True):
+            cleaned = cleaned.replace(s, " ")
+        ok, violations = _validate_summary_numbers(cleaned, allowed_numbers)
+
     if not ok or not text:
         logger.warning(
             f"tag_latest_explain 할루시네이션 → 폴백: "
