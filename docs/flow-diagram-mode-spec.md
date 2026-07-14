@@ -248,9 +248,13 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
   (유입 ≥ 유출)이면 `supply_time.status='CHARGING'`, `total_supply_time=24h` **고정값**으로
   저장한다. 24h 는 실제 소진 시간이 아닌 "소진 안 됨" 플레이스홀더라 저수위(≤12%) 게이지
   옆에 "24.0h" 로 뜨면 공급 여유로 오독될 수 있다. → 프런트는 CHARGING 이면 숫자 대신
-  **"충전 중"** 배지로 표기(저수위면 "⚠ 수위 N% 저수위 주의" 병기). 적용 4곳: GisDetailPanel /
-  GisFacilityCard(마커) / GisFacilityPopup / FlowMonitoringGraph(계통도 툴팁·오버레이).
-  저수위 임계는 WaterLevelGauge 와 동일한 ≤12% 재사용(임계 지어내지 않음).
+  **"충전 중"** 배지로 표기(저수위면 "⚠ 수위 N% 저수위 주의" 병기).
+  **단일 소스 (2026-07-14 공용화):** 판정·포맷 규칙은 `src/lib/supply-time.ts`
+  (`getSupplyTimeDisplay`/`getLevelStatus`/`LOW_LEVEL_PCT=12`/`HIGH_LEVEL_PCT=90`) 로
+  중앙화. 소비처 5곳: GisDetailPanel / GisFacilityCard(마커) / GisFacilityPopup /
+  FlowMonitoringGraph(계통도 툴팁·오버레이) / **monitoring/flow 사이드 "배수지
+  공급가능시간" 리스트**(공용화 중 발견된 5번째 누락 지점 — 24.0h 로 남아 있던 것 수정).
+  WaterLevelGauge 게이지 색 임계도 동일 상수 공유. 규칙 변경 시 supply-time.ts 만 수정.
 - **커밋:** `slm-dashboard@ac8b19e`
 
 ### 7.4 소블록 유량적산/압력 추가 (2026-04-17)
