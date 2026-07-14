@@ -1,0 +1,105 @@
+{
+  "_doc": [
+    "채팅 스모크 테스트 케이스 — test_chat_smoke.py 가 /ask/stream 으로 실행.",
+    "판정 원칙: 살아있는 DB 라 값(행 수·건수)은 환경 의존 → min_rows 는 '비면 확실히 고장'인 케이스만.",
+    "require_fields 는 설계상 항상 생성되는 분석 구조만 (리스트가 정상적으로 빌 수 있는 필드는 제외).",
+    "케이스 선정: 카테고리 대표 + 회귀 이력(regression 주석) 있는 질의.",
+    "기대값 갱신: 사양 변경으로 인텐트/구조가 바뀌면 같은 커밋에서 이 파일도 갱신."
+  ],
+  "cases": [
+    {
+      "question": "행정 배수지 센서이상 스캔",
+      "intent": "ANOMALY_SCAN_ALL",
+      "graph_type": "table",
+      "min_rows": 1,
+      "regression": "2026-07-12 프런트 사전분류 오라우팅(fault/draft). 재기동 직후 스캔 캐시 공백 ERROR 가능 → 러너가 1회 재시도"
+    },
+    {
+      "question": "교차 검증 결과 보여줘",
+      "intent": "ANOMALY_CROSS_FACILITY",
+      "graph_type": "none",
+      "regression": "2026-07-11 Stage1 키워드 누락 → SLM 폴백 ~10초 지연"
+    },
+    {
+      "question": "물 수지 검증해줘",
+      "intent": "ANOMALY_FLOW_BALANCE",
+      "graph_type": "none",
+      "require_fields": ["flow_balance_summary"]
+    },
+    {
+      "question": "최근 이상 이력 보여줘",
+      "intent": "ANOMALY_HISTORY",
+      "graph_type": "table"
+    },
+    {
+      "question": "경보 발생 이력 보여줘",
+      "intent": "ONGOING_ALARM_STATUS",
+      "graph_type": "table"
+    },
+    {
+      "question": "설비 장애 현황 보여줘",
+      "intent": "EQUIPMENT_FAULT_STATUS",
+      "regression": "2026-07-11 신설 인텐트 — _DYNAMIC_SQL_INTENTS(2곳) 누락 시 빈 응답"
+    },
+    {
+      "question": "합덕일반 배수지 수위 트렌드 보여줘",
+      "intent": "FACILITY_TREND",
+      "graph_type": "plot",
+      "min_rows": 1,
+      "require_fields": ["comparison_map"],
+      "regression": "2026-07-11 다중 tag 비교 맵. comparison_map 은 트렌드 비교 v1 구조"
+    },
+    {
+      "question": "소블록 누수 추정 분석해줘",
+      "intent": "LEAK_CUSUM_ANALYSIS",
+      "graph_type": "table",
+      "min_rows": 1,
+      "require_fields": ["cusum_chart_data"]
+    },
+    {
+      "question": "남산 배수지 수위 현황을 알려줘",
+      "intent": "RESERVOIR_LEVEL_STATUS",
+      "graph_type": "none"
+    },
+    {
+      "question": "소블록 야간최소유량 데이터를 표로 보여줘",
+      "intent": "NIGHT_MIN_FLOW_SUMMARY_TABLE",
+      "graph_type": "table",
+      "min_rows": 1
+    },
+    {
+      "question": "남산1 소블록 야간최소유량 표준편차분석 결과를 알려줘",
+      "intent": "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
+      "graph_type": "table",
+      "min_rows": 1,
+      "require_fields": ["stddev_stats"],
+      "regression": "2026-07-11 /trend/data event loop 블로킹으로 10.8s 지연 (perf)"
+    },
+    {
+      "question": "합덕 배수지 일반현황 알려줘",
+      "intent": "RESERVOIR_OVERVIEW",
+      "graph_type": "none"
+    },
+    {
+      "question": "송산2산단공업 배수지 최근 알람 보여줘",
+      "intent": "FACILITY_RECENT_ALARM",
+      "graph_type": "none"
+    },
+    {
+      "question": "비상연락처 알려줘",
+      "intent": "EMERGENCY_CONTACT_QUERY",
+      "graph_type": "table",
+      "min_rows": 1
+    },
+    {
+      "question": "남산 배수지 현재 수위를 알려줘",
+      "intent": "FACILITY_TAG_LATEST_VALUE",
+      "graph_type": "none"
+    },
+    {
+      "question": "남산 배수지 용수공급가능 시간은?",
+      "intent": "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
+      "graph_type": "none"
+    }
+  ]
+}
