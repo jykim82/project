@@ -521,9 +521,23 @@ def gbt_baseline(conn, tagsn: str, target_times: list, region: str = DEFAULT_REG
         vals = [v for k, v in hourly.items() if end - pd.Timedelta(hours=24) <= k < end]
         return fn(vals) if len(vals) >= 6 else np.nan
 
-    rows = []
+    # [perf] 모든 피처(캘린더·lag·rolling)는 '시(hour)' 단위에서만 변한다:
+    #  - 캘린더: KST 는 고정 오프셋(+9)이라 같은 UTC 시각 내 hour/dow/date 동일
+    #  - lag/rolling: _at/_roll 모두 floor('h') 기반
+    # → 타임스탬프별(1분 버킷 7일=10,080행) 대신 고유 시 버킷(~169행)만
+    #   피처 계산·예측 후 매핑. 동일 입력→동일 출력, 78s→sub-second (사양 §6.4).
+    uniq_idx: dict = {}          # hour_key → 예측 행 index
+    hour_keys = []               # tt 순서대로 각 timestamp 의 hour_key
     for t in tt:
-        tl = pd.Timestamp(t).tz_convert("Asia/Seoul")
+        hk = pd.Timestamp(t).floor("h")
+        hk = hk.tz_convert("UTC") if hk.tzinfo else hk.tz_localize("UTC")
+        hour_keys.append(hk)
+        if hk not in uniq_idx:
+            uniq_idx[hk] = len(uniq_idx)
+    rows = []
+    for hk in uniq_idx:
+        t = hk.to_pydatetime()
+        tl = hk.tz_convert("Asia/Seoul")
         rows.append({
             "trend_kind": trend_kind, "facilitytype": facilitytype,
             "equipmenttype": equipmenttype, "site_group": site_group,
@@ -541,7 +555,8 @@ def gbt_baseline(conn, tagsn: str, target_times: list, region: str = DEFAULT_REG
         })
     fdf = pd.DataFrame(rows)
     X = _build_matrix(fdf, art["encoder"])
-    pred = art["model"].predict(X)
+    hour_pred = art["model"].predict(X)
+    pred = np.asarray([hour_pred[uniq_idx[hk]] for hk in hour_keys])
 
     sigma = art["tag_sigma"].get(tagsn, art["global_sigma"])
     series = [round(float(p), 3) for p in pred]
