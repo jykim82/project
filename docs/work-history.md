@@ -2,6 +2,30 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-07-14 — 코드 최적화 라운드: GBT 25× + supply_time 공용화 + epanet·ai_server 분리)
+
+3개월(4월 정리 이후 +39K줄) 드리프트 검토 후 승인받아 순차 수행. 4개 작업 전체 완료:
+
+**1. GBT baseline 시(hour) 버킷 최적화** (`slm@ab2596c`)
+- gbt_baseline() 타임스탬프별 예측(10,080행)+_roll 전수 스캔 → 고유 시 버킷(~169행)만
+  예측 후 매핑. 완전 동치(고정창 10,080값 일치). 벤치 78.1s→3.06s, 실 UI 636ms.
+- 사양: trend-comparison-spec §6.4 ③ 완료 처리
+
+**2. supply_time 표시 규칙 단일 소스화** (`slm-dashboard@80decec`)
+- `src/lib/supply-time.ts` — 충전 배지/24h+ 캡/저수위 임계(12%/90%) 중앙화
+- 소비처 5곳 교체. **공용화 중 5번째 누락 지점 발견·수정** (monitoring/flow 사이드
+  리스트가 충전 상태 24.0h 표기). WaterLevelGauge 임계도 공용 상수로.
+
+**3. endpoints/epanet.py 3,223줄 → 패키지 12모듈** (`slm@8ea5743`)
+- common/points_crud/flow_map/deviation/menu_settings/leak_headloss/whatif/
+  assessment/data_quality/artifacts/simulations. import 경로 유지(ai_server 무변경).
+- 라우트 48개 diff 0, EPANET 임시 활성화 GET 20개 본문 200 스모크 후 원복.
+
+**4. ai_server.py Phase 4 — intent_matching.py 분리** (`slm@f6b6200`)
+- 질의 정규화·인텐트 매칭 클러스터 639줄 이관. 6,449→5,876줄.
+- FACILITY_ALIAS_MAP 재바인딩 시맨틱 유지(ai_server 잔류). 채팅 E2E 4종 OK.
+- Phase 5 후보(보류): _ask_inner/ask_stream 각 1,500줄+ — 전역 의존 커서 스모크 체계 선행 필요.
+
 ### 완료 (2026-07-11 — 대시보드 KPI 팝업 카드 일관화 + 설비장애 인텐트 + 트렌드 다중tag + 이상탐지 필터)
 
 **대시보드 KPI 팝업(QuickAnalysisDialog) 카드 디자인 일관화**
