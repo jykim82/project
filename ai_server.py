@@ -3439,10 +3439,11 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
         else:
             _tagtype = "Analog Input"
         if intent == "FACILITY_TAG_LATEST_VALUE":
-            # GROUP BY 앞에 tagtype 조건 주입
+            # ORDER BY 앞(WHERE 마지막)에 tagtype 조건 주입
+            # (템플릿이 LATERAL top-1 구조로 바뀌어 GROUP BY 없음 — 2026-07-14 perf)
             sql_combined = sql_combined.replace(
-                "GROUP BY",
-                f"  AND i.tagtype = '{_tagtype}'\nGROUP BY",
+                "ORDER BY l.tagsn",
+                f"  AND i.tagtype = '{_tagtype}'\nORDER BY l.tagsn",
             )
         elif "AND i.tagtype = 'Analog Input'" in sql_combined:
             # FACILITY_TAG_DATA_TABLE: 하드코딩된 tagtype을 동적으로 교체
@@ -5012,9 +5013,11 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
             else:
                 _tagtype = "Analog Input"
             if intent == "FACILITY_TAG_LATEST_VALUE":
+                # ORDER BY 앞(WHERE 마지막)에 tagtype 조건 주입
+                # (템플릿이 LATERAL top-1 구조로 바뀌어 GROUP BY 없음 — 2026-07-14 perf)
                 sql_combined = sql_combined.replace(
-                    "GROUP BY",
-                    f"  AND i.tagtype = '{_tagtype}'\nGROUP BY",
+                    "ORDER BY l.tagsn",
+                    f"  AND i.tagtype = '{_tagtype}'\nORDER BY l.tagsn",
                 )
             elif "AND i.tagtype = 'Analog Input'" in sql_combined:
                 sql_combined = sql_combined.replace(

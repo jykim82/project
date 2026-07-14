@@ -2465,7 +2465,7 @@
       "지금 수위 현황은?",
       "현재 유량 데이터는?"
     ],
-    "sql": "SELECT \n  i.sitename,\n  i.facilitytype,\n  i.datainfo,\n  i.datadesc,\n  r.tagsn,\n  last(r.val, r.logtime) AS latest_val,\n  to_char(max(r.logtime), 'YYYY-MM-DD HH24:MI:SS') AS latest_time\nFROM tb_tag_raw_data r\nJOIN tb_tag_info i ON r.tagsn = i.tagsn\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND (\n        i.datadesc ILIKE '%{datakey}%'\n     OR i.datainfo ILIKE '%{datakey}%'\n  )\nGROUP BY i.sitename, i.facilitytype, i.datainfo, i.datadesc, r.tagsn\nORDER BY r.tagsn;",
+    "sql": "SELECT\n  i.sitename,\n  i.facilitytype,\n  i.datainfo,\n  i.datadesc,\n  l.tagsn,\n  l.val AS latest_val,\n  to_char(l.logtime, 'YYYY-MM-DD HH24:MI:SS') AS latest_time\nFROM tb_tag_info i\nJOIN LATERAL (\n  SELECT r.tagsn, r.val, r.logtime\n  FROM tb_tag_raw_data r\n  WHERE r.tagsn = i.tagsn\n  ORDER BY r.logtime DESC\n  LIMIT 1\n) l ON TRUE\nWHERE i.sitename = '{sitename}'\n  AND i.facilitytype = '{facilitytype}'\n  AND (\n        i.datadesc ILIKE '%{datakey}%'\n     OR i.datainfo ILIKE '%{datakey}%'\n  )\nORDER BY l.tagsn;",
     "answer_template": {
       "summary": "{sitename} {facilitytype}에서 조회한 현재 데이터는 다음과 같습니다.",
       "detail": [
