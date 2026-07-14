@@ -24,7 +24,22 @@
 **4. ai_server.py Phase 4 — intent_matching.py 분리** (`slm@f6b6200`)
 - 질의 정규화·인텐트 매칭 클러스터 639줄 이관. 6,449→5,876줄.
 - FACILITY_ALIAS_MAP 재바인딩 시맨틱 유지(ai_server 잔류). 채팅 E2E 4종 OK.
-- Phase 5 후보(보류): _ask_inner/ask_stream 각 1,500줄+ — 전역 의존 커서 스모크 체계 선행 필요.
+
+**5. 채팅 스모크 테스트 체계 (Tier 1)** (`slm@45f6db9`)
+- test_chat_smoke.py + chat_smoke_cases.json — 대표 인텐트 16케이스 /ask/stream 구조
+  assert, exit 0/1, ~1분. 가이드 docs/chat-smoke-test-guide.md. 납품 검수 겸용.
+- 부정 테스트로 fail 경로 검증. 첫 실행에서 40s 아웃라이어 발견.
+
+**6. FACILITY_TAG_LATEST_VALUE 40s→0.1s** (`slm@c9a236c`)
+- 최신값 SQL 이 시간 하한 없이 태그당 전 기간 스캔(251,721 buffers) → LATERAL
+  top-1 (28 buffers, ~9,000×). 신/구 결과 EXCEPT 0건. 스모크 스위트 51s→11s.
+
+**7. ai_server Phase 5 — /ask 어댑터화** (`slm@e0eaa9d`)
+- _ask_inner(1,533줄)가 SSE event_generator 와 인텐트 42분기 1:1 복제 →
+  /ask 를 SSE 내부 소비 어댑터(~50줄)로 재구현, 복제 삭제. **5,879→4,374줄**.
+- SSE 응답 ml_* 8필드 누락(기존 격차) 동반 해소 — 프런트 ML 배지 복원.
+- 검증: /ask 68케이스 전/후 구조 차이 0건 + 스모크 16/16 (게이트 첫 실전).
+- **ai_server.py 누적: 15,084 → 4,374줄 (71% 감소)**
 
 ### 완료 (2026-07-11 — 대시보드 KPI 팝업 카드 일관화 + 설비장애 인텐트 + 트렌드 다중tag + 이상탐지 필터)
 
