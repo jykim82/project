@@ -62,7 +62,20 @@ slm/epanet/
   shp_reader.py        # pyshp 기반 SHP 스캐너 (geopandas 미사용, 경량)
   inp_converter.py     # SHP → EPANET .inp 텍스트 변환 (wntr 의존 X — 직접 텍스트 생성)
 
-slm/endpoints/epanet.py
+slm/endpoints/epanet/     # 2026-07-14 패키지 분리 (단일 epanet.py 3,223줄 → 12 모듈, 라우트 48개 무변경)
+  __init__.py             # router re-export + 서브모듈 로드 (import 경로 endpoints.epanet 유지)
+  common.py               # router·상수·_ensure_enabled·SHP/단위/시뮬 공용 헬퍼
+  points_crud.py          # elevations/demands/meters CRUD
+  flow_map.py             # facility-flow-map CRUD + auto-suggest + 실측 수요 주입(B-1)
+  deviation.py            # flow-deviation + timeseries (B-2)
+  menu_settings.py        # EPANET 메뉴 on/off
+  leak_headloss.py        # leak-suspicious + headloss-anomaly
+  whatif.py               # 밸브 차단/관 파단/펌프 제어/시나리오 비교
+  assessment.py           # 교체 후보/노후도/수질
+  data_quality.py         # 데이터 품질 게이트
+  artifacts.py            # status/scan/INP 생성·목록·다운로드·삭제 (아래 라우트)
+  simulations.py          # 시뮬 실행/이력/cron/정리/조회
+
   GET    /admin/epanet/status                 — 활성·환경 진단 (토글 OFF 시도 200 응답)
   POST   /admin/epanet/scan                   — SHP 메타·필드명·인코딩 (변환 전 검증)
   POST   /admin/epanet/inp/generate           — SHP→.inp 변환 + tb_epanet_artifact 저장
