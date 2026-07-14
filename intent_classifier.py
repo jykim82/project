@@ -26,6 +26,24 @@ from slm_config import ENABLE_KEYWORD_FALLBACK
 logger = logging.getLogger(__name__)
 
 # Stage 1 키워드 → 카테고리 매핑 (프로그래밍적 단축)
+_STAGE1_DEF_KEYWORDS: Optional[list] = None
+
+
+def _stage1_keywords_from_defs() -> list:
+    """example3.json classify_keywords.stage1 파생 키워드 (아키텍처 1단계).
+
+    인텐트 소속이 명확한 Stage1 단축 키워드는 해당 인텐트 정의(JSON)와 함께
+    선언한다 — 과거 '키워드 누락 → SLM 폴백 ~10초' 회귀의 구조적 방지.
+    lazy import + 캐시: intent_matching 은 import 시 DB 로드를 수행하므로
+    첫 호출 시점으로 지연.
+    """
+    global _STAGE1_DEF_KEYWORDS
+    if _STAGE1_DEF_KEYWORDS is None:
+        from intent_matching import stage1_keywords_from_definitions
+        _STAGE1_DEF_KEYWORDS = stage1_keywords_from_definitions()
+    return _STAGE1_DEF_KEYWORDS
+
+
 _KEYWORD_TO_CATEGORY = {
     "배수지": "배수지",
     "가압장": "가압장",
@@ -329,24 +347,18 @@ class IntentClassifier:
             return "트렌드", "keyword"
 
         # 공통 키워드 체크 (시설 키워드보다 우선)
+        # [아키텍처 1단계] 인텐트 소속이 명확한 키워드(교차검증/설비장애/센서스캔/
+        # 물수지/누수/표준편차)는 example3.json classify_keywords.stage1 로 이관 —
+        # 여기 리스트는 인텐트 무관 공통 신호만 유지. 새 인텐트는 JSON 에만 선언.
         common_keywords = [
             "야간최소유량", "야간 최소유량", "최소유량", "야간",
             "알람", "경보", "알림", "태그", "통신", "네트워크",
             "결측", "진행중",
             "표로",
             "이상", "위험", "예측", "이상감지",
-            "누수", "CUSUM", "cusum", "물 수지", "물수지", "유량 균형", "유량균형", "불명수량",
-            # 시설간 교차 검증 — 카테고리 SLM 폴백(~10초) 회피용. 인텐트 단계
-            # (_classify_intent ANOMALY_CROSS_FACILITY) 키워드와 동일 집합 유지
-            "교차 검증", "교차검증", "시설간 불일치", "유량 불일치", "흐름 불일치", "정합성",
-            # 설비 장애 현황(EQUIPMENT_FAULT_STATUS) — SLM 폴백 회피. Stage2 키워드와 동일
-            "설비 장애", "설비장애", "설비 고장", "설비고장", "장비 장애", "장비 고장",
-            "표준편차",
             "주소",
             "위치도", "계통도", "초동대응", "매뉴얼",
-            "센서 점검", "설비 점검", "센서 상태", "설비 상태",
-            "센서 스캔", "센서 이상",
-        ]
+        ] + _stage1_keywords_from_defs()
         for kw in common_keywords:
             if kw in question:
                 logger.info(f"Stage1 키워드 매칭: '{kw}' → 공통")

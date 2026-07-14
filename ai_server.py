@@ -2124,8 +2124,13 @@ from intent_matching import (  # noqa: E402
     calculate_match_score,
     match_intent,
 )
+from intent_matching import dynamic_sql_intents  # noqa: E402
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
+
+# [아키텍처 1단계] SQL 없이 커스텀 핸들러가 처리하는 인텐트 —
+# example3.json "dynamic_sql": true 에서 파생 (모듈 로드 시 1회)
+_DYNAMIC_SQL_INTENTS_STREAM = dynamic_sql_intents()
 
 
 
@@ -3010,7 +3015,8 @@ async def ask_stream(request: AskRequest):
                 logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
-        _DYNAMIC_SQL_INTENTS_STREAM = {"ALARM_ABNORMAL_LOCATIONS", "FACILITY_CATALOG_TREND_TABLE", "RESERVOIR_LEVEL_HUNTING_CHECK", "RESERVOIR_LEVEL_CAUSE_ANALYSIS", "ANOMALY_CROSS_FACILITY", "ANOMALY_FLOW_BALANCE", "EQUIPMENT_FAULT_STATUS", "NIGHT_MIN_FLOW_SUMMARY_TABLE", "NIGHT_MIN_FLOW_STATUS", "TAG_DAILY_MISSING_SUMMARY", "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS", "NETWORK_UPSTREAM_FAULT_ANALYSIS"} | _SUPPLY_INTENTS
+        # [아키텍처 1단계] 하드코딩 세트 → example3.json "dynamic_sql": true 파생
+        # (인텐트 추가 시 JSON 한 곳만 선언 — 세트 누락 회귀 방지)
         if intent not in _DYNAMIC_SQL_INTENTS_STREAM and (not sql_combined or not sql_combined.strip()):
             rendered_answer = render_answer_template(answer_template, params)
             rendered_answer = apply_corrections_to_answer(rendered_answer, params)

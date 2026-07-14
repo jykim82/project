@@ -1759,7 +1759,8 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true
   },
   {
     "intent": "RESERVOIR_LEVEL_CAUSE_ANALYSIS",
@@ -1817,7 +1818,8 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true
   },
   {
     "intent": "FACILITY_PRESSURE_STATUS",
@@ -1955,7 +1957,8 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true
   },
   {
     "intent": "FACILITY_COMMUNICATION_TOPOLOGY",
@@ -2873,7 +2876,8 @@
       ]
     },
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "dynamic_sql": true
   },
   {
     "intent": "TAG_DAILY_MISSING_SUMMARY",
@@ -2919,7 +2923,8 @@
       ]
     },
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "dynamic_sql": true
   },
   {
     "intent": "ONGOING_ALARM_STATUS",
@@ -3045,7 +3050,8 @@
         ]
       }
     },
-    "graph_type": "table"
+    "graph_type": "table",
+    "dynamic_sql": true
   },
   {
     "intent": "FACILITY_ABNORMAL_STATUS_SUMMARY",
@@ -3129,7 +3135,13 @@
       ]
     },
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "dynamic_sql": true,
+    "classify_keywords": {
+      "stage1": [
+        "표준편차"
+      ]
+    }
   },
   {
     "intent": "FACILITY_TREND",
@@ -3491,7 +3503,17 @@
       "comm_status"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "classify_keywords": {
+      "stage1": [
+        "센서 점검",
+        "설비 점검",
+        "센서 상태",
+        "설비 상태",
+        "센서 스캔",
+        "센서 이상"
+      ]
+    }
   },
   {
     "intent": "ANOMALY_FACILITY_DETAIL",
@@ -4071,7 +4093,18 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true,
+    "classify_keywords": {
+      "stage1": [
+        "교차 검증",
+        "교차검증",
+        "시설간 불일치",
+        "유량 불일치",
+        "흐름 불일치",
+        "정합성"
+      ]
+    }
   },
   {
     "intent": "ANOMALY_FLOW_BALANCE",
@@ -4114,7 +4147,17 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true,
+    "classify_keywords": {
+      "stage1": [
+        "물 수지",
+        "물수지",
+        "유량 균형",
+        "유량균형",
+        "불명수량"
+      ]
+    }
   },
   {
     "intent": "LEAK_CUSUM_ANALYSIS",
@@ -4202,7 +4245,14 @@
       "trend_slope"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "classify_keywords": {
+      "stage1": [
+        "누수",
+        "CUSUM",
+        "cusum"
+      ]
+    }
   },
   {
     "intent": "FACILITY_CATALOG_TREND_TABLE",
@@ -4239,7 +4289,8 @@
       "전체 {facilitytype} 압력을 표로 보여줘",
       "{sitename} {facilitytype} 밸브를 표로 보여줘"
     ],
-    "table_type": "summary"
+    "table_type": "summary",
+    "dynamic_sql": true
   },
   {
     "intent": "RESERVOIR_DAILY_SUPPLY_TABLE",
@@ -4307,7 +4358,8 @@
           }
         ]
       }
-    }
+    },
+    "dynamic_sql": true
   },
   {
     "intent": "RESERVOIR_MONTHLY_SUPPLY_TABLE",
@@ -4375,7 +4427,8 @@
           }
         ]
       }
-    }
+    },
+    "dynamic_sql": true
   },
   {
     "intent": "RESERVOIR_DAILY_SUPPLY_CHART",
@@ -4421,7 +4474,8 @@
           }
         ]
       }
-    }
+    },
+    "dynamic_sql": true
   },
   {
     "intent": "RESERVOIR_MONTHLY_SUPPLY_CHART",
@@ -4467,7 +4521,8 @@
           }
         ]
       }
-    }
+    },
+    "dynamic_sql": true
   },
   {
     "intent": "NETWORK_UPSTREAM_FAULT_ANALYSIS",
@@ -4515,7 +4570,8 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true
   },
   {
     "intent": "EMERGENCY_CONTACT_QUERY",
@@ -4680,6 +4736,17 @@
         ]
       }
     },
-    "graph_type": "none"
+    "graph_type": "none",
+    "dynamic_sql": true,
+    "classify_keywords": {
+      "stage1": [
+        "설비 장애",
+        "설비장애",
+        "설비 고장",
+        "설비고장",
+        "장비 장애",
+        "장비 고장"
+      ]
+    }
   }
 ]

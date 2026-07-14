@@ -46,6 +46,37 @@ INTENT_DEFINITIONS = load_intent_definitions()
 
 
 # =============================================================================
+# 인텐트 메타 파생 (아키텍처 1단계, 2026-07-15)
+#
+# 인텐트 추가 시 example3.json 한 곳에만 선언하면 되도록, 분산돼 있던
+# 등록 지점(dynamic-SQL 세트·분류 키워드)을 정의에서 파생 생성한다.
+#   - "dynamic_sql": true          → SQL 템플릿 없이 커스텀 핸들러가 rows 를
+#                                     채우는 인텐트 (ai_server SSE 게이트)
+#   - "classify_keywords": {"stage1": [...]}
+#                                   → 질의에 포함되면 Stage1 '공통' 카테고리로
+#                                     단축 (SLM 폴백 ~10s 회피)
+# 과거 회귀: _DYNAMIC_SQL_INTENTS 2곳 중 1곳 누락 → 빈 응답 (07-11),
+#            Stage1 키워드 누락 → 분류 10초 지연 (07-11)
+# =============================================================================
+
+def dynamic_sql_intents() -> frozenset:
+    """SQL 템플릿 없이(또는 무시하고) 커스텀 핸들러가 처리하는 인텐트 집합."""
+    return frozenset(
+        d["intent"] for d in INTENT_DEFINITIONS if d.get("dynamic_sql")
+    )
+
+
+def stage1_keywords_from_definitions() -> list:
+    """인텐트 정의의 stage1 분류 키워드를 모아 반환 (선언 순서 유지)."""
+    out = []
+    for d in INTENT_DEFINITIONS:
+        for kw in (d.get("classify_keywords") or {}).get("stage1", []):
+            if kw not in out:
+                out.append(kw)
+    return out
+
+
+# =============================================================================
 # DB에서 sitename, block_level 목록 동적 로딩
 # =============================================================================
 def load_sitenames_from_db() -> list:
