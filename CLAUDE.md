@@ -211,6 +211,7 @@ web/
 
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성
+- `docs/chat-smoke-test-guide.md` — 채팅 스모크 테스트 (대표 인텐트 16개 자동 E2E. Backend `test_chat_smoke.py`+`chat_smoke_cases.json`. ai_server/인텐트 변경·리팩토링 후 필수 실행, 납품 검수 겸용)
 - `docs/operations/report-quickstart.md` — 보고서 작성 빠른 가이드 (운영자용 1장)
 - `docs/operations/cron-setup.md` — 근본원인 자동 분류 cron 등록 가이드 (Linux/macOS/Docker)
 - `docs/operations/epanet-sim-cron.md` — EPANET 자동 시뮬 cron (시계열 누적, launchd plist + crontab + 트러블슈팅)
