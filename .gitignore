@@ -48,3 +48,4 @@ slm *.txt
 
 # 트렌드 baseline 모델 아티팩트 (재훈련 cron 으로 재생성 — 커밋 금지)
 data/models/
+*.bak
