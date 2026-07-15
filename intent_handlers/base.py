@@ -40,12 +40,15 @@ def service(name: str):
 class IntentContext:
     """훅에 전달되는 요청 컨텍스트. sql/params/rows 변형이 파이프라인에 반영된다."""
     intent: str
-    question: str
-    params: dict
+    question: str                    # 정규화된 질의
+    params: dict                     # prepare 훅에선 new_params(병합 전), 이후 병합 params
     sql: str
     session_id: str = ""
+    raw_question: str = ""           # 원본 사용자 질의 (정규화 전)
     rows: Optional[list] = None      # 채우면 SQL 실행 대체
     columns: Optional[list] = None
+    answer_template: Optional[dict] = None   # 변형 시 파이프라인에 반영
+    extra_sitenames: Optional[list] = None   # 다중 시설 질의 잔여분 (소비 시 None 으로)
     extras: dict = field(default_factory=dict)
 
 
@@ -54,8 +57,11 @@ class IntentHandler:
     """인텐트 커스텀 처리 훅. intents 튜플에 담당 인텐트 나열."""
     intents: tuple = ()
 
+    async def prepare(self, ctx: IntentContext) -> None:  # noqa: B027
+        """세션 병합 전 훅 — new_params 기본값 보정. 기본 no-op."""
+
     async def pre_sql(self, ctx: IntentContext) -> None:  # noqa: B027
-        """SQL 실행 전 훅 — 기본 no-op."""
+        """SQL 실행 전 훅 — sql 변형·rows 조달·answer_template 오버라이드. 기본 no-op."""
 
     def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
         """응답 추가 필드 훅 — 기본 없음."""

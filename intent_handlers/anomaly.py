@@ -14,6 +14,68 @@ from .base import IntentContext, IntentHandler, intent_handler, service
 logger = logging.getLogger(__name__)
 
 
+class AnomalyFilterPrepareMixin:
+    """ANOMALY 계열 공통 prepare — 선택적 시설 필터 + 범위 라벨 주입."""
+
+    async def prepare(self, ctx: IntentContext) -> None:
+        from response_builder import build_anomaly_facility_filter, build_anomaly_scope_label
+
+        ctx.params["anomaly_facility_filter"] = build_anomaly_facility_filter(
+            ctx.intent, ctx.params
+        )
+        ctx.params["anomaly_scope"] = build_anomaly_scope_label(ctx.params)
+        logger.info(f"[SSE] ANOMALY filter: intent={ctx.intent}, "
+                     f"scope={ctx.params['anomaly_scope']}, "
+                     f"filter={ctx.params['anomaly_facility_filter']!r}")
+
+
+@intent_handler
+class AnomalyScanAllHandler(AnomalyFilterPrepareMixin, IntentHandler):
+    """전체 이상 스캔 — prepare 필터 주입 (캐시 반환은 아직 인라인, 3차 이관)."""
+    intents = ("ANOMALY_SCAN_ALL",)
+
+
+@intent_handler
+class AnomalyFilterOnlyHandler(AnomalyFilterPrepareMixin, IntentHandler):
+    """예측/패턴/이력 — prepare 필터 주입만 필요한 ANOMALY 계열."""
+    intents = ("ANOMALY_PREDICT", "ANOMALY_PATTERN", "ANOMALY_HISTORY")
+
+
+@intent_handler
+class AnomalyFacilityDetailHandler(IntentHandler):
+    """시설 상세 이상 — stale 데이터 대응 시간창 조정 (max bucket 기준)."""
+    intents = ("ANOMALY_FACILITY_DETAIL",)
+
+    async def pre_sql(self, ctx: IntentContext) -> None:
+        if not ctx.sql:
+            return
+        try:
+            from anomaly_scan import adjust_sql_time_window_to_max_bucket
+
+            execute_sql = service("execute_sql")
+            _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
+            if _mb_rows and _mb_rows[0][0]:
+                ctx.sql = adjust_sql_time_window_to_max_bucket(
+                    ctx.sql, _mb_rows[0][0], label="[SSE] FACILITY_DETAIL",
+                )
+        except Exception as _e:
+            logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
+
+
+@intent_handler
+class AbnormalStatusSummaryHandler(IntentHandler):
+    """실시간 결측 요약 — fn_realtime_missing_summary 는 빈 문자열 = 전체."""
+    intents = ("FACILITY_ABNORMAL_STATUS_SUMMARY",)
+
+    async def pre_sql(self, ctx: IntentContext) -> None:
+        if ctx.params.get("sitename") in (None, "%%"):
+            ctx.params["sitename"] = ""
+        if ctx.params.get("facilitytype") in (None, "%%"):
+            ctx.params["facilitytype"] = ""
+        if ctx.params.get("datainfo") in (None, "%%"):
+            ctx.params["datainfo"] = ""
+
+
 @intent_handler
 class CrossFacilityHandler(IntentHandler):
     """시설간 교차 검증 — SQL 미사용, causal index 기반 불일치 계산."""

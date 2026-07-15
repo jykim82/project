@@ -2900,47 +2900,15 @@ async def ask_stream(request: AskRequest):
                     intent_name = _new_intent_s
                     intent_def = intent_index.get_definition(intent_name)
 
-        # 4.8. FACILITY_TREND + 야간최소유량: sitename 미추출 시 '전체' 기본값
-        _q_pre_check_s = user_question.replace(" ", "")
-        if (intent_name == "FACILITY_TREND"
-                and "야간최소유량" in _q_pre_check_s
-                and not new_params.get("sitename")):
-            new_params["sitename"] = "전체"
-            logger.info("[SSE] 야간최소유량 sitename 미추출 → '전체' 기본값 적용")
-
-        # 4.9. LEAK_CUSUM_ANALYSIS: 기본 파라미터 설정
-        if intent_name == "LEAK_CUSUM_ANALYSIS":
-            if not new_params.get("facilitytype"):
-                new_params["facilitytype"] = "소블록"
-            if not new_params.get("sitename"):
-                new_params["sitename"] = "전체"
-            if not new_params.get("from_ts"):
-                new_params["from_ts"] = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-            if not new_params.get("to_ts"):
-                new_params["to_ts"] = datetime.now().strftime("%Y-%m-%d")
-            logger.info(f"[SSE] LEAK_CUSUM defaults: site={new_params['sitename']}, "
-                         f"ft={new_params['facilitytype']}, "
-                         f"from={new_params['from_ts']}, to={new_params['to_ts']}")
-
-        # 4.10. RESERVOIR SUPPLY 인텐트: 기본 날짜 설정
-        if intent_name in _SUPPLY_INTENTS:
-            _is_monthly_sse = "MONTHLY" in intent_name
-            if not new_params.get("from_ts"):
-                _days_back_sse = 365 if _is_monthly_sse else 30
-                new_params["from_ts"] = (datetime.now() - timedelta(days=_days_back_sse)).strftime("%Y-%m-%d")
-            if not new_params.get("to_ts"):
-                new_params["to_ts"] = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-            logger.info(f"[SSE] SUPPLY defaults: intent={intent_name}, from={new_params['from_ts']}, to={new_params['to_ts']}")
-
-        # 4.11. ANOMALY 인텐트: 선택적 시설 필터 + 범위 라벨 설정
-        if intent_name in _ANOMALY_FILTER_INTENTS:
-            new_params["anomaly_facility_filter"] = build_anomaly_facility_filter(
-                intent_name, new_params
+        # 4.8~4.11. [아키텍처 2단계] 인텐트별 기본값·필터 보정 → prepare 훅
+        # (트렌드 nmf 기본값 / CUSUM·SUPPLY 기간 / ANOMALY 필터 — intent_handlers/)
+        _handler_prep = get_intent_handler(intent_name)
+        if _handler_prep is not None:
+            _pctx = IntentContext(
+                intent=intent_name, question=user_question, params=new_params,
+                sql="", session_id=sid, raw_question=request.user_question or "",
             )
-            new_params["anomaly_scope"] = build_anomaly_scope_label(new_params)
-            logger.info(f"[SSE] ANOMALY filter: intent={intent_name}, "
-                         f"scope={new_params['anomaly_scope']}, "
-                         f"filter={new_params['anomaly_facility_filter']!r}")
+            await _handler_prep.prepare(_pctx)
 
         # 5. 세션 파라미터 병합
         params = session_manager.get_merged_params(session, new_params)
@@ -2983,29 +2951,6 @@ async def ask_stream(request: AskRequest):
 
         logger.info(f"[SSE] INTENT 확정: {intent} (method={classify_method})")
 
-        # 경보 순위 인텐트: sitename/facilitytype 선택적 + 카테고리 필터
-        # 2026-05-10 fix: 사용자 메시지에 시설 명시 안 했으면 세션 컨텍스트 무시
-        _ALARM_PIE_INTENTS_SSE = {"FACILITY_ALARM_CAUSE_DIAGNOSIS_RANK", "FACILITY_ALARM_TOP_COUNT"}
-        if intent in _ALARM_PIE_INTENTS_SSE:
-            _u_sitename_s = extract_sitename(request.user_question or "")
-            _u_facilitytype_s = extract_facility_type_from_question(request.user_question or "")
-            if not _u_sitename_s or not params.get("sitename") or params.get("sitename") == "%%":
-                params["sitename"] = ""
-            if not _u_facilitytype_s or not params.get("facilitytype") or params.get("facilitytype") == "%%":
-                params["facilitytype"] = ""
-            # 경보 카테고리 필터 (수위/압력/통신/전원/펌프/밸브/수질/유량)
-            clause, label = _extract_alarm_filter(request.user_question or "")
-            params["alarm_filter_clause"] = clause
-            params["alarm_label"] = label
-            # {limit} 기본값: 질문에서 추출, 없으면 10
-            if not params.get("limit"):
-                params["limit"] = str(extract_limit(request.user_question or ""))
-            # {from_ts}/{to_ts} 기본값: 최근 30일
-            if not params.get("from_ts"):
-                params["from_ts"] = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-            if not params.get("to_ts"):
-                params["to_ts"] = datetime.now().strftime("%Y-%m-%d")
-
         session_manager.update_session(
             session,
             intent_name=intent,
@@ -3018,17 +2963,6 @@ async def ask_stream(request: AskRequest):
             sql_combined = "\n".join(sql_template)
         else:
             sql_combined = sql_template or ""
-
-        # ANOMALY_FACILITY_DETAIL: stale 데이터 대응 — 공통 헬퍼 사용
-        if intent == "ANOMALY_FACILITY_DETAIL" and sql_combined:
-            try:
-                _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
-                if _mb_rows and _mb_rows[0][0]:
-                    sql_combined = adjust_sql_time_window_to_max_bucket(
-                        sql_combined, _mb_rows[0][0], label="[SSE] FACILITY_DETAIL",
-                    )
-            except Exception as _e:
-                logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
         # 빈 SQL 체크 (동적 SQL 생성 인텐트는 커스텀 핸들러에서 sql_combined 설정)
         # [아키텍처 1단계] 하드코딩 세트 → example3.json "dynamic_sql": true 파생
@@ -3044,430 +2978,32 @@ async def ask_stream(request: AskRequest):
             ))
             return
 
-        # FACILITY_TREND + 야간최소유량: fn_night_min_flow_summary 사용
-        _q_no_space = user_question.replace(" ", "")
-        _is_night_min_flow = intent == "FACILITY_TREND" and "야간최소유량" in _q_no_space
-        if _is_night_min_flow:
-            # 기본 기간: 1년 (from_ts/to_ts가 기본 7일로 설정된 경우 오버라이드)
-            _ft = params.get("from_ts", "")
-            _tt = params.get("to_ts", "")
-            if _ft and _tt:
-                try:
-                    _ft_date = datetime.strptime(_ft.strip("'"), "%Y-%m-%d")
-                    _tt_date = datetime.strptime(_tt.strip("'"), "%Y-%m-%d")
-                    if (_tt_date - _ft_date).days <= 7:
-                        _tt_date = datetime.now()
-                        _ft_date = _tt_date - timedelta(days=365)
-                        params["from_ts"] = _ft_date.strftime("%Y-%m-%d")
-                        params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
-                except (ValueError, TypeError):
-                    pass
-            # '%%' 와일드카드 대신 '전체' 사용
-            if params.get("sitename") == "%%":
-                params["sitename"] = "전체"
-            # NOTE: 실제 사전집계 테이블 조회(rows 채우기)는 아래 "커스텀 핸들러용
-            # rows/columns 초기화"(rows: list = []) 이후에 수행한다. 여기서 채우면
-            # 그 초기화에 덮여 execute_sql(느린 선언 SQL)이 재실행된다. [E-030 후속]
-            # answer_template 오버라이드
-            _site = params.get("sitename", "")
-            _ftype = params.get("facilitytype", "소블록")
-            answer_template = {
-                "summary": "기간 설정이 없는 경우는 최근 1년 기준으로 1달 단위 데이터를 표출합니다.\n{sitename} {facilitytype} 야간최소유량 트렌드는 다음과 같습니다.",
-                "detail": [
-                    {"prefix": "•", "text": "야간 최소유량은 60분 단위 이동평균 계산법을 적용하여 계산됩니다."}
-                ],
-                "recommend_questions": {
-                    "title": "다음은 추천 질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"{_site} {_ftype} 야간최소유량 트렌드 그래프를 보여줘"},
-                        {"prefix": "2.", "text": f"{_site} {_ftype} 야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"},
-                        {"prefix": "3.", "text": f"{_site} {_ftype} 데이터 결측분석결과를 알려줘"},
-                    ]
-                }
-            }
-
-        # FACILITY_TREND (일반): answer_template 오버라이드
-        if intent == "FACILITY_TREND" and not _is_night_min_flow:
-            _site = params.get("sitename", "")
-            _ftype = params.get("facilitytype", "")
-            _dinfo = params.get("datainfo", "")
-            _user_period = params.get("user_specified_period", False)
-            _ft = params.get("from_ts", "")
-            _tt = params.get("to_ts", "")
-            if _user_period:
-                _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
-            else:
-                _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
-            answer_template = {
-                "summary": f"{_period_line}\n{_site} {_ftype} {_dinfo} 트렌드는 다음과 같습니다.",
-                "recommend_questions": {
-                    "title": "다음은 추천질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"한달간 {_site} {_ftype} {_dinfo} 트렌드를 보여줘"},
-                        {"prefix": "2.", "text": f"최근 3개월 {_site} {_ftype} {_dinfo} 트렌드를 보여줘"},
-                        {"prefix": "3.", "text": f"{_site} {_ftype} {_dinfo} 트렌드 그래프를 보여줘"},
-                    ]
-                }
-            }
-
-        # FACILITY_MIXED_TREND: answer_template 오버라이드
-        if intent == "FACILITY_MIXED_TREND":
-            _site = params.get("sitename", "")
-            _ftype = params.get("facilitytype", "")
-            _analog = params.get("analog_datainfo") or "유량"
-            _digital = params.get("digital_datainfo") or "밸브"
-            _user_period = params.get("user_specified_period", False)
-            _ft = params.get("from_ts", "")
-            _tt = params.get("to_ts", "")
-            if _user_period:
-                _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
-            else:
-                _period_line = "기간 설정이 없는 경우는 최근 7일간 데이터를 표출합니다."
-            answer_template = {
-                "summary": f"{_period_line}\n{_site} {_ftype}의 {_digital} 가동 상태와 {_analog} 데이터 트렌드는 다음과 같습니다.",
-                "recommend_questions": {
-                    "title": "다음은 추천질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"한달간 {_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
-                        {"prefix": "2.", "text": f"최근 3개월 {_site} {_ftype} {_analog} 트렌드를 보여줘"},
-                        {"prefix": "3.", "text": f"{_site} {_ftype} {_digital} 가동상태와 {_analog}을 함께 트렌드로 보여줘"},
-                    ]
-                }
-            }
-
-        # NIGHT_MIN_FLOW_SUMMARY_TABLE: 기본 1년 기간 + answer_template 오버라이드
-        if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
-            _user_period = params.get("user_specified_period", False)
-            if not _user_period:
-                _tt_date = datetime.now()
-                _ft_date = _tt_date - timedelta(days=365)
-                params["from_ts"] = _ft_date.strftime("%Y-%m-%d")
-                params["to_ts"] = _tt_date.strftime("%Y-%m-%d")
-            # fn_night_min_flow_summary는 = 비교이므로 '%%' 와일드카드 대신 '전체' 사용
-            _site = params.get("sitename", "")
-            if _site == "%%":
-                params["sitename"] = "전체"
-                _site = "전체"
-            _ftype = params.get("facilitytype", "소블록")
-            _display_site = "전체" if _site == "%%" or _site == "전체" else _site
-            _ft = params.get("from_ts", "")
-            _tt = params.get("to_ts", "")
-            if _user_period:
-                _period_line = f"{_ft} ~ {_tt} 기간의 데이터를 표출합니다."
-            else:
-                _period_line = "기간 설정이 없는 경우는 최근 1년 기준으로 1달 단위 데이터를 표출합니다."
-            _subject = f"{_display_site} {_ftype}" if _display_site != "전체" else _ftype
-            _sample_site = _display_site
-            if _display_site == "전체" and KNOWN_SITENAMES:
-                _sample_site = KNOWN_SITENAMES[0]
-            answer_template = {
-                "summary": f"{_period_line} {_subject} 야간최소유량은 다음과 같습니다.",
-                "detail": [
-                    {"prefix": "ㆍ", "text": "야간 최소유량은 60분 단위 이동평균 계산법을 적용하여 계산됩니다."}
-                ],
-                "recommend_questions": {
-                    "title": "다음은 추천질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"{_sample_site} {_ftype} 야간최소유량을 표로 보여줘"},
-                        {"prefix": "2.", "text": f"전체 {_ftype} 야간최소유량을 표로 보여줘"},
-                        {"prefix": "3.", "text": f"최근 한달간 {_ftype} 야간최소유량을 표로 보여줘"},
-                    ]
-                }
-            }
-
-        # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: answer_template 오버라이드
-        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
-            _site = params.get("sitename", "")
-            _ftype = params.get("facilitytype", "")
-            answer_template = {
-                "summary": f"{_site} {_ftype}의 야간최소유량 표준편차분석은 다음과 같습니다.",
-                "detail": [
-                    {"prefix": "ㆍ", "text": f"현재 {_site} {_ftype} 소블록 야간최소유량과 한달 및 일년 표준편차분석 결과입니다."},
-                    {"prefix": "ㆍ", "text": "분석결과(표)"},
-                ],
-                "reference": {
-                    "title": "다음 참고자료입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"{_site} {_ftype} 소블록 평균 야간최소유량"},
-                        {"prefix": "ㆍ", "text": "금월 야간최소유량 평균은 {avg_month}{unit}, 금년 야간최소유량 평균은 {avg_year}{unit} 입니다."},
-                    ]
-                },
-                "recommend_questions": {
-                    "title": "다음은 추천질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": f"{_site} {_ftype} 야간최소유량 트렌드 그래프를 보여줘"},
-                        {"prefix": "2.", "text": f"{_site} {_ftype} 야간최소유량 표준편차분석을 통해 이상여부를 확인해줘"},
-                        {"prefix": "3.", "text": f"{_site} {_ftype} 데이터 결측분석결과를 알려줘"},
-                    ]
-                }
-            }
-
-        # ONGOING_ALARM_STATUS: tb_equipment_alarm_report에서 alarm_status='진행중' 직접 조회
-        if intent == "ONGOING_ALARM_STATUS":
-            where_parts = ["alarm_status = '진행중'"]
-            _site = params.get("sitename")
-            _category = params.get("datainfo")
-            if _site:
-                _site_esc = _sql_escape_literal(_site)
-                where_parts.append(f"sitename = '{_site_esc}'")
-            if _category:
-                _cat_esc = _sql_escape_literal(_category)
-                where_parts.append(f"alarm_category = '{_cat_esc}'")
-            where_clause = " AND ".join(where_parts)
-            sql_combined = (
-                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
-                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time"
-                f" FROM tb_equipment_alarm_report"
-                f" WHERE {where_clause}"
-                f" ORDER BY alarm_start_time DESC;"
-            )
-
         # 커스텀 핸들러용 rows/columns 초기화
         rows: list = []
         columns: list = []
 
-        # FACILITY_TREND + 야간최소유량: 사전집계 테이블 tb_night_min_flow_daily
-        # 직접 조회 fast-path. 기존 SSE 는 fn_night_min_flow_summary(원시
-        # 하이퍼테이블 실시간 60분 이동평균)를 호출 → 43만행 대상 약 23초 소요.
-        # 비스트림 /ask 경로(3458-3487)는 이미 인덱스 스캔(<0.5초)로 최적화돼
-        # 있었으나 SSE 만 누락 → 두 경로를 동일 fast-path 로 통일. 반드시 위
-        # rows 초기화 이후에 채워야 execute_sql(선언 SQL) 재실행을 방지한다.
-        if _is_night_min_flow:
-            _nmf_sn = params.get("sitename", "전체")
-            _nmf_ft = params.get("facilitytype", "소블록")
-            _nmf_from = params.get("from_ts", "")
-            _nmf_to = params.get("to_ts", "")
-            try:
-                _nmf_site_list = [_nmf_sn]
-                if extra_sitenames:
-                    _nmf_site_list.extend(extra_sitenames)
-                    extra_sitenames = None  # 이중 처리 방지
-                _all_nmf_rows: list = []
-                _nmf_cols_ref = None
-                for _sn_i in _nmf_site_list:
-                    _r_i, _c_i = await asyncio.to_thread(
-                        _execute_night_min_flow_query, _sn_i, _nmf_ft, _nmf_from, _nmf_to
-                    )
-                    if _r_i:
-                        _all_nmf_rows.extend(_r_i)
-                        if _nmf_cols_ref is None:
-                            _nmf_cols_ref = _c_i
-                rows = _all_nmf_rows
-                columns = _nmf_cols_ref or []
-                if len(_nmf_site_list) > 1:
-                    params["sitename"] = ", ".join(_nmf_site_list)
-                logger.info(f"[SSE] 야간최소유량 사전집계 조회 완료: {len(rows)}행")
-            except Exception as e:
-                logger.warning(f"[SSE] 야간최소유량 테이블 조회 실패: {e}")
-                rows, columns = [], []
-
-        # ALARM_ABNORMAL_LOCATIONS: 경보 이상 발생 지점 (동적 필터)
-        if intent == "ALARM_ABNORMAL_LOCATIONS":
-            alarm_filter_clause, alarm_label = _extract_alarm_filter(user_question)
-            alarm_level_clause, alarm_level_label = _extract_alarm_level(user_question)
-            _ftype = params.get("facilitytype", "")
-
-            where_parts = ["alarm_status = '진행중'"]
-            if _ftype:
-                _ftype_esc = _sql_escape_literal(_ftype)
-                where_parts.append(f"facilitytype = '{_ftype_esc}'")
-            where_base = " AND ".join(where_parts)
-            if alarm_filter_clause:
-                where_base += f" {alarm_filter_clause}"
-            if alarm_level_clause:
-                where_base += f" {alarm_level_clause}"
-
-            sql_combined = (
-                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
-                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
-                f" alarm_status"
-                f" FROM tb_equipment_alarm_report"
-                f" WHERE {where_base}"
-                f" ORDER BY alarm_start_time DESC"
-                f" LIMIT 100;"
-            )
-            # 폴백용 필터 정보를 params에 저장
-            params["_alarm_where_filter"] = alarm_filter_clause
-            params["_alarm_where_level"] = alarm_level_clause
-            params["_alarm_where_ftype"] = f"facilitytype = '{_ftype_esc}'" if _ftype else ""
-            params["_alarm_label"] = alarm_label
-            params["_alarm_level_label"] = alarm_level_label
-
-            # answer_template 오버라이드
-            _filter_desc = " ".join(p for p in [_ftype, alarm_label, alarm_level_label] if p)
-            _subject = f"{_filter_desc} 경보" if _filter_desc else "경보"
-            answer_template = {
-                "summary": _subject + " 발생 지점은 다음과 같습니다. (총 {total_alarm_count}건)",
-                "detail": [
-                    {"prefix": "•", "text": "{category_summary}"},
-                    {"prefix": "", "text": "{alarm_location_detail_block}"},
-                ],
-                "recommend_questions": {
-                    "title": "다음은 추천질의입니다.",
-                    "items": [
-                        {"prefix": "1.", "text": "현재 진행중인 알람은?"},
-                        {"prefix": "2.", "text": "경보 발생원인 진단 순위를 알려줘"},
-                        {"prefix": "3.", "text": "전체 이상 스캔해줘"},
-                    ]
-                }
-            }
-
-        # NETWORK_UPSTREAM_FAULT_ANALYSIS: SSLVPN/UTM 계층 통신이상 원인 분석 (SSE)
-        if intent == "NETWORK_UPSTREAM_FAULT_ANALYSIS":
-            sql_combined = """
-WITH latest AS (
-    SELECT equipment_id, MAX(check_time) AS mt
-    FROM tb_network_status
-    GROUP BY equipment_id
-),
-current_status AS (
-    SELECT ns.equipment_id, ns.is_alive
-    FROM tb_network_status ns
-    JOIN latest ON latest.equipment_id = ns.equipment_id AND latest.mt = ns.check_time
-),
-sslvpn_summary AS (
-    SELECT
-        ei_t.sitename || ' ' || ei_t.equipmenttype AS sslvpn_id,
-        COUNT(*)                                                            AS total_lte,
-        COUNT(*) FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))         AS down_lte,
-        bool_or(cs_t.is_alive)                                             AS sslvpn_alive,
-        array_agg(ei_s.sitename ORDER BY ei_s.sitename)
-            FILTER (WHERE NOT COALESCE(cs_s.is_alive, false))              AS down_sites
-    FROM tb_network_link nl
-    JOIN tb_equipment_info ei_s ON ei_s.equipment_id = nl.source_equipment_id
-    JOIN tb_equipment_info ei_t ON ei_t.equipment_id = nl.target_equipment_id
-    LEFT JOIN current_status cs_s ON cs_s.equipment_id = nl.source_equipment_id
-    LEFT JOIN current_status cs_t ON cs_t.equipment_id = nl.target_equipment_id
-    WHERE ei_s.equipmenttype = 'LTE 모뎀'
-      AND ei_t.equipmenttype = 'SSLVPN'
-    GROUP BY ei_t.sitename, ei_t.equipmenttype
-),
-utm_info AS (
-    SELECT
-        COUNT(*)                                                            AS total_utm,
-        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, true))            AS down_utm
-    FROM tb_equipment_info ei
-    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
-    WHERE ei.equipmenttype IN ('UTM', 'FA망 현대화사업소 UTM')
-),
-total_lte AS (
-    SELECT
-        COUNT(*)                                                            AS global_lte_total,
-        COUNT(*) FILTER (WHERE NOT COALESCE(cs.is_alive, false))           AS global_lte_down
-    FROM tb_equipment_info ei
-    LEFT JOIN current_status cs ON cs.equipment_id = ei.equipment_id
-    WHERE ei.equipmenttype = 'LTE 모뎀'
-)
-SELECT
-    ss.sslvpn_id,
-    ss.total_lte::int,
-    ss.down_lte::int,
-    ss.sslvpn_alive,
-    ss.down_sites,
-    ui.total_utm::int,
-    ui.down_utm::int,
-    tl.global_lte_total::int,
-    tl.global_lte_down::int
-FROM sslvpn_summary ss
-CROSS JOIN utm_info ui
-CROSS JOIN total_lte tl
-ORDER BY ss.down_lte DESC, ss.sslvpn_id
-"""
-
-        # RESERVOIR_LEVEL_HUNTING_CHECK: 3시간 방향전환 분석 (커스텀 핸들러)
-        if intent == "RESERVOIR_LEVEL_HUNTING_CHECK":
-            _sn = params.get("sitename", "")
-            try:
-                _hunt_rows, _hunt_cols = await asyncio.to_thread(
-                    _execute_hunting_check, _sn,
-                )
-                if _hunt_rows:
-                    rows = _hunt_rows
-                    columns = _hunt_cols
-            except Exception as e:
-                logger.error(f"[SSE] HUNTING_CHECK 쿼리 실패: {e}")
-
-        # RESERVOIR_LEVEL_CAUSE_ANALYSIS: 수위 변동 원인 분석
-        if intent == "RESERVOIR_LEVEL_CAUSE_ANALYSIS":
-            _sn = params.get("sitename", "")
-            try:
-                _cause_rows, _cause_cols = await asyncio.to_thread(
-                    _execute_level_cause_analysis, _sn,
-                )
-                if _cause_rows:
-                    rows = _cause_rows
-                    columns = _cause_cols
-            except Exception as e:
-                logger.error(f"[SSE] LEVEL_CAUSE_ANALYSIS 쿼리 실패: {e}")
-
-        # FACILITY_CATALOG_TREND_TABLE: 2단계 청크 직접 쿼리 (성능 최적화)
-        if intent == "FACILITY_CATALOG_TREND_TABLE":
-            _ft = params.get("facilitytype", "배수지")
-            _sn = params.get("sitename", "%%")
-            _di = params.get("datainfo", "")
-            _from = params.get("from_ts", "")
-            _to = params.get("to_ts", "")
-
-            trend_name_filter, label_pattern, display_name = _get_catalog_trend_filter(user_question, _di)
-            params["datainfo"] = display_name
-            logger.info(f"FACILITY_CATALOG_TREND_TABLE SQL: ft={_ft}, sn={_sn}, tn={trend_name_filter}, lbl={label_pattern}")
-
-            try:
-                _cat_rows, _cat_cols = await asyncio.to_thread(
-                    _execute_catalog_trend_query,
-                    _ft, _sn, trend_name_filter, label_pattern, _from, _to,
-                )
-                if _cat_rows:
-                    rows = _cat_rows
-                    columns = _cat_cols
-            except Exception as e:
-                logger.error(f"[SSE] FACILITY_CATALOG_TREND_TABLE 쿼리 실패: {e}")
-
-        # RESERVOIR SUPPLY: 유량적산 기반 일별/월별 공급량
-        if intent in _SUPPLY_INTENTS:
-            _mode = "monthly" if "MONTHLY" in intent else "daily"
-            _from_str = params.get("from_ts", "")
-            _to_str = params.get("to_ts", "")
-            try:
-                _from_d = datetime.strptime(_from_str[:10], "%Y-%m-%d").date()
-                _to_d = datetime.strptime(_to_str[:10], "%Y-%m-%d").date()
-                _sup_rows, _sup_cols = await asyncio.to_thread(
-                    _execute_reservoir_supply_query_with_conn, _mode, _from_d, _to_d
-                )
-                if _sup_rows:
-                    rows = _sup_rows
-                    columns = _sup_cols
-                params["total_count"] = str(len(_sup_rows))
-            except Exception as e:
-                logger.error(f"[SSE] RESERVOIR SUPPLY 쿼리 실패 ({intent}): {e}")
-
-        # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용)
-        # [아키텍처 2단계] 인텐트 핸들러 훅 — 인라인 분기를 intent_handlers/ 로
-        # 점진 이관 (1차: ANOMALY_CROSS_FACILITY / EQUIPMENT_FAULT_STATUS /
-        # ANOMALY_FLOW_BALANCE / FACILITY_TAG_LATEST_VALUE·TAG_DATA_TABLE)
+        # [아키텍처 2단계] 인텐트 핸들러 pre_sql 훅 — 인라인 분기를
+        # intent_handlers/ 로 점진 이관 (SQL 변형·rows 조달·템플릿 오버라이드)
         _handler = get_intent_handler(intent)
         if _handler is not None:
             _hctx = IntentContext(
                 intent=intent, question=user_question, params=params,
                 sql=sql_combined, session_id=sid,
+                raw_question=request.user_question or "",
+                answer_template=answer_template,
+                extra_sitenames=extra_sitenames,
             )
             await _handler.pre_sql(_hctx)
             sql_combined = _hctx.sql
+            if _hctx.answer_template is not None:
+                answer_template = _hctx.answer_template
+            extra_sitenames = _hctx.extra_sitenames
             if _hctx.rows is not None:
                 rows, columns = _hctx.rows, _hctx.columns
 
         # alarm_msg 기본값
         if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
             params["alarm_msg"] = ""
-
-        # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
-        if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
-            if params.get("sitename") in (None, "%%"):
-                params["sitename"] = ""
-            if params.get("facilitytype") in (None, "%%"):
-                params["facilitytype"] = ""
-            if params.get("datainfo") in (None, "%%"):
-                params["datainfo"] = ""
 
         # 전체 조회 LIKE 변환
         if params.get("sitename") == "%%":
