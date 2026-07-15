@@ -2136,10 +2136,15 @@ from intent_handlers import (  # noqa: E402
 init_intent_handler_services(
     get_causal_index=lambda: _CAUSAL_INDEX,
     get_scan_cache=lambda: _ANOMALY_SCAN_CACHE,
+    get_scan_cache_time=lambda: _ANOMALY_SCAN_CACHE_TIME,
     get_flow_balance_cache=lambda: (
         _FLOW_BALANCE_CACHE, _FLOW_BALANCE_CACHE_TIME, _FLOW_BALANCE_CACHE_TTL,
     ),
     filter_flow_balance_edges=_filter_flow_balance_edges,
+    save_csv=lambda *a, **k: save_csv(*a, **k),
+    stratified_sample=lambda *a, **k: stratified_sample(*a, **k),
+    # execute_sql 은 이 지점보다 뒤에 정의 — lambda 로 호출 시점 조회
+    execute_sql=lambda *a, **k: execute_sql(*a, **k),
 )
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
@@ -2982,37 +2987,8 @@ async def ask_stream(request: AskRequest):
         rows: list = []
         columns: list = []
 
-        # [아키텍처 2단계] 인텐트 핸들러 pre_sql 훅 — 인라인 분기를
-        # intent_handlers/ 로 점진 이관 (SQL 변형·rows 조달·템플릿 오버라이드)
-        _handler = get_intent_handler(intent)
-        if _handler is not None:
-            _hctx = IntentContext(
-                intent=intent, question=user_question, params=params,
-                sql=sql_combined, session_id=sid,
-                raw_question=request.user_question or "",
-                answer_template=answer_template,
-                extra_sitenames=extra_sitenames,
-            )
-            await _handler.pre_sql(_hctx)
-            sql_combined = _hctx.sql
-            if _hctx.answer_template is not None:
-                answer_template = _hctx.answer_template
-            extra_sitenames = _hctx.extra_sitenames
-            if _hctx.rows is not None:
-                rows, columns = _hctx.rows, _hctx.columns
-
-        # alarm_msg 기본값
-        if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
-            params["alarm_msg"] = ""
-
-        # 전체 조회 LIKE 변환
-        if params.get("sitename") == "%%":
-            sql_combined = sql_combined.replace(
-                "sitename = '{sitename}'", "sitename LIKE '{sitename}'"
-            )
-            params["sitename"] = "%%"
-
-        # from_ts == to_ts 보정
+        # from_ts == to_ts 보정 (같은 날짜 지정 → to_ts+1일) — 핸들러 조달이
+        # 보정된 기간을 쓰도록 pre_sql 훅보다 먼저 수행 (기존 실행 순서 보존)
         if intent in ("FACILITY_TAG_DATA_TABLE", "FACILITY_ANALOG_TIMESERIES_TABLE",
                        "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE",
                        "FACILITY_FLOW_CURRENT_TABLE",
@@ -3028,324 +3004,49 @@ async def ask_stream(request: AskRequest):
                 except ValueError:
                     pass
 
-        # ── ANOMALY_SCAN_ALL: stale-while-revalidate 캐시 반환 ──
-        if intent == "ANOMALY_SCAN_ALL":
-            if not _ANOMALY_SCAN_CACHE:
-                yield _sse_event("result", build_error_response(
-                    "전체 센서 점검 데이터를 준비 중입니다 (서버 시작 후 약 1~2분 소요). 잠시 후 다시 질문해 주세요.", sid
-                ))
-                return
-            # 캐시 있으면 항상 반환 (신선/만료 무관)
-            cache_age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds() if _ANOMALY_SCAN_CACHE_TIME else 0
-            logger.info(f"[SSE] ANOMALY_SCAN_ALL 캐시 반환 ({cache_age:.0f}초 전)")
-            yield _sse_event("progress", {"step": "cache_hit", "message": "이상감지 결과를 반환합니다..."})
-            _c = _ANOMALY_SCAN_CACHE
-            _c_rows = _c["rows"]
-            _c_cols = _c["columns"]
-            _c_data = dict(_c["processed_data"])
-            _c_tmpl = _c["answer_template"]
-
-            # facilitytype / group_code 필터 적용
-            _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, params)
-            _scope = build_anomaly_scope_label(params)
-            if _scope != "전체":
-                _c_data["total_tag_count"] = len(_c_rows)
-                from anomaly_detector import count_anomaly_levels
-                _fc = count_anomaly_levels(_c_rows, _c_cols)
-                _c_data["error_count"] = _fc["이상"]
-                _c_data["warn_count"] = _fc["주의"]
-                _c_data["ok_count"] = _fc["정상"]
-                # verdict 기반 교차이상 카운트 재계산
-                _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
-                if _vd_idx is not None:
-                    _c_data["cross_anomaly_count"] = sum(
-                        1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
-                    )
-
-            params["total_count"] = str(len(_c_rows))
-            rendered = render_answer_template(_c_tmpl, _c_data)
-            rendered = apply_corrections_to_answer(rendered, params)
-
-            csv_fn = save_csv(_c_rows, _c_cols, intent, sid)
-            _total = len(_c_rows)
-            if _total > MAX_TABLE_ROWS:
-                _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
-                _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
-                _trunc = True
-            else:
-                _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
-                _trunc = False
-
-            yield _sse_event("result", build_success_response(
-                intent=intent,
-                answer=rendered,
+        # [아키텍처 2단계] 인텐트 핸들러 pre_sql 훅 — 인라인 분기를
+        # intent_handlers/ 로 점진 이관 (SQL 변형·rows 조달·템플릿 오버라이드)
+        _handler = get_intent_handler(intent)
+        if _handler is not None:
+            _hctx = IntentContext(
+                intent=intent, question=user_question, params=params,
+                sql=sql_combined, session_id=sid,
+                raw_question=request.user_question or "",
+                answer_template=answer_template,
+                extra_sitenames=extra_sitenames,
                 graph_type=graph_type,
-                data=_resp_data,
                 table_columns=table_columns,
                 table_type=table_type,
-                session_id=sid,
-                csv_url=f"/csv/{csv_fn}",
-                total_rows=_total,
-                data_truncated=_trunc,
                 intent_candidates=intent_candidates,
-                site_group_distribution=_c_data.get("site_group_distribution"),
-                cross_anomaly_count=_c_data.get("cross_anomaly_count"),
-                cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")),
-                cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), params.get("sitename")) or []),
-                data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), params.get("sitename")),
-                equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")),
-                equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), params.get("sitename")) or []),
-                flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), params.get("sitename")),
-                # [Phase 5] ML 지표 — 동기 경로에는 있었으나 SSE 에 누락돼 있던 격차 해소
-                ml_model_count=_c_data.get("ml_model_count"),
-                ml_anomaly_count=_c_data.get("ml_anomaly_count"),
-                ml_agree_count=_c_data.get("ml_agree_count"),
-                ml_tier1_count=_c_data.get("ml_tier1_count"),
-                ml_tier2_count=_c_data.get("ml_tier2_count"),
-            ))
-            return
+            )
+            await _handler.pre_sql(_hctx)
+            sql_combined = _hctx.sql
+            if _hctx.answer_template is not None:
+                answer_template = _hctx.answer_template
+            extra_sitenames = _hctx.extra_sitenames
+            if _hctx.rows is not None:
+                rows, columns = _hctx.rows, _hctx.columns
+            # early-return: 핸들러가 최종 응답을 확정한 경우 (캐시 반환 등)
+            if _hctx.final_response is not None:
+                if _hctx.progress_message is not None:
+                    _p_step, _p_msg = _hctx.progress_message
+                    yield _sse_event("progress", {"step": _p_step, "message": _p_msg})
+                yield _sse_event("result", _hctx.final_response)
+                return
 
-        # FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS: 청크 직접 쿼리 (53s→~10s)
-        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS":
-            _sd_sn = params.get("sitename", "")
-            _sd_ft = params.get("facilitytype", "소블록")
-            try:
-                _sd_rows, _sd_cols, _sd_stats_list = await asyncio.to_thread(
-                    _execute_night_min_flow_stddev_query, _sd_sn, _sd_ft,
-                )
-                if _sd_rows:
-                    _sd_data = [dict(zip(_sd_cols, r)) for r in _sd_rows]
-                    _sd_kwargs_s: dict = {}
-                    if len(_sd_rows) == 1:
-                        _sd_kwargs_s["stddev_stats"] = _extract_stddev_stats(_sd_data[0])
-                        _sd_rendered_s = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
-                    elif _sd_stats_list:
-                        _sd_kwargs_s["stddev_stats_list"] = _sd_stats_list
-                        _sd_ft_label = params.get("facilitytype", "소블록")
-                        _raw_sn = params.get("sitename", "")
-                        _sd_sn_label = "전체" if (not _raw_sn or _raw_sn == "%%") else _raw_sn
-                        _n_normal = sum(1 for s in _sd_stats_list if (s.get("excess") or 0) <= 0)
-                        _n_exceed = len(_sd_stats_list) - _n_normal
-                        _sd_summary = f"{_sd_sn_label} {_sd_ft_label} 야간최소유량 표준편차 분석 결과입니다."
-                        _sd_rendered_s = {
-                            "summary": _sd_summary,
-                            "detail": [
-                                {"prefix": "ㆍ", "text": f"총 {len(_sd_stats_list)}개 시설 분석 — 정상 {_n_normal}개, 신뢰구간 초과 {_n_exceed}개"},
-                            ],
-                        }
-                    else:
-                        _sd_rendered_s = render_answer_template(answer_template, params) if isinstance(answer_template, dict) else {}
-                    yield _sse_event("result", build_success_response(
-                        intent=intent, answer=_sd_rendered_s, graph_type=graph_type,
-                        data=_sd_data, columns=_sd_cols,
-                        session_id=sid, intent_candidates=intent_candidates,
-                        total_rows=len(_sd_rows),
-                        **_sd_kwargs_s,
-                    ))
-                    return
-            except Exception as e:
-                logger.warning(f"SSE 표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
+        # alarm_msg 기본값
+        if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
+            params["alarm_msg"] = ""
 
-        # LEAK_CUSUM_ANALYSIS: 청크 직접 쿼리 (rows만 채움 → process_sql_result에서 CUSUM)
-        if intent == "LEAK_CUSUM_ANALYSIS":
-            _lc_sn = params.get("sitename", "전체")
-            _lc_ft = params.get("facilitytype", "소블록")
-            _lc_from = params.get("from_ts", "")
-            _lc_to = params.get("to_ts", "")
-            try:
-                _lc_rows, _lc_cols = await asyncio.to_thread(
-                    _execute_night_min_flow_query,
-                    _lc_sn, _lc_ft, _lc_from, _lc_to,
-                )
-                if _lc_rows:
-                    rows = _lc_rows
-                    columns = _lc_cols
-                    logger.info(f"SSE LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
-            except Exception as e:
-                logger.warning(f"SSE LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
+        # 전체 조회 LIKE 변환
+        if params.get("sitename") == "%%":
+            sql_combined = sql_combined.replace(
+                "sitename = '{sitename}'", "sitename LIKE '{sitename}'"
+            )
+            params["sitename"] = "%%"
 
-        # NIGHT_MIN_FLOW_STATUS: 커스텀 핸들러 (다중 시설 지원)
-        if intent == "NIGHT_MIN_FLOW_STATUS":
-            _nfs_ft = params.get("facilitytype", "소블록")
-            _nfs_site_list = [params.get("sitename", "")]
-            if extra_sitenames:
-                _nfs_site_list.extend(extra_sitenames)
-                extra_sitenames = None
-            _nfs_result_cols = ["sitename", "facilitytype", "label", "datadesc",
-                                "current_val", "unit", "log_time", "avg_month", "avg_year"]
-            _all_nfs_rows: list = []
-            from collections import defaultdict
-            for _nfs_sn in _nfs_site_list:
-                if not _nfs_sn:
-                    continue
-                try:
-                    _now = datetime.now()
-                    _cur_rows, _cur_cols = await asyncio.to_thread(
-                        _execute_night_min_flow_query,
-                        _nfs_sn, _nfs_ft,
-                        (_now - timedelta(days=1)).strftime("%Y-%m-%d"),
-                        _now.strftime("%Y-%m-%d"),
-                    )
-                    if not _cur_rows:
-                        continue
-                    _mon_rows, _ = await asyncio.to_thread(
-                        _execute_night_min_flow_query,
-                        _nfs_sn, _nfs_ft,
-                        (_now - timedelta(days=30)).strftime("%Y-%m-%d"),
-                        _now.strftime("%Y-%m-%d"),
-                    )
-                    _yr_rows, _ = await asyncio.to_thread(
-                        _execute_night_min_flow_query,
-                        _nfs_sn, _nfs_ft,
-                        (_now - timedelta(days=365)).strftime("%Y-%m-%d"),
-                        _now.strftime("%Y-%m-%d"),
-                    )
-                    _tag_vals_m: dict[str, list] = defaultdict(list)
-                    _tag_vals_y: dict[str, list] = defaultdict(list)
-                    for r in _mon_rows:
-                        rd = dict(zip(_cur_cols, r))
-                        _tag_vals_m[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
-                    for r in _yr_rows:
-                        rd = dict(zip(_cur_cols, r))
-                        _tag_vals_y[rd.get("tagsn", "")].append(float(rd.get("val") or 0))
-                    _seen: set = set()
-                    for r in reversed(_cur_rows):
-                        rd = dict(zip(_cur_cols, r))
-                        _tsn = rd.get("tagsn", "")
-                        if _tsn in _seen:
-                            continue
-                        _seen.add(_tsn)
-                        _cv = float(rd.get("val") or 0)
-                        _mv = _tag_vals_m.get(_tsn, [])
-                        _yv = _tag_vals_y.get(_tsn, [])
-                        _all_nfs_rows.append((
-                            rd.get("sitename", ""), rd.get("facilitytype", ""),
-                            rd.get("label", rd.get("datainfo", "")), rd.get("datadesc", ""),
-                            round(_cv, 2), rd.get("unit") or "", rd.get("log_time", ""),
-                            round(sum(_mv) / len(_mv), 2) if _mv else None,
-                            round(sum(_yv) / len(_yv), 2) if _yv else None,
-                        ))
-                    logger.info(f"SSE NIGHT_MIN_FLOW_STATUS '{_nfs_sn}': {len(_all_nfs_rows)}행 누적")
-                except Exception as e:
-                    logger.warning(f"SSE NIGHT_MIN_FLOW_STATUS '{_nfs_sn}' 커스텀 실패, 폴백: {e}")
-            if _all_nfs_rows:
-                sql_combined = "-- custom handler"
-                rows = _all_nfs_rows
-                columns = _nfs_result_cols
-                if len([s for s in _nfs_site_list if s]) > 1:
-                    params["sitename"] = ", ".join(s for s in _nfs_site_list if s)
-                logger.info(f"SSE NIGHT_MIN_FLOW_STATUS 커스텀 완료: {len(_all_nfs_rows)}행")
-
-        # NIGHT_MIN_FLOW_SUMMARY_TABLE: 청크 직접 쿼리 (fn_night_min_flow_summary 대체)
-        if intent == "NIGHT_MIN_FLOW_SUMMARY_TABLE":
-            _nmf_sn = params.get("sitename", "전체")
-            _nmf_ft = params.get("facilitytype", "소블록")
-            _nmf_from = params.get("from_ts", "")
-            _nmf_to = params.get("to_ts", "")
-            try:
-                _nmf_rows, _nmf_cols = await asyncio.to_thread(
-                    _execute_night_min_flow_query,
-                    _nmf_sn, _nmf_ft, _nmf_from, _nmf_to,
-                )
-                if _nmf_rows:
-                    csv_fn = save_csv(_nmf_rows, _nmf_cols, intent, sid)
-                    _total = len(_nmf_rows)
-                    if _total > MAX_TABLE_ROWS:
-                        _sampled = stratified_sample(_nmf_rows, _nmf_cols, MAX_TABLE_ROWS)
-                        _resp_data = [dict(zip(_nmf_cols, r)) for r in _sampled]
-                        _trunc = True
-                    else:
-                        _resp_data = [dict(zip(_nmf_cols, r)) for r in _nmf_rows]
-                        _trunc = False
-                    _nmf_rendered = answer_template if isinstance(answer_template, dict) else {}
-                    yield _sse_event("result", build_success_response(
-                        intent=intent, answer=_nmf_rendered, graph_type=graph_type,
-                        data=_resp_data, columns=_nmf_cols, csv_file=csv_fn,
-                        session_id=sid, intent_candidates=intent_candidates,
-                        total_rows=_total, data_truncated=_trunc,
-                    ))
-                    return
-            except Exception as e:
-                logger.warning(f"SSE 야간최소유량 청크 쿼리 실패, 원본 함수 폴백: {e}")
-
-        # TAG_DAILY_MISSING_SUMMARY: 청크 직접 쿼리 (fn_tag_daily_summary 대체)
-        if intent == "TAG_DAILY_MISSING_SUMMARY":
-            _tdm_sn = params.get("sitename", "")
-            _tdm_ft = params.get("facilitytype", "")
-            _tdm_from = params.get("from_ts", "")
-            _tdm_to = params.get("to_ts", "")
-            _tdm_di = params.get("datainfo", "")
-            try:
-                _tdm_rows, _tdm_cols = await asyncio.to_thread(
-                    _execute_tag_daily_summary_query,
-                    _tdm_from, _tdm_to, _tdm_sn, _tdm_ft, _tdm_di,
-                )
-                if _tdm_rows:
-                    csv_fn = save_csv(_tdm_rows, _tdm_cols, intent, sid)
-                    _total = len(_tdm_rows)
-                    _resp_data = [dict(zip(_tdm_cols, r)) for r in _tdm_rows]
-                    # placeholder 치환 — params 기반 ({sitename}, {facilitytype} 등)
-                    _tdm_rendered = (
-                        render_answer_template(answer_template, {**params, "total_count": str(_total)})
-                        if isinstance(answer_template, dict) else {}
-                    )
-                    _tdm_rendered = apply_corrections_to_answer(_tdm_rendered, params)
-                    yield _sse_event("result", build_success_response(
-                        intent=intent, answer=_tdm_rendered, graph_type=graph_type,
-                        data=_resp_data, columns=_tdm_cols, csv_file=csv_fn,
-                        session_id=sid, intent_candidates=intent_candidates,
-                        total_rows=_total,
-                    ))
-                    return
-            except Exception as e:
-                logger.warning(f"SSE 결측분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
-
-        # TIMESERIES 인텐트: 그룹 기반 + 청크 직접 쿼리 (JOIN 플래너 우회)
-        if intent in _TIMESERIES_CHUNK_INTENTS:
-            _sn = params.get("sitename", "%%")
-            _ft_ts = params.get("facilitytype", "%%")
-            _from = params.get("from_ts", "")
-            _to = params.get("to_ts", "")
-
-            # tagtype 결정
-            if intent == "FACILITY_DIGITAL_STATUS_TIMESERIES_TABLE":
-                _tagtype = "Digital Input"
-            elif intent == "FACILITY_TAG_DATA_TABLE":
-                _dk = params.get("datakey") or params.get("datainfo") or ""
-                _tagtype = ("Digital Input" if "밸브" in _dk
-                            else "Analog Output" if "설정" in _dk
-                            else "Analog Input")
-            else:
-                _tagtype = "Analog Input"
-
-            # datainfo 패턴 결정
-            if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
-                _di_pat = "(유량.*순시|순시.*유량)"
-            elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
-                _di_pat = "유량.*적산"
-            else:
-                _di_pat = params.get("datainfo", ".*")
-
-            # group_code 결정: param_extractor에서 추출 → intent-specific 오버라이드
-            _group = params.get("group_code")
-            if intent == "FACILITY_FLOW_INSTANT_TIMESERIES_TABLE":
-                _group = _group or "FLOW_INSTANT"
-            elif intent == "FACILITY_FLOW_ACCUMULATED_TIMESERIES_TABLE":
-                _group = _group or "FLOW_CUMULATIVE"
-
-            logger.info(f"[SSE] TIMESERIES 쿼리 시작: intent={intent}, site={_sn}, ft={_ft_ts}, tagtype={_tagtype}, di_pat={_di_pat}, group={_group}, from={_from}, to={_to}")
-            try:
-                _ts_rows, _ts_cols = await asyncio.to_thread(
-                    _execute_timeseries_query,
-                    _sn, _ft_ts, _tagtype, _di_pat, _from, _to,
-                    _group,
-                )
-                logger.info(f"[SSE] TIMESERIES 쿼리 완료: {len(_ts_rows)}행")
-                if _ts_rows:
-                    rows = _ts_rows
-                    columns = _ts_cols
-            except Exception as e:
-                logger.error(f"[SSE] TIMESERIES 청크 쿼리 실패 ({intent}): {e}")
+        # [아키텍처 2단계 3차] SCAN_ALL 캐시/STDDEV/CUSUM/야간최소유량/결측/
+        # TIMESERIES 조달·early-return → intent_handlers/ pre_sql 훅으로 이관
 
         # --- 진행 3: 데이터 조회 ---
         yield _sse_event("progress", {

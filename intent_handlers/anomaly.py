@@ -31,8 +31,103 @@ class AnomalyFilterPrepareMixin:
 
 @intent_handler
 class AnomalyScanAllHandler(AnomalyFilterPrepareMixin, IntentHandler):
-    """전체 이상 스캔 — prepare 필터 주입 (캐시 반환은 아직 인라인, 3차 이관)."""
+    """전체 이상 스캔 — prepare 필터 주입 + stale-while-revalidate 캐시 반환."""
     intents = ("ANOMALY_SCAN_ALL",)
+
+    async def pre_sql(self, ctx: IntentContext) -> None:
+        from datetime import datetime
+
+        from response_builder import (
+            MAX_TABLE_ROWS,
+            _filter_anomaly_cache_rows,
+            _filter_by_sitename,
+            _filter_cross_mismatches,
+            _filter_flow_balance,
+            apply_corrections_to_answer,
+            build_anomaly_scope_label,
+            build_error_response,
+            build_success_response,
+            render_answer_template,
+        )
+
+        scan_cache = (service("get_scan_cache") or (lambda: None))()
+        if not scan_cache:
+            ctx.final_response = build_error_response(
+                "전체 센서 점검 데이터를 준비 중입니다 (서버 시작 후 약 1~2분 소요). 잠시 후 다시 질문해 주세요.",
+                session_id=ctx.session_id,
+            )
+            return
+        cache_time = (service("get_scan_cache_time") or (lambda: None))()
+        cache_age = (datetime.now() - cache_time).total_seconds() if cache_time else 0
+        logger.info(f"[SSE] ANOMALY_SCAN_ALL 캐시 반환 ({cache_age:.0f}초 전)")
+        ctx.progress_message = ("cache_hit", "이상감지 결과를 반환합니다...")
+        _c = scan_cache
+        _c_rows = _c["rows"]
+        _c_cols = _c["columns"]
+        _c_data = dict(_c["processed_data"])
+        _c_tmpl = _c["answer_template"]
+
+        # facilitytype / group_code 필터 적용
+        _c_rows = _filter_anomaly_cache_rows(_c_rows, _c_cols, ctx.params)
+        _scope = build_anomaly_scope_label(ctx.params)
+        if _scope != "전체":
+            _c_data["total_tag_count"] = len(_c_rows)
+            from anomaly_detector import count_anomaly_levels
+            _fc = count_anomaly_levels(_c_rows, _c_cols)
+            _c_data["error_count"] = _fc["이상"]
+            _c_data["warn_count"] = _fc["주의"]
+            _c_data["ok_count"] = _fc["정상"]
+            # verdict 기반 교차이상 카운트 재계산
+            _vd_idx = _c_cols.index("verdict") if "verdict" in _c_cols else None
+            if _vd_idx is not None:
+                _c_data["cross_anomaly_count"] = sum(
+                    1 for r in _c_rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                )
+
+        ctx.params["total_count"] = str(len(_c_rows))
+        rendered = render_answer_template(_c_tmpl, _c_data)
+        rendered = apply_corrections_to_answer(rendered, ctx.params)
+
+        save_csv = service("save_csv")
+        stratified_sample = service("stratified_sample")
+        csv_fn = save_csv(_c_rows, _c_cols, ctx.intent, ctx.session_id)
+        _total = len(_c_rows)
+        if _total > MAX_TABLE_ROWS:
+            _sampled = stratified_sample(_c_rows, _c_cols, MAX_TABLE_ROWS)
+            _resp_data = [dict(zip(_c_cols, r)) for r in _sampled]
+            _trunc = True
+        else:
+            _resp_data = [dict(zip(_c_cols, r)) for r in _c_rows]
+            _trunc = False
+
+        _sn = ctx.params.get("sitename")
+        ctx.final_response = build_success_response(
+            intent=ctx.intent,
+            answer=rendered,
+            graph_type=ctx.graph_type,
+            data=_resp_data,
+            table_columns=ctx.table_columns,
+            table_type=ctx.table_type,
+            session_id=ctx.session_id,
+            csv_url=f"/csv/{csv_fn}",
+            total_rows=_total,
+            data_truncated=_trunc,
+            intent_candidates=ctx.intent_candidates,
+            site_group_distribution=_c_data.get("site_group_distribution"),
+            cross_anomaly_count=_c_data.get("cross_anomaly_count"),
+            cross_facility_mismatches=_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), _sn),
+            cross_facility_mismatch_count=len(_filter_cross_mismatches(_c_data.get("cross_facility_mismatches"), _sn) or []),
+            data_quality_issues=_filter_by_sitename(_c_data.get("data_quality_issues"), _sn),
+            equipment_failure_impacts=_filter_by_sitename(_c_data.get("equipment_failure_impacts"), _sn),
+            equipment_failure_count=len(_filter_by_sitename(_c_data.get("equipment_failure_impacts"), _sn) or []),
+            flow_balance_summary=_filter_flow_balance(_c_data.get("flow_balance_summary"), _sn),
+            # [Phase 5] ML 지표 — 동기 경로에는 있었으나 SSE 에 누락돼 있던 격차 해소
+            ml_model_count=_c_data.get("ml_model_count"),
+            ml_anomaly_count=_c_data.get("ml_anomaly_count"),
+            ml_agree_count=_c_data.get("ml_agree_count"),
+            ml_tier1_count=_c_data.get("ml_tier1_count"),
+            ml_tier2_count=_c_data.get("ml_tier2_count"),
+        )
 
 
 @intent_handler

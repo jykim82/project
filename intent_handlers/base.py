@@ -49,6 +49,15 @@ class IntentContext:
     columns: Optional[list] = None
     answer_template: Optional[dict] = None   # 변형 시 파이프라인에 반영
     extra_sitenames: Optional[list] = None   # 다중 시설 질의 잔여분 (소비 시 None 으로)
+    # 응답 조립용 읽기 컨텍스트 (early-return 형 핸들러가 사용)
+    graph_type: str = "none"
+    table_columns: Optional[list] = None
+    table_type: Optional[str] = None
+    intent_candidates: list = field(default_factory=list)
+    # 설정 시 파이프라인이 즉시 result 로 yield 하고 종료 (early-return)
+    final_response: Optional[dict] = None
+    # final_response 직전 표출할 progress 메시지 (step, message)
+    progress_message: Optional[tuple] = None
     extras: dict = field(default_factory=dict)
 
 
