@@ -91,11 +91,36 @@ event_generator 는 인텐트 분기 0개, 651줄 순수 파이프라인만 남�
 
 **새 인텐트 추가 = example3.json 선언 + (커스텀 필요 시) 핸들러 클래스 1개.**
 
-## 3단계 — 카드 타입 선언화 (계획)
+## 3단계 — 카드 타입 선언화 (완료 2026-07-15)
 
-백엔드 응답에 `card_type` 필드 선언 → 프런트는 인텐트 목록
-(chat-response-mapper ANOMALY_INTENTS, BotMessage 억제 목록) 대신 card_type
-레지스트리로 렌더. Tier 3 카드 갤러리와 함께 진행.
+**백엔드가 카드를 선언하고 프런트는 따른다** — 카드 렌더·평문 억제의 단일 소스.
+
+### 백엔드 (`slm@9156d70`)
+- example3.json 인텐트 정의에 `card_type` 11종 선언 (anomaly_scan/detail/
+  predict/pattern/history/compare, leak_cusum, alarm_history, cross_facility,
+  flow_balance, equipment_fault)
+- `build_success_response` 가 인텐트→card_type 맵(1회 캐시)으로 **자동 주입** —
+  파이프라인·핸들러 수정 없이 모든 빌드 지점 적용
+
+### 프런트 (`slm-dashboard@3cc666c`)
+- mapper: ANOMALY 카드 게이트 `response.card_type` 우선
+- BotMessage: `isCard(cardType, legacyIntent)` — 데이터 카드 3종 판정 +
+  평문 억제 3종(alarm_history/leak_cusum/anomaly_history)
+- VisualRenderer: ONGOING_ALARM 특례 → `alarm_history` 우선
+
+### 하위호환 (필수 불변식)
+**히스토리(tb_ai_chat_bot 저장 응답)에는 card_type 이 없다** → 모든 소비처는
+인텐트 목록 폴백을 유지한다. 폴백 제거 금지 (과거 대화 재렌더 깨짐).
+검증: 신규 응답 카드+평문 억제 정상 / 과거 대화 재렌더 카드 정상 / 스모크 16/16.
+
+### 새 카드 추가 절차
+1. example3.json 인텐트에 `card_type` 선언
+2. 프런트 카드 컴포넌트 + mapper/BotMessage 의 card_type 매핑 1곳
+3. (기존 인텐트 목록은 건드릴 필요 없음)
+
+### 남은 후속
+- Tier 3 `/admin/chat-gallery` 카드 갤러리 (미적 검수) — 별도 작업
+- 신규 카드가 쌓이면 프런트 card_type→컴포넌트 매핑을 단일 레지스트리 객체로 승격 검토
 
 ## 인텐트 추가 절차 (1단계 기준)
 
