@@ -2125,6 +2125,22 @@ from intent_matching import (  # noqa: E402
     match_intent,
 )
 from intent_matching import dynamic_sql_intents  # noqa: E402
+from intent_handlers import (  # noqa: E402
+    IntentContext,
+    get_intent_handler,
+    init_services as init_intent_handler_services,
+)
+
+# [아키텍처 2단계] 핸들러가 ai_server 전역(재할당되는 캐시·인덱스)에 접근할
+# getter 주입 — lambda 는 호출 시점에 현재 모듈 전역을 읽는다.
+init_intent_handler_services(
+    get_causal_index=lambda: _CAUSAL_INDEX,
+    get_scan_cache=lambda: _ANOMALY_SCAN_CACHE,
+    get_flow_balance_cache=lambda: (
+        _FLOW_BALANCE_CACHE, _FLOW_BALANCE_CACHE_TIME, _FLOW_BALANCE_CACHE_TTL,
+    ),
+    filter_flow_balance_edges=_filter_flow_balance_edges,
+)
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
 
@@ -3426,90 +3442,23 @@ ORDER BY ss.down_lte DESC, ss.sslvpn_id
                 logger.error(f"[SSE] RESERVOIR SUPPLY 쿼리 실패 ({intent}): {e}")
 
         # ANOMALY_CROSS_FACILITY: 시설간 교차 검증 (SQL 미사용)
-        if intent == "ANOMALY_CROSS_FACILITY":
-            try:
-                from anomaly_detector import cross_facility_check_all
-
-                mismatches = await asyncio.to_thread(
-                    cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
-                )
-                params["_cross_facility_mismatches"] = mismatches
-                rows = [["cross_facility_done"]]
-                columns = ["status"]
-                logger.info(f"[SSE] ANOMALY_CROSS_FACILITY: {len(mismatches)}건 불일치")
-            except Exception as e:
-                logger.error(f"[SSE] ANOMALY_CROSS_FACILITY 실패: {e}")
-                params["_cross_facility_mismatches"] = []
-                rows = [["cross_facility_error"]]
-                columns = ["status"]
-
-        # EQUIPMENT_FAULT_STATUS: 설비 장애 전용 (ANOMALY_SCAN_ALL 캐시의 DI 고장 재사용)
-        if intent == "EQUIPMENT_FAULT_STATUS":
-            cache = (_ANOMALY_SCAN_CACHE or {}).get("processed_data", {})
-            impacts = cache.get("equipment_failure_impacts") or []
-            params["_equipment_failure_impacts"] = impacts
-            rows = [["equipment_fault_done"]]
-            columns = ["status"]
-            logger.info(f"[SSE] EQUIPMENT_FAULT_STATUS: 설비 장애 {len(impacts)}건 (스캔 캐시)")
-
-        # ANOMALY_FLOW_BALANCE: 물 수지 검증 (SQL 미사용)
-        if intent == "ANOMALY_FLOW_BALANCE":
-            _fb_sitename = params.get("sitename")
-            try:
-                if _FLOW_BALANCE_CACHE and _FLOW_BALANCE_CACHE_TIME:
-                    cache_age = (datetime.now() - _FLOW_BALANCE_CACHE_TIME).total_seconds()
-                    if cache_age < _FLOW_BALANCE_CACHE_TTL:
-                        params["_flow_balance_edges"] = _filter_flow_balance_edges(_FLOW_BALANCE_CACHE, _fb_sitename)
-                        rows = [["flow_balance_cached"]]
-                        columns = ["status"]
-                        logger.info(f"[SSE] ANOMALY_FLOW_BALANCE 캐시 히트 ({cache_age:.0f}초 전), sitename={_fb_sitename}")
-                    else:
-                        raise ValueError("cache expired")
-                else:
-                    raise ValueError("no cache")
-            except (ValueError, Exception):
-                try:
-                    from flow_balance import compute_flow_balance_all
-                    tag_info = await asyncio.to_thread(_get_tag_datainfo_cache)
-                    edges = await asyncio.to_thread(
-                        compute_flow_balance_all,
-                        _query_flow_timeseries, _CAUSAL_INDEX, tag_info,
-                    )
-                    params["_flow_balance_edges"] = _filter_flow_balance_edges(edges, _fb_sitename)
-                    rows = [["flow_balance_done"]]
-                    columns = ["status"]
-                    logger.info(f"[SSE] ANOMALY_FLOW_BALANCE: {len(edges)}엣지, sitename={_fb_sitename}")
-                except Exception as e2:
-                    logger.error(f"[SSE] ANOMALY_FLOW_BALANCE 실패: {e2}")
-                    params["_flow_balance_edges"] = []
-                    rows = [["flow_balance_error"]]
-                    columns = ["status"]
+        # [아키텍처 2단계] 인텐트 핸들러 훅 — 인라인 분기를 intent_handlers/ 로
+        # 점진 이관 (1차: ANOMALY_CROSS_FACILITY / EQUIPMENT_FAULT_STATUS /
+        # ANOMALY_FLOW_BALANCE / FACILITY_TAG_LATEST_VALUE·TAG_DATA_TABLE)
+        _handler = get_intent_handler(intent)
+        if _handler is not None:
+            _hctx = IntentContext(
+                intent=intent, question=user_question, params=params,
+                sql=sql_combined, session_id=sid,
+            )
+            await _handler.pre_sql(_hctx)
+            sql_combined = _hctx.sql
+            if _hctx.rows is not None:
+                rows, columns = _hctx.rows, _hctx.columns
 
         # alarm_msg 기본값
         if params.get("alarm_msg") is None and "{alarm_msg}" in sql_combined:
             params["alarm_msg"] = ""
-
-        # tagtype 필터 주입
-        if intent in ("FACILITY_TAG_LATEST_VALUE", "FACILITY_TAG_DATA_TABLE"):
-            _dk = params.get("datakey") or params.get("datainfo") or ""
-            if "밸브" in _dk:
-                _tagtype = "Digital Input"
-            elif "설정" in _dk:
-                _tagtype = "Analog Output"
-            else:
-                _tagtype = "Analog Input"
-            if intent == "FACILITY_TAG_LATEST_VALUE":
-                # ORDER BY 앞(WHERE 마지막)에 tagtype 조건 주입
-                # (템플릿이 LATERAL top-1 구조로 바뀌어 GROUP BY 없음 — 2026-07-14 perf)
-                sql_combined = sql_combined.replace(
-                    "ORDER BY l.tagsn",
-                    f"  AND i.tagtype = '{_tagtype}'\nORDER BY l.tagsn",
-                )
-            elif "AND i.tagtype = 'Analog Input'" in sql_combined:
-                sql_combined = sql_combined.replace(
-                    "AND i.tagtype = 'Analog Input'",
-                    f"AND i.tagtype = '{_tagtype}'",
-                )
 
         # FACILITY_ABNORMAL_STATUS_SUMMARY: fn_realtime_missing_summary는 빈 문자열 = 전체
         if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
