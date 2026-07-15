@@ -2982,7 +2982,8 @@
       ]
     },
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "alarm_history"
   },
   {
     "intent": "ALARM_ABNORMAL_LOCATIONS",
@@ -3513,7 +3514,8 @@
         "센서 스캔",
         "센서 이상"
       ]
-    }
+    },
+    "card_type": "anomaly_scan"
   },
   {
     "intent": "ANOMALY_FACILITY_DETAIL",
@@ -3602,7 +3604,8 @@
       "active_pct"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "anomaly_detail"
   },
   {
     "intent": "ANOMALY_HISTORY",
@@ -3686,7 +3689,8 @@
       "alarm_status"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "anomaly_history"
   },
   {
     "intent": "ANOMALY_PREDICT",
@@ -3816,7 +3820,8 @@
       "confidence"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "anomaly_predict"
   },
   {
     "intent": "ANOMALY_COMPARE",
@@ -3934,7 +3939,8 @@
       "max_z_score"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "anomaly_compare"
   },
   {
     "intent": "ANOMALY_PATTERN",
@@ -4048,7 +4054,8 @@
       "current_hour"
     ],
     "graph_type": "table",
-    "table_type": "summary"
+    "table_type": "summary",
+    "card_type": "anomaly_pattern"
   },
   {
     "intent": "ANOMALY_CROSS_FACILITY",
@@ -4104,7 +4111,8 @@
         "흐름 불일치",
         "정합성"
       ]
-    }
+    },
+    "card_type": "cross_facility"
   },
   {
     "intent": "ANOMALY_FLOW_BALANCE",
@@ -4157,7 +4165,8 @@
         "유량균형",
         "불명수량"
       ]
-    }
+    },
+    "card_type": "flow_balance"
   },
   {
     "intent": "LEAK_CUSUM_ANALYSIS",
@@ -4252,7 +4261,8 @@
         "CUSUM",
         "cusum"
       ]
-    }
+    },
+    "card_type": "leak_cusum"
   },
   {
     "intent": "FACILITY_CATALOG_TREND_TABLE",
@@ -4747,6 +4757,7 @@
         "장비 장애",
         "장비 고장"
       ]
-    }
+    },
+    "card_type": "equipment_fault"
   }
 ]

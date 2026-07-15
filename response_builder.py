@@ -1108,7 +1108,31 @@ def build_success_response(
                     "ml_features_used"):
         if kwargs.get(_ml_key) is not None:
             response[_ml_key] = kwargs[_ml_key]
+    # [아키텍처 3단계] card_type — example3.json 인텐트 선언에서 자동 주입.
+    # 프런트는 이 값으로 카드 렌더·평문 억제를 결정 (인텐트 하드코딩 목록의
+    # 단일 소스화). 과거 저장 응답(히스토리)에는 없으므로 프런트는 인텐트 폴백 유지.
+    _ct = _card_type_for_intent(intent)
+    if _ct:
+        response["card_type"] = _ct
     return response
+
+
+_CARD_TYPE_MAP: Optional[dict] = None
+
+
+def _card_type_for_intent(intent: str) -> Optional[str]:
+    """example3.json 의 card_type 선언 → intent 매핑 (첫 호출 시 1회 캐시)."""
+    global _CARD_TYPE_MAP
+    if _CARD_TYPE_MAP is None:
+        try:
+            from intent_matching import INTENT_DEFINITIONS
+            _CARD_TYPE_MAP = {
+                d["intent"]: d["card_type"]
+                for d in INTENT_DEFINITIONS if d.get("card_type")
+            }
+        except Exception:  # 초기화 전 호출 등 — 다음 호출에서 재시도
+            return None
+    return _CARD_TYPE_MAP.get(intent)
 
 
 def _extract_stddev_stats(data_row: dict) -> Optional[dict]:
