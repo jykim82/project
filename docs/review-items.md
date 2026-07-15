@@ -122,7 +122,7 @@
 
 ---
 
-## [Perf] 야간최소유량 사전집계 테이블 갱신 스케줄 부재
+## [Perf] 야간최소유량 사전집계 테이블 갱신 스케줄 부재 ✅ 해결 (선택지 b, 2026-07-10)
 
 **현상:** `tb_night_min_flow_daily`(야간최소유량 트렌드/표준편차 fast-path의
 원천)가 2026-03-21 이후 갱신되지 않아 정체. 채팅 야간최소유량 트렌드가
@@ -141,6 +141,11 @@
 - (b) 백엔드 background 루프에 일 1회 `compute_night_min_flow()` 호출 추가
   (폐쇄망·컨테이너 자족적, 별도 호스트 설정 불필요)
 - (c) DB 에 pg_cron extension 설치 후 `_job_compute_night_min_flow` 스케줄
+
+**✅ 해결:** (b) 채택 — `ai_server._night_min_flow_agg_loop` (시작 200초 후 첫
+실행 + 24h 주기, `_refresh_night_min_flow_daily` self-healing 백필). 폐쇄망·
+컨테이너 자족적. 2026-07-15 실증: max(log_date)=2026-07-14(최신), 루프 로그
+"이미 최신 (갱신 불필요)" 정상.
 
 **✅ 해결 (b) 2026-07-10** — `ai_server._night_min_flow_agg_loop` 신규.
 서버 시작 200초 후 첫 실행, 이후 24h 주기. `max(log_date)+1 ~ 어제` 구간만
