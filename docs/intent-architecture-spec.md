@@ -47,21 +47,38 @@
 - 파생 stage1 ⊇ 이관 키워드 27개 (누락 0)
 - 스모크 16/16 + 파생 키워드 실매칭 로그 확인 ('교차 검증'/'물 수지'/'설비 장애')
 
-## 2단계 — 핸들러 레지스트리 (계획)
+## 2단계 — 핸들러 레지스트리 (1차 진행 2026-07-15)
 
-SSE `event_generator` 의 인텐트별 인라인 분기(42개)를 훅 클래스로 이관:
+SSE `event_generator` 의 인텐트별 인라인 분기(42개)를 훅 클래스로 점진 이관.
+
+### 프레임 (`slm/intent_handlers/`, 완료)
 
 ```python
-@intent_handler("ANOMALY_SCAN_ALL")
-class AnomalyScanHandler:
-    def pre_sql(ctx): ...        # SQL 실행 전 (캐시 반환·SQL 변형)
-    def post_process(ctx): ...   # rows 후처리
-    def response_extras(ctx): .. # 응답 추가 필드 (ml_*, cross_* 등)
+@intent_handler
+class EquipmentFaultHandler(IntentHandler):
+    intents = ("EQUIPMENT_FAULT_STATUS",)
+    async def pre_sql(self, ctx): ...   # ctx.sql 변형 / ctx.rows 채우면 SQL 대체
+    def response_extras(self, ctx, processed_data): ...  # 응답 추가 필드 (2차부터)
 ```
 
-- `event_generator` 는 "분류→추출→pre_sql→SQL→post_process→응답(+extras)"
-  파이프라인 한 벌만 남김
-- 인텐트 몇 개씩 점진 이관, 매 단계 스모크 16 + /ask 68 비교 게이트
+- `IntentContext`: intent/question/params/sql/rows/columns/extras
+- **서비스 getter 주입** (`init_services`): ai_server 전역(_CAUSAL_INDEX,
+  _ANOMALY_SCAN_CACHE, _FLOW_BALANCE_CACHE)은 재할당되는 변수라 값이 아닌
+  lambda getter 로 주입 — 호출 시점에 현재 값
+- 파이프라인 훅 포인트: SQL 실행 직전 1곳 (`pre_sql` → sql 반영, rows 설정
+  시 기존 'if not rows' 게이트로 SQL 스킵)
+
+### 이관 현황 (5/42 분기)
+
+| 배치 | 인텐트 | 패턴 | 상태 |
+|---|---|---|---|
+| 1차 | ANOMALY_CROSS_FACILITY | rows 대체 (causal 교차검증) | ✅ `2b9adb7` |
+| 1차 | EQUIPMENT_FAULT_STATUS | rows 대체 (스캔 캐시 재사용) | ✅ |
+| 1차 | ANOMALY_FLOW_BALANCE | rows 대체 (30분 캐시+계산) | ✅ |
+| 1차 | FACILITY_TAG_LATEST_VALUE / TAG_DATA_TABLE | SQL 변형 (tagtype 주입) | ✅ |
+| 후속 | 나머지 37개 분기 (트렌드 기간·stddev·CUSUM·SCAN_ALL early-return·후처리) | — | 계획 |
+
+- 매 배치 게이트: 스모크 16 (+대규모 배치는 /ask 68 비교)
 - 새 인텐트 = JSON 선언 + (필요시) 핸들러 파일 1개
 
 ## 3단계 — 카드 타입 선언화 (계획)
