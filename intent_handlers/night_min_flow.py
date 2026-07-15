@@ -149,6 +149,14 @@ class StddevAnalysisHandler(IntentHandler):
         except Exception as e:
             logger.warning(f"SSE 표준편차분석 청크 쿼리 실패, 원본 함수 폴백: {e}")
 
+    def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
+        """개별 조회(1행) 시 stddev_stats 추출 — SQL 폴백 경로용."""
+        from response_builder import _extract_stddev_stats
+
+        if ctx.response_data and len(ctx.response_data) == 1:
+            return {"stddev_stats": _extract_stddev_stats(ctx.response_data[0])}
+        return {}
+
     def _override_template(self, ctx: IntentContext) -> None:
         _site = ctx.params.get("sitename", "")
         _ftype = ctx.params.get("facilitytype", "")
@@ -212,6 +220,27 @@ class LeakCusumHandler(IntentHandler):
                 logger.info(f"SSE LEAK_CUSUM 청크 쿼리: {len(_lc_rows)}행")
         except Exception as e:
             logger.warning(f"SSE LEAK_CUSUM 청크 쿼리 실패, 원본 함수 폴백: {e}")
+
+    def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
+        """CUSUM 결과 → 응답 데이터를 요약 테이블로 교체 + 차트 데이터."""
+        if not processed_data.get("_cusum_results"):
+            return {}
+        cusum_table_rows = processed_data["_cusum_table_rows"]
+        cusum_table_cols = processed_data["_cusum_table_columns"]
+        ctx.response_data = [dict(zip(cusum_table_cols, r)) for r in cusum_table_rows]
+        ctx.table_columns = cusum_table_cols
+        ctx.total_rows = len(cusum_table_rows)
+        ctx.data_truncated = False
+        _cusum_chart_data = {}
+        for tagsn, cr in processed_data["_cusum_results"].items():
+            _cusum_chart_data[cr.get("label", tagsn)] = {
+                "series": cr["cusum_series"],
+                "threshold_h": cr["threshold_h"],
+                "baseline_mean": cr["baseline_mean"],
+                "baseline_stddev": cr["baseline_stddev"],
+                "leak_status": cr["leak_status"],
+            }
+        return {"cusum_chart_data": _cusum_chart_data}
 
 
 @intent_handler

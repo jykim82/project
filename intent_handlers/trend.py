@@ -18,6 +18,12 @@ class FacilityTrendHandler(IntentHandler):
     """시설 트렌드 — 야간최소유량 fast-path + answer_template 오버라이드."""
     intents = ("FACILITY_TREND",)
 
+    async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:
+        _ft = ctx.params.get("from_ts", "")
+        _tt = ctx.params.get("to_ts", "")
+        if _ft and _tt:
+            processed_data["period_desc"] = f"{_ft} ~ {_tt}"
+
     async def prepare(self, ctx: IntentContext) -> None:
         # 야간최소유량 + sitename 미추출 → '전체' 기본값
         if ("야간최소유량" in ctx.question.replace(" ", "")
@@ -120,8 +126,21 @@ class FacilityTrendHandler(IntentHandler):
             ctx.rows, ctx.columns = [], []
 
 
+class _TrendVarsMixin:
+    """트렌드 계열 공통 — 렌더링 템플릿 변수 보충."""
+
+    async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:
+        _ft = ctx.params.get("from_ts", "")
+        _tt = ctx.params.get("to_ts", "")
+        if _ft and _tt:
+            processed_data["period_desc"] = f"{_ft} ~ {_tt}"
+        if ctx.intent == "FACILITY_MIXED_TREND":
+            processed_data["digital_label"] = ctx.params.get("digital_datainfo") or "밸브"
+            processed_data["analog_label"] = ctx.params.get("analog_datainfo") or "유량"
+
+
 @intent_handler
-class MixedTrendHandler(IntentHandler):
+class MixedTrendHandler(_TrendVarsMixin, IntentHandler):
     """아날로그+디지털 혼합 트렌드 — answer_template 오버라이드."""
     intents = ("FACILITY_MIXED_TREND",)
 

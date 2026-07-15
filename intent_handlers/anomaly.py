@@ -129,6 +129,35 @@ class AnomalyScanAllHandler(AnomalyFilterPrepareMixin, IntentHandler):
             ml_tier2_count=_c_data.get("ml_tier2_count"),
         )
 
+    async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:
+        """교차 검증 + per-row 종합 판정 (캐시 미스로 SQL 경로를 탄 경우)."""
+        causal_index = (service("get_causal_index") or (lambda: None))()
+        if not causal_index:
+            return
+        try:
+            from anomaly_detector import cross_facility_check_all, enrich_rows_with_cross_verdict
+            from sql_executor import _query_recent_values
+
+            cross_mismatches = await asyncio.to_thread(
+                cross_facility_check_all, _query_recent_values, causal_index,
+                lookback_minutes=180,
+            )
+            if cross_mismatches:
+                processed_data["cross_facility_mismatches"] = cross_mismatches
+                processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
+            logger.info(f"[SSE] SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
+            # per-row cross_status/verdict 병합
+            _profiler = (service("get_site_profiler") or (lambda: None))()
+            _profiles = _profiler.profiles if _profiler and _profiler.profiles else None
+            enrich_rows_with_cross_verdict(ctx.rows, ctx.columns, cross_mismatches, site_profiles=_profiles)
+            _vd_idx = ctx.columns.index("verdict") if "verdict" in ctx.columns else None
+            if _vd_idx is not None:
+                processed_data["cross_anomaly_count"] = sum(
+                    1 for r in ctx.rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
+                )
+        except Exception as e:
+            logger.warning(f"[SSE] SCAN_ALL 교차 검증 실패: {e}")
+
 
 @intent_handler
 class AnomalyFilterOnlyHandler(AnomalyFilterPrepareMixin, IntentHandler):
@@ -169,6 +198,11 @@ class AbnormalStatusSummaryHandler(IntentHandler):
             ctx.params["facilitytype"] = ""
         if ctx.params.get("datainfo") in (None, "%%"):
             ctx.params["datainfo"] = ""
+
+    async def post_sql(self, ctx: IntentContext) -> None:
+        # SQL 실행 후 빈 문자열을 렌더링용 "전체" 로 변환 (rows 있을 때만 — 기존 위치 보존)
+        if ctx.rows and not ctx.params.get("datainfo"):
+            ctx.params["datainfo"] = "전체"
 
 
 @intent_handler

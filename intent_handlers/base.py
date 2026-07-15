@@ -58,6 +58,10 @@ class IntentContext:
     final_response: Optional[dict] = None
     # final_response 직전 표출할 progress 메시지 (step, message)
     progress_message: Optional[tuple] = None
+    # 응답 조립 로컬 (response_extras 훅에서 교체 가능 — CUSUM 요약 테이블 등)
+    response_data: Optional[list] = None
+    total_rows: Optional[int] = None
+    data_truncated: Optional[bool] = None
     extras: dict = field(default_factory=dict)
 
 
@@ -72,8 +76,15 @@ class IntentHandler:
     async def pre_sql(self, ctx: IntentContext) -> None:  # noqa: B027
         """SQL 실행 전 훅 — sql 변형·rows 조달·answer_template 오버라이드. 기본 no-op."""
 
+    async def post_sql(self, ctx: IntentContext) -> None:  # noqa: B027
+        """SQL 실행 직후(no-data 체크 전) 훅 — 폴백 조회 등. 기본 no-op."""
+
+    async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:  # noqa: B027
+        """process_sql_result 후 훅 — processed_data/rows 보강. 기본 no-op."""
+
     def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
-        """응답 추가 필드 훅 — 기본 없음."""
+        """응답 조립 직전 훅 — build_success_response 에 병합할 추가 kwargs 반환.
+        ctx.response_data/table_columns/total_rows/data_truncated 교체 가능."""
         return {}
 
 

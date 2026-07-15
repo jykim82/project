@@ -92,6 +92,46 @@ class AlarmAbnormalLocationsHandler(IntentHandler):
             }
         }
 
+    async def post_sql(self, ctx: IntentContext) -> None:
+        """진행중 0건 → 최근 7일 폴백 조회."""
+        import asyncio
+
+        from .base import service
+
+        if ctx.rows:
+            return
+        fb_where_parts = ["alarm_start_time >= NOW() - INTERVAL '7 days'"]
+        _fb_ftype = ctx.params.get("_alarm_where_ftype", "")
+        if _fb_ftype:
+            fb_where_parts.append(_fb_ftype)
+        fb_where = " AND ".join(fb_where_parts)
+        _fb_filter = ctx.params.get("_alarm_where_filter", "")
+        _fb_level = ctx.params.get("_alarm_where_level", "")
+        if _fb_filter:
+            fb_where += f" {_fb_filter}"
+        if _fb_level:
+            fb_where += f" {_fb_level}"
+        fb_sql = (
+            f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
+            f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
+            f" alarm_status"
+            f" FROM tb_equipment_alarm_report"
+            f" WHERE {fb_where}"
+            f" ORDER BY alarm_start_time DESC"
+            f" LIMIT 100;"
+        )
+        try:
+            execute_sql = service("execute_sql")
+            _rows, _cols = await asyncio.to_thread(execute_sql, fb_sql, {})
+            if _rows:
+                ctx.rows, ctx.columns = _rows, _cols
+                ctx.params["_alarm_fallback"] = True
+                if isinstance(ctx.answer_template, dict):
+                    ctx.answer_template["summary"] = "현재 진행중인 해당 알람이 없어 최근 7일 이력을 표시합니다. ({total_alarm_count}건)"
+                logger.info(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백: 최근 7일 {len(_rows)}건")
+        except Exception as e:
+            logger.warning(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백 SQL 실행 실패: {e}")
+
 
 @intent_handler
 class AlarmPieHandler(IntentHandler):

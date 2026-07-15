@@ -2145,6 +2145,7 @@ init_intent_handler_services(
     stratified_sample=lambda *a, **k: stratified_sample(*a, **k),
     # execute_sql 은 이 지점보다 뒤에 정의 — lambda 로 호출 시점 조회
     execute_sql=lambda *a, **k: execute_sql(*a, **k),
+    get_site_profiler=lambda: site_profiler,
 )
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
@@ -3148,36 +3149,13 @@ async def ask_stream(request: AskRequest):
             all_site_names = [params.get("sitename", "")] + list(extra_sitenames)
             params["sitename"] = ", ".join(all_site_names)
 
-        # ALARM_ABNORMAL_LOCATIONS: 진행중 0건 → 최근 7일 폴백
-        if intent == "ALARM_ABNORMAL_LOCATIONS" and not rows:
-            fb_where_parts = ["alarm_start_time >= NOW() - INTERVAL '7 days'"]
-            _fb_ftype = params.get("_alarm_where_ftype", "")
-            if _fb_ftype:
-                fb_where_parts.append(_fb_ftype)
-            fb_where = " AND ".join(fb_where_parts)
-            _fb_filter = params.get("_alarm_where_filter", "")
-            _fb_level = params.get("_alarm_where_level", "")
-            if _fb_filter:
-                fb_where += f" {_fb_filter}"
-            if _fb_level:
-                fb_where += f" {_fb_level}"
-            fb_sql = (
-                f"SELECT sitename, facilitytype, alarm_msg, alarm_category,"
-                f" TO_CHAR(alarm_start_time, 'YYYY-MM-DD HH24:MI:SS') AS alarm_start_time,"
-                f" alarm_status"
-                f" FROM tb_equipment_alarm_report"
-                f" WHERE {fb_where}"
-                f" ORDER BY alarm_start_time DESC"
-                f" LIMIT 100;"
-            )
-            try:
-                rows, columns = await asyncio.to_thread(execute_sql, fb_sql, {})
-                if rows:
-                    params["_alarm_fallback"] = True
-                    answer_template["summary"] = "현재 진행중인 해당 알람이 없어 최근 7일 이력을 표시합니다. ({total_alarm_count}건)"
-                    logger.info(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백: 최근 7일 {len(rows)}건")
-            except Exception as e:
-                logger.warning(f"[SSE] ALARM_ABNORMAL_LOCATIONS 폴백 SQL 실행 실패: {e}")
+        # [아키텍처 2단계] post_sql 훅 — 폴백 조회(ALARM_ABNORMAL 7일) 등
+        if _handler is not None:
+            _hctx.rows, _hctx.columns = rows, columns
+            await _handler.post_sql(_hctx)
+            rows, columns = _hctx.rows, _hctx.columns
+            if _hctx.answer_template is not None:
+                answer_template = _hctx.answer_template
 
         # 결과 확인
         if not rows:
@@ -3194,11 +3172,6 @@ async def ask_stream(request: AskRequest):
         })
         await asyncio.sleep(0)
 
-        # FACILITY_ABNORMAL_STATUS_SUMMARY: SQL 실행 후 빈 문자열을 렌더링용 "전체"로 변환
-        if intent == "FACILITY_ABNORMAL_STATUS_SUMMARY":
-            if not params.get("datainfo"):
-                params["datainfo"] = "전체"
-
         # total_count: 템플릿 {total_count} 렌더링용
         params["total_count"] = str(len(rows))
 
@@ -3214,38 +3187,11 @@ async def ask_stream(request: AskRequest):
             })
             return
 
-        # ANOMALY_SCAN_ALL: 교차 검증 + per-row 종합 판정
-        if intent == "ANOMALY_SCAN_ALL" and _CAUSAL_INDEX:
-            try:
-                from anomaly_detector import cross_facility_check_all, enrich_rows_with_cross_verdict
-                cross_mismatches = await asyncio.to_thread(
-                    cross_facility_check_all, _query_recent_values, _CAUSAL_INDEX,
-                    lookback_minutes=180,
-                )
-                if cross_mismatches:
-                    processed_data["cross_facility_mismatches"] = cross_mismatches
-                    processed_data["cross_facility_mismatch_count"] = len(cross_mismatches)
-                logger.info(f"[SSE] SCAN_ALL 교차 검증: {len(cross_mismatches)}건 불일치")
-                # per-row cross_status/verdict 병합
-                _profiles = site_profiler.profiles if site_profiler and site_profiler.profiles else None
-                enrich_rows_with_cross_verdict(rows, columns, cross_mismatches, site_profiles=_profiles)
-                _vd_idx = columns.index("verdict") if "verdict" in columns else None
-                if _vd_idx is not None:
-                    processed_data["cross_anomaly_count"] = sum(
-                        1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
-                    )
-            except Exception as e:
-                logger.warning(f"[SSE] SCAN_ALL 교차 검증 실패: {e}")
-
-        # 트렌드 인텐트: 템플릿 변수 보충
-        if intent in ("FACILITY_TREND", "FACILITY_MIXED_TREND"):
-            _ft = params.get("from_ts", "")
-            _tt = params.get("to_ts", "")
-            if _ft and _tt:
-                processed_data["period_desc"] = f"{_ft} ~ {_tt}"
-            if intent == "FACILITY_MIXED_TREND":
-                processed_data["digital_label"] = params.get("digital_datainfo") or "밸브"
-                processed_data["analog_label"] = params.get("analog_datainfo") or "유량"
+        # [아키텍처 2단계] post_process 훅 — SCAN_ALL 교차 검증·트렌드 변수 등
+        if _handler is not None:
+            _hctx.rows, _hctx.columns = rows, columns
+            await _handler.post_process(_hctx, processed_data)
+            rows, columns = _hctx.rows, _hctx.columns
 
         # answer_template 렌더링
         rendered_answer = render_answer_template(answer_template, processed_data)
@@ -3341,29 +3287,24 @@ async def ask_stream(request: AskRequest):
             elif not _plot_type and _chart_data_type:
                 _plot_type = _PLOT_TYPE_DEFAULTS.get(_chart_data_type, "line")
 
-        # STDDEV 분석: stddev_stats 추출 (개별 조회 시만)
+        # [아키텍처 2단계] response_extras 훅 — stddev_stats 추출·CUSUM 요약
+        # 테이블 교체 등 응답 조립 직전 보강 (intent_handlers/)
         _stddev_stats = None
-        if intent == "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS" and response_data and len(response_data) == 1:
-            _stddev_stats = _extract_stddev_stats(response_data[0])
-
-        # CUSUM 누수추정: 응답 데이터를 CUSUM 요약 테이블로 교체
         _cusum_chart_data = None
-        if intent == "LEAK_CUSUM_ANALYSIS" and processed_data.get("_cusum_results"):
-            cusum_table_rows = processed_data["_cusum_table_rows"]
-            cusum_table_cols = processed_data["_cusum_table_columns"]
-            response_data = [dict(zip(cusum_table_cols, r)) for r in cusum_table_rows]
-            table_columns = cusum_table_cols
-            total_rows = len(cusum_table_rows)
-            data_truncated = False
-            _cusum_chart_data = {}
-            for tagsn, cr in processed_data["_cusum_results"].items():
-                _cusum_chart_data[cr.get("label", tagsn)] = {
-                    "series": cr["cusum_series"],
-                    "threshold_h": cr["threshold_h"],
-                    "baseline_mean": cr["baseline_mean"],
-                    "baseline_stddev": cr["baseline_stddev"],
-                    "leak_status": cr["leak_status"],
-                }
+        if _handler is not None:
+            _hctx.response_data = response_data
+            _hctx.table_columns = table_columns
+            _hctx.total_rows = total_rows
+            _hctx.data_truncated = data_truncated
+            _hextras = _handler.response_extras(_hctx, processed_data) or {}
+            _stddev_stats = _hextras.get("stddev_stats")
+            _cusum_chart_data = _hextras.get("cusum_chart_data")
+            response_data = _hctx.response_data
+            table_columns = _hctx.table_columns
+            if _hctx.total_rows is not None:
+                total_rows = _hctx.total_rows
+            if _hctx.data_truncated is not None:
+                data_truncated = _hctx.data_truncated
 
         # 트렌드 이상구간 강조: Z-Score 기반 anomaly zones
         _anomaly_zones = None
