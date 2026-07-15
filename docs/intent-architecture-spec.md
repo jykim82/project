@@ -47,39 +47,49 @@
 - 파생 stage1 ⊇ 이관 키워드 27개 (누락 0)
 - 스모크 16/16 + 파생 키워드 실매칭 로그 확인 ('교차 검증'/'물 수지'/'설비 장애')
 
-## 2단계 — 핸들러 레지스트리 (1차 진행 2026-07-15)
+## 2단계 — 핸들러 레지스트리 (완료 2026-07-15)
 
-SSE `event_generator` 의 인텐트별 인라인 분기(42개)를 훅 클래스로 점진 이관.
+SSE `event_generator` 의 인텐트별 인라인 분기 **42개 전부** 훅 클래스로 이관 —
+event_generator 는 인텐트 분기 0개, 651줄 순수 파이프라인만 남음.
 
-### 프레임 (`slm/intent_handlers/`, 완료)
+### 파이프라인 훅 (5개)
 
-```python
-@intent_handler
-class EquipmentFaultHandler(IntentHandler):
-    intents = ("EQUIPMENT_FAULT_STATUS",)
-    async def pre_sql(self, ctx): ...   # ctx.sql 변형 / ctx.rows 채우면 SQL 대체
-    def response_extras(self, ctx, processed_data): ...  # 응답 추가 필드 (2차부터)
+```
+분류 → 추출 → [prepare] → 세션병합·검증 → SQL 준비 → [pre_sql]
+  → (final_response 면 즉시 result·종료) → SQL 실행 → [post_sql]
+  → no-data 체크 → process_sql_result → [post_process]
+  → 렌더링 → [response_extras] → build_success_response
 ```
 
-- `IntentContext`: intent/question/params/sql/rows/columns/extras
-- **서비스 getter 주입** (`init_services`): ai_server 전역(_CAUSAL_INDEX,
-  _ANOMALY_SCAN_CACHE, _FLOW_BALANCE_CACHE)은 재할당되는 변수라 값이 아닌
-  lambda getter 로 주입 — 호출 시점에 현재 값
-- 파이프라인 훅 포인트: SQL 실행 직전 1곳 (`pre_sql` → sql 반영, rows 설정
-  시 기존 'if not rows' 게이트로 SQL 스킵)
+| 훅 | 시점 | 용도 |
+|---|---|---|
+| `prepare(ctx)` | 세션 병합 전 (new_params) | 기간·기본값·필터 보정 |
+| `pre_sql(ctx)` | SQL 실행 전 | SQL 변형·rows 조달·템플릿 오버라이드·early-return(`ctx.final_response`) |
+| `post_sql(ctx)` | 실행 직후 (no-data 전) | 폴백 조회 (예: 알람 7일) |
+| `post_process(ctx, pd)` | process_sql_result 후 | processed_data/rows 보강 (예: SCAN_ALL 교차검증) |
+| `response_extras(ctx, pd)` | 응답 조립 직전 | 추가 kwargs 반환 + response_data 교체 (예: CUSUM 요약) |
 
-### 이관 현황 (5/42 분기)
+### 프레임 (`slm/intent_handlers/`)
 
-| 배치 | 인텐트 | 패턴 | 상태 |
-|---|---|---|---|
-| 1차 | ANOMALY_CROSS_FACILITY | rows 대체 (causal 교차검증) | ✅ `2b9adb7` |
-| 1차 | EQUIPMENT_FAULT_STATUS | rows 대체 (스캔 캐시 재사용) | ✅ |
-| 1차 | ANOMALY_FLOW_BALANCE | rows 대체 (30분 캐시+계산) | ✅ |
-| 1차 | FACILITY_TAG_LATEST_VALUE / TAG_DATA_TABLE | SQL 변형 (tagtype 주입) | ✅ |
-| 후속 | 나머지 37개 분기 (트렌드 기간·stddev·CUSUM·SCAN_ALL early-return·후처리) | — | 계획 |
+- `base.py` — IntentContext(파이프라인 상태 왕복) + IntentHandler + `@intent_handler`
+  레지스트리 + `init_services` (**getter 주입**: ai_server 전역 _CAUSAL_INDEX·캐시류는
+  재할당되는 변수라 lambda 로 호출 시점 조회. save_csv/execute_sql 등 유틸도 주입)
+- 도메인 모듈: `anomaly` `alarm` `trend` `night_min_flow` `reservoir` `tag_query`
 
-- 매 배치 게이트: 스모크 16 (+대규모 배치는 /ask 68 비교)
-- 새 인텐트 = JSON 선언 + (필요시) 핸들러 파일 1개
+### 이관 완료 42/42 (커밋 체인)
+
+| 배치 | 범위 | 커밋 |
+|---|---|---|
+| 1차 | 교차검증/설비장애/물수지/tagtype (5) | `2b9adb7` |
+| 2차 | prepare 계열+템플릿+SQL 생성 (17) | `82d5f36` |
+| 3차 | 조달·early-return 계열 (13) | `99a9b6f` |
+| 4차 | 후처리·extras 계열 (7) | `3a35c41` |
+
+- 매 배치 게이트: 스모크 16/16 + /ask 68케이스 구조 비교 (최종 불일치 0건) + 실 UI 확인
+- 주의 사례: from_ts==to_ts 보정은 TIMESERIES 조달보다 먼저여야 해서 훅 앞으로
+  이동 (실행 순서 보존). 같은 인텐트의 복수 시점 분기는 한 핸들러의 여러 훅으로.
+
+**새 인텐트 추가 = example3.json 선언 + (커스텀 필요 시) 핸들러 클래스 1개.**
 
 ## 3단계 — 카드 타입 선언화 (계획)
 
