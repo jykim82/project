@@ -55,9 +55,38 @@ python test_chat_smoke.py --api http://192.168.x.x:8000 --region R01   # 원격/
 - 납품 설치 후 검수 (`--api` 로 대상 지정)
 - (선택) 주간 cron — `docs/operations/` cron 가이드 패턴 참조
 
+## Tier 2 — Playwright 프런트 스모크 (완료 2026-07-15)
+
+백엔드 스모크가 못 잡는 층을 커버: **프런트 사전 분류(use-chat-submit.ts)
+오라우팅 + 카드 렌더·평문 억제(card_type 경로)**.
+
+| 파일 (Frontend 레포) | 역할 |
+|---|---|
+| `playwright.config.ts` | baseURL https://localhost:3000, 순차 실행, setup 의존 |
+| `e2e/auth.setup.ts` | jykim 로그인 → storageState 재사용 |
+| `e2e/chat-smoke.spec.ts` | 4케이스 (아래) |
+
+```bash
+cd slm-dashboard/slm-dashboard
+npm run test:e2e        # prod 스택(:3000) + 백엔드(:8000) 기동 전제, ~10s
+```
+
+케이스 (회귀 이력 기반):
+1. "센서이상 스캔" → 이상 카드 렌더 + **"장애 기록 확인" 부재** (07-12 오라우팅 회귀)
+2. "판넬 전원이상 발생했어" → 장애 기록 확인 카드 (사전 분류 정상 경로. 취소로 정리 — DB 부작용 없음)
+3. "경보 발생 이력" → 알람 카드 + 평문 억제
+4. "최근 이상 이력" → AnomalyHistoryView 카드 + 평문 억제
+
+주의: 백엔드 재기동 직후엔 스캔 캐시 웜업(~2분) 후 실행. 실행 시점: 채팅
+UI·use-chat-submit·카드 컴포넌트·mapper 변경 후 (필수), 백엔드 스모크와 세트로.
+
+## Tier 3 — 채팅 카드 갤러리 (완료 2026-07-15)
+
+`/admin/chat-gallery` (관리 > 채팅 카드 갤러리, ADMIN/MASTER) — 대표 질의
+12종을 실서버에 실행해 **실제 BotMessage 컴포넌트**로 렌더. 디자인·카드 정책
+변경 시 전 카드 한 화면 육안 검수 (자동 판정 아님 — 스모크가 담당).
+항목별 card_type·응답시간 라벨. 메뉴: migration 0097.
+
 ## 커버리지 계획 (후속)
 
-- Tier 2: Playwright 프런트 스모크 — 프런트 사전 분류(use-chat-submit.ts)
-  오라우팅·카드 렌더 구조까지 커버 (백엔드 스모크로는 잡히지 않는 층)
-- Tier 3: `/admin/chat-gallery` 카드 갤러리 — 응답 디자인 육안 검수 (자동 판정 아님)
 - 장기: 오답 피드백 루프에서 회귀 케이스로 승격하는 훅
