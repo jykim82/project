@@ -13,8 +13,18 @@
 | 계층 | 파일 | 역할 |
 |---|---|---|
 | 백엔드 | `slm/endpoints/stt.py` | POST /stt/transcribe (multipart) → {text, ...}. lazy 싱글턴(로드 ~1.4s), CPU int8, 동기 def(threadpool) |
-| 프런트 훅 | `src/hooks/use-voice-input.ts` | MediaRecorder(webm/opus) 토글 녹음(최대 1분) → 프록시 POST → 텍스트 콜백 |
+| 프런트 훅 | `src/hooks/use-voice-input.ts` | MediaRecorder(webm/opus) 녹음 + **VAD 자동 종료** → 프록시 POST → 텍스트 콜백 |
 | UI | `ChatInput.tsx` 마이크 버튼 | idle=Mic / recording=빨강 펄스+Square / transcribing=스피너. 결과는 입력창에 이어붙임 (**자동 전송 안 함** — 사용자 확인 후 전송) |
+
+## 자동 종료 (VAD — 2026-07-16 개선)
+현장 취지상 "버튼 → 말하기 → 끝"이어야 함. 종료 버튼 재클릭 요구는 UX 위배
+(사용자 피드백). `AnalyserNode` RMS 기반 무음 감지로 자동 정지:
+- **발화 후 무음 2초** → 자동 정지·전사 (`SILENCE_STOP_MS`)
+- **발화 전혀 없이 8초** → 자동 취소 (`NO_SPEECH_CANCEL_MS`)
+- 하드 리밋 1분 유지. 수동 정지(버튼 재클릭)는 폴백으로 유지
+- `AudioContext` 미지원 환경은 VAD 없이 수동 정지 모드로 폴백
+- 임계 `VOICE_RMS_THRESHOLD=0.02` (정규화 RMS) — 현장 소음 환경에서
+  오탐 시 조정 포인트
 
 ## 도메인 용어 바이어스 (핵심)
 Whisper `initial_prompt` 에 상수도 용어 사전 주입 — 프롬프트 없이는
