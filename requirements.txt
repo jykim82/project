@@ -18,3 +18,4 @@ pyproj>=3.6.0
 # 향후 전망 forecast 엔진 (Chronos-Bolt, Apache-2.0) — 폐쇄망은 CPU wheel 권장:
 # pip install torch --index-url https://download.pytorch.org/whl/cpu
 chronos-forecasting>=1.4
+faster-whisper>=1.2   # 음성 입력 STT (로컬 Whisper, MIT)

@@ -2367,6 +2367,10 @@ app.include_router(afc_router)
 init_equipment_health(get_db_connection)
 app.include_router(equipment_health_router)
 
+# 음성 입력 STT (로컬 Whisper — endpoints/stt.py)
+from endpoints.stt import router as stt_router  # noqa: E402
+app.include_router(stt_router)
+
 
 def _reload_facility_aliases():
     """facility_alias CRUD 후 런타임 param_extractor에 즉시 반영"""
