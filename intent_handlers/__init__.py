@@ -15,4 +15,4 @@ from .base import (  # noqa: F401
 )
 
 # 핸들러 등록 (데코레이터 부수효과)
-from . import alarm, anomaly, night_min_flow, reservoir, tag_query, trend  # noqa: F401,E402
+from . import alarm, anomaly, night_min_flow, replacement, reservoir, tag_query, trend  # noqa: F401,E402
