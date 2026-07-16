@@ -44,6 +44,12 @@ equipmenttype, equipment_id|null, score, level, reasons:[{type,label}]}]}`
   dev 데이터는 no_data 293건으로 신호 0 (입력 시 자동 반영, 코드 변경 불필요).
   GIS 시설 메뉴 인스펙터 CRUD(설치일자)로 보강 가능.
 
+## 채팅 인텐트 (2026-07-16 완료)
+`REPLACEMENT_PRIORITY_QUERY` — "교체해야 할 설비 알려줘" 등 10문형 →
+graph_type=table Top 5 표. `intent_handlers/replacement.py` 가
+`replacement_priority()` 를 직접 호출해 rows 조달 (개요 카드와 동일 결과 —
+판정 이원화 방지). stage1 키워드 9종("교체 우선순위"/"교체해야" 등) 선언으로
+SLM 폴백 없이 0.2~0.5s 분류. 스모크 16/16 회귀 통과.
+
 ## 향후 후보 (미착수)
-- 채팅 인텐트 "교체해야 할 설비 알려줘" → 동일 API 재사용
 - 대시보드 개요(startup)에도 요약 1줄 노출

@@ -744,7 +744,9 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
 - **기간 필터**: 30일(기본)/90일/전체 — report_date 기준
 - API: `GET /reports/stats?region&report_type&days` (endpoints/reports.py)
 - 컴포넌트: `ReportStatsHeader.tsx` — 목록 갱신(추가/삭제) 시 refreshKey 로 동기 재조회
-- 일 점검 보고서에는 미표시 (지표 체계가 달라 후속 별도 설계)
+- **일 점검 보고서에도 공통 적용** (2026-07-16 확장): 동일 지표 체계, 항목
+  라벨만 "점검 항목" 으로 분기 (`isInspection`). 점검 중 발견 항목의
+  조치율·조치 시간도 동일 정의로 유의미
 
 ### 조치 시각 역전파 (2026-07-16)
 
