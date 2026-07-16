@@ -221,6 +221,7 @@ web/
 - `docs/operations/epanet-sim-cron.md` — EPANET 자동 시뮬 cron (시계열 누적, launchd plist + crontab + 트러블슈팅)
 - `docs/operations/baseline-train-cron.md` — 트렌드 GBT baseline 주1회 재훈련 cron (CLI `python -m trend_baseline train` + launchd/crontab + 롤백)
 - `docs/operations/iforest-train-cron.md` — IForest 이상탐지 모델 주1회 재학습 cron (CLI `python -m anomaly_iforest train` + launchd/crontab + 지표 모니터링)
+- `docs/operations/model-weights-bundle.md` — 모델 웨이트 오프라인 번들 (납품 필수 — Chronos 783MB + Whisper 1.5GB. `slm/tools/model_weights_bundle.sh` pack/install/verify, sha256 매니페스트)
 - `docs/claude-code-setup-guide.md` — 스킬/에이전트/셋업
 - `docs/migration-to-mac.md` — Windows → Mac 이전 기록 (구조 다이어그램은 이관 시점 스냅샷 — **폴더 구조 정본은 본 CLAUDE.md 의 "📂 디렉토리 구조" 섹션**)
 - `docs/deploy-secrets.md` — 시크릿 관리
