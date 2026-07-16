@@ -15,3 +15,6 @@ openpyxl>=3.1
 wntr>=1.2.0
 pyshp>=2.3.0
 pyproj>=3.6.0
+# 향후 전망 forecast 엔진 (Chronos-Bolt, Apache-2.0) — 폐쇄망은 CPU wheel 권장:
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+chronos-forecasting>=1.4

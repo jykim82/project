@@ -586,6 +586,27 @@ def compute_comparison(
     threshold, threshold_label = _lookup_threshold(conn, trend_kind, sitename or "", facilitytype or "")
     f_times, f_vals, slope = _linear_forecast(times, vals, forecast_hours)
     fc_method = "linear"
+    # [2026-07-16] Chronos-Bolt 우선 (백테스트 +46.9% — 사양 §5.4).
+    # 실패/미가용 시 위 선형회귀 결과 그대로(폴백). 클램프·임계 스캔 등
+    # 후처리는 엔진과 무관하게 아래에서 동일 적용된다.
+    f_band_upper = None
+    f_band_lower = None
+    if f_times:
+        try:
+            from trend_forecast import chronos_forecast
+            _ch = chronos_forecast(vals, len(f_times))
+        except Exception:
+            _ch = None
+        if _ch:
+            _med, _q10, _q90 = _ch
+            if len(_med) >= len(f_times):
+                f_vals = _med[:len(f_times)]
+                f_band_lower = _q10[:len(f_times)]
+                f_band_upper = _q90[:len(f_times)]
+                fc_method = "chronos_bolt"
+                # slope 는 방향 지표 — 예측 곡선 전체 기울기로 재산출
+                if len(f_vals) > 1 and forecast_hours:
+                    slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
     if f_vals:
         # 향후 전망을 '같은 기간 실측이 실제로 간 범위(관측 밴드)' 근처로 하드 클램프.
         # 사용자 검증 원칙: 전망이 표출 기간 실측(min~max)을 크게 벗어나면 비현실적.
@@ -620,6 +641,10 @@ def compute_comparison(
 
         if _upper is not None or _lower is not None:
             f_vals = [_clamp(v) for v in f_vals]
+            if f_band_upper is not None:
+                f_band_upper = [_clamp(v) for v in f_band_upper]
+            if f_band_lower is not None:
+                f_band_lower = [_clamp(v) for v in f_band_lower]
 
         # 임계 도달 시점 — 블렌딩 forecast 시리즈에서 첫 교차를 직접 스캔(곡선과 일관).
         # 선형 slope 로 계산하면 평균회귀로 평탄해진 곡선과 어긋나므로 시리즈 기준.
@@ -648,6 +673,9 @@ def compute_comparison(
             "hours_to_threshold": hours_to,
             "status": f_status,
             "status_label": f_label,
+            # chronos 사용 시 10/90% 불확실성 밴드 (선형 폴백이면 None)
+            "band_upper": f_band_upper,
+            "band_lower": f_band_lower,
         }
 
     # baseline 도 forecast 도 없으면 None
