@@ -31,6 +31,59 @@ def init(get_db_connection_fn):
 # 스캔 로직 — 백그라운드 태스크에서도 호출
 # =============================================================================
 
+
+def _build_reason(info: dict) -> str:
+    """CUSUM 판정 근거를 운영자용 자연어로 서술 (스캔 시점 데이터 기준).
+
+    수치를 지어내지 않음 — compute_cusum_for_tags 산출값만 사용.
+    """
+    unit = (info.get("unit") or "").strip()
+    u = f" {unit}" if unit else ""
+    baseline = float(info.get("baseline_mean") or 0)
+    recent = float(info.get("recent_mean") or 0)
+    # 판정 근거는 cusum_max (cusum_current 는 리셋 후 0 일 수 있음)
+    cusum_max = float(info.get("cusum_max") or 0)
+    current = float(info.get("cusum_current") or 0)
+    h = float(info.get("threshold_h") or 0)
+    slope = float(info.get("trend_slope") or 0)
+    days = int(info.get("day_count") or 0)
+
+    parts = []
+    diff = recent - baseline
+    if baseline > 0 and recent > 0:
+        pct = diff / baseline * 100
+        parts.append(
+            f"최근 7일 야간최소유량 평균 {recent:.2f}{u}가 "
+            f"기준 {baseline:.2f}{u} 대비 {diff:+.2f} ({pct:+.1f}%)"
+        )
+
+    # 임계 최초 초과 시점 (cusum_series: [(log_time, val, cusum_upper)])
+    exceed_date = ""
+    for entry in info.get("cusum_series") or []:
+        try:
+            if float(entry[2]) >= h > 0:
+                exceed_date = str(entry[0])[:10]
+                break
+        except (TypeError, ValueError, IndexError):
+            continue
+    exceed_txt = f" ({exceed_date}에 초과)" if exceed_date else ""
+    cusum_txt = (
+        f"기준 초과 누적(CUSUM)이 최대 {cusum_max:.2f}로 "
+        f"임계 {h:.2f}를 넘음{exceed_txt}"
+    )
+    if h > 0 and current < h:
+        cusum_txt += f" — 현재 누적은 {current:.2f}로 완화된 상태"
+    parts.append(cusum_txt)
+
+    if slope > 0:
+        parts.append(f"일평균 {slope:+.2f}{u} 상승 추세")
+
+    body = ", ".join(parts)
+    return (
+        f"{body} — 최근 {days}일 분석. 야간 사용이 가장 적은 시간대의 "
+        f"지속적인 유량 상승은 관로 누수 신호일 수 있어 현장 확인이 필요합니다."
+    )
+
 def run_leak_cusum_scan(
     execute_night_min_flow_query_fn,
     region: str = "R01",
@@ -112,8 +165,9 @@ def run_leak_cusum_scan(
                     """
                     INSERT INTO tb_leak_cusum_alert
                         (region, sitename, facilitytype, tagsn, label,
-                         leak_status, cusum_value, threshold_h, baseline_mean)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         leak_status, cusum_value, threshold_h, baseline_mean,
+                         reason)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         region,
@@ -122,9 +176,12 @@ def run_leak_cusum_scan(
                         tagsn,
                         info.get("label", ""),
                         info.get("leak_status", "누수의심"),
-                        float(info.get("cusum_current") or 0),
+                        # 판정 근거값(cusum_max) 저장 — cusum_current 는 리셋
+                        # 후 0 이 될 수 있어 "0 인데 누수의심" 혼란 유발
+                        float(info.get("cusum_max") or 0),
                         float(info.get("threshold_h") or 0),
                         float(info.get("baseline_mean") or 0),
+                        _build_reason(info),
                     ),
                 )
                 inserted += 1
@@ -161,7 +218,7 @@ class AckPayload(BaseModel):
 _SELECT_COLS = (
     "alert_id, region, sitename, facilitytype, tagsn, label, "
     "leak_status, cusum_value, threshold_h, baseline_mean, "
-    "detected_at, acknowledged, ack_at, ack_by, note"
+    "detected_at, acknowledged, ack_at, ack_by, note, reason"
 )
 
 
@@ -182,6 +239,7 @@ def _row_to_dict(r) -> dict:
         "ack_at": r[12].isoformat() if r[12] else None,
         "ack_by": r[13],
         "note": r[14],
+        "reason": r[15],
     }
 
 
