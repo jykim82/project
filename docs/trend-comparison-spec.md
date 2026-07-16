@@ -318,6 +318,37 @@ else:
 
 ---
 
+## 5.4 Chronos-Bolt forecast 엔진 (2026-07-16)
+
+향후 전망을 선형회귀에서 **시계열 파운데이션 모델**로 교체. 사용자 요구
+"자연스럽게 내려갔다 올라갔다 해야 하는 것 아닌가"(§5.3 배경)의 근본 해결 —
+일주기 사이클의 다음 위상을 zero-shot 예측한다.
+
+### 모델 선정 (중국 모델 제외 조건)
+| 후보 | MAE 개선* | 추론(CPU) | 선정 |
+|---|---|---|---|
+| **Chronos-Bolt base** (Amazon, Apache-2.0, 205M) | +46.9% | 24ms | ✅ (속도 6배, 의존 단순) |
+| TimesFM 2.5 (Google, Apache-2.0, 200M) | +48.0% | 148ms | 차점 |
+
+\* 백테스트: 8태그(수위4/압력2/유량2) × 10컷 × 24h, 운영 클램프 동일 적용.
+패턴 신호에서 +38~81%(남산 수위 +81%, 기지시 유량 +59%), 평탄 신호 동급.
+
+### 구조
+- `slm/trend_forecast.py` — lazy 싱글턴 로드(첫 ~1s, 이후 ~24ms/태그),
+  로컬 웨이트 전용(`data/models/chronos-bolt-base`, 783MB, **git 제외** —
+  폐쇄망 배포 시 오프라인 번들). 미가용/실패 시 None → 선형 폴백.
+- `trend_comparison`: chronos 성공 시 median 을 forecast 시리즈로, 10/90%
+  quantile 을 `forecast.band_upper/band_lower` 로 응답에 포함 (선형 폴백이면
+  None). **클램프(관측 밴드·만수위 캡)·임계 시리즈 스캔·status 판정은 엔진과
+  무관하게 동일 적용** — §5.3 안전장치 유지.
+- `forecast.method`: "chronos_bolt" | "linear" (폴백 관찰용)
+- requirements: chronos-forecasting>=1.4 (폐쇄망은 torch CPU wheel 권장 주석)
+
+### 검증
+- API: method=chronos_bolt·밴드 포함, 웜 4태그 7일 /trend/data 2.8s
+- UI: 남산 수위 — 예측 곡선이 사이클 위상 추종(하강→재상승) 확인, 스모크 16/16
+- 후속: 프런트 불확실성 밴드(10~90%) 렌더는 별도 (데이터는 이미 응답에 포함)
+
 ## 6. 백엔드 — `slm/trend_comparison.py` 신규 모듈
 
 ```python
