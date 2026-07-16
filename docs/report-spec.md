@@ -745,3 +745,12 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
 - API: `GET /reports/stats?region&report_type&days` (endpoints/reports.py)
 - 컴포넌트: `ReportStatsHeader.tsx` — 목록 갱신(추가/삭제) 시 refreshKey 로 동기 재조회
 - 일 점검 보고서에는 미표시 (지표 체계가 달라 후속 별도 설계)
+
+### 조치 시각 역전파 (2026-07-16)
+
+task 조치 완료(채팅 confirm / direct resolve) 시, 그 task 를 참조하는
+**초안(draft) 보고서 항목**의 `resolved_at` 을 동기화한다
+(`chat_fault_record._sync_draft_report_items`). 확정 보고서는 불변.
+배경: 조치 내용을 보고서에 먼저 쓰고 task 를 나중에 완료하면 시각이 영구
+누락돼 목록 통계(조치 완료율)가 왜곡됨. 기존 14건은 해당 task 완료 시 자동
+회복되는 구조 (임의 백필 안 함 — 시각을 지어내지 않음).
