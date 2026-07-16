@@ -896,10 +896,12 @@ def confirm_resolve(req: ResolveConfirmRequest):
             """,
             (req.user_id, note, photos_json, task_id),
         )
+        _synced = _sync_draft_report_items(cur, task_id)
         cur.execute("DELETE FROM tb_chat_pending_action WHERE session_id = %s", (req.session_id,))
         conn.commit()
         cur.close()
-        logger.info(f"resolve 완료: task_id={task_id} user={req.user_id} photos={len(photos)}")
+        logger.info(f"resolve 완료: task_id={task_id} user={req.user_id} photos={len(photos)}"
+                    + (f" (초안 보고서 항목 {_synced}건 동기화)" if _synced else ""))
         return ResolveConfirmResponse(
             status="resolved", task_id=task_id,
             message=f"장애 #{task_id} 조치 완료로 기록했습니다." + (f" (사진 {len(photos)}장)" if photos else ""),
@@ -912,6 +914,29 @@ def confirm_resolve(req: ResolveConfirmRequest):
         raise HTTPException(500, f"resolve confirm 실패: {e}")
     finally:
         conn.close()
+
+
+def _sync_draft_report_items(cur, task_id: int) -> int:
+    """task 조치 완료 시 이 task 를 참조하는 '초안' 보고서 항목에 시각 역전파.
+
+    [배경 2026-07-16] 보고서에 조치 내용(resolved_text)을 먼저 쓰고 task 를
+    나중에 완료하면 항목의 resolved_at 이 영구 누락 → 목록 통계의 조치
+    완료율 왜곡 (실측 17.6%, 시각만 없는 항목 14건). 확정(finalized) 보고서는
+    불변 원칙에 따라 건드리지 않는다. resolved_text 는 비어 있을 때만 채움.
+    """
+    cur.execute(
+        """
+        UPDATE tb_report_item ri
+        SET resolved_at = t.resolved_at,
+            resolved_text = COALESCE(NULLIF(ri.resolved_text, ''), t.resolution_note)
+        FROM tb_task_master t, tb_report r
+        WHERE t.task_id = %s AND ri.task_id = t.task_id
+          AND r.report_id = ri.report_id AND r.status = 'draft'
+          AND ri.resolved_at IS NULL
+        """,
+        (task_id,),
+    )
+    return cur.rowcount
 
 
 class DirectResolveRequest(BaseModel):
@@ -952,6 +977,9 @@ def direct_resolve(req: DirectResolveRequest):
             """,
             (req.user_id, req.resolution_note or "(메모 없음)", photos_json, req.task_id),
         )
+        _synced = _sync_draft_report_items(cur, req.task_id)
+        if _synced:
+            logger.info(f"direct resolve: 초안 보고서 항목 {_synced}건 동기화 (task {req.task_id})")
         conn.commit()
         cur.close()
         return ResolveConfirmResponse(
