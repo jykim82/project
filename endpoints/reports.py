@@ -443,6 +443,79 @@ def list_reports(
         conn.close()
 
 
+@router.get("/stats")
+def report_stats(
+    region: str = Query(...),
+    report_type: str = Query("fault_action"),
+    days: int = Query(30, ge=0, le=3650, description="기간(일). 0=전체"),
+):
+    """보고서 목록 상단 통계 — KPI 4종 + 장애 분류 분포.
+
+    기간(days)은 보고서 report_date 기준. 항목 지표(조치율·평균 조치시간·분류)는
+    해당 기간 보고서에 속한 tb_report_item 집계.
+    """
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        date_cond = "AND r.report_date >= CURRENT_DATE - %s" if days else ""
+        dparams = [days] if days else []
+
+        cur.execute(
+            f"""
+            SELECT count(*),
+                   count(*) FILTER (WHERE r.status = 'draft'),
+                   count(*) FILTER (WHERE r.status = 'finalized')
+            FROM tb_report r
+            WHERE r.region = %s AND r.report_type = %s {date_cond}
+            """,
+            [region, report_type, *dparams],
+        )
+        total, draft, finalized = cur.fetchone()
+
+        cur.execute(
+            f"""
+            SELECT count(*),
+                   count(*) FILTER (WHERE ri.resolved_at IS NOT NULL),
+                   round(avg(EXTRACT(epoch FROM ri.resolved_at - ri.occurred_at) / 3600)
+                         FILTER (WHERE ri.resolved_at IS NOT NULL
+                                   AND ri.occurred_at IS NOT NULL
+                                   AND ri.resolved_at > ri.occurred_at), 1)
+            FROM tb_report_item ri
+            JOIN tb_report r ON r.report_id = ri.report_id
+            WHERE r.region = %s AND r.report_type = %s {date_cond}
+            """,
+            [region, report_type, *dparams],
+        )
+        items_total, items_resolved, avg_hours = cur.fetchone()
+
+        cur.execute(
+            f"""
+            SELECT COALESCE(ri.fault_category, '미분류'), count(*)
+            FROM tb_report_item ri
+            JOIN tb_report r ON r.report_id = ri.report_id
+            WHERE r.region = %s AND r.report_type = %s {date_cond}
+            GROUP BY 1 ORDER BY 2 DESC
+            """,
+            [region, report_type, *dparams],
+        )
+        categories = [{"category": c, "count": n} for c, n in cur.fetchall()]
+        cur.close()
+
+        return {
+            "days": days,
+            "total_reports": total,
+            "draft": draft,
+            "finalized": finalized,
+            "items_total": items_total,
+            "items_resolved": items_resolved,
+            "resolve_rate_pct": round(items_resolved / items_total * 100, 1) if items_total else None,
+            "avg_resolve_hours": float(avg_hours) if avg_hours is not None else None,
+            "categories": categories,
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/candidates")
 def list_candidate_tasks(
     region: str = Query(...),
