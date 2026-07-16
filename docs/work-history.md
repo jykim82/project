@@ -2,6 +2,28 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-07-16 — 현장 UX 라운드: 음성 VAD·게이지 PoC·교체 우선순위·팝업 전체화면)
+
+**1. 음성 입력 고도화** (`slm-dashboard@677d59d`, `slm@…stt`)
+- VAD 무음 감지 자동 종료 (발화 후 2s 무음 → 자동 전사, 무발화 8s 취소) —
+  "종료 버튼 재클릭" UX 지적 해소. 수동 정지 폴백 유지
+- STT 도메인 프롬프트 동적화: DB 시설명(tb_equipment_info+tb_facility_alias)
+  1h 캐시 결합, 224 토큰 절단 대비 핵심 용어 후방 배치. "기지시/소난지도" 2/2
+
+**2. VLM 게이지 판독 PoC → 라이트 통합 종결**
+- 합성 게이지 5/5 값 정확 (gemma4 비전). 본격 기능화 보류(사용자 결정 —
+  점검 보고는 숫자 기록 아님), 진단 observed_state 관찰 한 줄만 채택
+
+**3. 교체 우선순위 Top 5 카드** (`slm@b9deba5`, `slm-dashboard@…`)
+- 설비 건강성 개요 최상단 — 3신호 융합(내용연수/MTBF/재발) 랭킹+사유 배지,
+  행 클릭 → 상세 탭. docs/equipment-health-priority-spec.md
+
+**4. 장애조치 보고서 통계 헤더 + resolved_at 역전파** (이전 세션분 포함)
+- KPI 4카드+분류 칩+기간 필터. task 완료 시 초안 보고서 항목 resolved_at 자동 회복
+
+**5. 모든 팝업 전체화면 토글** (`slm-dashboard@…dialog`)
+- DialogContent expandable 기본 true — 35개 팝업 일괄. docs/popup-expand-policy.md
+
 ### 완료 (2026-07-14 — 코드 최적화 라운드: GBT 25× + supply_time 공용화 + epanet·ai_server 분리)
 
 3개월(4월 정리 이후 +39K줄) 드리프트 검토 후 승인받아 순차 수행. 4개 작업 전체 완료:

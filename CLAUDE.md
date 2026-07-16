@@ -177,6 +177,7 @@ web/
 ## 정책 (`docs/*-policy.md`)
 - `docs/fault-category-policy.md` — 장애 분류 4종(고장/이상/교체/점검) 정의 + 알람="이상", 현장 확인 고장만 "고장" 원칙
 - `docs/chart-rendering-policy.md` — ECharts 렌더링 정책 (default svg + 부드러운 애니메이션 + .echart-svg-mode CSS, TopologyGraph만 canvas 유지)
+- `docs/popup-expand-policy.md` — 팝업 전체화면(크게보기) 기본 제공 정책 (DialogContent expandable 기본 true, 전체화면 오버레이 유지 결정 — 사이드바 제외 확장 안 함)
 
 ## 사양 (`docs/*-spec.md` 및 관련)
 - `docs/slm-api-contract-final.md` — Python ↔ Next.js API 규약 (56개 인텐트)
