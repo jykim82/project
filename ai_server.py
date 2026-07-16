@@ -109,6 +109,7 @@ from endpoints.chat_fault_record import router as chat_fault_record_router, init
 from endpoints.fault_case import router as fault_case_router, init as init_fault_case
 from endpoints.alarm_fault_correlation import router as afc_router, init as init_afc
 from endpoints.equipment_health import router as equipment_health_router, init as init_equipment_health
+from endpoints.replacement_priority import router as replacement_priority_router, init as init_replacement_priority
 from endpoints.facility_alias import router as facility_alias_router, init as init_facility_alias
 from endpoints.baseline_eval import router as baseline_eval_router, init as init_baseline_eval
 from endpoints.iforest_eval import router as iforest_eval_router, init as init_iforest_eval
@@ -2366,6 +2367,10 @@ app.include_router(afc_router)
 # 설비 건강성 통계 엔드포인트 (migration 0045 views)
 init_equipment_health(get_db_connection)
 app.include_router(equipment_health_router)
+
+# 교체 우선순위 Top N — 3신호 융합 (개요 탭 카드)
+init_replacement_priority(get_db_connection)
+app.include_router(replacement_priority_router)
 
 # 음성 입력 STT (로컬 Whisper — endpoints/stt.py)
 from endpoints.stt import router as stt_router  # noqa: E402
