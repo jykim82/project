@@ -732,3 +732,16 @@ onInputChange, onAdd, adding, onDelete) — 두 인스턴스로 사용.
   · dry_run 응답 5필드 current/refined
   · 미리보기 다이얼로그 — 5개 row 비교, 비어있는 필드 자동 생략
   · [적용 (5개 필드 대체)] → PATCH 한 번에 5필드 갱신
+
+
+## 목록 상단 통계 (2026-07-16)
+
+장애 조치 보고서 목록(/reports/fault-action) 상단에 통계 배치 (사용자 요청).
+
+- **KPI 4카드**: 보고서(초안·확정) / 장애 항목(최다 분류) / 조치 완료율
+  (80% 미만 amber) / 평균 조치 시간(발생→조치)
+- **분류 칩**: fault-category-policy 4분류 색 (고장 rose·이상 amber·교체 sky·점검 emerald)
+- **기간 필터**: 30일(기본)/90일/전체 — report_date 기준
+- API: `GET /reports/stats?region&report_type&days` (endpoints/reports.py)
+- 컴포넌트: `ReportStatsHeader.tsx` — 목록 갱신(추가/삭제) 시 refreshKey 로 동기 재조회
+- 일 점검 보고서에는 미표시 (지표 체계가 달라 후속 별도 설계)
