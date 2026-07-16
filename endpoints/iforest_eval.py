@@ -48,13 +48,21 @@ def _run_dict(r) -> dict:
         "mean_score": r[12],
         "feature_set": r[13],
         "status": r[14],
+        # P1.5: 알람-일치율 (weak-label)
+        "alarm_events_total": r[15],
+        "alarm_events_evaluated": r[16],
+        "alarm_recall_pct": float(r[17]) if r[17] is not None else None,
+        "alarm_window_anomaly_rate": float(r[18]) if r[18] is not None else None,
+        "alarm_lift": float(r[19]) if r[19] is not None else None,
     }
 
 
 _RUN_COLS = """model_version, trained_at, train_window_days,
                tier1_count, tier2_count, total_models, n_eligible, n_skipped,
                coverage_pct, mean_anomaly_rate, mean_contamination,
-               calibration_err, mean_score, feature_set, status"""
+               calibration_err, mean_score, feature_set, status,
+               alarm_events_total, alarm_events_evaluated, alarm_recall_pct,
+               alarm_window_anomaly_rate, alarm_lift"""
 
 
 @router.get("")

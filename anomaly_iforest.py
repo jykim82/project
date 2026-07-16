@@ -273,6 +273,13 @@ class IForestManager:
                 )
                 pconn = get_connection_fn()
                 try:
+                    # P1.5: 실제 알람 이벤트 대비 약한 레이블 일치율 (실패 무해)
+                    try:
+                        run.update(self._evaluate_alarm_agreement(
+                            pconn, mean_anomaly_rate=run.get("mean_anomaly_rate"),
+                        ))
+                    except Exception as e:
+                        logger.warning("IForest 알람-일치율 평가 건너뜀: %s", e)
                     _persist_metrics(pconn, run, model_metrics)
                 finally:
                     pconn.close()
@@ -314,6 +321,116 @@ class IForestManager:
             "feature_set": FEATURE_SET, "status": "ok",
         }
         return run, model_metrics
+
+    # ── P1.5: 알람-일치율 (weak-label) 평가 ─────────────────
+    #
+    # 실제 알람 이벤트(tb_equipment_alarm_report, 아날로그 계열)를 약한
+    # 레이블로 사용해 IForest 탐지와의 일치율을 산출한다.
+    # 알람 tagsn 은 경보(디지털) 태그이므로 시설+카테고리 → 해당 시설의
+    # 아날로그 태그(수위/압력/유량)로 매핑해 근사 평가한다.
+    #
+    # 한계 (사양 §P1.5): 알람 자체에 오탐이 섞여 있어 '정밀도'가 아니라
+    # 재현율 proxy + lift. 사람 판정 레이블 축적(50건+) 후 P2 로 승격.
+
+    _ALARM_CAT_DATAINFO = {"수위": "%수위%", "압력": "%압력%", "유량": "%유량%"}
+
+    def _evaluate_alarm_agreement(
+        self, conn, window_days: int = 7,
+        mean_anomaly_rate: Optional[float] = None,
+    ) -> dict:
+        """알람 이벤트 ±60분 구간을 Tier-2 태그 모델로 스코어 → 일치 지표."""
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT ar.sitename, ar.alarm_category, ar.alarm_start_time
+                FROM tb_equipment_alarm_report ar
+                WHERE ar.alarm_start_time >= now() - (%s || ' days')::interval
+                  AND ar.alarm_category IN ('수위', '압력', '유량')
+                ORDER BY ar.alarm_start_time
+                """,
+                (window_days,),
+            )
+            events = cur.fetchall()
+            total = len(events)
+            if not total:
+                return {"alarm_events_total": 0, "alarm_events_evaluated": 0,
+                        "alarm_recall_pct": None,
+                        "alarm_window_anomaly_rate": None, "alarm_lift": None}
+
+            evaluated = 0
+            hits = 0
+            window_samples = 0
+            window_anoms = 0
+            for sitename, category, start_time in events:
+                pattern = self._ALARM_CAT_DATAINFO.get(category)
+                if not pattern or not sitename:
+                    continue
+                # 해당 시설의 대상 아날로그 태그 ±60분 5분 집계
+                cur.execute(
+                    """
+                    SELECT c.tagsn, c.bucket,
+                           (c.min_val + c.max_val) / 2.0 AS approx_avg
+                    FROM cagg_5min_raw_stats_ai c
+                    JOIN tb_tag_info ti ON ti.tagsn = c.tagsn
+                    WHERE ti.sitename = %s
+                      AND ti.tagtype = 'Analog Input'
+                      AND ti.datainfo LIKE %s
+                      AND ti.datainfo NOT LIKE '%%적산%%'
+                      AND c.bucket BETWEEN %s - interval '60 minutes'
+                                       AND %s + interval '60 minutes'
+                    ORDER BY c.tagsn, c.bucket
+                    """,
+                    (sitename, pattern, start_time, start_time),
+                )
+                rows = cur.fetchall()
+                if not rows:
+                    continue
+                tag_points: dict = defaultdict(list)
+                for tagsn, bucket, avg_val in rows:
+                    tag_points[tagsn].append((bucket, float(avg_val or 0)))
+
+                event_hit = False
+                event_scored = False
+                for tagsn, pts in tag_points.items():
+                    model = self.tag_models.get(tagsn)
+                    if model is None:
+                        continue
+                    X = self._build_tag_features(pts)
+                    if X is None or not len(X):
+                        continue
+                    preds = model.predict(X)
+                    event_scored = True
+                    window_samples += len(preds)
+                    n_anom = int((preds == -1).sum())
+                    window_anoms += n_anom
+                    if n_anom:
+                        event_hit = True
+                if event_scored:
+                    evaluated += 1
+                    if event_hit:
+                        hits += 1
+
+            recall = round(hits / evaluated * 100, 2) if evaluated else None
+            win_rate = (round(window_anoms / window_samples * 100, 2)
+                        if window_samples else None)
+            lift = None
+            if win_rate is not None and mean_anomaly_rate:
+                lift = round(win_rate / float(mean_anomaly_rate), 2)
+            logger.info(
+                "IForest 알람-일치율(P1.5): 이벤트 %d/%d 평가, recall(proxy)=%s%%, "
+                "구간 이상률=%s%%, lift=%s",
+                evaluated, total, recall, win_rate, lift,
+            )
+            return {
+                "alarm_events_total": total,
+                "alarm_events_evaluated": evaluated,
+                "alarm_recall_pct": recall,
+                "alarm_window_anomaly_rate": win_rate,
+                "alarm_lift": lift,
+            }
+        finally:
+            cur.close()
 
     def _save_models(self, region: str) -> None:
         """학습된 모델을 디스크에 원자적 저장 (콜드스타트 해소)."""
@@ -740,8 +857,11 @@ def _persist_metrics(conn, run: dict, model_metrics: list[dict]) -> None:
               (region, model_version, trained_at, train_window_days,
                tier1_count, tier2_count, total_models, n_eligible, n_skipped,
                coverage_pct, mean_anomaly_rate, mean_contamination,
-               calibration_err, mean_score, feature_set, status)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               calibration_err, mean_score, feature_set, status,
+               alarm_events_total, alarm_events_evaluated, alarm_recall_pct,
+               alarm_window_anomaly_rate, alarm_lift)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,%s)
             ON CONFLICT (region, model_version) DO UPDATE SET
                trained_at=EXCLUDED.trained_at,
                tier1_count=EXCLUDED.tier1_count, tier2_count=EXCLUDED.tier2_count,
@@ -750,14 +870,22 @@ def _persist_metrics(conn, run: dict, model_metrics: list[dict]) -> None:
                mean_anomaly_rate=EXCLUDED.mean_anomaly_rate,
                mean_contamination=EXCLUDED.mean_contamination,
                calibration_err=EXCLUDED.calibration_err,
-               mean_score=EXCLUDED.mean_score, status=EXCLUDED.status
+               mean_score=EXCLUDED.mean_score, status=EXCLUDED.status,
+               alarm_events_total=EXCLUDED.alarm_events_total,
+               alarm_events_evaluated=EXCLUDED.alarm_events_evaluated,
+               alarm_recall_pct=EXCLUDED.alarm_recall_pct,
+               alarm_window_anomaly_rate=EXCLUDED.alarm_window_anomaly_rate,
+               alarm_lift=EXCLUDED.alarm_lift
             """,
             (run["region"], run["model_version"], run["trained_at"],
              run["train_window_days"], run["tier1_count"], run["tier2_count"],
              run["total_models"], run["n_eligible"], run["n_skipped"],
              run["coverage_pct"], run["mean_anomaly_rate"],
              run["mean_contamination"], run["calibration_err"],
-             run["mean_score"], run["feature_set"], run["status"]),
+             run["mean_score"], run["feature_set"], run["status"],
+             run.get("alarm_events_total"), run.get("alarm_events_evaluated"),
+             run.get("alarm_recall_pct"), run.get("alarm_window_anomaly_rate"),
+             run.get("alarm_lift")),
         )
         region, version = run["region"], run["model_version"]
         rows = [
