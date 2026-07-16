@@ -2373,7 +2373,8 @@ init_replacement_priority(get_db_connection)
 app.include_router(replacement_priority_router)
 
 # 음성 입력 STT (로컬 Whisper — endpoints/stt.py)
-from endpoints.stt import router as stt_router  # noqa: E402
+from endpoints.stt import router as stt_router, init as init_stt  # noqa: E402
+init_stt(get_db_connection)  # 시설명 동적 도메인 프롬프트
 app.include_router(stt_router)
 
 

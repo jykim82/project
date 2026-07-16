@@ -26,16 +26,81 @@ MODEL_DIR = os.environ.get(
 )
 MAX_AUDIO_BYTES = 15 * 1024 * 1024  # 15MB (~2분 webm)
 
-# 도메인 용어 바이어스 — 현장 발화에서 상수도 용어 인식률 확보
-_DOMAIN_PROMPT = (
+# 도메인 용어 바이어스 — 현장 발화에서 상수도 용어 인식률 확보.
+# Whisper initial_prompt 는 224 토큰 초과 시 '앞'이 잘리므로, 검증된 핵심
+# 용어(탁도계 등 — 없으면 '학도 개' 오인식)를 문장 '뒤'에 배치한다.
+_BASE_DOMAIN_PROMPT = (
     "상수도 시설 현장 보고. 용어: 배수지, 가압장, 감압시설, 소블록, "
     "탁도계, 수위계, 유량계, 압력계, 잔류염소, 판넬, 인버터, PLC, RTU, "
     "UPS, 펌프, 밸브, 센서, 수리 완료, 조치 완료, 이상 발생, 고장"
 )
+_SITENAME_MAX_CHARS = 250  # 시설명 블록 상한 (224 토큰 예산 내 유지)
+_PROMPT_TTL_S = 3600       # 시설명 캐시 주기
 
 _model = None
 _load_failed = False
 _lock = threading.Lock()
+
+_get_db_connection = None
+_prompt_cache: str = _BASE_DOMAIN_PROMPT
+_prompt_cached_at: float = 0.0
+_prompt_lock = threading.Lock()
+
+
+def init(get_db_connection_fn) -> None:
+    """DB 커넥션 주입 — 시설명 동적 프롬프트 활성화 (미주입 시 base 만 사용)."""
+    global _get_db_connection
+    _get_db_connection = get_db_connection_fn
+
+
+def _load_sitenames() -> list[str]:
+    """운영 시설명 + 별칭 — 발화에서 가장 오인식되기 쉬운 고유명사."""
+    conn = _get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT sitename FROM tb_equipment_info
+            WHERE sitename IS NOT NULL AND sitename <> ''
+            UNION
+            SELECT DISTINCT alias FROM tb_facility_alias
+            WHERE use_yn = 'Y' AND alias IS NOT NULL AND alias <> ''
+            ORDER BY 1
+        """)
+        return [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _domain_prompt() -> str:
+    """시설명(DB, 1h 캐시) + 핵심 용어 프롬프트. DB 실패 시 base 폴백.
+
+    핵심 용어를 마지막에 두어 토큰 초과 절단 시에도 살아남게 한다.
+    """
+    global _prompt_cache, _prompt_cached_at
+    if _get_db_connection is None:
+        return _BASE_DOMAIN_PROMPT
+    now = time.monotonic()
+    if now - _prompt_cached_at < _PROMPT_TTL_S and _prompt_cached_at > 0:
+        return _prompt_cache
+    with _prompt_lock:
+        if now - _prompt_cached_at < _PROMPT_TTL_S and _prompt_cached_at > 0:
+            return _prompt_cache
+        try:
+            names, used = [], 0
+            for n in _load_sitenames():
+                used += len(n) + 2
+                if used > _SITENAME_MAX_CHARS:
+                    break
+                names.append(n)
+            site_block = f"시설명: {', '.join(names)}. " if names else ""
+            _prompt_cache = site_block + _BASE_DOMAIN_PROMPT
+            logger.info("STT 도메인 프롬프트 갱신: 시설명 %d개, %d자",
+                        len(names), len(_prompt_cache))
+        except Exception as e:
+            logger.warning("STT 시설명 로드 실패 — base 프롬프트 사용: %s", e)
+            _prompt_cache = _BASE_DOMAIN_PROMPT
+        _prompt_cached_at = now
+    return _prompt_cache
 
 
 def _get_model():
@@ -88,7 +153,7 @@ def transcribe(audio: UploadFile = File(...), language: Optional[str] = None) ->
                 language=language or "ko",
                 beam_size=5,
                 vad_filter=True,
-                initial_prompt=_DOMAIN_PROMPT,
+                initial_prompt=_domain_prompt(),
             )
             text = "".join(s.text for s in segments).strip()
         except Exception as e:
