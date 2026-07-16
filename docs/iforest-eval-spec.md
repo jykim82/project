@@ -174,3 +174,32 @@ baseline-eval 과 동일 구조·룩앤필:
   한 화면으로 통합, 셀렉터 전환(`?model=iforest`). `IForestEvalView` 컴포넌트로
   추출, 구 라우트 redirect. 메뉴 M100-14 삭제·M100-13 "AI 모델 평가"로 통합
   (migration 0093). 백엔드 API·로직 불변.
+
+
+## P1.5 — 알람-일치율 (weak-label) 평가 (2026-07-16 추가, Migration 0098)
+
+사람 판정 레이블(P2 조건: 50건+)이 쌓이기 전, **실제 알람 이벤트를 약한
+레이블**로 사용해 탐지 정렬도를 산출한다. 사용자 지적("실제 데이터가 올라오고
+있는데?")에서 출발 — 센서·알람 실데이터는 유입 중이므로 proxy 평가는 지금 가능.
+
+### 방식 (`anomaly_iforest._evaluate_alarm_agreement`, 학습 직후 실행)
+- 평가 창 7일, 아날로그 계열 알람(수위/압력/유량)만. 알람 tagsn 은 경보(디지털)
+  태그이므로 **시설+카테고리 → 해당 시설 아날로그 태그**로 매핑 (근사)
+- 이벤트별 ±60분 cagg_5min 피처를 Tier-2 태그 모델로 판정 → 1개 이상 이상(-1)이면 hit
+- Tier-1 커버 시설(태그 모델 없음)은 커버리지에서 제외 카운트
+
+### 지표 (tb_iforest_model_run 컬럼 / admin API / UI KPI)
+| 지표 | 의미 | 첫 실측 (07-16) |
+|---|---|---|
+| alarm_recall_pct | 알람 이벤트 중 IForest 도 이상으로 본 비율 (재현율 proxy) | 46.4% |
+| alarm_lift | 알람 구간 이상률 ÷ 평상시 이상률 — >1 이면 알람과 정렬 | ×1.48 |
+| alarm_events_evaluated/total | 평가 커버리지 | 84/156 |
+
+### 한계 (반드시 함께 표기)
+알람 자체에 오탐이 섞여 있어(본 제품의 전제) **정밀도가 아니다**. 재현율
+proxy + lift 로 방향성만 판단. 현장 확인 판정 50건+ 축적 시 P2 로 승격
+(트리거 조건: docs/review-items.md [대기] 절).
+
+### UI
+`/admin/model-eval?model=iforest` — 기존 KPI 아래 P1.5 행 (재현율 proxy /
+lift / 설명 노트). 데이터 없으면(alarm_events_total null) 행 자체 숨김.

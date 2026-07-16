@@ -180,7 +180,7 @@
 
 | 항목 | 트리거 | 현재치 (07-16) | 점검 |
 |---|---|---|---|
-| IForest P2 (레이블 정밀도) | 현장 확인 판정 알람 50건+ | 0건 | `SELECT count(*) FROM tb_equipment_alarm_report WHERE user_cause_description <> '' OR action_plan <> ''` |
+| IForest P2 (레이블 정밀도) | 현장 확인 판정 알람 50건+ | 0건 — **P1.5(알람 weak-label proxy)는 2026-07-16 완료** (recall 46.4%·lift 1.48) | `SELECT count(*) FROM tb_equipment_alarm_report WHERE user_cause_description <> '' OR action_plan <> ''` |
 | Gemma few-shot (A-4) | 오분류 피드백 100건+ (혼동 쌍 식별) | 4건 | `SELECT count(*) FROM tb_ai_chat_feedback` 또는 /admin/chat-feedback |
 | 벡터 임계값 최적화 | 오분류 피드백 300건+ | 4건 | 상동 |
 
