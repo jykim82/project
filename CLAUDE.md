@@ -205,6 +205,7 @@ web/
 - `docs/alarm-popup-spec.md` — 알람 발생 시 위기대응 모달 (경고 모달 / 주의 toast / 종합 카드 + SITE_SETTING.ALARM_POPUP_ENABLED 마스터 토글)
 - `docs/alarm-diagnosis-control-mode-spec.md` — 알람 진단 펌프 제어모드 게이트 (Node-RED diagnosed_cause 오분류 수정: pump_control_mode 게이트 + 실가동 검증 + 경합 제거. 죽동 HH "펌프 미가동" 오분류 분석에서 도출. Phase A 사양/B 구현)
 - `docs/performance/alarm-notifications-index.md` — 알람 폴링·인덱스 최적화 (features fetch 5분 + invalidate event + dynamic import + Migration 0081 부분 인덱스)
+- `docs/equipment-health-priority-spec.md` — 설비 교체 우선순위 Top 5 (개요 탭 카드. 3신호 융합: 내용연수·MTBF·재발 지속. `slm/endpoints/replacement_priority.py` + ReplacementPriorityCard)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
