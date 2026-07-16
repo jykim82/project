@@ -208,6 +208,7 @@ web/
 - `docs/performance/alarm-notifications-index.md` — 알람 폴링·인덱스 최적화 (features fetch 5분 + invalidate event + dynamic import + Migration 0081 부분 인덱스)
 - `docs/equipment-health-priority-spec.md` — 설비 교체 우선순위 Top 5 (개요 탭 카드. 3신호 융합: 내용연수·MTBF·재발 지속. `slm/endpoints/replacement_priority.py` + ReplacementPriorityCard)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
+- `docs/field-mode-spec.md` — 현장 모드 (/field 모바일 런처 — 사진 진단·음성 기록 대형 버튼 + 진행중 장애. 처리는 채팅 재사용, field-handoff 사진 전달, Migration 0099 M009)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
 - `docs/startup-spec.md` — 시작 페이지
