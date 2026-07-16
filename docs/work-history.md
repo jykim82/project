@@ -2,6 +2,27 @@
 - 작업 진행할 때마다 CLAUDE.md의 "현재 작업 상태" 섹션을 업데이트해.
 - 완료된 항목, 진행 중인 항목, 남은 항목을 정리해둬.
 
+### 완료 (2026-07-16 후반 — 사양·백로그 배치: 인텐트·통계·E-037·번들·현장 모드)
+
+**1. REPLACEMENT_PRIORITY_QUERY 채팅 인텐트** (`slm@…`)
+- "교체해야 할 설비 알려줘" → replacement_priority() 직접 호출 (이원화 방지).
+  선언+핸들러 1파일, ai_server 무변경 (3단계 아키텍처 검증 사례). 스모크 16/16
+
+**2. 일 점검 보고서 통계 헤더** (`slm-dashboard@…`)
+- ReportStatsHeader 공통 적용, 라벨 "점검 항목" 분기
+
+**3. [E-037] 오타 보정 안내 세션 누수 수정** (`slm@5803163`)
+- _corrections 가 세션 누적 → 다음 턴 재표출. '_' 접두 파생 키 누적 제외.
+  규약을 intent-architecture-spec 에 명문화
+
+**4. 모델 웨이트 오프라인 번들** (`slm/tools/model_weights_bundle.sh`)
+- pack/install/verify (sha256 31파일 전수 + 번들 체크섬). 종단 테스트 +
+  손상 감지 확인. docs/operations/model-weights-bundle.md — 납품 리스크 해소
+
+**5. 현장 모드 /field** (`slm-dashboard@…`, Migration 0099)
+- 모바일 런처: 사진 진단(핸드오프→채팅 첨부+프리필)·음성 기록(VAD→프리필)·
+  진행중 장애 Top5(탭→조치 기록 프리필). docs/field-mode-spec.md
+
 ### 완료 (2026-07-16 — 현장 UX 라운드: 음성 VAD·게이지 PoC·교체 우선순위·팝업 전체화면)
 
 **1. 음성 입력 고도화** (`slm-dashboard@677d59d`, `slm@…stt`)

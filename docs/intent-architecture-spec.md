@@ -89,6 +89,20 @@ event_generator 는 인텐트 분기 0개, 651줄 순수 파이프라인만 남�
 - 주의 사례: from_ts==to_ts 보정은 TIMESERIES 조달보다 먼저여야 해서 훅 앞으로
   이동 (실행 순서 보존). 같은 인텐트의 복수 시점 분기는 한 핸들러의 여러 훅으로.
 
+### 파라미터 규약 — `_` 접두 파생 키 [E-037]
+
+`params` 에 넣는 **턴 한정 파생 정보**(오타 보정 이력 `_corrections` 등)는
+반드시 `_` 접두 키를 사용한다. `session_manager.update_session` 이 `_` 접두
+키를 세션 누적(slot-filling)에서 제외하기 때문 — 미준수 시 이전 턴의 파생
+정보가 다음 턴 응답에 재표출된다 (E-037: '신편'→'신평' 보정 안내가 무관한
+다음 질문에 붙던 버그). 반대로 **턴 간 유지해야 하는 슬롯**(sitename 등)은
+`_` 없이.
+
+### 후속 추가 인텐트 (아키텍처 검증 사례)
+- `REPLACEMENT_PRIORITY_QUERY` (2026-07-16) — 선언 + 핸들러 파일 1개
+  (`intent_handlers/replacement.py`)로 추가 완료. 3단계 아키텍처 의도대로
+  ai_server 본체 무변경 (docs/equipment-health-priority-spec.md §채팅 인텐트)
+
 **새 인텐트 추가 = example3.json 선언 + (커스텀 필요 시) 핸들러 클래스 1개.**
 
 ## 3단계 — 카드 타입 선언화 (완료 2026-07-15)

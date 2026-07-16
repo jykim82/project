@@ -336,7 +336,8 @@ else:
 ### 구조
 - `slm/trend_forecast.py` — lazy 싱글턴 로드(첫 ~1s, 이후 ~24ms/태그),
   로컬 웨이트 전용(`data/models/chronos-bolt-base`, 783MB, **git 제외** —
-  폐쇄망 배포 시 오프라인 번들). 미가용/실패 시 None → 선형 폴백.
+  폐쇄망 배포 시 오프라인 번들: `slm/tools/model_weights_bundle.sh`,
+  docs/operations/model-weights-bundle.md). 미가용/실패 시 None → 선형 폴백.
 - `trend_comparison`: chronos 성공 시 median 을 forecast 시리즈로, 10/90%
   quantile 을 `forecast.band_upper/band_lower` 로 응답에 포함 (선형 폴백이면
   None). **클램프(관측 밴드·만수위 캡)·임계 시리즈 스캔·status 판정은 엔진과
