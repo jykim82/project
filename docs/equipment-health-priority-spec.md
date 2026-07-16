@@ -51,5 +51,8 @@ graph_type=table Top 5 표. `intent_handlers/replacement.py` 가
 판정 이원화 방지). stage1 키워드 9종("교체 우선순위"/"교체해야" 등) 선언으로
 SLM 폴백 없이 0.2~0.5s 분류. 스모크 16/16 회귀 통과.
 
-## 향후 후보 (미착수)
-- 대시보드 개요(startup)에도 요약 1줄 노출
+## 대시보드 KPI 통일 (2026-07-16 완료)
+대시보드의 기존 "교체 권고" KPI(근본원인 weighted_score ≥5 기준)를 본
+3신호 융합 API 로 교체 — equipment-health 개요 Top5 와 **숫자 일치 보장**
+(판정 이원화 방지). 라벨 "교체 검토 필요", sub "1위 {시설} {설비} · {레벨}",
+클릭 → /monitoring/equipment-health. API 실패 시 기존 근본원인 랭킹 폴백.

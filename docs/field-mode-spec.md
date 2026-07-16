@@ -28,7 +28,12 @@ File 객체는 URL 로 전달 불가 → 모듈 싱글턴 stash/take (1회 소�
 - `sidebar-menus.ts` M009 "현장 모드" (HardHat 아이콘) + Migration 0099
   (`tb_menu` M009 idx 8, 권한은 AI 채팅 M002 와 동일 — 전 사용자)
 
+## 모바일 안내 배너 (2026-07-16 추가)
+`FieldModeBanner` — 모바일 뷰포트에서 하단 고정 배너로 현장 모드 전환 제안
+(발견성 확보). `(dashboard)/layout.tsx` 에 마운트.
+- 표시 조건: `useIsMobile()` && 미해제 && pathname ∉ {/field, /chat}
+- 닫기 = sessionStorage (세션 내 재표시 안 함, 다음 방문 시 재안내)
+
 ## 향후 후보 (미착수)
-- 모바일 접속 감지 시 시작 페이지에서 현장 모드 배너 제안
 - PWA (manifest·홈화면 설치) — 사용자 결정 시
 - 담당 시설 즐겨찾기 바로가기
