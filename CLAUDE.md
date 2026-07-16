@@ -182,6 +182,7 @@ web/
 - `docs/slm-api-contract-final.md` — Python ↔ Next.js API 규약 (56개 인텐트)
 - `docs/intent-architecture-spec.md` — 인텐트 레지스트리+훅 아키텍처 (1단계 완료: example3.json 에 dynamic_sql·classify_keywords 선언 → 파생 생성. 인텐트 추가 = JSON 한 곳. 2단계 핸들러 레지스트리·3단계 card_type 계획)
 - `docs/slm-setup-phase-spec.md` — 기초정보 구축 + 컬럼 잠금
+- `docs/voice-input-spec.md` — 음성 입력 (로컬 Whisper STT, 채팅 마이크 버튼. 도메인 용어 프롬프트 바이어스. 웨이트 1.5GB git 제외 — 납품 번들)
 - `docs/tag-monitoring-spec.md` — 태그 모니터링 (모니터링 그룹 — 현재값 컬럼 + 이상 카테고리 9종 필터 + 컬럼 정렬 + 우클릭 트랜드 보기, CSV·태그추가 제외, 4 Phase)
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉

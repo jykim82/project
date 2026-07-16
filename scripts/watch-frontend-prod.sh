@@ -47,8 +47,9 @@ while true; do
   if [ "$last_seen" != "$last_built" ] && [ "$changed_at" -ne 0 ]; then
     if [ $(( $(now) - changed_at )) -ge "$DEBOUNCE_S" ]; then
       echo "▶ [$(date '+%H:%M:%S')] 변경 확정 → 프로덕션 프런트 재빌드·재배포"
+      build_sig="$(sig)"      # 빌드 '시작 시점' signature — 빌드 중 변경은 다음 루프에서 감지
       if scripts/switch-frontend-prod.sh; then
-        last_built="$(sig)"   # 빌드 직후 최신 signature 로 갱신(빌드 중 변경 반영)
+        last_built="$build_sig"
         echo "✅ [$(date '+%H:%M:%S')] 반영 완료 — 브라우저 새로고침 시 최신 반영"
       else
         echo "⚠ 재빌드 실패 — ${POLL_S}s 후 재시도"
