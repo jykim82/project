@@ -100,7 +100,9 @@ class SessionManager:
 
         if params:
             for key, value in params.items():
-                if value is not None:
+                # '_' 접두 키는 해당 턴의 파생 정보(오타 보정 이력 등) — 누적 시
+                # 다음 턴 답변에 이전 턴 보정 안내가 재표출되는 오류 (2026-07-16)
+                if value is not None and not key.startswith("_"):
                     session.accumulated_params[key] = value
 
         session.last_status = status
