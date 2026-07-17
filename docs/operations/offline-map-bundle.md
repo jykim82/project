@@ -32,7 +32,7 @@ cp -R /tmp/bma/fonts /tmp/bma/sprites slm-dashboard/slm-dashboard/public/map/ass
 | 타일 | `scripts/extract-map-region.sh "<bbox>"` — 예) 광주 `"126.60,35.02,127.05,35.30"` |
 | 지도 중심/줌 | env `NEXT_PUBLIC_GIS_CENTER="126.85,35.16"` `NEXT_PUBLIC_GIS_ZOOM=11` (기본: 당진) |
 | 시설 좌표 | `gis-facility-coords.json` — 구축 단계 데이터 (setup 플로우) |
-| SHP 레이어 | 관할 SHP 교체 (기존 GIS 구축 절차) |
+| SHP 레이어 (관로·밸브·경계) | `scripts/import-shp-layers.py <SHP디렉토리>` — 아래 §SHP 임포트 |
 
 ## 납품 장비 — 검증
 1. 인터넷 차단 상태에서 `/monitoring/gis` 접속 → 지도 타일·한글 지명 표시
@@ -45,3 +45,22 @@ cp -R /tmp/bma/fonts /tmp/bma/sprites slm-dashboard/slm-dashboard/public/map/ass
   다른 정적 서버로 바꿀 땐 Range 지원 확인
 - 라이선스: 타일 데이터 © OpenStreetMap (ODbL), 스타일/에셋 protomaps (BSD/OFL)
 - 모델 웨이트 번들과 함께 납품 체크리스트 항목 (delivery-checklist 참조)
+
+## SHP 임포트 — 관로·밸브·경계 레이어 (2026-07-17 스크립트화)
+
+관할의 상수도 GIS SHP 세트(표준 코드 SA1xx/SA2xx/SAA0xx + 블록경계)를
+받아 프런트 레이어 데이터를 재생성:
+
+```bash
+/Users/jykim/slm/venv/bin/python scripts/import-shp-layers.py "docs/SHP추출"
+# → public/gis/{layer}.geojson 17종 + pipes/facilities.pmtiles 재생성
+```
+
+- 입력 규격: EPSG:5186, DBF 인코딩 CP949 (EUC-KR/UTF-8 자동 폴백)
+- 코드 매핑: 스크립트 `CODE_TO_LAYER` (SAA004→배수관 distribution 등).
+  같은 코드 복수 파일(블록구축신설 등) 자동 병합, **"폐쇄" 파일 제외**
+- 의존: pyshp·pyproj (slm venv) + tippecanoe (brew) — 개발/구축 장비 전용
+- 재현 검증 (당진 원본 22종): 15개 레이어 feature 수 기존 산출과 정확 일치,
+  관로 2종은 기존에 누락됐던 신설분 포함으로 +137/+2
+- 좌표계가 다른 관할(예: EPSG:5185/5187 서부/동부원점)은 스크립트 상단
+  Transformer 의 소스 CRS 만 변경

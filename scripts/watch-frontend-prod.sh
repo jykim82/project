@@ -22,7 +22,8 @@ DEBOUNCE_S="${DEBOUNCE_S:-20}"
 # 감시 대상 파일들의 최신 수정시각(epoch) — 변경 signature
 sig() {
   { find $WATCH_DIRS -type f \
-      \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.js' -o -name '*.json' \) \
+      \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.js' -o -name '*.json' \
+         -o -name '*.geojson' -o -name '*.pmtiles' \) \
       -not -path '*/node_modules/*' -not -path '*/.next/*' -exec stat -f '%m' {} + 2>/dev/null
     stat -f '%m' $WATCH_FILES 2>/dev/null; } | sort -n | tail -1
 }
