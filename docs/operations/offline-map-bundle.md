@@ -6,7 +6,7 @@
 ## 구성
 | 요소 | 경로 (프런트 submodule) | 크기 | 출처 |
 |---|---|---|---|
-| 관할 벡터 타일 | `public/map/dangjin.pmtiles` | ~19MB | protomaps 빌드에서 bbox 추출 |
+| 관할 벡터 타일 | `public/map/region.pmtiles` | ~19MB | protomaps 빌드에서 bbox 추출 |
 | 글리프(폰트) | `public/map/assets/fonts/` | ~14MB | protomaps/basemaps-assets |
 | 스프라이트 | `public/map/assets/sprites/` | ~260KB | 〃 |
 
@@ -19,20 +19,25 @@
 ## 개발 장비 — 에셋 준비 (인터넷 필요, 1회)
 ```bash
 brew install pmtiles
-# 관할 bbox 추출 (당진 + 여유)
-pmtiles extract https://build.protomaps.com/$(date -v-2d +%Y%m%d).pmtiles \
-  slm-dashboard/slm-dashboard/public/map/dangjin.pmtiles \
-  --bbox=126.35,36.65,127.05,37.15
-# 글리프/스프라이트
+# 관할 타일 추출 — bbox 파라미터 스크립트 (파일명 region.pmtiles 고정)
+scripts/extract-map-region.sh "126.35,36.65,127.05,37.15"   # 당진
+# 글리프/스프라이트 (관할 무관 — 1회만)
 git clone --depth 1 https://github.com/protomaps/basemaps-assets.git /tmp/bma
 cp -R /tmp/bma/fonts /tmp/bma/sprites slm-dashboard/slm-dashboard/public/map/assets/
 ```
-다른 고객사(관할) 납품 시 bbox 만 변경해 재추출.
+
+## 고객사(관할) 변경 절차 — 코드 수정 없음
+| 항목 | 방법 |
+|---|---|
+| 타일 | `scripts/extract-map-region.sh "<bbox>"` — 예) 광주 `"126.60,35.02,127.05,35.30"` |
+| 지도 중심/줌 | env `NEXT_PUBLIC_GIS_CENTER="126.85,35.16"` `NEXT_PUBLIC_GIS_ZOOM=11` (기본: 당진) |
+| 시설 좌표 | `gis-facility-coords.json` — 구축 단계 데이터 (setup 플로우) |
+| SHP 레이어 | 관할 SHP 교체 (기존 GIS 구축 절차) |
 
 ## 납품 장비 — 검증
 1. 인터넷 차단 상태에서 `/monitoring/gis` 접속 → 지도 타일·한글 지명 표시
 2. 브라우저 Network 에서 `cartocdn.com` 요청 0건 확인
-3. 지도 안 뜨면: `public/map/dangjin.pmtiles` 존재 + 서버가 Range 요청
+3. 지도 안 뜨면: `public/map/region.pmtiles` 존재 + 서버가 Range 요청
    (206) 지원하는지 확인
 
 ## 주의
