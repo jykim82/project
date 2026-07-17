@@ -209,7 +209,7 @@ web/
 - `docs/equipment-health-priority-spec.md` — 설비 교체 우선순위 Top 5 (개요 탭 카드. 3신호 융합: 내용연수·MTBF·재발 지속. `slm/endpoints/replacement_priority.py` + ReplacementPriorityCard)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/leak-alert-spec.md` — 누수 의심 알림 (야간최소유량 CUSUM 자동 감지·확인 + 선정 사유 서술. 판정=cusum_max, Migration 0100 reason 컬럼)
-- `docs/field-mode-spec.md` — 현장 모드 (/field 모바일 런처 — 사진 진단·음성 기록 대형 버튼 + 진행중 장애. 처리는 채팅 재사용, field-handoff 사진 전달, Migration 0099 M009)
+- `docs/field-mode-spec.md` — 현장 모드 v3 (/field — ①알람 대응(확장 액션: 사진 진단/고장 기록/매뉴얼/조치) ②시설 선택 작업(일상점검·알람 없는 설비) ③진행중 장애 조치 완료 ④자유 입력. 처리는 채팅 재사용, field-handoff 사진 전달, FieldModeBanner, Migration 0099 M009)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
 - `docs/startup-spec.md` — 시작 페이지
