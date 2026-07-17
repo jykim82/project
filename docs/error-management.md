@@ -1633,6 +1633,15 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **재발 방지:** WebGL 커스텀 레이어는 "추가했다"가 아니라 "존재한다"를 주기 확인. DOM 오버레이와 WebGL 레이어를 섞을 때 한쪽만 살아남는 비대칭 증상 패턴 기억. 부수 발견: 베이스맵 cartocdn 외부 의존 → 납품 전 오프라인 타일 번들 필요 (review-items 등재)
 - **커밋:** `slm-dashboard@c7d3cdb`
 
+### [E-039] 차트 첫 로드 이중 렌더 — 그려진 뒤 다시 그려짐
+
+- **날짜:** 2026-07-17
+- **증상:** 채팅 트렌드 카드·트렌드 메뉴에서 첫 로드 시 차트가 그려졌다가 곧바로 다시 처음부터 그려짐 (애니메이션 재시작 — "리프레시되는" 느낌)
+- **원인:** ① `EChartWrapper` 가 next-themes `resolvedTheme` 확정 전(hydration 직전 undefined)에 차트를 초기화 → 직후 다크 테마 확정 시 ECharts **전체 재초기화** (테마는 init-time 파라미터). 모든 차트 공통 ② `TrendChart` 활성 비교 tag 를 effect 로 결정 → 데이터 도착 렌더 후 오버레이 적용 2차 전체 리드로우 (notMerge=true)
+- **해결:** ① 테마 확정까지 1프레임 대기 후 1회만 초기화 ② 활성 tag 를 렌더 중 파생 계산(useMemo)으로 전환, 사용자 선택만 state 유지
+- **재발 방지:** 신규 차트는 EChartWrapper 경유 필수. 차트 옵션에 들어가는 파생 상태는 effect 금지·렌더 중 계산 (chart-rendering-policy §이중 렌더 방지, trend-comparison-spec §7.7-4)
+- **커밋:** `slm-dashboard@bfff649`
+
 ---
 
 - 시작 스크립트: `D:\web\start-services.bat`

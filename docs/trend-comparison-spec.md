@@ -635,6 +635,10 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
    - 사용자가 직접 선택한 tag 가 다음 진입에서도 유지
 3. **자동 무효화**: 활성 tag 가 새 응답의 `comparison` 에 없으면 (skip 됐거나
    사라짐) → 워스트 자동 재선택
+4. **구현 방식** (2026-07-17, E-039): 위 1~3 결정은 effect 가 아니라 **렌더
+   중 파생 계산(useMemo)** — effect 로 결정하면 데이터 도착 렌더(오버레이
+   없음) 뒤 2차 전체 리드로우가 생겨 차트가 "다시 그려짐". 사용자 직접
+   선택만 state(`userTagId`) 로 유지 (chart-rendering-policy §이중 렌더 방지)
 
 #### UI — ComparisonHeader 의 셀렉터
 
