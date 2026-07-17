@@ -26,13 +26,29 @@ git clone --depth 1 https://github.com/protomaps/basemaps-assets.git /tmp/bma
 cp -R /tmp/bma/fonts /tmp/bma/sprites slm-dashboard/slm-dashboard/public/map/assets/
 ```
 
-## 고객사(관할) 변경 절차 — 코드 수정 없음
-| 항목 | 방법 |
+## 고객사(관할) 변경 절차 — UI (구축 > 지도 설정, 2026-07-17 제품화)
+
+**`/setup/map-config`** (M200-16, Migration 0101) 에서 재빌드·코드 수정 없이 처리:
+| 항목 | UI 동작 |
 |---|---|
-| 타일 | `scripts/extract-map-region.sh "<bbox>"` — 예) 광주 `"126.60,35.02,127.05,35.30"` |
-| 지도 중심/줌 | env `NEXT_PUBLIC_GIS_CENTER="126.85,35.16"` `NEXT_PUBLIC_GIS_ZOOM=11` (기본: 당진) |
-| 시설 좌표 | `gis-facility-coords.json` — 구축 단계 데이터 (setup 플로우) |
-| SHP 레이어 (관로·밸브·경계) | `scripts/import-shp-layers.py <SHP디렉토리>` — 아래 §SHP 임포트 |
+| 지도 중심/줌 | 폼 입력 → site-settings DB (`GIS_MAP_CENTER`/`GIS_MAP_ZOOM`) — GIS 진입 시 적용 |
+| 베이스맵 타일 | `region.pmtiles` 업로드 → `files/map/` 저장, 즉시 반영 |
+| 관망 레이어 (관로·밸브·경계) | geojson/pmtiles zip 업로드 → `files/gis/` 저장, 즉시 반영 |
+| 내장본 복원 | 각 섹션 "내장본 복원" 버튼 (업로드본 삭제) |
+
+**서빙 아키텍처**: 업로드본(files/) 우선 → 빌드 내장본(public/) 폴백.
+- `/api/gis/basemap` (Range 지원, region.pmtiles) / `/api/gis/layer/[id]` /
+  `/api/gis/tiles/*` — 모두 `resolveGisAsset()` 경유
+- 백엔드: `slm/endpoints/map_assets.py` (업로드·상태·삭제, PMTiles 매직 검증)
+
+**산출물 생성은 개발/구축 장비 스크립트** (인터넷 필요):
+| 산출물 | 스크립트 |
+|---|---|
+| region.pmtiles | `scripts/extract-map-region.sh "<bbox>"` — 예) 광주 `"126.60,35.02,127.05,35.30"` |
+| 레이어 zip | `scripts/import-shp-layers.py <SHP디렉토리>` (§SHP 임포트) → public/gis 산출물을 zip |
+
+env `NEXT_PUBLIC_GIS_CENTER`/`GIS_ZOOM` 은 DB 설정 없을 때 폴백으로 유지.
+시설 좌표(`gis-facility-coords.json`)는 구축 단계 데이터 (setup 플로우).
 
 ## 납품 장비 — 검증
 1. 인터넷 차단 상태에서 `/monitoring/gis` 접속 → 지도 타일·한글 지명 표시
