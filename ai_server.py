@@ -2377,6 +2377,10 @@ from endpoints.stt import router as stt_router, init as init_stt  # noqa: E402
 init_stt(get_db_connection)  # 시설명 동적 도메인 프롬프트
 app.include_router(stt_router)
 
+# 구축 — 지도·관망 데이터 자산 (endpoints/map_assets.py)
+from endpoints.map_assets import router as map_assets_router  # noqa: E402
+app.include_router(map_assets_router)
+
 
 def _reload_facility_aliases():
     """facility_alias CRUD 후 런타임 param_extractor에 즉시 반영"""

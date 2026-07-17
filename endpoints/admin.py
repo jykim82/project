@@ -23,7 +23,7 @@ import shutil
 import uuid
 
 import psycopg2
-from fastapi import APIRouter, Request, UploadFile, File, Form, Query
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -542,6 +542,10 @@ async def get_site_settings():
                 settings["trend_comparison_enabled"] = use_yn == "Y"
             elif comm_cd == "REPORT_AUTOMATION_ENABLED":
                 settings["report_automation_enabled"] = use_yn == "Y"
+            elif comm_cd == "GIS_MAP_CENTER":
+                settings["gis_center"] = comm_val  # "lon,lat"
+            elif comm_cd == "GIS_MAP_ZOOM":
+                settings["gis_zoom"] = comm_val
 
         if "default_landing_page" not in settings:
             settings["default_landing_page"] = "/dashboard"
@@ -644,6 +648,42 @@ async def update_site_settings(request: Request):
                 (page,),
             )
             conn.commit()
+
+        # 지도 기본 뷰 (관할 중심좌표/줌) — 구축 지도 설정 UI
+        if "gis_center" in body:
+            try:
+                lon, lat = (float(v) for v in str(body["gis_center"]).split(","))
+                if not (124 <= lon <= 132 and 33 <= lat <= 39):
+                    raise ValueError("한국 영역 밖")
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', 'GIS_MAP_CENTER', '지도 중심좌표', %s, 'Y')
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET comm_val = EXCLUDED.comm_val
+                    """,
+                    (f"{lon},{lat}",),
+                )
+                conn.commit()
+            except (ValueError, TypeError):
+                raise HTTPException(400, "gis_center 는 'lon,lat' (한국 영역)")
+        if "gis_zoom" in body:
+            try:
+                z = float(body["gis_zoom"])
+                if not (7 <= z <= 18):
+                    raise ValueError
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', 'GIS_MAP_ZOOM', '지도 기본 줌', %s, 'Y')
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET comm_val = EXCLUDED.comm_val
+                    """,
+                    (str(z),),
+                )
+                conn.commit()
+            except (ValueError, TypeError):
+                raise HTTPException(400, "gis_zoom 은 7~18 숫자")
 
         # 테마·브랜드·레이아웃 (site-level, comm_val) — 검증 후 저장
         if "tweaks" in body and isinstance(body["tweaks"], dict):
