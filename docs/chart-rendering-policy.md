@@ -152,3 +152,15 @@ const chartRef = useRef<EChartHandle>(null);
 
 - 2026-04-28 — v1 초안. default svg + smooth animation + alarm-calendar/
   reservoir/pressure 검증. TopologyGraph 만 canvas 명시 유지.
+
+## 이중 렌더(재초기화) 방지 (2026-07-17)
+
+첫 로드 시 "그려졌다가 다시 그려지는" 증상의 두 가지 원인과 규칙:
+
+1. **테마 확정 전 초기화 금지** — `EChartWrapper` 는 next-themes
+   `resolvedTheme` 이 undefined(hydration 직전)인 동안 차트를 만들지 않고
+   1프레임 대기한다. 테마는 ECharts **init-time 파라미터**라 나중에 바뀌면
+   전체 재초기화가 일어남. 새 차트 컴포넌트는 반드시 EChartWrapper 경유.
+2. **옵션에 들어가는 파생 상태는 effect 가 아니라 렌더 중 계산** —
+   effect 로 결정하면 "데이터 렌더 → effect → 옵션 변경 → notMerge 전체
+   리드로우" 2차 패스가 생긴다 (TrendChart 활성 태그 사례). `useMemo` 파생.
