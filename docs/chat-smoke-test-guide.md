@@ -80,6 +80,12 @@ npm run test:e2e        # prod 스택(:3000) + 백엔드(:8000) 기동 전제, ~
 주의: 백엔드 재기동 직후엔 스캔 캐시 웜업(~2분) 후 실행. 실행 시점: 채팅
 UI·use-chat-submit·카드 컴포넌트·mapper 변경 후 (필수), 백엔드 스모크와 세트로.
 
+**hydration 레이스 (2026-07-18)**: prod 빌드에서 goto 직후 즉시 fill 하면
+React hydration 이 컨트롤드 입력을 초기화해 전송이 유실됨 (번들이 커지며
+상시 실패로 표면화). `askChat` 헬퍼가 **전송 버튼 활성화**(=React state 반영
+증거)까지 fill 을 재시도(`expect().toPass`)하므로 새 케이스도 반드시 이
+헬퍼를 경유할 것 — 직접 fill+Enter 금지.
+
 ## Tier 3 — 채팅 카드 갤러리 (완료 2026-07-15)
 
 `/admin/chat-gallery` (관리 > 채팅 카드 갤러리, ADMIN/MASTER) — 대표 질의

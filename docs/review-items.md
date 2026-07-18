@@ -213,8 +213,8 @@ PoC 로 능력 확인 완료 — gemma4 비전 합성 게이지 5/5 (아날로�
 - 후보: OpenMapTiles 셀프호스팅 or pmtiles 정적 파일 (Caddy 서빙)
 - 모델 웨이트 번들(model_weights_bundle.sh)과 동일하게 납품 체크리스트 등재
 
-## [정리 후보] FlowDiagram.tsx — 미사용 레거시 (2026-07-18 발견)
+## ~~[정리 후보] FlowDiagram.tsx — 미사용 레거시~~ → **✅ 삭제 (2026-07-18)**
 
 `src/components/setup/FlowDiagram.tsx` 는 어디서도 import 되지 않는 구
-프리뷰 컴포넌트 (실사용은 FlowDiagramGraph.tsx). tsc 제로화에서 구 스키마
-참조를 로컬 타입으로 격리해 둠 — 다음 정리 라운드에서 삭제 검토.
+프리뷰 컴포넌트였음 (실사용은 FlowDiagramGraph.tsx). 정리 라운드에서
+import 0건 재확인 후 삭제 — tsc 0건 유지.
