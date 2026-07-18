@@ -107,6 +107,7 @@ Ollama). 구축 업체별 커스터마이징은 **config·미그레이션 분리
 - 상세 스키마: `docs/slm-api-contract-final.md`
 
 ## 컨벤션
+- **커밋 게이트: `npx tsc --noEmit` 0건** (2026-07-18 제로화 완료 — 신규 오류를 만들지 말 것. "기존 오류"는 더 이상 없음)
 - 컴포넌트: PascalCase, `src/components/`
 - 페이지: `src/app/(dashboard)/` 내 라우트 그룹
 - API 호출: `src/lib/api-client.ts` 중앙 관리
