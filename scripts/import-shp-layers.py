@@ -155,6 +155,11 @@ def main() -> int:
         return 1
 
     for layer, feats in by_layer.items():
+        # 블록 경계는 렌더러 색상 step 이 block_index(숫자) 를 요구 — 누락 시
+        # MapLibre 표현식 오류로 검정 폴백(관할 전체가 진회색) [E-040]
+        if layer in ("block_boundary", "mid_block_boundary"):
+            for i, f in enumerate(feats, start=1):
+                f["properties"]["block_index"] = i
         out = OUT_DIR / f"{layer}.geojson"
         out.write_text(json.dumps(
             {"type": "FeatureCollection", "features": feats}, ensure_ascii=False,

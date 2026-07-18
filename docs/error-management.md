@@ -1642,6 +1642,15 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **재발 방지:** 신규 차트는 EChartWrapper 경유 필수. 차트 옵션에 들어가는 파생 상태는 effect 금지·렌더 중 계산 (chart-rendering-policy §이중 렌더 방지, trend-comparison-spec §7.7-4)
 - **커밋:** `slm-dashboard@bfff649`
 
+### [E-040] GIS 소블록경계가 관할 전체를 진회색으로 덮음 — SHP 임포트 스키마 불일치
+
+- **날짜:** 2026-07-18
+- **증상:** 오프라인 지도 전환 후 GIS 관망도에서 당진 관할 전체가 어두운 회색으로 덮이고 블록 경계선이 검정으로 표시 ("기존과 많이 달라졌다, 배경이 어둡다"). 콘솔에 MapLibre 경고 `Expected value to be of type number, but found null` 반복
+- **원인:** 렌더러 색상 표현식 `["step", ["get","block_index"], …]` 은 숫자 `block_index` 를 요구하는데, SHP 임포트 파이프라인(`scripts/import-shp-layers.py`)이 생성한 `block_boundary.geojson` 은 원본 DBF 속성(`소블록` 이름)만 담고 `block_index` 를 넣지 않음 → step 이 null 을 받아 표현식 오류 → MapLibre 가 **기본색(검정) 폴백**으로 채색 (0.18 투명 검정 = 진회색). 구 geojson 에는 있던 속성을 SHP 파이프라인이 유지하지 않은 회귀
+- **해결:** ① 임포트 스크립트가 `block_boundary`/`mid_block_boundary` feature 에 `block_index` (1-based) 를 부여하고 geojson 재생성 ② 렌더러 `buildBlockColorStep` 입력을 `["to-number", ["coalesce", ["get","block_index"], 0]]` 로 null-safe 화 — 속성이 없어도 파스텔 기본색으로 렌더
+- **재발 방지:** SHP → geojson 변환 산출물은 **렌더러가 기대하는 파생 속성까지 포함**해야 함 (원본 DBF 속성 그대로는 불충분). MapLibre 표현식에 `["get", …]` 숫자 입력을 쓸 때는 항상 coalesce/to-number 가드 — 고객사 SHP 는 속성 스키마를 보장할 수 없음 (제품화 전제)
+- **커밋:** web(스크립트+문서) + `slm-dashboard`(렌더러+geojson) 동시 커밋
+
 ---
 
 - 시작 스크립트: `D:\web\start-services.bat`

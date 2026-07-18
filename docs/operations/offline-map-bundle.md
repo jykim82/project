@@ -80,3 +80,6 @@ env `NEXT_PUBLIC_GIS_CENTER`/`GIS_ZOOM` 은 DB 설정 없을 때 폴백으로 �
   관로 2종은 기존에 누락됐던 신설분 포함으로 +137/+2
 - 좌표계가 다른 관할(예: EPSG:5185/5187 서부/동부원점)은 스크립트 상단
   Transformer 의 소스 CRS 만 변경
+- **파생 속성**: 블록 경계 2종에는 `block_index`(1-based) 를 스크립트가
+  자동 부여 — 렌더러 파스텔 색상 step 이 요구. 누락 시 표현식 오류로
+  검정 폴백(관할 전체 진회색) [E-040]. 렌더러도 coalesce 로 null-safe
