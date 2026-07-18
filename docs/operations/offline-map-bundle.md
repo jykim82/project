@@ -62,6 +62,16 @@ env `NEXT_PUBLIC_GIS_CENTER`/`GIS_ZOOM` 은 DB 설정 없을 때 폴백으로 �
 - 라이선스: 타일 데이터 © OpenStreetMap (ODbL), 스타일/에셋 protomaps (BSD/OFL)
 - 모델 웨이트 번들과 함께 납품 체크리스트 항목 (delivery-checklist 참조)
 
+### 테마 — Voyager 톤 오버라이드 (2026-07-18)
+
+일반지도는 protomaps `light` 원 테마가 아니라 **기존 CARTO Voyager 인상을
+재현한 부분 오버라이드**를 쓴다 (`src/lib/config/gis-voyager-theme.ts` —
+웜 크림 대지 · 파스텔 녹지 · 소프트 블루 수역 · 옐로 간선도로 · 웜 그레이
+라벨). light 는 산림 초록이 짙어 기존 지도와 인상이 크게 달랐음 (사용자
+피드백). 적용은 `layersWithPartialCustomTheme("protomaps","light",
+VOYAGER_OVERRIDES,"ko")` — 정의 안 한 키는 light 원값. 색 조정은 이 파일
+한 곳만 수정 (회색조 슬롯은 원 테마 유지).
+
 ## SHP 임포트 — 관로·밸브·경계 레이어 (2026-07-17 스크립트화)
 
 관할의 상수도 GIS SHP 세트(표준 코드 SA1xx/SA2xx/SAA0xx + 블록경계)를
