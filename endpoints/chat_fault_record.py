@@ -680,6 +680,57 @@ async def attach_photo(
         conn.close()
 
 
+class AppendDetailRequest(BaseModel):
+    session_id: str
+    user_id: str
+    text: str
+
+
+@router.post("/append-detail")
+def append_detail(req: AppendDetailRequest) -> dict:
+    """기존 pending draft 에 상세 내용을 덧붙임 — 확인 카드의 음성 덧붙이기
+    (voice-input-spec §후속). original_text 에 append → confirm 시 task_content 로 저장.
+    """
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "덧붙일 내용이 비어 있습니다.")
+    if len(text) > 1000:
+        raise HTTPException(400, "내용이 너무 깁니다 (1000자 이내).")
+
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT draft FROM tb_chat_pending_action
+            WHERE session_id = %s AND user_id = %s AND expires_at > now()
+            """,
+            (req.session_id, req.user_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "대기 중인 장애 기록이 없습니다 (만료되었을 수 있음).")
+        draft = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        base = (draft.get("original_text") or "").rstrip()
+        draft["original_text"] = f"{base}\n[추가] {text}" if base else text
+        cur.execute(
+            "UPDATE tb_chat_pending_action SET draft = %s::jsonb WHERE session_id = %s",
+            (json.dumps(draft, ensure_ascii=False, default=str), req.session_id),
+        )
+        conn.commit()
+        cur.close()
+        logger.info(f"fault append-detail: session={req.session_id} +{len(text)}자")
+        return {"session_id": req.session_id, "original_text": draft["original_text"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception("fault append-detail 실패")
+        raise HTTPException(500, f"내용 추가 실패: {e}")
+    finally:
+        conn.close()
+
+
 @router.post("/resolve/upload-photo")
 async def resolve_upload_photo(
     user_id: str,
