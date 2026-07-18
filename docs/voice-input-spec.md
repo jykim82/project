@@ -58,7 +58,10 @@ Whisper `initial_prompt` 에 상수도 용어 사전 주입 — 프롬프트 없
 다음 루프에서 재빌드.
 
 ## 후속 후보
-- 장애 기록 카드(FaultRecordConfirmCard) 안에서 음성으로 상세 덧붙이기
+- ~~장애 기록 카드(FaultRecordConfirmCard) 안에서 음성으로 상세 덧붙이기~~ →
+  **완료 (2026-07-18)**: 카드 '상세 내용' 섹션 + 음성 덧붙이기 버튼 —
+  전사 → `POST /chat/fault/append-detail` → draft original_text 에
+  `[추가] …` 병합 (confirm 시 task_content 저장). 카드에 누적 표시
 - ~~모바일 화면에서 마이크 우선 배치 (현장 모드)~~ → **완료 (2026-07-16)**:
   `/field` 현장 모드가 마이크 대형 버튼으로 본 훅 재사용 (docs/field-mode-spec.md).
   PWA(홈화면 설치)는 별도 미착수
