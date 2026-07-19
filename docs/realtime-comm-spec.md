@@ -69,6 +69,26 @@
   + 사용자 목록에서 새 대화, 우측 스레드 + 입력. 활성 방 3s 폴링, 방 목록 15s.
 - 메시지는 소프트 삭제 예약(use_yn) — P1 UI 는 삭제 미제공.
 
+## 5.2 P2 구현 (사진·영상·음성메시지 첨부 — Migration 0107)
+
+- `tb_user_chat_message` 에 attach_url/attach_type(image|video|audio)/attach_name.
+- 업로드 `POST /userchat/upload` (multipart) — 유형별 정책:
+  이미지 jpg/jpeg/png/webp/gif ≤10MB · 영상 mp4/webm/mov ≤100MB ·
+  음성 webm/m4a/mp3/wav/ogg ≤20MB. 저장 `files/messenger/` (uuid 파일명),
+  URL `/api/files/messenger/<name>`.
+- 파일 서빙 라우트에 영상/음성 MIME + **Range 응답(206)** 추가 — <video>
+  탐색(seek) 지원.
+- UI: 입력줄 📎(사진·영상 파일) + 🎤(MediaRecorder 음성 녹음 → 정지 시
+  업로드·전송). 렌더: 이미지 미리보기(클릭 원본), <video controls>,
+  <audio controls>. content 또는 첨부 중 하나 필수 (서버 검증).
+
+## 5.3 새 메시지 도착 전역 알림 (P2 부속)
+
+- `MessengerNotifier` — (dashboard) 레이아웃 전역, 10s 폴링.
+  방 last_at 전진 + unread>0 → sonner 토스트 (발신 방·미리보기 +
+  "메신저 열기" 액션). 메신저 화면에서는 억제, 첫 폴링은 기준선만 기록
+  (로그인 직후 기존 미읽음 폭주 방지). 같은 방 연속 도착은 토스트 갱신(id 고정).
+
 ## 6. 리스크
 
 - WebRTC 다자 통화는 폐쇄망에서도 가능하나 SFU(예: 자체 호스팅 mediasoup)

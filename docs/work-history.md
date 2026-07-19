@@ -3676,3 +3676,13 @@ Migration 0106 + `endpoints/user_chat.py` + `/messenger`. 전체 채널('all') +
 1:1 DM('dm:a|b' 정렬 규칙), unread 뱃지(tb_user_chat_read), REST 3s 증분 폴링.
 방 멤버십 서버 검증(비참여 dm 403). WS 는 P3 wss(Caddy TLS 종단)에서 도입 예정.
 다음: P2 사진·영상·음성메시지 파일 전송.
+
+
+---
+
+## 운영자 메신저 P2 — 파일 전송 + 도착 알림 (2026-07-19)
+
+Migration 0107(attach 3컬럼) + /userchat/upload(유형별 확장자·크기 정책) +
+files/messenger 저장. 프런트 📎 파일·🎤 음성 녹음, 미디어 렌더(이미지/video/
+audio), /api/files Range 206 (영상 seek). MessengerNotifier 전역 토스트
+(10s 폴링·메신저 화면 억제). 다음: P3 운영자 1:1 음성 통화 (wss + WebRTC).
