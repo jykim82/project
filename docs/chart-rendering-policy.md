@@ -172,3 +172,24 @@ const chartRef = useRef<EChartHandle>(null);
    갱신에 `animation:false` 를 적용한다 (trend-store → TrendChart
    `silentUpdate` prop). 사용자 조작(태그·기간 변경)은 플래그를 해제해
    정상 애니메이션 유지.
+4. **자동 갱신 훅의 즉시 실행 금지 (초기 로드가 별도 경로일 때)** —
+   `useAutoRefresh` 류가 enabled 전환 시 즉시 1회 실행하면 초기 로드와
+   **이중 로드 레이스** (가드 기준시각이 아직 null). 첫 차트 직후 두 번째
+   응답이 데이터를 교체하며 갱신처럼 보임. `immediate:false` +
+   isLoading/isRefreshing 재진입 가드 (E-039④, 배수지 모니터링).
+5. **같은 조회 조건은 최초 1회만 애니메이션** — 재진입 마운트가 캐시
+   데이터로 애니메이션을 다시 시작하고, 직후 백그라운드 갱신이 그것을
+   끊는 잔여 경로 (silentUpdate 는 fetch 후에만 세워져 마운트 렌더엔
+   못 미침). TrendChart `animationKey`(조회 조건 키) — 모듈 싱글턴
+   Set 으로 키당 1회만 애니메이션, SPA 라우팅 간 유지 (E-039⑤).
+
+### 진단 체크리스트 — "차트가 그려졌다 다시 그려짐" 신고 시
+
+빈발 증상이므로 순서대로 배제할 것:
+1. 테마 확정 전 초기화? (EChartWrapper 미경유 차트)
+2. 옵션 파생 상태를 effect 로 계산? (렌더 중 useMemo 로)
+3. 전역 store 캐시 + 마운트 자동 재조회? (silentUpdate / animationKey)
+4. 자동 갱신 훅 즉시 실행이 초기 로드와 중복? (immediate:false + 가드)
+5. fetch 로그로 이중 호출 실측 (window.fetch 패치로 /trend/data 타임라인)
+— 신규 차트 화면은 위 1~4 를 처음부터 적용해 재발 자체를 차단.
+
