@@ -123,6 +123,59 @@ def _read_shp(path: Path) -> list[dict]:
     raise RuntimeError(f"인코딩 판별 실패: {path.name}")
 
 
+def _normalize_boundary_feats(layer: str, feats: list[dict]) -> list[dict]:
+    """블록 경계 레이어 정규화 [E-041].
+
+    ① 폐합 경계선(POLYLINE) → Polygon: LineString 인 채로는 MapLibre 가
+       타일 클리핑 시 재폐합하지 않아 확대 줌에서 fill 이 조각남
+       (직선 절단·색 누락)
+    ② 미폐합 경계선은 제외 (블록 면을 이루지 못함 — fill 시 임의 직선 폐합 유발)
+    ③ 복수 소스 파일 병합으로 생긴 완전 동일 지오메트리 중복 제거
+    ④ 자기교차 링은 shapely 가용 시 buffer(0) 자동 보정
+    ⑤ 동일 블록명·상이 지오메트리는 유지하되 경고 (개정 전/후 혼재 후보)
+    """
+    try:
+        from shapely.geometry import mapping, shape  # 선택 의존 — 구축 장비 전용
+    except ImportError:
+        mapping = shape = None
+    seen: set[str] = set()
+    by_name: dict[str, list[str]] = defaultdict(list)
+    out: list[dict] = []
+    dropped_open = 0
+    for f in feats:
+        g = f["geometry"]
+        if g["type"] == "LineString":
+            ring = g["coordinates"]
+            if len(ring) >= 4 and ring[0] == ring[-1]:
+                f["geometry"] = {"type": "Polygon", "coordinates": [ring]}
+            else:
+                dropped_open += 1
+                continue
+        if shape is not None:
+            s = shape(f["geometry"])
+            if not s.is_valid:
+                repaired = s.buffer(0)
+                if repaired.is_valid and not repaired.is_empty:
+                    f["geometry"] = mapping(repaired)
+        gkey = json.dumps(f["geometry"]["coordinates"])
+        if gkey in seen:
+            continue
+        seen.add(gkey)
+        name = str(f["properties"].get("소블록") or f["properties"].get("중블록") or "")
+        by_name[name].append(gkey)
+        out.append(f)
+    if dropped_open:
+        print(f"⚠ {layer}: 미폐합 경계선 {dropped_open}건 제외 (블록 면 불성립)")
+    if shape is None:
+        print(f"⚠ {layer}: shapely 미설치 — 자기교차 자동 보정 생략")
+    dup_names = [n for n, ks in by_name.items() if n and len(ks) > 1]
+    if dup_names:
+        print(f"⚠ {layer}: 동일 블록명·상이 지오메트리 유지 — {', '.join(dup_names)}")
+    if len(out) != len(feats):
+        print(f"  {layer}: 중복 {len(feats) - len(out)}건 제거 → {len(out)} features")
+    return out
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -155,9 +208,11 @@ def main() -> int:
         return 1
 
     for layer, feats in by_layer.items():
-        # 블록 경계는 렌더러 색상 step 이 block_index(숫자) 를 요구 — 누락 시
-        # MapLibre 표현식 오류로 검정 폴백(관할 전체가 진회색) [E-040]
         if layer in ("block_boundary", "mid_block_boundary"):
+            feats = _normalize_boundary_feats(layer, feats)
+            by_layer[layer] = feats
+            # 렌더러 색상 step 이 block_index(숫자) 를 요구 — 누락 시
+            # MapLibre 표현식 오류로 검정 폴백(관할 전체가 진회색) [E-040]
             for i, f in enumerate(feats, start=1):
                 f["properties"]["block_index"] = i
         out = OUT_DIR / f"{layer}.geojson"
