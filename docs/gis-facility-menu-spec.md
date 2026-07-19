@@ -210,3 +210,6 @@ GIS 관망도에서 **시설(배수지·가압장 등)과 그 안의 설비(PLC�
 - 2026-06-29 1차 구현 — 탐색 결과 백엔드 CRUD·setup UI 가 이미 존재함을 확인(§10).
   실제 갭인 GIS 인스펙터 설비 CRUD 통합을 구현: GisDetailPanel 추가/수정/삭제 +
   EquipmentFormDialog prefill·잠금 옵션 + 설비목록 빈-표시 버그 수정. (submodule)
+- 2026-07-19 — 인스펙터 펌프 가동 현황 카드 추가. `pump_status`(flow-map/realtime)
+  가 있는 시설(가압장 등)은 우측 패널 상단에 "N대 중 M대 가동" + 팬 아이콘
+  (가동=적색 회전) 표시 — 지도 팝업 카드(GisFacilityCard)와 동일 데이터·표현 규칙.
