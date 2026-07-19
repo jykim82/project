@@ -7,9 +7,11 @@ room_id: 'dm:<a>|<b>' (user_id 정렬) 또는 'all' (전체 채널).
 """
 
 import logging
+import os
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("slm")
@@ -19,6 +21,22 @@ router = APIRouter(prefix="/userchat", tags=["userchat"])
 _get_db_connection = None
 
 ALL_ROOM = "all"
+
+# 첨부 저장소 — chat_attachments 와 동일 볼륨의 messenger 하위 (P2)
+MESSENGER_DIR = os.environ.get(
+    "MESSENGER_ATTACHMENT_DIR",
+    os.path.join(
+        os.path.dirname(os.environ.get("CHAT_ATTACHMENT_DIR", "/data/files/chat_attachments")),
+        "messenger",
+    ),
+)
+
+# 첨부 유형별 허용 확장자·크기 상한 (docs/realtime-comm-spec.md §5.2)
+ATTACH_POLICY = {
+    "image": {"exts": {".jpg", ".jpeg", ".png", ".webp", ".gif"}, "max": 10 * 1024 * 1024},
+    "video": {"exts": {".mp4", ".webm", ".mov"}, "max": 100 * 1024 * 1024},
+    "audio": {"exts": {".webm", ".m4a", ".mp3", ".wav", ".ogg"}, "max": 20 * 1024 * 1024},
+}
 
 
 def init(get_db_connection_fn):
@@ -58,7 +76,10 @@ def _check_access(room_id: str, user_id: str):
 class SendBody(BaseModel):
     room_id: str = Field(..., max_length=120)
     sender_id: str = Field(..., max_length=50)
-    content: str = Field(..., min_length=1, max_length=4000)
+    content: str = Field("", max_length=4000)
+    attach_url: Optional[str] = Field(None, max_length=500)
+    attach_type: Optional[str] = Field(None, pattern="^(image|video|audio)$")
+    attach_name: Optional[str] = Field(None, max_length=200)
 
 
 class ReadBody(BaseModel):
@@ -183,7 +204,7 @@ def list_messages(
             if after_idn > 0:
                 cur.execute(
                     "SELECT m.msg_idn, m.sender_id, COALESCE(u.user_nm, m.sender_id), "
-                    "       m.content, m.created_at "
+                    "       m.content, m.created_at, m.attach_url, m.attach_type, m.attach_name "
                     "FROM tb_user_chat_message m "
                     "LEFT JOIN tb_user u ON u.region=m.region AND u.user_id=m.sender_id "
                     "WHERE m.region=%s AND m.room_id=%s AND m.use_yn='Y' AND m.msg_idn > %s "
@@ -195,7 +216,7 @@ def list_messages(
                 cur.execute(
                     "SELECT * FROM ("
                     "  SELECT m.msg_idn, m.sender_id, COALESCE(u.user_nm, m.sender_id), "
-                    "         m.content, m.created_at "
+                    "         m.content, m.created_at, m.attach_url, m.attach_type, m.attach_name "
                     "  FROM tb_user_chat_message m "
                     "  LEFT JOIN tb_user u ON u.region=m.region AND u.user_id=m.sender_id "
                     "  WHERE m.region=%s AND m.room_id=%s AND m.use_yn='Y' "
@@ -213,6 +234,9 @@ def list_messages(
                         "sender_nm": r[2],
                         "content": r[3],
                         "created_at": r[4].isoformat() if r[4] else None,
+                        "attach_url": r[5],
+                        "attach_type": r[6],
+                        "attach_name": r[7],
                     }
                     for r in rows
                 ],
@@ -227,13 +251,17 @@ def list_messages(
 @router.post("/send")
 def send_message(body: SendBody, region: str = "R01"):
     _check_access(body.room_id, body.sender_id)
+    if not body.content.strip() and not body.attach_url:
+        raise HTTPException(status_code=400, detail="내용 또는 첨부가 필요합니다")
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO tb_user_chat_message (region, room_id, sender_id, content) "
-                "VALUES (%s, %s, %s, %s) RETURNING msg_idn, created_at",
-                (region, body.room_id, body.sender_id, body.content),
+                "INSERT INTO tb_user_chat_message "
+                "(region, room_id, sender_id, content, attach_url, attach_type, attach_name) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING msg_idn, created_at",
+                (region, body.room_id, body.sender_id, body.content,
+                 body.attach_url, body.attach_type, body.attach_name),
             )
             msg_idn, created_at = cur.fetchone()
             # 본인 읽음 위치 동기 갱신 — 자기 메시지가 unread 로 잡히지 않게
@@ -277,3 +305,36 @@ def mark_read(body: ReadBody, region: str = "R01"):
         raise HTTPException(status_code=500, detail="읽음 처리 실패")
     finally:
         conn.close()
+
+
+@router.post("/upload")
+async def upload_attachment(
+    user_id: str,
+    attach_type: str = Query(..., pattern="^(image|video|audio)$"),
+    file: UploadFile = File(...),
+):
+    """메신저 첨부 업로드 — 유형별 확장자·크기 검증 후 URL 반환.
+
+    반환 URL 을 /userchat/send 의 attach_url 로 전달해 메시지와 함께 영속.
+    """
+    policy = ATTACH_POLICY[attach_type]
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in policy["exts"]:
+        raise HTTPException(400, f"지원하지 않는 {attach_type} 형식: {ext or '(없음)'}")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "빈 파일")
+    if len(content) > policy["max"]:
+        raise HTTPException(413, f"파일 크기 상한 초과 ({policy['max'] // (1024 * 1024)}MB)")
+
+    os.makedirs(MESSENGER_DIR, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(MESSENGER_DIR, stored_name), "wb") as f:
+        f.write(content)
+    logger.info("userchat upload: user=%s type=%s size=%d", user_id, attach_type, len(content))
+    return {
+        "status": "OK",
+        "attach_url": f"/api/files/messenger/{stored_name}",
+        "attach_type": attach_type,
+        "attach_name": file.filename or stored_name,
+    }
