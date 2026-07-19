@@ -1681,3 +1681,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - 시작 사양: `D:\web\docs\startup-spec.md`
 - Next.js 설정: `D:\web\slm-dashboard\slm-dashboard\next.config.ts`
 - HTTPS 인증서: `D:\web\certs\localhost.pem`, `D:\web\certs\localhost-key.pem`
+
+### [E-043] 신규 FastAPI 엔드포인트 커넥션 풀 미반환 — 전 API 연쇄 500
+
+- **날짜:** 2026-07-19
+- **증상:** 메모·일정 알림 신규 API 배포 후 수 분 내 `/schedule/*` 뿐 아니라 알람 알림·epanet 등 **무관한 API까지 500** (connection pool exhausted). 30초 폴링 엔드포인트가 있어 고갈이 특히 빨랐음
+- **원인:** `get_db_connection()` 은 풀 래퍼(`_PooledConnection`)를 반환하며 **`close()` 호출이 풀 반환 계약**. 신규 endpoints(memo.py, user_schedule.py)가 `conn.close()` 없이 커넥션을 잡고 놓지 않아 요청마다 풀 슬롯이 소모됨
+- **해결:** 전 함수에 `try/finally: conn.close()` 추가. 재시작 후 연속 24회 호출로 고갈 없음 확인
+- **재발 방지:** 신규 endpoint 는 기존 모듈(alarm_contacts.py)의 **finally close 패턴**을 복사해 시작할 것. 가능하면 `ai_server.db_conn()` 컨텍스트 매니저 사용. 폴링(30s 이하) 엔드포인트는 누수 시 고갈이 수 분 내 발생하므로 배포 직후 `docker logs slm-backend | grep PoolError` 확인 습관화

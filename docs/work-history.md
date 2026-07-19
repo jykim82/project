@@ -3645,3 +3645,23 @@ LLM 역할: 분류 + 라우팅 + 포맷팅 전용
 - **인과 체인 tag_map**: group_code → [tagsn 리스트] — 시설별 인과 step에 태그 배정
 - **이상감지 group_code 결정**: 현재 ai_server.py에서 datainfo 키워드 하드코딩 (pass 스텁 → tb_tag_group_map 미사용) — 향후 교체 필요
 - **설비↔태그(tb_equipment_tag_map)**: 3,375건 자동 매핑 완료 (PLC:2185 + 가압펌프:519 + LTE:603 + 유량계:68), 설비 장애 역추적 Phase 2 대기
+
+
+---
+
+## 업무 메모 + 일정 알림 v1 (2026-07-19)
+
+**요청**: ① DB 영속(리셋 후 유지) ② 메모 = 제목+내용, 날짜/제목/내용/작성자 검색
+③ 일정 알림 = 달력 등록(할일·내용·날짜·시각) → 해당 시각 팝업 ④ 채팅·영상·음성은 사양 검토만
+
+**산출물**:
+- `docs/memo-schedule-spec.md` — 사양 v1 (SCADA 알람과 용어·시스템 분리 명시)
+- `docs/realtime-comm-spec.md` — 사용자 간 채팅/영상/음성 검토 v0 (P1~P4 단계, 결정 필요 4항)
+- Migration `0105_memo_schedule.sql` — tb_memo·tb_user_schedule + 메뉴 M005-3/4 (보고서 그룹)
+- Backend `endpoints/memo.py`·`user_schedule.py` — CRUD + due/ack. 작성자 본인만 수정·삭제
+- Frontend `/reports/memo`(검색+CRUD)·`/reports/schedule`(월 달력)·`ScheduleAlarmPopup`(30s 폴링 전역 모달)
+
+**검증**: 메모 생성→검색(작성자명 join), 일정 등록→정시 팝업 발화→확인(ack)→달력 취소선 반영,
+백엔드 재시작 후 데이터 유지. E2E 스크린샷 통과.
+
+**트러블**: [E-043] 신규 endpoint 커넥션 풀 미반환 → 전 API 연쇄 500. finally close 로 수정.

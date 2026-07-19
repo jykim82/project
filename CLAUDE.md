@@ -212,6 +212,8 @@ web/
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/leak-alert-spec.md` — 누수 의심 알림 (야간최소유량 CUSUM 자동 감지·확인 + 선정 사유 서술. 판정=cusum_max, Migration 0100 reason 컬럼)
 - `docs/field-mode-spec.md` — 현장 모드 v3 (/field — ①알람 대응(확장 액션: 사진 진단/고장 기록/매뉴얼/조치) ②시설 선택 작업(일상점검·알람 없는 설비) ③진행중 장애 조치 완료 ④자유 입력. 처리는 채팅 재사용, field-handoff 사진 전달, FieldModeBanner, Migration 0099 M009)
+- `docs/memo-schedule-spec.md` — 업무 메모 + 일정 알림 v1 (Migration 0105, tb_memo·tb_user_schedule, /reports/memo·/reports/schedule + 30s 폴링 전역 팝업. SCADA 알람과 용어·시스템 분리)
+- `docs/realtime-comm-spec.md` — 사용자 간 채팅·영상·음성 사양 검토 v0 (WebSocket+WebRTC LAN, P1~P4 단계 제안, 결정 필요 4항 — 구현 미착수)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
 - `docs/startup-spec.md` — 시작 페이지
@@ -235,7 +237,7 @@ web/
 - `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
-- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-042)
+- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-043)
   - 1차 시도 실패 시: 전체 스캔 → 유사 패턴 확인 → 해결책 참고
   - 새 버그 해결 후: E-NNN 번호 부여 기록 (날짜/증상/원인/해결/재발방지)
   - 기록 대상: 포트 충돌, DB 연결 오류, SQL 오류, 서버 기동 실패, 환경변수 문제 등 **재발 가능성 있는 모든 에러**
