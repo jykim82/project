@@ -93,6 +93,8 @@ from endpoints.network_crud import router as network_crud_router, init as init_n
 from endpoints.canvas_crud import router as canvas_crud_router, init as init_canvas_crud
 from endpoints.auth_crud import router as auth_crud_router, init as init_auth_crud
 from endpoints.alarm_contacts import router as alarm_contacts_router, init as init_alarm_contacts
+from endpoints.memo import router as memo_router, init as init_memo
+from endpoints.user_schedule import router as user_schedule_router, init as init_user_schedule
 from endpoints.monitoring_catalogs import router as monitoring_catalogs_router, init as init_monitoring_catalogs
 from endpoints.flow_map_crud import router as flow_map_crud_router, init as init_flow_map_crud
 from endpoints.csv_import import router as csv_import_router, init as init_csv_import
@@ -2254,6 +2256,12 @@ app.include_router(auth_crud_router)
 # 비상연락처 엔드포인트 모듈 초기화
 init_alarm_contacts(get_db_connection)
 app.include_router(alarm_contacts_router)
+
+# 업무 메모 + 일정 알림 (docs/memo-schedule-spec.md)
+init_memo(get_db_connection)
+app.include_router(memo_router)
+init_user_schedule(get_db_connection)
+app.include_router(user_schedule_router)
 
 # 모니터링 카탈로그 엔드포인트 모듈 초기화
 init_monitoring_catalogs(get_db_connection)
