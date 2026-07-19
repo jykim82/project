@@ -136,7 +136,17 @@ def create_memo(body: MemoCreate, region: str = "R01"):
         conn.close()
 
 
-def _check_owner(cur, region: str, memo_idn: int, user_id: str):
+def _is_master(cur, region: str, user_id: str) -> bool:
+    """마스터 권한 서버측 확인 — 클라이언트 플래그를 신뢰하지 않는다."""
+    cur.execute(
+        "SELECT user_auth FROM tb_user WHERE region=%s AND user_id=%s AND use_yn='Y'",
+        (region, user_id),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] == "MASTER")
+
+
+def _check_owner(cur, region: str, memo_idn: int, user_id: str, allow_master: bool = False):
     cur.execute(
         "SELECT created_by FROM tb_memo WHERE region=%s AND memo_idn=%s AND use_yn='Y'",
         (region, memo_idn),
@@ -144,8 +154,12 @@ def _check_owner(cur, region: str, memo_idn: int, user_id: str):
     row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="메모가 없습니다")
-    if row[0] != user_id:
-        raise HTTPException(status_code=403, detail="작성자만 수정/삭제할 수 있습니다")
+    if row[0] == user_id:
+        return
+    # 마스터는 타인 메모 삭제 허용 (수정은 작성자 본인만 — 내용 위변조 방지)
+    if allow_master and _is_master(cur, region, user_id):
+        return
+    raise HTTPException(status_code=403, detail="작성자만 수정/삭제할 수 있습니다")
 
 
 @router.put("/{memo_idn}")
@@ -183,7 +197,7 @@ def delete_memo(memo_idn: int, user_id: str, region: str = "R01"):
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
-            _check_owner(cur, region, memo_idn, user_id)
+            _check_owner(cur, region, memo_idn, user_id, allow_master=True)
             cur.execute(
                 "UPDATE tb_memo SET use_yn='N', updated_at=now() "
                 "WHERE region=%s AND memo_idn=%s",
