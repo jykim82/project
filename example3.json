@@ -3430,7 +3430,7 @@
    "    ELSE 0 END) DESC"
   ],
   "answer_template": {
-   "summary": "■ {anomaly_scope} Analog 센서 {total_tag_count}개 대상 이상 스캔 결과입니다. (요일·시간대별 기준선 Z-Score + ML 분석)",
+   "summary": "{anomaly_scope} Analog 센서 {total_tag_count}개 대상 이상 스캔 결과입니다. (요일·시간대별 기준선 Z-Score + ML 분석)",
    "detail": [
     {
      "prefix": "•",
@@ -3532,7 +3532,7 @@
   ],
   "sql": "WITH facility_arr AS (\n    SELECT array_agg(tagsn) AS arr\n    FROM tb_tag_info\n    WHERE sitename = '{sitename}'\n        AND facilitytype = '{facilitytype}'\n        AND tagtype = 'Analog Input'\n        AND datainfo NOT LIKE '%적산%' AND datainfo NOT LIKE '%설정%'\n),\nraw_adaptive AS (\n    SELECT c.tagsn, c.bucket,\n        (c.min_val + c.max_val) / 2.0 AS approx_avg,\n        CASE WHEN c.min_val = c.max_val THEN 1 ELSE 0 END AS is_flat,\n        date_trunc('hour', c.bucket) AS bucket_hr,\n        CASE WHEN EXTRACT(ISODOW FROM c.bucket) IN (6, 7) THEN 'WE' ELSE 'WD' END AS day_type,\n        CASE WHEN EXTRACT(HOUR FROM c.bucket) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS time_slot\n    FROM cagg_5min_raw_stats_ai c, facility_arr fa\n    WHERE c.tagsn = ANY(fa.arr)\n        AND c.bucket >= now() - interval '365 days'\n),\ntime_ctx AS (\n    SELECT\n        CASE WHEN EXTRACT(ISODOW FROM now()) IN (6, 7) THEN 'WE' ELSE 'WD' END AS cur_day,\n        CASE WHEN EXTRACT(HOUR FROM now()) BETWEEN 6 AND 21 THEN 'PK' ELSE 'OP' END AS cur_slot\n),\nhourly_holding AS (\n    SELECT tagsn, bucket_hr\n    FROM raw_adaptive\n    WHERE approx_avg > 0.001\n    GROUP BY tagsn, bucket_hr\n    HAVING SUM(is_flat) = COUNT(*)\n       AND COUNT(DISTINCT ROUND(approx_avg::numeric, 1)) <= 1\n       AND COUNT(*) >= 6\n),\nstats_segment AS (\n    SELECT r.tagsn,\n        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_seg,\n        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_seg,\n        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS seg_cnt\n    FROM raw_adaptive r\n    CROSS JOIN time_ctx tc\n    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr\n    WHERE r.day_type = tc.cur_day AND r.time_slot = tc.cur_slot\n        AND hh.bucket_hr IS NULL\n    GROUP BY r.tagsn\n),\nstats_global AS (\n    SELECT r.tagsn,\n        AVG(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS mean_all,\n        STDDEV_POP(r.approx_avg) FILTER (WHERE r.approx_avg > 0.001) AS stddev_all,\n        COUNT(*) FILTER (WHERE r.approx_avg > 0.001) AS active_cnt,\n        COUNT(*) AS total_cnt\n    FROM raw_adaptive r\n    LEFT JOIN hourly_holding hh ON r.tagsn = hh.tagsn AND r.bucket_hr = hh.bucket_hr\n    WHERE hh.bucket_hr IS NULL\n    GROUP BY r.tagsn\n    HAVING COUNT(*) FILTER (WHERE r.approx_avg > 0.001) >= 50\n),\nstats_30d AS (\n    SELECT g.tagsn,\n        COALESCE(CASE WHEN s.seg_cnt >= 30 THEN s.mean_seg END, g.mean_all) AS mean_30d,\n        COALESCE(CASE WHEN s.seg_cnt >= 30 THEN s.stddev_seg END, g.stddev_all) AS stddev_30d,\n        g.active_cnt,\n        g.total_cnt\n    FROM stats_global g\n    LEFT JOIN stats_segment s ON g.tagsn = s.tagsn\n),\nlmax AS (\n    SELECT c.tagsn, MAX(c.bucket) AS mt\n    FROM cagg_5min_raw_stats_ai c, facility_arr fa\n    WHERE c.tagsn = ANY(fa.arr)\n        AND c.bucket >= now() - interval '3 hours'\n    GROUP BY c.tagsn\n),\nlatest AS (\n    SELECT c.tagsn,\n        (c.min_val + c.max_val) / 2.0 AS current_val,\n        c.bucket AS latest_time\n    FROM cagg_5min_raw_stats_ai c\n    JOIN lmax ON c.tagsn = lmax.tagsn AND c.bucket = lmax.mt\n),\nraw_recent AS (\n    SELECT r.tagsn, r.logtime, r.val,\n        LAG(r.val) OVER (PARTITION BY r.tagsn ORDER BY r.logtime) AS prev_val\n    FROM tb_tag_raw_data r, facility_arr fa\n    WHERE r.tagsn = ANY(fa.arr)\n        AND r.logtime >= now() - interval '5 minutes'\n),\nwith_diff AS (\n    SELECT tagsn, logtime, val, prev_val,\n        val - prev_val AS diff,\n        LAG(val - prev_val) OVER (PARTITION BY tagsn ORDER BY logtime) AS prev_diff\n    FROM raw_recent WHERE prev_val IS NOT NULL\n),\ndir_changes AS (\n    SELECT tagsn,\n        COUNT(*) FILTER (WHERE\n            ABS(diff) > 0.001 AND ABS(prev_diff) > 0.001\n            AND SIGN(diff) != SIGN(prev_diff)\n        ) AS change_count\n    FROM with_diff WHERE prev_diff IS NOT NULL\n    GROUP BY tagsn\n)\nSELECT\n    ti.tagsn,\n    ti.sitename,\n    ti.facilitytype,\n    ti.datainfo,\n    ROUND(l.current_val::numeric, 2) AS current_val,\n    ROUND(s.mean_30d::numeric, 2) AS mean_30d,\n    CASE\n        WHEN ABS(l.current_val) < 0.001 THEN 0\n        WHEN s.stddev_30d > 0.001\n            THEN ROUND(((l.current_val - s.mean_30d) / s.stddev_30d)::numeric, 2)\n        ELSE 0\n    END AS z_score,\n    CASE\n        WHEN ABS(l.current_val) < 0.001 THEN 0\n        WHEN ABS(s.mean_30d) < 0.001 THEN 0\n        ELSE ROUND((ABS(l.current_val - s.mean_30d) / ABS(s.mean_30d) * 100)::numeric, 1)\n    END AS deviation_pct,\n    COALESCE(dc.change_count, 0) AS change_count,\n    ROUND(s.active_cnt::numeric * 100 / NULLIF(s.total_cnt, 0), 0) AS active_pct,\n    l.latest_time\nFROM latest l\nJOIN stats_30d s ON l.tagsn = s.tagsn\nJOIN tb_tag_info ti ON l.tagsn = ti.tagsn\nLEFT JOIN dir_changes dc ON l.tagsn = dc.tagsn\nORDER BY ABS(CASE\n    WHEN ABS(l.current_val) < 0.001 THEN 0\n    WHEN s.stddev_30d > 0.001\n        THEN (l.current_val - s.mean_30d) / s.stddev_30d\n    ELSE 0 END) DESC",
   "answer_template": {
-   "summary": "■ {sitename} {facilitytype} 정밀 진단 결과입니다. (Z-Score + 진동패턴 복합분석)",
+   "summary": "{sitename} {facilitytype} 정밀 진단 결과입니다. (Z-Score + 진동패턴 복합분석)",
    "detail": [
     {
      "prefix": "•",
@@ -3638,7 +3638,7 @@
    "LIMIT 100"
   ],
   "answer_template": {
-   "summary": "■ {anomaly_scope} 최근 7일 알람 이력입니다. (총 {total_alarm_count}건)",
+   "summary": "{anomaly_scope} 최근 7일 알람 이력입니다. (총 {total_alarm_count}건)",
    "detail": [
     {
      "prefix": "•",
@@ -3763,7 +3763,7 @@
    "ORDER BY ABS((p.predicted_1h - b.mean_30d) / b.stddev_30d) DESC"
   ],
   "answer_template": {
-   "summary": "■ {anomaly_scope} 1시간 후 위험 예측 분석 결과입니다. (24시간 선형 회귀 기반)",
+   "summary": "{anomaly_scope} 1시간 후 위험 예측 분석 결과입니다. (24시간 선형 회귀 기반)",
    "detail": [
     {
      "prefix": "•",
@@ -3886,7 +3886,7 @@
    "ORDER BY avg_z_score DESC"
   ],
   "answer_template": {
-   "summary": "■ {facilitytype} 시설간 이상 비교 결과입니다. (30일 기준 Z-Score 집계)",
+   "summary": "{facilitytype} 시설간 이상 비교 결과입니다. (30일 기준 Z-Score 집계)",
    "detail": [
     {
      "prefix": "•",
@@ -4001,7 +4001,7 @@
    "ORDER BY ABS((ch.current_avg - hb.hour_avg) / hb.hour_stddev) DESC"
   ],
   "answer_template": {
-   "summary": "■ {anomaly_scope} 현재 {current_hour}시 기준 시간대 이상 패턴 분석 결과입니다.",
+   "summary": "{anomaly_scope} 현재 {current_hour}시 기준 시간대 이상 패턴 분석 결과입니다.",
    "detail": [
     {
      "prefix": "•",
@@ -4192,7 +4192,7 @@
   ],
   "sql": "SELECT * FROM fn_night_min_flow_summary('{sitename}', '{facilitytype}', {from_ts}::date, {to_ts}::date)",
   "answer_template": {
-   "summary": "■ {sitename} {facilitytype} 야간최소유량 CUSUM 누수추정 분석 결과입니다.",
+   "summary": "{sitename} {facilitytype} 야간최소유량 CUSUM 누수추정 분석 결과입니다.",
    "detail": [
     {
      "prefix": "•",

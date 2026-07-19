@@ -222,7 +222,7 @@ async def get_alarm_list(
         where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         cur.execute(f"""
-            SELECT alarm_start_time, tagsn, sitename, facilitytype,
+            SELECT alarm_start_time, alarm_end_time, tagsn, sitename, facilitytype,
                    equipmenttype, alarm_msg, alarm_status, alarm_value
             FROM tb_equipment_alarm_report
             {where_sql}
@@ -306,6 +306,8 @@ async def get_alarm_list(
             results.append({
                 "id": idx + 1,
                 "occurredAt": row["alarm_start_time"].strftime("%Y-%m-%d %H:%M:%S") if row["alarm_start_time"] else "",
+                # 타임라인 t-시점 진행중 판정용 (GIS 스크러버 Phase 1.5) — 미해제면 null
+                "endedAt": row["alarm_end_time"].strftime("%Y-%m-%d %H:%M:%S") if row.get("alarm_end_time") else None,
                 "siteName": row["sitename"] or "",
                 "facilityType": row["facilitytype"] or "",
                 "alarmLevel": alarm_level,
