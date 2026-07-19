@@ -639,6 +639,12 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
    중 파생 계산(useMemo)** — effect 로 결정하면 데이터 도착 렌더(오버레이
    없음) 뒤 2차 전체 리드로우가 생겨 차트가 "다시 그려짐". 사용자 직접
    선택만 state(`userTagId`) 로 유지 (chart-rendering-policy §이중 렌더 방지)
+5. **재진입 무음 갱신** (2026-07-19, E-039③): /trend 는 전역 store 가
+   데이터를 유지해 SPA 재진입 시 캐시로 즉시 그려진 뒤 마운트 자동 재조회가
+   도착 — 같은 태그·기간의 재조회면 store 가 `silentUpdate` 를 세우고
+   TrendChart 는 그 갱신에 `animation:false` 를 적용 (애니메이션 재시작
+   없는 무음 반영). 태그·기간 변경 등 사용자 조작은 플래그 해제로 정상
+   애니메이션 유지
 
 #### UI — ComparisonHeader 의 셀렉터
 

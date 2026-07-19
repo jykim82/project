@@ -93,3 +93,14 @@ VOYAGER_OVERRIDES,"ko")` — 정의 안 한 키는 light 원값. 색 조정은 �
 - **파생 속성**: 블록 경계 2종에는 `block_index`(1-based) 를 스크립트가
   자동 부여 — 렌더러 파스텔 색상 step 이 요구. 누락 시 표현식 오류로
   검정 폴백(관할 전체 진회색) [E-040]. 렌더러도 coalesce 로 null-safe
+- **블록 경계 정규화** (`_normalize_boundary_feats`) [E-041]: 경계선
+  SHP(POLYLINE) 는 그대로 fill 하면 타일 클리핑에서 재폐합되지 않아
+  확대 줌에서 조각남 → ① 폐합 링 → Polygon 변환 ② 미폐합 선 제외(경고)
+  ③ 완전 동일 지오메트리 중복 제거 ④ shapely 가용 시 자기교차 buffer(0)
+  보정 ⑤ 동명·상이 지오메트리 경고. fill 대상 레이어는 Polygon 타입 보장이
+  스크립트 책임
+- **블록 채도**: 렌더러 fill 0.33 / 경계선 0.9 (GisShpLayer) — 과거 중복
+  2겹 렌더 시절의 체감값을 단일 렌더로 보존한 값. 조정 시 이 근거 참고
+- **geojson 서빙 캐시** [E-042]: `/api/gis/layer/[id]`·`/api/gis/pipelines` 는
+  고정 max-age 금지 — `serveGeojsonWithEtag` (no-cache + ETag/304) 로
+  재빌드·지도 설정 업로드 교체가 즉시 반영되게 한다
