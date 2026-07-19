@@ -6,7 +6,9 @@
 ## 1. 목적·범위
 
 - **업무 메모**: 운영자가 제목+내용으로 기록을 남기고, 날짜·제목·내용·작성자로
-  검색. 조직 내 공유(전체 열람), 수정·삭제는 작성자 본인만.
+  검색. 조직 내 공유(전체 열람). 수정은 작성자 본인만, **삭제는 본인 + 마스터
+  권한자**(2026-07-19 추가 — 서버가 tb_user.user_auth='MASTER' 직접 확인,
+  클라이언트 플래그 불신뢰. 마스터도 타인 메모 수정은 불가 — 내용 위변조 방지).
 - **일정 알림**: 달력에서 할 일(제목)+내용+날짜·시각을 등록하면 해당 시각에
   **팝업**으로 알림. 확인 전까지 재표시(놓침 방지).
 
@@ -63,7 +65,7 @@ CREATE INDEX idx_schedule_due ON tb_user_schedule (region, created_by, alarm_at)
 | GET | `/memo/list` | 검색: `date_from`·`date_to`(작성일), `title`, `content`, `created_by` (ILIKE 부분일치), 페이징 `page`/`page_size` |
 | POST | `/memo` | 생성 {title, content, created_by} |
 | PUT | `/memo/{memo_idn}` | 수정 (작성자 본인만 — user_id 대조) |
-| DELETE | `/memo/{memo_idn}` | 소프트 삭제 (작성자 본인만) |
+| DELETE | `/memo/{memo_idn}` | 소프트 삭제 (작성자 본인 또는 마스터) |
 
 - 목록 응답에 작성자명(tb_user.user_nm) join 포함.
 
