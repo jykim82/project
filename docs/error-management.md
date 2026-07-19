@@ -1643,6 +1643,7 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **커밋:** `slm-dashboard@bfff649`
 - **추가 사례 ③ (2026-07-19):** 트렌드 메뉴 SPA **재진입** 시 재발 보고 (행정 배수지) — 전역 zustand store 가 이전 데이터를 유지해 캐시로 즉시 그려진 뒤, 마운트 자동 재조회 결과가 도착하며 notMerge 리드로우 + 애니메이션 재시작. 해결: store 가 동일 태그·기간 재조회를 판별해 `silentUpdate` 플래그 → TrendChart 가 해당 갱신에 `animation:false` 적용 (사용자 조작 시 플래그 해제). chart-rendering-policy §이중 렌더 방지 3항
 - **추가 사례 ④ (2026-07-19):** 배수지 모니터링(/monitoring/reservoir) 첫 화면 재갱신 — `useAutoRefresh` 가 enabled 전환 시 **즉시 1회 실행**되는데, 초기 로드(selectSite→loadTrendData)와 겹쳐 **이중 로드 레이스** (가드 lastUpdated 가 아직 null 이라 통과). 첫 차트가 그려진 몇 초 뒤 두 번째 응답이 데이터를 교체하며 갱신. 해결: 훅에 `immediate` 옵션(기본 true, 모니터링 페이지 false) + 콜백에 isLoading/isRefreshing 재진입 가드. 재진입 15s 실측 트렌드 호출 1회 확인. **패턴: 초기 데이터를 다른 경로로 로드하는 화면에서 자동갱신 훅의 즉시 실행 금지**
+- **추가 사례 ⑥ (2026-07-19):** 모니터링 30초 **자동 갱신 자체**가 매 주기 400ms 모프 애니메이션으로 전체 시리즈를 다시 그려 "화면이 갱신"으로 보임 (notMerge=false 여도 update 애니는 동작. 행정 배수지 실측: 선택 23s 뒤 자동 갱신에서 재현). 해결: monitoring-view-store `loadTrendData({silent:true})` — 자동 갱신 결과는 silentUpdate 로 무음 반영. 검증: 30s 틱 전후 스크린샷 픽셀 diff **0** (bbox None)
 - **추가 사례 ⑤ (2026-07-19):** /trend 재진입에서 재재현 — silentUpdate 는 **fetch 완료 후에만** 세워져, 재진입 **마운트 첫 렌더**(캐시 데이터)가 애니메이션을 다시 시작하고 직후 백그라운드 갱신이 이를 끊음. 해결: TrendChart `animationKey`(조회 조건 키) — 모듈 싱글턴 Set 으로 **같은 조회 조건은 세션 동안 최초 1회만 애니메이션** (SPA 라우팅 간 유지). 재진입 스크린샷 t0/t+2s 픽셀 동일 검증. **빈발 증상 — 진단 체크리스트를 chart-rendering-policy §이중 렌더 방지에 상비**
 
 ### [E-040] GIS 소블록경계가 관할 전체를 진회색으로 덮음 — SHP 임포트 스키마 불일치
