@@ -1645,6 +1645,7 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **추가 사례 ④ (2026-07-19):** 배수지 모니터링(/monitoring/reservoir) 첫 화면 재갱신 — `useAutoRefresh` 가 enabled 전환 시 **즉시 1회 실행**되는데, 초기 로드(selectSite→loadTrendData)와 겹쳐 **이중 로드 레이스** (가드 lastUpdated 가 아직 null 이라 통과). 첫 차트가 그려진 몇 초 뒤 두 번째 응답이 데이터를 교체하며 갱신. 해결: 훅에 `immediate` 옵션(기본 true, 모니터링 페이지 false) + 콜백에 isLoading/isRefreshing 재진입 가드. 재진입 15s 실측 트렌드 호출 1회 확인. **패턴: 초기 데이터를 다른 경로로 로드하는 화면에서 자동갱신 훅의 즉시 실행 금지**
 - **추가 사례 ⑥ (2026-07-19):** 모니터링 30초 **자동 갱신 자체**가 매 주기 400ms 모프 애니메이션으로 전체 시리즈를 다시 그려 "화면이 갱신"으로 보임 (notMerge=false 여도 update 애니는 동작. 행정 배수지 실측: 선택 23s 뒤 자동 갱신에서 재현). 해결: monitoring-view-store `loadTrendData({silent:true})` — 자동 갱신 결과는 silentUpdate 로 무음 반영. 검증: 30s 틱 전후 스크린샷 픽셀 diff **0** (bbox None)
 - **추가 사례 ⑤ (2026-07-19):** /trend 재진입에서 재재현 — silentUpdate 는 **fetch 완료 후에만** 세워져, 재진입 **마운트 첫 렌더**(캐시 데이터)가 애니메이션을 다시 시작하고 직후 백그라운드 갱신이 이를 끊음. 해결: TrendChart `animationKey`(조회 조건 키) — 모듈 싱글턴 Set 으로 **같은 조회 조건은 세션 동안 최초 1회만 애니메이션** (SPA 라우팅 간 유지). 재진입 스크린샷 t0/t+2s 픽셀 동일 검증. **빈발 증상 — 진단 체크리스트를 chart-rendering-policy §이중 렌더 방지에 상비**
+- **추가 사례 ⑦ (2026-07-19, 최종):** 배수지 모니터링에서 ④⑥ 수정 후에도 영상 재현 — 포렌식(ECharts 인스턴스 ID 추적) 결과 **마운트 0.6s 뒤 인스턴스가 통째로 교체**(ec_...423→426, dispose 훅 미경유 = next/dynamic(LoadableComponent) 경계의 간헐 리마운트). 근원은 라이브러리 레이어라 통제 불가로 판단 → **animationKey(같은 조회 조건 1회 애니메이션)를 MonitoringTrendBlock 에도 적용**해 재init 이 일어나도 무음 렌더. 검증: 재선택 후 SVG 애니메이션 변이 0건 (이전 +2,000×2 버스트). **교훈: 차트 재-draw 계열은 원인 차단과 별개로 animationKey 로 시각 재시작을 구조적으로 봉쇄할 것**
 
 ### [E-040] GIS 소블록경계가 관할 전체를 진회색으로 덮음 — SHP 임포트 스키마 불일치
 

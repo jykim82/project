@@ -195,6 +195,7 @@ web/
 - `docs/report-spec.md` — 보고서 (장애 조치 / 일 점검) 사양 + 채팅 점검 인텐트 (migration 0058)
 - `docs/feature-spec.md` — 기능 개괄
 - `docs/gis_plan.md` — EPANET + GIS 관망 고도화 (Phase 1 구현 완료 / Migration 0064 — `slm/epanet/` 모듈 + `/admin/epanet` 페이지)
+- `docs/gis-timeline-scrubber-spec.md` — GIS 관망도 타임라인 스크러버 (시안 14 — 24h 되감기/재생·알람 도트·useChartPlayback 재사용. Phase 1 신규 API 없음, 사양 확립 단계)
 - `docs/gis-facility-menu-spec.md` — GIS 관망도 시설 메뉴 고도화 (P1 1순위 계획. 시설↔설비 CRUD: 설치일자/제조사/제원, 기존 tb_equipment_info.meta·tb_equipment_lifespan·tb_service_*_info 재사용. 1차 CRUD/2차 고장이력·교체주기 분리)
 - `docs/epanet-menu-spec.md` — EPANET 활용 메뉴 사양 v1 (3 그룹 10 메뉴 트리 + 데이터 품질 게이트 + DataQualityCard UX + Phase 2.7~6 로드맵)
 - `docs/epanet-flow-injection-spec.md` — EPANET 실측 유량 주입 사양 (B-1: 시설별 outflow 매핑 → INP demand IDW 보간, Migration 0071)
