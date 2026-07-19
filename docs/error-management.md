@@ -1660,6 +1660,15 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **재발 방지:** fill 로 그릴 레이어는 임포트 단계에서 **Polygon 타입 보장** 필수 — 경계선 SHP(POLYLINE) 를 그대로 fill 소스로 쓰지 말 것. 축소 줌 정상 + 확대 줌 조각 = "선을 fill 로 렌더" 신호 패턴
 - **커밋:** web(스크립트) + `slm-dashboard`(geojson 재생성) 동시 커밋
 
+### [E-042] GIS 레이어 데이터 교체가 브라우저에 반영 안 됨 — max-age 고정 캐시
+
+- **날짜:** 2026-07-19
+- **증상:** E-041 로 블록 geojson 을 교정·재빌드했는데도 브라우저는 여전히 깨진 렌더(전부 기본 블루·직선 절단) 표시. 서버 curl 은 신본, 데이터 참값 렌더(matplotlib)도 정상 — 브라우저만 구본
+- **원인:** `/api/gis/layer/[id]`·`/api/gis/pipelines` 가 `Cache-Control: public, max-age=86400` — 브라우저가 24시간 동안 재검증 없이 구본을 재사용. 재빌드·구축 지도 설정 업로드로 데이터를 교체해도 최대 하루 동안 화면이 안 바뀜 ("재빌드 불필요 교체" 제품 스토리와 충돌)
+- **해결:** 공용 `serveGeojsonWithEtag` (`src/lib/server/geojson-response.ts`) — `Cache-Control: public, no-cache` + mtime·size 기반 ETag, If-None-Match 시 304 (본문 미전송). pipelines 라우트는 업로드본 우선(resolveGisAsset)도 함께 적용
+- **재발 방지:** **교체 가능한 데이터 파일 서빙에 고정 max-age 금지** — ETag/no-cache 재검증 패턴 사용. "서버는 신본인데 브라우저만 구본" 증상이면 Cache-Control 을 먼저 의심. 진단 순서: curl(서버) → 데이터 자체 렌더(참값) → 브라우저 캐시
+- **커밋:** `slm-dashboard` (routes + 헬퍼)
+
 ---
 
 - 시작 스크립트: `D:\web\start-services.bat`
