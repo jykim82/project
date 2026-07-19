@@ -1641,6 +1641,7 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **해결:** ① 테마 확정까지 1프레임 대기 후 1회만 초기화 ② 활성 tag 를 렌더 중 파생 계산(useMemo)으로 전환, 사용자 선택만 state 유지
 - **재발 방지:** 신규 차트는 EChartWrapper 경유 필수. 차트 옵션에 들어가는 파생 상태는 effect 금지·렌더 중 계산 (chart-rendering-policy §이중 렌더 방지, trend-comparison-spec §7.7-4)
 - **커밋:** `slm-dashboard@bfff649`
+- **추가 사례 ③ (2026-07-19):** 트렌드 메뉴 SPA **재진입** 시 재발 보고 (행정 배수지) — 전역 zustand store 가 이전 데이터를 유지해 캐시로 즉시 그려진 뒤, 마운트 자동 재조회 결과가 도착하며 notMerge 리드로우 + 애니메이션 재시작. 해결: store 가 동일 태그·기간 재조회를 판별해 `silentUpdate` 플래그 → TrendChart 가 해당 갱신에 `animation:false` 적용 (사용자 조작 시 플래그 해제). chart-rendering-policy §이중 렌더 방지 3항
 
 ### [E-040] GIS 소블록경계가 관할 전체를 진회색으로 덮음 — SHP 임포트 스키마 불일치
 

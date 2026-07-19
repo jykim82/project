@@ -164,3 +164,11 @@ const chartRef = useRef<EChartHandle>(null);
 2. **옵션에 들어가는 파생 상태는 effect 가 아니라 렌더 중 계산** —
    effect 로 결정하면 "데이터 렌더 → effect → 옵션 변경 → notMerge 전체
    리드로우" 2차 패스가 생긴다 (TrendChart 활성 태그 사례). `useMemo` 파생.
+3. **같은 조건 백그라운드 재조회는 무음 갱신** (2026-07-19 추가) —
+   전역 store(zustand)가 데이터를 유지하는 화면은 SPA 재진입 시 캐시로
+   즉시 그려진 뒤 마운트 자동 재조회가 도착하며 notMerge 리드로우 +
+   애니메이션 재시작이 보인다 (/trend 사례). store 가 "직전과 동일한
+   태그·기간의 재조회"를 판별해 `silentUpdate` 를 세우고, 차트는 해당
+   갱신에 `animation:false` 를 적용한다 (trend-store → TrendChart
+   `silentUpdate` prop). 사용자 조작(태그·기간 변경)은 플래그를 해제해
+   정상 애니메이션 유지.
