@@ -213,7 +213,7 @@ web/
 - `docs/leak-alert-spec.md` — 누수 의심 알림 (야간최소유량 CUSUM 자동 감지·확인 + 선정 사유 서술. 판정=cusum_max, Migration 0100 reason 컬럼)
 - `docs/field-mode-spec.md` — 현장 모드 v3 (/field — ①알람 대응(확장 액션: 사진 진단/고장 기록/매뉴얼/조치) ②시설 선택 작업(일상점검·알람 없는 설비) ③진행중 장애 조치 완료 ④자유 입력. 처리는 채팅 재사용, field-handoff 사진 전달, FieldModeBanner, Migration 0099 M009)
 - `docs/memo-schedule-spec.md` — 업무 메모 + 일정 알림 v1 (Migration 0105, tb_memo·tb_user_schedule, /reports/memo·/reports/schedule + 30s 폴링 전역 팝업. SCADA 알람과 용어·시스템 분리)
-- `docs/realtime-comm-spec.md` — 사용자 간 채팅·영상·음성 사양 검토 v0 (WebSocket+WebRTC LAN, P1~P4 단계 제안, 결정 필요 4항 — 구현 미착수)
+- `docs/realtime-comm-spec.md` — 사용자 간 채팅·영상·음성 v1 (확정: 영상=파일 공유 우선·음성=운영자 통화·1:1·순차. P1 운영자 메신저 구현 완료 — Migration 0106, /messenger, REST 3s 폴링. wss/WebRTC 는 P3)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
 - `docs/metric-trend-panel-spec.md` — Q/H/P 트렌드 공용 패널
 - `docs/startup-spec.md` — 시작 페이지

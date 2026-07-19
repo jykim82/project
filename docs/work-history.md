@@ -3665,3 +3665,14 @@ LLM 역할: 분류 + 라우팅 + 포맷팅 전용
 백엔드 재시작 후 데이터 유지. E2E 스크린샷 통과.
 
 **트러블**: [E-043] 신규 endpoint 커넥션 풀 미반환 → 전 API 연쇄 500. finally close 로 수정.
+
+
+---
+
+## 운영자 메신저 P1 (2026-07-19)
+
+realtime-comm-spec v1 확정(파일 공유 우선/운영자 통화/1:1/순차) 후 P1 구현.
+Migration 0106 + `endpoints/user_chat.py` + `/messenger`. 전체 채널('all') +
+1:1 DM('dm:a|b' 정렬 규칙), unread 뱃지(tb_user_chat_read), REST 3s 증분 폴링.
+방 멤버십 서버 검증(비참여 dm 403). WS 는 P3 wss(Caddy TLS 종단)에서 도입 예정.
+다음: P2 사진·영상·음성메시지 파일 전송.
