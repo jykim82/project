@@ -1,0 +1,14 @@
+# ============================================================
+# 공개 도메인 HTTPS — Let's Encrypt 자동 발급 (dev/데모 호스트 전용)
+# ============================================================
+# switch-frontend-prod.sh 가 .env 의 PUBLIC_DOMAIN 설정 시 본 파일을
+# 기본 Caddyfile 뒤에 이어 붙여 사용한다. __PUBLIC_DOMAIN__/__ACME_EMAIL__ 은
+# 스크립트가 치환. 발급 조건: 공유기 TCP 80/443 → 서버 포워딩.
+# 폐쇄망 납품에는 해당 없음 (LE 는 외부 인터넷 필요) — 고객 인증서는
+# docker-compose.prod.yml + certs/ 마운트 경로 사용 (deploy-production.md).
+
+__PUBLIC_DOMAIN__ {
+	tls __ACME_EMAIL__
+	encode gzip
+	reverse_proxy frontend:3000
+}

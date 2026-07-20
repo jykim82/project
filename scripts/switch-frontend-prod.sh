@@ -42,9 +42,27 @@ docker run -d --name slm-frontend-prod \
 
 echo "▶ Caddy TLS 리버스 프록시 기동 (HTTPS:3000 → frontend:3000)..."
 docker rm -f slm-caddy >/dev/null 2>&1 || true
-docker run -d --name slm-caddy --network "$NET" -p 3000:3000 \
-  -v "$PWD/certs/Caddyfile:/etc/caddy/Caddyfile:ro" \
+
+# 공개 도메인(Let's Encrypt) 옵션 — .env 의 PUBLIC_DOMAIN 설정 시 443/80 도 종단.
+# 공유기 TCP 80/443 포워딩 필요. 미설정이면 기존 :3000(mkcert)만.
+PUBLIC_DOMAIN="$(sed -n 's/^PUBLIC_DOMAIN=//p' .env 2>/dev/null | tail -1)"
+ACME_EMAIL="$(sed -n 's/^ACME_EMAIL=//p' .env 2>/dev/null | tail -1)"
+CADDY_PORTS=(-p 3000:3000)
+CADDYFILE_SRC="$PWD/certs/Caddyfile"
+if [ -n "$PUBLIC_DOMAIN" ]; then
+  CADDY_PORTS+=(-p 80:80 -p 443:443)
+  CADDYFILE_SRC="$PWD/certs/.Caddyfile.generated"
+  { cat "$PWD/certs/Caddyfile";
+    sed -e "s/__PUBLIC_DOMAIN__/$PUBLIC_DOMAIN/" \
+        -e "s/__ACME_EMAIL__/${ACME_EMAIL:-internal}/" \
+        "$PWD/certs/Caddyfile.public"; } > "$CADDYFILE_SRC"
+  echo "   공개 도메인 활성: https://$PUBLIC_DOMAIN (LE 자동 발급 — 80/443 포워딩 필요)"
+fi
+
+docker run -d --name slm-caddy --network "$NET" "${CADDY_PORTS[@]}" \
+  -v "$CADDYFILE_SRC:/etc/caddy/Caddyfile:ro" \
   -v "$PWD/certs:/certs:ro" \
+  -v slm-caddy-data:/data \
   --restart unless-stopped caddy:2 >/dev/null
 
 echo "✅ 프로덕션 프런트 가동. https://<host 또는 DDNS>:3000 — HMR 없음(리로드 없음)."
