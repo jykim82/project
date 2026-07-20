@@ -97,6 +97,7 @@ from endpoints.memo import router as memo_router, init as init_memo
 from endpoints.user_schedule import router as user_schedule_router, init as init_user_schedule
 from endpoints.user_chat import router as user_chat_router, init as init_user_chat
 from endpoints.call_signal import router as call_signal_router, init as init_call_signal
+from endpoints.conf_call import router as conf_call_router, init as init_conf_call
 from endpoints.monitoring_catalogs import router as monitoring_catalogs_router, init as init_monitoring_catalogs
 from endpoints.flow_map_crud import router as flow_map_crud_router, init as init_flow_map_crud
 from endpoints.csv_import import router as csv_import_router, init as init_csv_import
@@ -2272,6 +2273,10 @@ app.include_router(user_chat_router)
 # 운영자 1:1 음성 통화 시그널링 P3 (docs/realtime-comm-spec.md §5.4)
 init_call_signal(get_db_connection)
 app.include_router(call_signal_router)
+
+# 3~4인 회의 통화 풀메시 (docs/realtime-comm-spec.md §7)
+init_conf_call(get_db_connection)
+app.include_router(conf_call_router)
 
 # 모니터링 카탈로그 엔드포인트 모듈 초기화
 init_monitoring_catalogs(get_db_connection)
