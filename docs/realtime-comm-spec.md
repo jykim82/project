@@ -132,6 +132,10 @@
 - **활성화 절차**: ① .env 4개 값 설정 ② `docker compose --profile turn up -d
   coturn` + backend 재기동 ③ 공유기 포트포워딩 **UDP 3478, UDP 49160-49200**
   → 서버(192.168.50.84) ④ 공인 IP 변경 시 TURN_EXTERNAL_IP 갱신 필요.
+- **켜기/끄기 (운영 중)**: 관리 > 사이트 설정 > "외부망 통화 (TURN 릴레이)"
+  토글 (Migration 0109, tb_comm_code CALL_TURN_ENABLED). 실동작 = env
+  TURN_ENABLED(인프라) **AND** 사이트 설정 토글. 끄면 자격증명 발급 중단 →
+  사내망 P2P 통화만 허용. 사내망 통화는 토글과 무관하게 항상 가능.
 - 검증: 로컬 turnutils_uclient 로 백엔드 발급 자격증명 인증·릴레이 할당 성공.
   실 LTE↔LAN 통화는 포트포워딩 후 인수 테스트.
 - 연결음: WebAudio 톤 생성 (음원 파일 없음). 발신 425Hz 링백 / 수신 740+880Hz
