@@ -1689,3 +1689,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** `get_db_connection()` 은 풀 래퍼(`_PooledConnection`)를 반환하며 **`close()` 호출이 풀 반환 계약**. 신규 endpoints(memo.py, user_schedule.py)가 `conn.close()` 없이 커넥션을 잡고 놓지 않아 요청마다 풀 슬롯이 소모됨
 - **해결:** 전 함수에 `try/finally: conn.close()` 추가. 재시작 후 연속 24회 호출로 고갈 없음 확인
 - **재발 방지:** 신규 endpoint 는 기존 모듈(alarm_contacts.py)의 **finally close 패턴**을 복사해 시작할 것. 가능하면 `ai_server.db_conn()` 컨텍스트 매니저 사용. 폴링(30s 이하) 엔드포인트는 누수 시 고갈이 수 분 내 발생하므로 배포 직후 `docker logs slm-backend | grep PoolError` 확인 습관화
+
+### [E-044] 트렌드 조회 창 9시간 과거 오프셋 — 시각 파라미터 나이브 절단
+
+- **날짜:** 2026-07-20
+- **증상:** 트렌드 계열 화면(트렌드 메뉴·배수지/가압장·GIS 인스펙터·타임라인)의 시각축이 "UTC 나이브"처럼 보임. 실측 결과 표시 문제가 아니라 **조회 창 자체가 9시간 과거** — "최근 2시간" 요청 시 9시간 전 데이터를 조회·표시 (라벨과 데이터가 자체 정합이라 발견 지연)
+- **원인:** DB 세션 TZ 는 Asia/Seoul 인데, 프런트가 보낸 UTC ISO(`...Z`)를 백엔드가 `replace("Z","")` 로 **나이브 절단** → KST 로 오해석. GIS 타임라인은 이 어긋난 축에 맞춰 알람 시각을 KST→UTC 변환하는 보정까지 얹어 이중으로 꼬여 있었음. GBT baseline 도 학습(hour, KST)·서빙(hour, UTC 시계면) 시간 피처가 9시간 어긋난 채 운용
+- **해결:** `parse_ts_kst()` — aware 파싱(naive 는 UTC 간주) 후 KST 변환해 필터·라벨 모두 KST 정합. GIS 타임라인 보정 제거. 채팅 plot 은 프런트 매퍼에서 오프셋 포함 시각을 KST 나이브로 정규화 (`normalizeKstTs`)
+- **재발 방지:** ① 시각 문자열에서 **Z/오프셋을 잘라내는 코드 금지** — 반드시 aware 파싱 후 명시 변환 ② 시계열 창 검증은 "라벨" 이 아니라 **"지금 시각 데이터가 마지막 포인트로 오는가"** 로 실측 ③ 세션 TZ 를 가정하지 말고 `SHOW timezone` 확인
