@@ -78,10 +78,38 @@ services:
       CHAT_ATTACHMENT_DIR: /data/files/chat_attachments
       FACILITY_FILE_BASE_DIR: /data/files/facility
       PYTHONUNBUFFERED: "1"
+      # 외부망 통화 옵션 (docs/realtime-comm-spec.md §5.5) — 납품 기본 off
+      TURN_ENABLED: ${TURN_ENABLED:-0}
+      TURN_HOST: ${TURN_HOST:-}
+      TURN_SECRET: ${TURN_SECRET:-}
     depends_on:
       timescaledb:
         condition: service_healthy
     restart: unless-stopped
+
+  # ============================================================
+  # [옵션] 외부망 통화 TURN 릴레이 — docs/realtime-comm-spec.md §5.5
+  # ============================================================
+  # 서로 다른 네트워크(LTE↔LAN 등) 간 음성 통화 중계. 폐쇄망 납품 기본
+  # 비활성(TURN_ENABLED=0) — LAN 내 통화는 P2P 직결이라 불필요.
+  # 활성화: .env 에 TURN_ENABLED=1, TURN_HOST(공인 DDNS), TURN_SECRET 설정
+  #         + 공유기 UDP 3478, 49160-49200 포트포워딩.
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: slm-coturn
+    profiles: ["turn"]
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+    command: >
+      -n --log-file=stdout
+      --lt-cred-mech --use-auth-secret
+      --static-auth-secret=${TURN_SECRET:-}
+      --realm=slm --fingerprint
+      --min-port=49160 --max-port=49200
+      --external-ip=${TURN_EXTERNAL_IP:-}
 
   # ============================================================
   # [DEV-ONLY] tb_tag_raw_data 원격 → 로컬 복제 데몬

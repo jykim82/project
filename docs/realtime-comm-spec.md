@@ -119,6 +119,25 @@
 - 모바일 레이아웃: lg 미만 1열 전환 (목록 ↔ 스레드 + 뒤로가기) — 사이드
   목록이 채팅을 가리던 문제.
 
+## 5.5 외부망 통화 옵션 — coturn TURN 릴레이 (2026-07-20)
+
+- **목적**: 서로 다른 망(LTE↔LAN 등) 간 통화. LAN 내 통화는 P2P 직결이라
+  불필요 — **납품 기본 비활성** (`TURN_ENABLED=0`, compose profile "turn").
+- 구성: `docker-compose.dev.yml` coturn 서비스 (UDP/TCP 3478 + 릴레이
+  49160-49200/udp, use-auth-secret). `.env`: TURN_ENABLED / TURN_HOST /
+  TURN_SECRET / TURN_EXTERNAL_IP.
+- 자격증명: `GET /call/turn-credentials` — coturn 규격 시간제한 HMAC-SHA1
+  (username=만료epoch:user, TTL 1h). 비활성 시 `{enabled:false}` → 프런트
+  LAN P2P 폴백. 프런트는 TTL/2 캐시, TURN 시 gathering 상한 3s→5s.
+- **활성화 절차**: ① .env 4개 값 설정 ② `docker compose --profile turn up -d
+  coturn` + backend 재기동 ③ 공유기 포트포워딩 **UDP 3478, UDP 49160-49200**
+  → 서버(192.168.50.84) ④ 공인 IP 변경 시 TURN_EXTERNAL_IP 갱신 필요.
+- 검증: 로컬 turnutils_uclient 로 백엔드 발급 자격증명 인증·릴레이 할당 성공.
+  실 LTE↔LAN 통화는 포트포워딩 후 인수 테스트.
+- 연결음: WebAudio 톤 생성 (음원 파일 없음). 발신 425Hz 링백 / 수신 740+880Hz
+  벨. 끄기 토글(수신 모달·발신 바, localStorage 영속). 자동재생 정책으로
+  첫 상호작용 전에는 무음일 수 있음 (시각 알림은 항상 표시).
+
 ## 6. 리스크
 
 - WebRTC 다자 통화는 폐쇄망에서도 가능하나 SFU(예: 자체 호스팅 mediasoup)
