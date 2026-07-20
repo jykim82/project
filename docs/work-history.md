@@ -3697,3 +3697,16 @@ call-store. 설계 핵심: wss 대신 REST 폴링 + non-trickle ICE (HTTPS 혼�
 콘텐츠·프록시 제약 회피), 미디어는 WebRTC LAN P2P (폐쇄망 host candidate).
 상태기계(ringing→accepted/rejected/canceled/missed→ended) curl 전 경로 검증,
 중복 통화 409·제3자 403 확인. 실제 오디오는 LAN 2대 인수 테스트 항목.
+
+
+---
+
+## 실시간 통신 P1~P4 + TURN 완결 (2026-07-20)
+
+realtime-comm-spec **확정판 v2**. LTE↔PC 외부망 실통화 성공으로 전 단계 검증.
+- 통화: REST 폴링 시그널링(wss 불요) + WebRTC P2P/TURN. 연결음(WebAudio
+  차임벨+끄기), 유령세션 3중 방어(벨 20s·하트비트 30s·미연결 20s), 수락
+  중복 클릭 가드, 영상(PiP·전후면 전환·무카메라 폴백), 카메라 없는 쪽 PiP 숨김
+- 외부망: coturn profile + 시간제한 HMAC 자격증명, env AND 사이트설정 토글,
+  공유기 UDP 3478/49160-49200 포워딩 (개통 실측)
+- Migration 0106~0111. 다중 통화는 §7 검토(풀메시 3~4인 권장, 착수 대기)
