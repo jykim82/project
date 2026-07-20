@@ -281,7 +281,8 @@ def _linear_forecast(
         # 추세 성분(신뢰 높을수록) + 최근 평균 회귀 성분(신뢰 낮을수록·수평)
         val = (last_y + (slope * trend_w) * dh
                + (mean_y - last_y) * (1.0 - phi ** i) * (1.0 - trend_w))
-        out_times.append(t.isoformat())
+        # 축 라벨 포맷 통일 — 데이터 times 와 동일한 "YYYY-MM-DD HH:MM:SS" (KST 통일 2026-07-20)
+        out_times.append(t.strftime("%Y-%m-%d %H:%M:%S"))
         out_vals.append(round(val, 3))
     return out_times, out_vals, round(slope * trend_w, 4)
 

@@ -15,6 +15,22 @@ import re
 import time
 from collections import OrderedDict
 from datetime import datetime as dt_parse
+from datetime import timedelta, timezone
+
+# 시각 좌표계 (2026-07-20 KST 통일 — docs/review-items.md 승인)
+# DB 세션 TZ 는 Asia/Seoul. 프런트는 toISOString()(UTC, 'Z') 로 기간을 보낸다.
+# 과거엔 Z 를 잘라 나이브로 비교해 "KST 로 오해석 → 9시간 과거 창 조회 +
+# 축 라벨이 UTC 시계처럼 보이는" 결함이 있었다. aware 파싱 → KST 변환으로
+# 창·라벨·baseline 시간 피처를 모두 KST 로 정합시킨다.
+KST = timezone(timedelta(hours=9))
+
+
+def parse_ts_kst(s: str) -> dt_parse:
+    """ISO 시각(Z/offset/naive)을 KST aware 로. naive 는 UTC 로 간주."""
+    d = dt_parse.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T")[:32])
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(KST)
 from typing import Optional
 
 import psycopg2
@@ -834,13 +850,11 @@ def get_trend_data(req: TrendDataRequest):
 
     conn = None
     try:
-        # 시간범위 파싱
-        from_ts = req.from_ts.replace("T", " ").replace("Z", "")[:19]
-        to_ts = req.to_ts.replace("T", " ").replace("Z", "")[:19]
-
-        # 시간범위(분) 계산 → 버킷 크기 결정
-        t_from = dt_parse.strptime(from_ts, "%Y-%m-%d %H:%M:%S")
-        t_to = dt_parse.strptime(to_ts, "%Y-%m-%d %H:%M:%S")
+        # 시간범위 파싱 — UTC(Z) 입력을 KST 로 변환 (세션 TZ=Asia/Seoul 정합)
+        t_from = parse_ts_kst(req.from_ts)
+        t_to = parse_ts_kst(req.to_ts)
+        from_ts = t_from.strftime("%Y-%m-%d %H:%M:%S")
+        to_ts = t_to.strftime("%Y-%m-%d %H:%M:%S")
         total_minutes = max(1, int((t_to - t_from).total_seconds() / 60))
         max_pts = min(max(req.max_points or 2000, 100), 5000)
         bucket_mins = max(1, total_minutes // max_pts)
