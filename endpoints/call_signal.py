@@ -25,7 +25,12 @@ router = APIRouter(prefix="/call", tags=["call"])
 _get_db_connection = None
 
 # ringing 상태가 이 시간(초)을 넘으면 부재중(missed) 처리 — 조회 시점 정리
-RING_TIMEOUT_SEC = 60
+# (2026-07-20 사용자 요청: 20초 무응답 시 자동 종료)
+RING_TIMEOUT_SEC = 20
+
+# accepted 통화의 하트비트(양측 status 3s 폴링) 끊김 허용 시간 —
+# 초과 시 유령 세션으로 보고 자동 종료 (브라우저 강제 종료 등)
+ACCEPTED_STALE_SEC = 30
 
 # 외부망 통화 TURN 옵션 (§5.5) — 납품 기본 off. coturn use-auth-secret 방식과
 # 동일 시크릿으로 시간제한 자격증명(HMAC-SHA1)을 발급한다.
@@ -65,12 +70,23 @@ class CallActionBody(BaseModel):
 
 
 def _expire_stale(cur, region: str):
-    """오래된 ringing 을 missed 로 정리 — 폴링 조회 시마다 수행."""
+    """유령 세션 정리 — 폴링 조회 시마다 수행.
+
+    ringing: 무응답 20초 → missed.
+    accepted: 양측 status 폴링(하트비트)이 30초 끊기면 → ended
+    (브라우저 강제 종료로 end 미호출 시 "진행 중 통화" 영구 차단 방지).
+    """
     cur.execute(
         "UPDATE tb_call_session SET status='missed', ended_at=now() "
         "WHERE region=%s AND status='ringing' "
         "  AND created_at < now() - make_interval(secs => %s)",
         (region, RING_TIMEOUT_SEC),
+    )
+    cur.execute(
+        "UPDATE tb_call_session SET status='ended', ended_at=now(), end_by='system' "
+        "WHERE region=%s AND status='accepted' "
+        "  AND last_poll_at < now() - make_interval(secs => %s)",
+        (region, ACCEPTED_STALE_SEC),
     )
 
 
@@ -266,6 +282,12 @@ def call_status(call_id: int, user_id: str, region: str = "R01"):
     try:
         with conn.cursor() as cur:
             _expire_stale(cur, region)
+            # 하트비트 — 통화 당사자의 폴링이 세션 생존 신호
+            cur.execute(
+                "UPDATE tb_call_session SET last_poll_at = now() "
+                "WHERE region=%s AND call_id=%s AND status IN ('ringing','accepted')",
+                (region, call_id),
+            )
             cur.execute(
                 "SELECT status, answer_sdp, caller_id, callee_id "
                 "FROM tb_call_session WHERE region=%s AND call_id=%s",
