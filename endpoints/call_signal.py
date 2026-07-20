@@ -299,6 +299,21 @@ def turn_credentials(user_id: str):
     """
     if not TURN_ENABLED or not TURN_HOST or not TURN_SECRET:
         return {"enabled": False}
+    # 사이트 설정 토글 (관리 > 사이트 설정) — 인프라(env)와 AND 조건
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT use_yn FROM tb_comm_code "
+                "WHERE region='R01' AND grp_cd='SITE_SETTING' AND comm_cd='CALL_TURN_ENABLED'",
+            )
+            row = cur.fetchone()
+            if row and row[0] != "Y":
+                return {"enabled": False}
+    except Exception as e:
+        logger.error("turn setting check error: %s", e)
+    finally:
+        conn.close()
     username = f"{int(time.time()) + TURN_CRED_TTL_SEC}:{user_id}"
     digest = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()
     return {

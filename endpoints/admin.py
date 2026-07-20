@@ -536,6 +536,8 @@ async def get_site_settings():
                 settings["manual_rag_enabled"] = use_yn == "Y"
             elif comm_cd == "ALARM_POPUP_ENABLED":
                 settings["alarm_popup_enabled"] = use_yn == "Y"
+            elif comm_cd == "CALL_TURN_ENABLED":
+                settings["call_turn_enabled"] = use_yn == "Y"
             elif comm_cd == "VISION_AGENT_ENABLED":
                 settings["vision_agent_enabled"] = use_yn == "Y"
             elif comm_cd == "TREND_COMPARISON_ENABLED":
@@ -565,6 +567,9 @@ async def get_site_settings():
             settings["manual_rag_enabled"] = False
         if "alarm_popup_enabled" not in settings:
             settings["alarm_popup_enabled"] = True  # 기본 ON
+        if "call_turn_enabled" not in settings:
+            # UI 토글 기본 ON — 실제 동작은 서버 TURN_ENABLED env(인프라)와 AND
+            settings["call_turn_enabled"] = True
         if "vision_agent_enabled" not in settings:
             settings["vision_agent_enabled"] = False
         if "trend_comparison_enabled" not in settings:
@@ -780,6 +785,20 @@ async def update_site_settings(request: Request):
                 """
                 INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
                 VALUES ('R01', 'SITE_SETTING', 'ALARM_POPUP_ENABLED', '알람 팝업 (위기대응 모달)', %s)
+                ON CONFLICT (region, grp_cd, comm_cd)
+                DO UPDATE SET use_yn = %s
+                """,
+                (use_yn, use_yn),
+            )
+            conn.commit()
+
+        # 외부망 통화 TURN (realtime-comm-spec.md §5.5, Migration 0109)
+        if "call_turn_enabled" in body:
+            use_yn = "Y" if body["call_turn_enabled"] else "N"
+            cur.execute(
+                """
+                INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                VALUES ('R01', 'SITE_SETTING', 'CALL_TURN_ENABLED', '외부망 통화 (TURN 릴레이)', %s)
                 ON CONFLICT (region, grp_cd, comm_cd)
                 DO UPDATE SET use_yn = %s
                 """,
