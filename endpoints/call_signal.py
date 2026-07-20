@@ -8,7 +8,12 @@ REST 폴링 시그널링 (wss 불요 — 기존 HTTPS/프록시 인프라 그대
 미디어는 WebRTC LAN P2P 직결 (DTLS-SRTP 내장 암호화). ICE 는 non-trickle.
 """
 
+import base64
+import hashlib
+import hmac
 import logging
+import os
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -21,6 +26,13 @@ _get_db_connection = None
 
 # ringing 상태가 이 시간(초)을 넘으면 부재중(missed) 처리 — 조회 시점 정리
 RING_TIMEOUT_SEC = 60
+
+# 외부망 통화 TURN 옵션 (§5.5) — 납품 기본 off. coturn use-auth-secret 방식과
+# 동일 시크릿으로 시간제한 자격증명(HMAC-SHA1)을 발급한다.
+TURN_ENABLED = os.environ.get("TURN_ENABLED", "0") == "1"
+TURN_HOST = os.environ.get("TURN_HOST", "")
+TURN_SECRET = os.environ.get("TURN_SECRET", "")
+TURN_CRED_TTL_SEC = 3600
 
 
 def init(get_db_connection_fn):
@@ -276,3 +288,23 @@ def call_status(call_id: int, user_id: str, region: str = "R01"):
         raise HTTPException(status_code=500, detail="상태 조회 실패")
     finally:
         conn.close()
+
+
+@router.get("/turn-credentials")
+def turn_credentials(user_id: str):
+    """외부망 통화용 시간제한 TURN 자격증명 (coturn use-auth-secret 규격).
+
+    비활성(기본) 시 enabled=false — 프런트는 LAN P2P(host only)로 동작.
+    username = 만료 epoch + user, credential = base64(HMAC-SHA1(secret, username)).
+    """
+    if not TURN_ENABLED or not TURN_HOST or not TURN_SECRET:
+        return {"enabled": False}
+    username = f"{int(time.time()) + TURN_CRED_TTL_SEC}:{user_id}"
+    digest = hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()
+    return {
+        "enabled": True,
+        "urls": [f"turn:{TURN_HOST}:3478?transport=udp", f"turn:{TURN_HOST}:3478?transport=tcp"],
+        "username": username,
+        "credential": base64.b64encode(digest).decode(),
+        "ttl": TURN_CRED_TTL_SEC,
+    }
