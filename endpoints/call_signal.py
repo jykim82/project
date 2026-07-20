@@ -50,6 +50,7 @@ class InviteBody(BaseModel):
     caller_id: str = Field(..., max_length=50)
     callee_id: str = Field(..., max_length=50)
     sdp: str = Field(..., max_length=100_000, description="offer SDP (gathering 완료본)")
+    call_type: str = Field("audio", pattern="^(audio|video)$")
 
 
 class AnswerBody(BaseModel):
@@ -98,9 +99,9 @@ def invite(body: InviteBody, region: str = "R01"):
             if cur.fetchone():
                 raise HTTPException(status_code=409, detail="이미 진행 중인 통화가 있습니다")
             cur.execute(
-                "INSERT INTO tb_call_session (region, caller_id, callee_id, offer_sdp) "
-                "VALUES (%s, %s, %s, %s) RETURNING call_id",
-                (region, body.caller_id, body.callee_id, body.sdp),
+                "INSERT INTO tb_call_session (region, caller_id, callee_id, offer_sdp, call_type) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING call_id",
+                (region, body.caller_id, body.callee_id, body.sdp, body.call_type),
             )
             call_id = cur.fetchone()[0]
         conn.commit()
@@ -126,7 +127,7 @@ def incoming(user_id: str, region: str = "R01"):
             _expire_stale(cur, region)
             cur.execute(
                 "SELECT c.call_id, c.caller_id, COALESCE(u.user_nm, c.caller_id), "
-                "       c.offer_sdp, c.created_at "
+                "       c.offer_sdp, c.created_at, c.call_type "
                 "FROM tb_call_session c "
                 "LEFT JOIN tb_user u ON u.region=c.region AND u.user_id=c.caller_id "
                 "WHERE c.region=%s AND c.callee_id=%s AND c.status='ringing' "
@@ -145,6 +146,7 @@ def incoming(user_id: str, region: str = "R01"):
                 "caller_nm": r[2],
                 "offer_sdp": r[3],
                 "created_at": r[4].isoformat(),
+                "call_type": r[5],
             },
         }
     except Exception as e:
