@@ -89,6 +89,26 @@
   "메신저 열기" 액션). 메신저 화면에서는 억제, 첫 폴링은 기준선만 기록
   (로그인 직후 기존 미읽음 폭주 방지). 같은 방 연속 도착은 토스트 갱신(id 고정).
 
+## 5.4 P3 구현 (운영자 1:1 음성 통화 — Migration 0108)
+
+- **시그널링: REST 폴링 + non-trickle ICE** — wss 없이 기존 HTTPS/프록시
+  인프라 그대로. offer/answer SDP 를 ICE gathering 완료(상한 3s) 후 통째로
+  교환. 미디어는 WebRTC LAN P2P 직결 (DTLS-SRTP 내장 암호화, STUN/TURN 미사용
+  — 폐쇄망 host candidate 만).
+- `tb_call_session`: ringing → accepted/rejected/canceled/missed → ended.
+  통화 이력 겸용. ringing 60s 경과 시 조회 시점 missed 정리.
+- API `/call`: invite(중복 통화 409) / incoming(수신 폴링 4s) / answer /
+  reject / cancel / end / status(발신 응답 대기 1.5s·통화 중 3s 폴링,
+  당사자 검증 403).
+- UI: DM 헤더 📞 발신(call-store 경유) → `VoiceCallManager` 전역
+  (수신 벨 모달 수락/거절 + 발신 대기·통화 중 플로팅 바: 경과시간·음소거·종료).
+  P2P 연결 끊김(connectionState) 시 자동 종료 처리.
+- **검증 범위**: 시그널링 상태기계 전이는 API 로 전 경로 검증. 실제 양방향
+  오디오는 단일 브라우저 환경에서 불가 — **LAN 내 2대(각자 로그인, 마이크
+  권한 허용)로 인수 테스트 필요**. HTTPS 필수 (getUserMedia secure context).
+- 알려진 한계(P4 후보): 벨소리 사운드 없음(시각 알림만), 다자 통화 미지원,
+  통화 이력 조회 화면 없음(DB 만 축적).
+
 ## 6. 리스크
 
 - WebRTC 다자 통화는 폐쇄망에서도 가능하나 SFU(예: 자체 호스팅 mediasoup)

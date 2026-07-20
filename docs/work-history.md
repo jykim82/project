@@ -3686,3 +3686,14 @@ Migration 0107(attach 3컬럼) + /userchat/upload(유형별 확장자·크기 �
 files/messenger 저장. 프런트 📎 파일·🎤 음성 녹음, 미디어 렌더(이미지/video/
 audio), /api/files Range 206 (영상 seek). MessengerNotifier 전역 토스트
 (10s 폴링·메신저 화면 억제). 다음: P3 운영자 1:1 음성 통화 (wss + WebRTC).
+
+
+---
+
+## 운영자 메신저 P3 — 1:1 음성 통화 (2026-07-19)
+
+Migration 0108 + endpoints/call_signal.py + VoiceCallManager/voice-call.ts/
+call-store. 설계 핵심: wss 대신 REST 폴링 + non-trickle ICE (HTTPS 혼합
+콘텐츠·프록시 제약 회피), 미디어는 WebRTC LAN P2P (폐쇄망 host candidate).
+상태기계(ringing→accepted/rejected/canceled/missed→ended) curl 전 경로 검증,
+중복 통화 409·제3자 403 확인. 실제 오디오는 LAN 2대 인수 테스트 항목.
