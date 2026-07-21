@@ -243,3 +243,16 @@ function getNewItems(): NotificationAlarm[] {
    자동 채움, 기간 등 나머지는 사용자가 입력 후 등록.
    — 알람 자동 해제 금지 원칙(feedback_no_auto_alarm_link)과 부합: 억제는
    작업관리에 **명시 등록**으로만 이뤄짐.
+
+### §신규-③ 확장 2026-07-21 — 헤더 실시간 알람에도 진입점 추가
+
+"이 알람 중지" 진입점을 위기대응 모달 외 **헤더 실시간 알람 2곳**으로 확장.
+프리필 URL 은 `buildAlarmSuppressHref()` (`src/lib/utils/alarm-suppress.ts`)
+공용 헬퍼로 일원화 (모달·벨·toast 3곳 동일).
+
+1. **헤더 알림 벨 드롭다운** (`AlarmNotificationBell`): 진행중 알람 행마다
+   메시지 우측에 **"중지"** 미니 버튼 (BellOff 아이콘). 클릭 시 행 기본 동작
+   (알람 현황 이동)과 분리되어 알람 제어 프리필로 이동 (dropdown 은 controlled
+   전환으로 닫힘 처리).
+2. **주의 toast**: 기존 "분석 상세" 액션 옆 **"알람 중지"** 보조 버튼 추가
+   (sonner cancel 슬롯) — 클릭 시 동일 프리필 이동.
