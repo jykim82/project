@@ -337,6 +337,24 @@ class AddItemsRequest(BaseModel):
     task_ids: list[int]
 
 
+class AddManualItemRequest(BaseModel):
+    """수동(직접 입력) 항목 — task_id NULL. 일 점검·장애 조치 공통.
+
+    일 점검은 하루 일상 점검을 사용자가 개별 기재하는 것이 기본 취지이고,
+    장애 조치도 이력 없이 현장 상황을 직접 기재할 수 있어야 한다 (2026-07-22).
+    """
+    user_id: str
+    site_name: Optional[str] = None
+    facility_type: Optional[str] = None
+    equipment_name: Optional[str] = None
+    fault_category: Optional[str] = None     # 고장/이상/교체/점검
+    inspection_type: Optional[str] = None    # 일상/정기/특별 (일 점검)
+    occurred_at: Optional[datetime] = None
+    occurred_text: str                       # 내용 (필수)
+    resolved_at: Optional[datetime] = None
+    resolved_text: Optional[str] = None
+
+
 class ReorderRequest(BaseModel):
     user_id: str
     item_ids: list[int]
@@ -812,6 +830,60 @@ def add_items(report_id: int, req: AddItemsRequest):
     except Exception as e:
         conn.rollback()
         logger.exception(f"add_items 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/{report_id}/items/manual")
+def add_manual_item(report_id: int, req: AddManualItemRequest):
+    """직접 입력 항목 추가 — 이력(task) 없이 사용자가 개별 기재 (AI 요약 없음)."""
+    if not req.occurred_text.strip():
+        raise HTTPException(status_code=400, detail="내용을 입력하세요")
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM tb_report WHERE report_id = %s", (report_id,))
+        report = _fetchone_dict(cur)
+        if not report:
+            raise HTTPException(status_code=404, detail="보고서를 찾을 수 없습니다")
+        _ensure_owner_or_403(report, req.user_id)
+        _ensure_draft_or_405(report)
+
+        cur.execute(
+            "SELECT COALESCE(MAX(seq),0) FROM tb_report_item WHERE report_id = %s",
+            (report_id,),
+        )
+        next_seq = (cur.fetchone()[0] or 0) + 1
+
+        item = {
+            "seq": next_seq,
+            "task_id": None,
+            "site_name": req.site_name,
+            "facility_type": req.facility_type,
+            "equipment_name": req.equipment_name,
+            "fault_category": req.fault_category,
+            "inspection_type": req.inspection_type,
+            "occurred_at": req.occurred_at or datetime.now(),
+            "occurred_text": req.occurred_text.strip(),
+            "resolved_at": req.resolved_at,
+            "resolved_text": (req.resolved_text or "").strip() or None,
+            "original_text": None,
+            "photo_urls": [],
+            "ai_model": None,
+        }
+        inserted = _insert_items(cur, report_id, [item])
+        conn.commit()
+
+        cur.execute("SELECT * FROM tb_report_item WHERE item_id = %s", (inserted[0],))
+        row = _fetchone_dict(cur)
+        return _row_to_item(row)
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception(f"add_manual_item 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
