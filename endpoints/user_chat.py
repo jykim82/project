@@ -462,3 +462,107 @@ def group_members(room_id: str, user_id: str, region: str = "R01"):
         raise HTTPException(status_code=500, detail="그룹 멤버 조회 실패")
     finally:
         conn.close()
+
+
+class GroupInviteBody(BaseModel):
+    room_id: str = Field(..., max_length=120)
+    user_id: str = Field(..., max_length=50)
+    member_ids: list[str] = Field(..., min_length=1, max_length=20)
+
+
+class GroupLeaveBody(BaseModel):
+    room_id: str = Field(..., max_length=120)
+    user_id: str = Field(..., max_length=50)
+
+
+class GroupRenameBody(BaseModel):
+    room_id: str = Field(..., max_length=120)
+    user_id: str = Field(..., max_length=50)
+    title: str = Field(..., min_length=1, max_length=100)
+
+
+@router.post("/group/invite")
+def group_invite(body: GroupInviteBody, region: str = "R01"):
+    """그룹에 멤버 추가 — 기존 멤버만 초대 가능."""
+    gid = _group_id_of(body.room_id)
+    if gid is None:
+        raise HTTPException(status_code=400, detail="그룹 대화방이 아닙니다")
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            _check_access(body.room_id, body.user_id, cur, region)
+            added = []
+            for uid in dict.fromkeys(body.member_ids):
+                cur.execute(
+                    "INSERT INTO tb_chat_group_member (region, group_id, user_id) "
+                    "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING user_id",
+                    (region, gid, uid),
+                )
+                if cur.fetchone():
+                    added.append(uid)
+        conn.commit()
+        return {"status": "OK", "added": added}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error("group invite error: %s", e)
+        raise HTTPException(status_code=500, detail="멤버 추가 실패")
+    finally:
+        conn.close()
+
+
+@router.post("/group/leave")
+def group_leave(body: GroupLeaveBody, region: str = "R01"):
+    """그룹 나가기 — 본인 멤버십 삭제."""
+    gid = _group_id_of(body.room_id)
+    if gid is None:
+        raise HTTPException(status_code=400, detail="그룹 대화방이 아닙니다")
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            _check_access(body.room_id, body.user_id, cur, region)
+            cur.execute(
+                "DELETE FROM tb_chat_group_member "
+                "WHERE region=%s AND group_id=%s AND user_id=%s",
+                (region, gid, body.user_id),
+            )
+        conn.commit()
+        return {"status": "OK"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error("group leave error: %s", e)
+        raise HTTPException(status_code=500, detail="나가기 실패")
+    finally:
+        conn.close()
+
+
+@router.post("/group/rename")
+def group_rename(body: GroupRenameBody, region: str = "R01"):
+    """그룹 이름 변경 — 멤버 누구나."""
+    gid = _group_id_of(body.room_id)
+    if gid is None:
+        raise HTTPException(status_code=400, detail="그룹 대화방이 아닙니다")
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            _check_access(body.room_id, body.user_id, cur, region)
+            cur.execute(
+                "UPDATE tb_chat_group SET title=%s WHERE region=%s AND group_id=%s",
+                (body.title.strip(), region, gid),
+            )
+        conn.commit()
+        return {"status": "OK"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error("group rename error: %s", e)
+        raise HTTPException(status_code=500, detail="이름 변경 실패")
+    finally:
+        conn.close()

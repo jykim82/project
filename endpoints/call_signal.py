@@ -347,3 +347,61 @@ def turn_credentials(user_id: str):
         "credential": base64.b64encode(digest).decode(),
         "ttl": TURN_CRED_TTL_SEC,
     }
+
+
+@router.get("/history")
+def call_history(
+    user_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    region: str = "R01",
+):
+    """1:1 통화 이력 — 발신/수신 모두. 통화시간 = ended-answered."""
+    page = max(1, page)
+    page_size = min(max(page_size, 1), 100)
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM tb_call_session "
+                "WHERE region=%s AND (caller_id=%s OR callee_id=%s) "
+                "  AND status NOT IN ('ringing','accepted')",
+                (region, user_id, user_id),
+            )
+            total = cur.fetchone()[0]
+            cur.execute(
+                """
+                SELECT c.call_id, c.caller_id, COALESCE(uc.user_nm, c.caller_id),
+                       c.callee_id, COALESCE(ue.user_nm, c.callee_id),
+                       c.call_type, c.status, c.created_at, c.answered_at, c.ended_at
+                FROM tb_call_session c
+                LEFT JOIN tb_user uc ON uc.region=c.region AND uc.user_id=c.caller_id
+                LEFT JOIN tb_user ue ON ue.region=c.region AND ue.user_id=c.callee_id
+                WHERE c.region=%s AND (c.caller_id=%s OR c.callee_id=%s)
+                  AND c.status NOT IN ('ringing','accepted')
+                ORDER BY c.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (region, user_id, user_id, page_size, (page - 1) * page_size),
+            )
+            data = []
+            for r in cur.fetchall():
+                dur = None
+                if r[8] and r[9]:
+                    dur = int((r[9] - r[8]).total_seconds())
+                data.append({
+                    "call_id": r[0],
+                    "direction": "out" if r[1] == user_id else "in",
+                    "peer_id": r[3] if r[1] == user_id else r[1],
+                    "peer_nm": r[4] if r[1] == user_id else r[2],
+                    "call_type": r[5],
+                    "result": r[6],
+                    "at": r[7].isoformat(),
+                    "duration_sec": dur,
+                })
+            return {"status": "OK", "total": total, "data": data}
+    except Exception as e:
+        logger.error("call history error: %s", e)
+        raise HTTPException(status_code=500, detail="통화 이력 조회 실패")
+    finally:
+        conn.close()

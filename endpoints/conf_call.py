@@ -358,3 +358,54 @@ def get_signals(conf_id: int, user_id: str, region: str = "R01"):
         raise HTTPException(status_code=500, detail="시그널 수신 실패")
     finally:
         conn.close()
+
+
+class ConfInviteBody(BaseModel):
+    conf_id: int
+    user_id: str = Field(..., max_length=50)
+    member_ids: list[str] = Field(..., min_length=1, max_length=3)
+
+
+@router.post("/invite")
+def invite_more(body: ConfInviteBody, region: str = "R01"):
+    """회의 중 추가 초대 — 참가자 누구나. 총원(joined+invited) 상한 4."""
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            st = _check_member(cur, region, body.conf_id, body.user_id)
+            if st != "joined":
+                raise HTTPException(status_code=409, detail="회의 참가 중에만 초대할 수 있습니다")
+            cur.execute(
+                "SELECT count(*) FROM tb_conf_member "
+                "WHERE region=%s AND conf_id=%s AND status IN ('joined','invited')",
+                (region, body.conf_id),
+            )
+            current = cur.fetchone()[0]
+            added = []
+            for uid in dict.fromkeys(body.member_ids):
+                if uid == body.user_id:
+                    continue
+                if current + len(added) >= MAX_MEMBERS:
+                    break
+                cur.execute(
+                    "INSERT INTO tb_conf_member (region, conf_id, user_id) "
+                    "VALUES (%s, %s, %s) "
+                    "ON CONFLICT (region, conf_id, user_id) DO UPDATE "
+                    "SET status='invited', invited_at=now() "
+                    "WHERE tb_conf_member.status IN ('rejected','missed','left') "
+                    "RETURNING user_id",
+                    (region, body.conf_id, uid),
+                )
+                if cur.fetchone():
+                    added.append(uid)
+        conn.commit()
+        return {"status": "OK", "added": added}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.error("conf invite-more error: %s", e)
+        raise HTTPException(status_code=500, detail="추가 초대 실패")
+    finally:
+        conn.close()
