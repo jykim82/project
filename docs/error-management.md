@@ -1697,3 +1697,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** DB 세션 TZ 는 Asia/Seoul 인데, 프런트가 보낸 UTC ISO(`...Z`)를 백엔드가 `replace("Z","")` 로 **나이브 절단** → KST 로 오해석. GIS 타임라인은 이 어긋난 축에 맞춰 알람 시각을 KST→UTC 변환하는 보정까지 얹어 이중으로 꼬여 있었음. GBT baseline 도 학습(hour, KST)·서빙(hour, UTC 시계면) 시간 피처가 9시간 어긋난 채 운용
 - **해결:** `parse_ts_kst()` — aware 파싱(naive 는 UTC 간주) 후 KST 변환해 필터·라벨 모두 KST 정합. GIS 타임라인 보정 제거. 채팅 plot 은 프런트 매퍼에서 오프셋 포함 시각을 KST 나이브로 정규화 (`normalizeKstTs`)
 - **재발 방지:** ① 시각 문자열에서 **Z/오프셋을 잘라내는 코드 금지** — 반드시 aware 파싱 후 명시 변환 ② 시계열 창 검증은 "라벨" 이 아니라 **"지금 시각 데이터가 마지막 포인트로 오는가"** 로 실측 ③ 세션 TZ 를 가정하지 말고 `SHOW timezone` 확인
+
+### [E-045] View Transition 테마 전환 번짐 미표시 — 스냅샷 콜백 내 DOM 미변경
+
+- **날짜:** 2026-07-21
+- **증상:** 테마 토글 원형 번짐(View Transitions) 적용 후에도 사용자 화면에서 번짐 없이 즉시 전환. 콘솔 오류 없음
+- **원인:** `startViewTransition(() => flushSync(setTheme(...)))` 에서 next-themes 의 html class 반영은 **useEffect(비동기)** — 콜백이 끝나도 DOM 이 안 바뀌어 old/new 스냅샷이 동일 → 전환이 시각적으로 무효. 실제 테마 변경은 전환 밖에서 일어남
+- **해결:** `toggleThemeWithCircle` — 콜백 안에서 `documentElement.classList` 를 **직접 동기 토글** + `style.colorScheme` 갱신 후 setTheme 은 상태·저장 동기화용으로만 호출. resolvedTheme 기준으로 "system" 상태 첫 클릭 무반응도 함께 해소
+- **재발 방지:** View Transitions 사용 시 스냅샷 콜백 안에서 **DOM 이 동기적으로 바뀌는지** 반드시 확인 (React 상태 → effect 경유 반영은 비동기). 검증은 육안 대신 `document.getAnimations()` 로 `::view-transition-new(root)` 애니메이션 존재를 프로그램 확인

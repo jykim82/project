@@ -19,7 +19,7 @@ magicui / motion.dev / GSAP 데모 7건 검토 결과와 채택 기준. 이후 �
 | 효과 | 구현 | 적용처 |
 |------|------|--------|
 | 시작 진행 액션 버튼 (유휴→처리중→성공/오류) | `src/components/common/ActionStateButton.tsx` — CSS transition, 완료 후 1.8s 유휴 복귀 | 보고서 생성 (AddReportDialog) 시범 → 모델 학습·시뮬 실행·저장 버튼 확대 예정 |
-| 테마 토글 원형 전환 | `src/lib/utils/theme-transition.ts` — View Transitions API + flushSync, 미지원/reduce-motion 즉시 전환 폴백 | AppHeader·AppTopbar 테마 버튼 |
+| 테마 토글 원형 전환 | `src/lib/utils/theme-transition.ts` `toggleThemeWithCircle` — View Transitions API. **html class 를 스냅샷 콜백 안에서 직접 동기 토글** (next-themes 의 useEffect 반영은 비동기라 스냅샷 전후가 같아져 번짐이 안 보임 — E-045). resolvedTheme 기준이라 system 상태 첫 클릭도 즉시 전환. 미지원/reduce-motion 즉시 전환 폴백 | AppHeader·AppTopbar 테마 버튼 |
 | 우측 패널·팝업 순차 등장 | `globals.css` `.slm-stagger-in` (자식 스태거) + 기존 animate-in idiom | 네트워크 인스펙터 (누락분 보강), 일정 알림 팝업, 위기대응 모달 카드 |
 
 ## 배제 (사유 기록 — 재검토 시 참조)
