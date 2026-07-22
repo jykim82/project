@@ -56,3 +56,17 @@ SLM 폴백 없이 0.2~0.5s 분류. 스모크 16/16 회귀 통과.
 3신호 융합 API 로 교체 — equipment-health 개요 Top5 와 **숫자 일치 보장**
 (판정 이원화 방지). 라벨 "교체 검토 필요", sub "1위 {시설} {설비} · {레벨}",
 클릭 → /monitoring/equipment-health. API 실패 시 기존 근본원인 랭킹 폴백.
+
+## v2 — 실알람 추세 신호 (2026-07-22)
+
+사용자 검토: 수기 고장보고 카운트만으로는 실제 조치 방향과 어긋남 (탁도계
+통신이상 1.5만건 미반영, 테스트 기록 몇 건이 순위 좌우). 개선:
+
+1. **신호 4 — 실알람 추세** (`_alarm_trend_signals`): tb_equipment_alarm_report
+   기간 내 (sitename, facilitytype, equipmenttype) 그룹 집계.
+   ≥1,000건+최근 7일 지속 = 3.0 / ≥100건 = 1.5. 사유 라벨
+   "최근 N일 알람 X건 · 지속 중" (reason type: alarm_trend)
+2. **MTBF 신호 정제**: fault_category='고장'(현장 확인)만 + 같은 설비 같은 날
+   중복 기록 1회로 접기 (인라인 쿼리 — v_equipment_mtbf 뷰는 이력 탭용 유지)
+3. 검증: 죽동 배수지 네트워크(통신) 10,463건·지속 중이 근거 라벨과 함께
+   상위 진입 확인

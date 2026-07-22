@@ -38,3 +38,12 @@
   같은 블록 복수 알림은 **최대 배율 1행으로 집계** (label 이 전체 명칭,
   미확인 포함 시 red). 배율↑ = 누수 가능성↑ 를 한눈에
 - 기존 "시설별 알림" 뱃지 카드는 본 통계로 대체
+
+## AI 요약 (Hybrid) — 2026-07-22
+
+야간최소유량 분석 카드(누수 CUSUM `LeakCusumView` · 표준편차 `StddevAnalysisView`
+/`StddevMultiAnalysisView`)에 **"AI 요약"** 버튼 추가 —
+`POST /leak/cusum/explain` (`analysis_type: cusum|stddev`).
+scan-all explain(E-023) Hybrid 패턴: LLM 1문장(가장 심각/두드러진 1건, 쉬운 말
+— "평소 변동 범위" 등, 수치 괄호 병기) + 정적 블록([현황]/[지표 뜻]/[확인 순서]).
+수치 화이트리스트 검증 + 결정적 템플릿 폴백. 비전문 운영자의 판정 해석 보조 목적.
