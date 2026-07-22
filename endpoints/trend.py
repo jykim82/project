@@ -872,6 +872,15 @@ def get_trend_data(req: TrendDataRequest):
         )
         digital_tags = {r[0] for r in cur.fetchall()}
 
+        # 적산계 태그 — 단조 증가 누적값이라 원값 트렌드는 정보가 없음.
+        # 버킷 간 차분(적산차 = 구간 사용량)으로 변환해 반환한다 (2026-07-22).
+        cur.execute(
+            "SELECT tagsn FROM tb_tag_info WHERE tagsn = ANY(%s) "
+            "AND datainfo ~* '적산'",
+            (req.tag_ids,)
+        )
+        accum_tags = {r[0] for r in cur.fetchall()} - digital_tags
+
         # 청크 직접 쿼리로 time_bucket 집계 (ChunkAppend 플래너 우회)
         bucket_interval = f"{bucket_mins} minutes"
         chunks = get_chunks_for_range(cur, from_ts, to_ts)
@@ -887,15 +896,17 @@ def get_trend_data(req: TrendDataRequest):
         # 후처리: 공통 times + tagsn별 values 배열
         time_set = OrderedDict()
         tag_data: dict[str, dict] = {}
-        for (tagsn, bucket), (avg_val, _, _, _) in sorted(
+        for (tagsn, bucket), (avg_val, max_val, _, _) in sorted(
             reagg.items(), key=lambda x: (x[0][1], x[0][0]),
         ):
             ts = bucket.strftime("%Y-%m-%d %H:%M") if hasattr(bucket, "strftime") else str(bucket)[:16]
             time_set[ts] = True
             if tagsn not in tag_data:
                 tag_data[tagsn] = {}
-            # 디지털 태그 → 0/1 반올림
-            if avg_val is not None:
+            # 디지털 태그 → 0/1 반올림. 적산계 → 버킷 max (단조 증가라 = 버킷 마지막 값)
+            if tagsn in accum_tags:
+                v = round(max_val, 4) if max_val is not None else None
+            elif avg_val is not None:
                 v = round(avg_val) if tagsn in digital_tags else round(avg_val, 4)
             else:
                 v = None
@@ -906,6 +917,23 @@ def get_trend_data(req: TrendDataRequest):
         for tag_id in req.tag_ids:
             td = tag_data.get(tag_id, {})
             series[tag_id] = [td.get(t) for t in times]
+
+        # ── 적산차 변환 — 인접(직전 비결측) 차분, 음수(리셋·롤오버)는 결측 ──
+        for tag_id in accum_tags:
+            vals = series.get(tag_id)
+            if not vals:
+                continue
+            diffs: list = [None] * len(vals)
+            prev = None
+            for i, v in enumerate(vals):
+                if v is None:
+                    continue
+                if prev is not None:
+                    d = round(v - prev, 4)
+                    # 음수 = 계량기 리셋/롤오버 구간 — 스파이크 방지 위해 결측
+                    diffs[i] = d if d >= 0 else None
+                prev = v
+            series[tag_id] = diffs
 
         # ── 트렌드 비교 (평소 대비 / 향후 전망) — tag 별 ──────────
         # docs/trend-comparison-spec.md (B안 — causal_hint 포함)
@@ -924,6 +952,10 @@ def get_trend_data(req: TrendDataRequest):
             cur2.close()
 
             for tag_id in req.tag_ids:
+                # 적산 태그는 비교 제외 — baseline/z-score 가 적산 원값 기준으로
+                # 학습·판정돼 있어 적산차 시리즈와 기대값 정합이 깨진다
+                if tag_id in accum_tags:
+                    continue
                 vals = series.get(tag_id) or []
                 # 비결측 인덱스 — compute_comparison 은 비결측만(빠름). 결과 series 는
                 # 아래에서 전체 times 로 재배치(scatter)한다.
@@ -967,6 +999,8 @@ def get_trend_data(req: TrendDataRequest):
             "bucket_mins": bucket_mins,
             "total_points": len(times),
             "comparison": comparison_by_tag,
+            # 적산차로 변환된 태그 — 프런트가 시리즈명에 "(적산차)" 표기
+            "accum_diff_tags": sorted(accum_tags),
         }
 
     except Exception as e:
