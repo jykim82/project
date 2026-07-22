@@ -352,18 +352,29 @@ async def get_flow_map_realtime():
                           AND (ti.datainfo ~* '운전|동작' OR ti.datadesc ~* 'RUN|동작')
                           AND NOT ti.datainfo ~* 'FAULT|FLT|STOP|정지'
                           AND ti.tagtype = 'Digital Input'
+                    ), per_pump AS (
+                        -- 호기 단위 집계 (인버터/직기동 중복 태그는 MAX)
+                        SELECT sitename, pump_num, MAX(val) AS run
+                        FROM pump_tags
+                        WHERE pump_num IS NOT NULL
+                        GROUP BY sitename, pump_num
                     )
                     SELECT sitename,
-                           COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL) AS total_pumps,
-                           COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL AND val = 1) AS running_pumps
-                    FROM pump_tags
+                           COUNT(*) AS total_pumps,
+                           COUNT(*) FILTER (WHERE run = 1) AS running_pumps,
+                           json_agg(json_build_object(
+                               'no', pump_num::int, 'running', run = 1
+                           ) ORDER BY pump_num::int) AS pumps
+                    FROM per_pump
                     GROUP BY sitename
-                    HAVING COUNT(DISTINCT pump_num) FILTER (WHERE pump_num IS NOT NULL) > 0
                 """, (booster_sites,))
                 for row in cur.fetchall():
                     booster_pump_status[row[0]] = {
                         "total": int(row[1]),
                         "running": int(row[2]),
+                        # 호기별 상태 — 아이콘이 호기 순서를 실제로 반영하도록
+                        # (사용자 질문 2026-07-22: "왼쪽부터 1호?" — 이전엔 대수만)
+                        "pumps": row[3],
                     }
             except Exception as e:
                 logger.warning(f"가압장 펌프 가동 상태 조회 실패: {e}")
