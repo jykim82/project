@@ -146,24 +146,55 @@ def _select_most_urgent(rows: list[dict]) -> Optional[tuple]:
     return None
 
 
+
+# 감지 신호 원시 라벨 → 운영자 표기 (쉬운 말 서술용)
+_SIGNAL_LABELS = {
+    "comm_error": "통신이상",
+    "ups_fault": "UPS 이상",
+    "pump_fault": "펌프 이상",
+}
+
+
+def _signal_label(row: dict) -> str:
+    raw = row.get("equip_failure") or (
+        "통신장애" if row.get("comm_status") == "통신장애" else "설비 장애 신호"
+    )
+    return _SIGNAL_LABELS.get(str(raw), str(raw))
+
 def _template_urgent_sentence(row: dict, cat_key: str) -> str:
-    """LLM 실패 시 사용할 결정적 1문장 템플릿."""
+    """LLM 실패 시 사용할 결정적 1문장 템플릿 — 카테고리별 근거로 서술.
+
+    (사용자 피드백 2026-07-22: 통신장애·교차검증 건에 현재값/평균 비교를
+    쓰면 "평균과 동일한데 이상"처럼 모순으로 읽힘 — 값 비교는 값 이탈에만)
+    """
     site = row.get("sitename", "?")
     ft = row.get("facilitytype", "?")
     di = row.get("datainfo", "?")
+    label = CATEGORY_LABELS.get(cat_key, cat_key)
+    head = f"{site} {ft} {di}이(가)"
+
+    if cat_key == "equip_fault":
+        return f"{head} {_signal_label(row)} 신호로 감지되었습니다. ({label})"
+    if cat_key == "cross_check":
+        return (
+            f"{head} 상류 유입과 하류 유출의 수지가 맞지 않아 "
+            f"{row.get('verdict') or '교차이상'} 단계입니다. ({label})"
+        )
+    if cat_key == "data_quality":
+        return f"{head} 값이 갱신되지 않고 정체(홀딩)되어 있습니다. ({label})"
+
+    # value_deviation — 여기서만 평소(평균) 대비 값 비교 서술
+    parts = [head]
     curr = row.get("current_val")
     mean = row.get("mean_30d")
     dev = row.get("deviation_pct")
-    verdict = row.get("verdict") or "?"
-    label = CATEGORY_LABELS.get(cat_key, cat_key)
-    parts = [f"{site} {ft} {di}이(가)"]
     if curr is not None:
         parts.append(f"현재 {curr}")
     if mean is not None:
         parts.append(f"30일 평균 {mean} 대비")
     if dev is not None:
         parts.append(f"편차 {dev}%로")
-    parts.append(f"{verdict} 단계입니다. ({label})")
+    parts.append(f"{row.get('verdict') or '?'} 단계입니다. ({label})")
     return " ".join(parts)
 
 
@@ -347,23 +378,53 @@ async def explain_scan_all(req: ScanAllExplainRequest = ScanAllExplainRequest())
             except (TypeError, ValueError):
                 pass
 
-    # ── LLM 1문장 프롬프트 (의도: 토큰 최소화) ──
+    # ── LLM 1문장 프롬프트 — 카테고리별 근거만 제공 ──
+    # (사용자 피드백 2026-07-22: 통신장애·교차검증 건에 현재값/30일 평균을
+    #  제공하면 "평균과 동일한데 이상 판정"처럼 모순으로 읽히는 문장이 생성됨.
+    #  판정 근거가 되는 정보만 카테고리별로 주입한다)
+    base_lines = (
+        f"- 시설: {urgent_row.get('sitename','?')} {urgent_row.get('facilitytype','?')}\n"
+        f"- 태그: {urgent_row.get('datainfo','?')}\n"
+    )
+    if urgent_cat == "equip_fault":
+        evidence = f"- 감지 신호: {_signal_label(urgent_row)} (설비 DI 직접 감지)\n"
+        reason_rule = (
+            "5. 판정 근거는 위 '감지 신호'다 — 현재값·평균 비교로 서술하지 마라\n"
+        )
+    elif urgent_cat == "cross_check":
+        evidence = (
+            f"- 판정: {urgent_row.get('verdict','?')}\n"
+            "- 근거: 상류 유입과 하류 유출의 수지 불일치 (교차 검증)\n"
+        )
+        reason_rule = (
+            "5. 판정 근거는 상류·하류 수지 불일치다 — 태그 자체의 현재값·평균 "
+            "비교로 서술하지 마라\n"
+        )
+    elif urgent_cat == "data_quality":
+        evidence = "- 감지: 값이 갱신되지 않고 정체(홀딩)\n"
+        reason_rule = "5. 판정 근거는 값 정체다 — 현재값·평균 비교로 서술하지 마라\n"
+    else:  # value_deviation — 여기서만 값 비교가 판정 근거
+        evidence = (
+            f"- 현재값: {urgent_row.get('current_val')}\n"
+            f"- 30일 평균: {urgent_row.get('mean_30d')}\n"
+            f"- 편차: {urgent_row.get('deviation_pct')}%\n"
+            f"- 판정: {urgent_row.get('verdict','?')}\n"
+        )
+        reason_rule = (
+            "5. 'Z-Score' 같은 통계 용어 대신 '평소보다 크게 높습니다/낮습니다'"
+            "처럼 쉬운 표현으로 서술하고 수치는 괄호로 병기하라\n"
+        )
     prompt = (
         "다음은 이상 스캔에서 가장 위급한 1건이다. **단 1문장**으로 자연어 서술하라.\n\n"
         "## 대상 정보\n"
-        f"- 시설: {urgent_row.get('sitename','?')} {urgent_row.get('facilitytype','?')}\n"
-        f"- 태그: {urgent_row.get('datainfo','?')}\n"
-        f"- 현재값: {urgent_row.get('current_val')}\n"
-        f"- 30일 평균: {urgent_row.get('mean_30d')}\n"
-        f"- 편차: {urgent_row.get('deviation_pct')}%\n"
-        f"- Z-Score: {urgent_row.get('z_score')}\n"
-        f"- 판정: {urgent_row.get('verdict','?')}\n"
+        f"{base_lines}{evidence}"
         f"- 유형: {urgent_label}\n\n"
         "## 절대 규칙\n"
         "1. 위 수치·명칭만 사용. 외부 지식 추가 금지\n"
         "2. **1문장만**. 존댓말 '~습니다' 종결\n"
         f"3. 문장 끝에 유형을 괄호로 명시: ({urgent_label})\n"
-        "4. 권고·조치·원인추측 금지 (현황 서술만)\n\n"
+        "4. 권고·조치·원인추측 금지 (현황 서술만)\n"
+        f"{reason_rule}\n"
         "출력 (1문장):"
     )
 
