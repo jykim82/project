@@ -29,6 +29,12 @@ _SCORE_LIFESPAN_APPROACHING = 1.5
 _SCORE_MTBF_CRITICAL = 3.0   # < 30일
 _SCORE_MTBF_WARNING = 1.5    # < 90일
 _SCORE_RECURRENCE = 3.0
+# 실알람 추세 신호 (2026-07-22 v2 — 사용자 검토: 수기 고장보고 카운트만으로는
+# 실제 조치 방향과 어긋남. 예: 탁도계 통신이상 1.5만건이 미반영)
+_SCORE_ALARM_SURGE = 3.0   # 기간 내 >=1000건 + 최근 7일에도 발생 (폭주 지속)
+_SCORE_ALARM_HIGH = 1.5    # 기간 내 >=100건
+_ALARM_HIGH_MIN = 100
+_ALARM_SURGE_MIN = 1000
 
 _LEVEL_VERY_HIGH = 5.0
 _LEVEL_HIGH = 3.0
@@ -72,13 +78,55 @@ def _lifespan_signals(cur) -> list[dict]:
 
 
 def _mtbf_signals(cur) -> list[dict]:
-    """MTBF 90일 미만 설비 (fault_cnt>=2, equipment_id 단위)."""
+    """MTBF 90일 미만 설비 (fault_cnt>=2, equipment_id 단위).
+
+    v2 정제 (2026-07-22): 분류 정책상 현장 확인된 fault_category='고장' 만
+    카운트하고, 같은 설비의 같은 날 중복 기록(테스트·재입력)은 1회로 접는다
+    — 수기 기록 몇 건이 순위를 좌우하는 왜곡 축소. (v_equipment_mtbf 뷰는
+    이력 탭 용도로 유지 — 여기서만 인라인 정제 쿼리 사용)
+    """
     cur.execute("""
+        WITH dedup AS (
+            SELECT DISTINCT equipment_id, sitename, facilitytype, equipmenttype,
+                   date_trunc('day', task_start_time) AS fault_day
+            FROM tb_task_master
+            WHERE task_category = '고장보고'
+              AND fault_category = '고장'
+              AND equipment_id IS NOT NULL
+        ), gaps AS (
+            SELECT equipment_id, sitename, facilitytype, equipmenttype, fault_day,
+                   EXTRACT(epoch FROM (fault_day - lag(fault_day) OVER (
+                       PARTITION BY equipment_id ORDER BY fault_day))) / 86400.0 AS gap_days
+            FROM dedup
+        )
         SELECT equipment_id, sitename, facilitytype, equipmenttype,
-               fault_cnt, mtbf_days
-        FROM v_equipment_mtbf
-        WHERE fault_cnt >= 2 AND mtbf_days IS NOT NULL AND mtbf_days < 90
+               COUNT(*) AS fault_cnt, ROUND(AVG(gap_days)::numeric, 2) AS mtbf_days
+        FROM gaps
+        GROUP BY 1,2,3,4
+        HAVING COUNT(*) >= 2 AND AVG(gap_days) IS NOT NULL AND AVG(gap_days) < 90
     """)
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def _alarm_trend_signals(cur, days: int) -> list[dict]:
+    """실알람 발생 추세 — (sitename, facilitytype, equipmenttype) 그룹 단위.
+
+    기간 내 발생 건수 + 최근 7일 지속 여부. 알람 리포트에 설비 매핑이
+    있는 행만 집계 (equipmenttype NOT NULL).
+    """
+    cur.execute("""
+        SELECT sitename, facilitytype, equipmenttype,
+               COUNT(*) AS alarm_cnt,
+               COUNT(*) FILTER (
+                   WHERE alarm_start_time >= now() - interval '7 days'
+               ) AS recent7_cnt
+        FROM tb_equipment_alarm_report
+        WHERE alarm_start_time >= now() - make_interval(days => %s)
+          AND equipmenttype IS NOT NULL AND sitename IS NOT NULL
+        GROUP BY 1,2,3
+        HAVING COUNT(*) >= %s
+    """, (days, _ALARM_HIGH_MIN))
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
@@ -110,11 +158,11 @@ def replacement_priority(
     limit: int = Query(5, ge=1, le=20),
     days: int = Query(90, ge=1, le=365, description="재발 신호 집계 기간"),
 ) -> dict:
-    """3신호 융합 교체 우선순위 Top N.
+    """4신호 융합 교체 우선순위 Top N (v2 — 실알람 추세 포함).
 
     응답 rows: [{sitename, facilitytype, equipmenttype, equipment_id,
                  score, level, reasons: [{type, label}]}]
-      type ∈ {lifespan_overdue, lifespan_approaching, mtbf, recurrence}
+      type ∈ {lifespan_overdue, lifespan_approaching, mtbf, recurrence, alarm_trend}
       equipment_id 는 그룹 신호(재발)만 있는 행에서 null.
     """
     if _get_db_connection is None:
@@ -125,6 +173,11 @@ def replacement_priority(
         cur = conn.cursor()
         lifespan = _lifespan_signals(cur)
         mtbf = _mtbf_signals(cur)
+        try:
+            alarm_trend = _alarm_trend_signals(cur, days)
+        except Exception as e:
+            logger.warning("실알람 추세 신호 집계 실패 — 나머지 신호로 동작: %s", e)
+            alarm_trend = []
         cur.close()
     finally:
         conn.close()
@@ -185,6 +238,21 @@ def replacement_priority(
             e["reasons"].append({
                 "type": "recurrence",
                 "label": f"재발 지속 (조치 후 알람 {r['alarm_after_resolved']}건)",
+            })
+
+    # 실알람 추세 — 그룹 단위 (재발 신호와 동일 부여 방식)
+    for r in alarm_trend:
+        group = (r["sitename"], r["facilitytype"], r["equipmenttype"])
+        cnt = int(r["alarm_cnt"])
+        surge = cnt >= _ALARM_SURGE_MIN and int(r["recent7_cnt"]) > 0
+        matched = [e for k, e in entries.items() if k[:3] == group and k[3] is not None]
+        targets = matched or [_entry(*group, None)]
+        for e in targets:
+            e["score"] += _SCORE_ALARM_SURGE if surge else _SCORE_ALARM_HIGH
+            e["reasons"].append({
+                "type": "alarm_trend",
+                "label": f"최근 {days}일 알람 {cnt:,}건"
+                         + (" · 지속 중" if int(r["recent7_cnt"]) > 0 else ""),
             })
 
     rows = sorted(entries.values(), key=lambda e: (-e["score"], -len(e["reasons"])))

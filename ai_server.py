@@ -130,6 +130,7 @@ from endpoints.leak_cusum_alert import (
 from endpoints.llm_narrative_stats import router as llm_narrative_stats_router
 from endpoints.tag_latest_explain import router as tag_latest_explain_router, init as init_tag_latest_explain
 from endpoints.scan_all_explain import router as scan_all_explain_router, init as init_scan_all_explain
+from endpoints.leak_cusum_explain import router as leak_cusum_explain_router, init as init_leak_cusum_explain
 from endpoints.equipment_mtbf_explain import (
     router as equipment_mtbf_explain_router,
     init as init_equipment_mtbf_explain,
@@ -2452,6 +2453,8 @@ app.include_router(tag_latest_explain_router)
 # 전체 이상 스캔 요약 AI 서술 엔드포인트 (P2.6)
 init_scan_all_explain(_get_scan_cache, ollama_client)
 app.include_router(scan_all_explain_router)
+init_leak_cusum_explain(ollama_client)
+app.include_router(leak_cusum_explain_router)
 
 # 설비 MTBF AI 해석 엔드포인트 (P2.7)
 init_equipment_mtbf_explain(get_db_connection, ollama_client)
