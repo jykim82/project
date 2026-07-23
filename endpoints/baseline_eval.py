@@ -155,7 +155,8 @@ def get_baseline_eval(
             f"""
             SELECT tagsn, mae, rmse, sigma, coverage_pct, n_samples, method,
                    trend_kind, lag_avail_pct, y_scale, {_ACC_SQL("")} AS accuracy,
-                   {_LOWSIG_SQL("")} AS low_signal
+                   {_LOWSIG_SQL("")} AS low_signal,
+                   COALESCE(hm_gated, false), mae_hourly_mean
               FROM tb_baseline_tag_metric
              WHERE region = %s AND model_version = %s{kind_clause}
              ORDER BY mae DESC NULLS LAST
@@ -170,6 +171,8 @@ def get_baseline_eval(
                 "trend_kind": r[7], "lag_avail_pct": r[8], "y_scale": r[9],
                 "accuracy_pct": round(r[10], 1) if r[10] is not None else None,
                 "low_signal": bool(r[11]),
+                "hm_gated": bool(r[12]),
+                "mae_hourly_mean": r[13],
             }
             for r in cur.fetchall()
         ]
@@ -298,7 +301,8 @@ def get_group_tags(
             SELECT m.tagsn, t.datadesc, m.trend_kind, m.mae, m.rmse, m.sigma,
                    m.coverage_pct, m.lag_avail_pct, m.n_samples, m.method,
                    m.y_scale, {_ACC_SQL("m.")} AS accuracy,
-                   {_LOWSIG_SQL("m.")} AS low_signal
+                   {_LOWSIG_SQL("m.")} AS low_signal,
+                   COALESCE(m.hm_gated, false), m.mae_hourly_mean
               FROM tb_baseline_tag_metric m
               LEFT JOIN tb_tag_info t ON t.tagsn = m.tagsn
              WHERE m.region = %s AND m.model_version = %s AND {where}
@@ -314,6 +318,8 @@ def get_group_tags(
                 "n_samples": r[8], "method": r[9], "y_scale": r[10],
                 "accuracy_pct": round(r[11], 1) if r[11] is not None else None,
                 "low_signal": bool(r[12]),
+                "hm_gated": bool(r[13]),
+                "mae_hourly_mean": r[14],
             }
             for r in cur.fetchall()
         ]

@@ -33,6 +33,10 @@ WINDOW_DAYS = int(os.environ.get("BASELINE_WINDOW_DAYS", "60"))      # 학습창
 HOLDOUT_DAYS = int(os.environ.get("BASELINE_HOLDOUT_DAYS", "7"))     # 시간순 홀드아웃
 MIN_TAG_ROWS = int(os.environ.get("BASELINE_MIN_TAG_ROWS", str(24 * 14)))  # 태그당 최소(시간행)
 FEATURE_SET = "v1"
+# 태그별 hm 게이트 마진 — 홀드아웃에서 hm MAE 가 GBT MAE 의 이 배율 미만으로
+# "명확히" 우세할 때만 추론을 hourly_mean 으로 폴백. 근소 우위(플래핑)는 GBT 유지
+# (σ 밴드 보정은 GBT 쪽이 정교). Migration 0114.
+HM_GATE_MARGIN = float(os.environ.get("BASELINE_HM_GATE_MARGIN", "0.97"))
 
 # 저카디널리티 categorical (native) — tagsn(2700)은 제외
 CAT_COLS = ["trend_kind", "facilitytype", "equipmenttype", "site_group"]
@@ -271,6 +275,20 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
         mae_hm = float(np.mean(np.abs(merged["y"].values - merged["hm"].values)))
         improvement_pct = ((mae_hm - overall_mae) / mae_hm * 100) if mae_hm > 1e-9 else 0.0
 
+        # 태그별 hm 게이트 — 같은 홀드아웃에서 hm 이 명확히 우세한 태그는 추론 시
+        # hourly_mean 폴백 (Migration 0114). 개선율 음수 회차 대응.
+        merged = merged.assign(abs_hm_err=np.abs(merged["y"].values - merged["hm"].values))
+        hm_mae_by_tag = merged.groupby("tagsn")["abs_hm_err"].mean().to_dict()
+        hm_gated_tags: set = set()
+        for m in tag_metrics:
+            hmv = hm_mae_by_tag.get(m["tagsn"])
+            m["mae_hourly_mean"] = round(float(hmv), 4) if hmv is not None else None
+            m["hm_gated"] = bool(
+                hmv is not None and float(hmv) < m["mae"] * HM_GATE_MARGIN
+            )
+            if m["hm_gated"]:
+                hm_gated_tags.add(m["tagsn"])
+
         n_tags = int(hold_df["tagsn"].nunique())
         version = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         metrics = {
@@ -287,6 +305,7 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
                 **_dataset_summary(conn, df_full),
                 "lag24_avail_pct": round(float(df["lag_24h"].notna().mean()) * 100, 1),
                 "lag168_avail_pct": round(float(df["lag_168h"].notna().mean()) * 100, 1),
+                "hm_gated_n": len(hm_gated_tags),
             },
         }
 
@@ -297,6 +316,7 @@ def train(region: str = DEFAULT_REGION, window_days: int = WINDOW_DAYS) -> dict:
             "model_version": version,
             "trained_at": metrics["trained_at"], "window_days": window_days,
             "tag_sigma": tag_sigma, "global_sigma": global_sigma,
+            "hm_gated_tags": hm_gated_tags,
         }, metrics, tag_metrics)
 
         # P2 지표 적재 (테이블 없거나 실패해도 학습은 성공으로 간주)
@@ -395,7 +415,8 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
         rows = [
             (region, version, m["tagsn"], m["mae"], m["rmse"], m["sigma"],
              m["coverage_pct"], m["n_samples"], m["method"], m.get("trend_kind"),
-             m.get("lag_avail_pct"), m.get("y_scale"))
+             m.get("lag_avail_pct"), m.get("y_scale"),
+             m.get("mae_hourly_mean"), m.get("hm_gated", False))
             for m in tag_metrics
         ]
         if rows:
@@ -404,8 +425,8 @@ def _persist_metrics(conn, metrics: dict, tag_metrics: list[dict]):
                 INSERT INTO tb_baseline_tag_metric
                   (region, model_version, tagsn, mae, rmse, sigma,
                    coverage_pct, n_samples, method, trend_kind, lag_avail_pct,
-                   y_scale)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   y_scale, mae_hourly_mean, hm_gated)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (region, model_version, tagsn) DO NOTHING
                 """,
                 rows,
@@ -466,6 +487,10 @@ def gbt_baseline(conn, tagsn: str, target_times: list, region: str = DEFAULT_REG
         return None
     art = _load_artifact(region)
     if art is None:
+        return None
+    # 태그별 hm 게이트 — 홀드아웃에서 hourly_mean 이 우세했던 태그는 GBT 를
+    # 건너뛰고 None 반환 → 호출부가 hourly_mean 으로 폴백 (Migration 0114)
+    if tagsn in (art.get("hm_gated_tags") or ()):
         return None
 
     # 태그 메타
