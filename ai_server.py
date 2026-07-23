@@ -1181,6 +1181,23 @@ async def _iforest_training_loop():
         await asyncio.sleep(RETRAIN_INTERVAL_HOURS * 3600)
 
 
+async def _tag_quality_loop():
+    """백그라운드: 태그 품질 계층 검사 5종 — 시작 30초 후 첫 실행, 1시간 주기.
+
+    tb_tag_quality 를 갱신해 이상 진단·AI 요약·대시보드·DI 게이트가 공유
+    (docs/tag-quality-layer-spec.md §5 — 외부 cron 배제, 컨테이너 자족).
+    """
+    import tag_quality
+    await asyncio.sleep(30)
+    while True:
+        try:
+            summary = await asyncio.to_thread(tag_quality.run_quality_check, get_db_connection)
+            logger.info(f"태그 품질 검사 완료: {summary['total']}건 {summary['by_reason']}")
+        except Exception as e:
+            logger.error(f"태그 품질 검사 실패: {e}")
+        await asyncio.sleep(3600)
+
+
 async def _anomaly_scan_cache_loop():
     """백그라운드: 프로파일링 완료 대기 후 첫 실행, 이후 5분마다 ANOMALY_SCAN_ALL 전체 캐시 갱신.
 
@@ -1777,6 +1794,9 @@ async def lifespan(app: FastAPI):
     # IForest 백그라운드 학습 (90초 후 첫 실행, 이후 24시간 주기)
     global _iforest_task
     _iforest_task = asyncio.create_task(_iforest_training_loop())
+
+    # 태그 품질 계층 검사 (30초 후 첫 실행, 1시간 주기 — spec §5)
+    _tag_quality_task = asyncio.create_task(_tag_quality_loop())
 
     # ANOMALY_SCAN_ALL 백그라운드 캐시 (150초 후 첫 실행, 이후 5분 주기)
     global _anomaly_scan_task

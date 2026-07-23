@@ -431,32 +431,41 @@ def _detect_equipment_failures(
                 """, (di_tagsn_list,))
                 active_faults = {r[0] for r in cur.fetchall()}
 
-                # B-2.5: 상시 ON 게이트 — 최근 7일 on 비율 95%+ DI 는 접점 반전/
-                # 고착 의심이라 "확정 사고" 판정에서 제외하고 데이터 품질로 강등.
-                # (죽동 '정전 발생' DI 30일 상시 1 → power_fault 상시 오경보,
-                #  동일 패턴 10개+ 사이트 — 2026-07-23, docs/review-items.md)
+                # B-2.5: 상시 ON 게이트 — 품질 계층 테이블(reason='DI상시ON의심')
+                # 참조로 "확정 사고" 판정에서 제외 (죽동 '정전 발생' DI 사례,
+                # docs/tag-quality-layer-spec.md P1). 테이블 미가용 시에만 직접
+                # 계산 폴백 — 이때는 표시용 이슈도 함께 생성(5단계 폴백과 짝).
                 if active_faults:
-                    cur.execute("""
-                        SELECT tagsn,
-                               AVG(CASE WHEN val = 1 THEN 1.0 ELSE 0.0 END) AS on_ratio
-                        FROM tb_tag_raw_data
-                        WHERE tagsn = ANY(%s)
-                          AND logtime >= now() - interval '7 days'
-                        GROUP BY tagsn
-                    """, (list(active_faults),))
-                    for tsn, on_ratio in cur.fetchall():
-                        if on_ratio is not None and float(on_ratio) >= 0.95:
-                            active_faults.discard(tsn)
-                            gc, sn, ft, di = di_meta.get(tsn, ("", "", "", ""))
-                            stuck_di_issues.append({
-                                "tagsn": tsn,
-                                "sitename": sn, "facilitytype": ft, "datainfo": di,
-                                "issue_type": "DI상시ON의심",
-                                "detail": (
-                                    f"최근 7일 on 비율 {float(on_ratio)*100:.0f}% — "
-                                    f"접점 반전/고착 의심으로 설비 장애 판정 제외 ({gc})"
-                                ),
-                            })
+                    _gated = False
+                    try:
+                        import tag_quality
+                        stuck_set = tag_quality.fetch_stuck_di_tagsns(cur)
+                        active_faults -= stuck_set
+                        _gated = True
+                    except Exception as e:
+                        logger.debug(f"품질 테이블 DI 게이트 폴백: {e}")
+                    if not _gated:
+                        cur.execute("""
+                            SELECT tagsn,
+                                   AVG(CASE WHEN val = 1 THEN 1.0 ELSE 0.0 END) AS on_ratio
+                            FROM tb_tag_raw_data
+                            WHERE tagsn = ANY(%s)
+                              AND logtime >= now() - interval '7 days'
+                            GROUP BY tagsn
+                        """, (list(active_faults),))
+                        for tsn, on_ratio in cur.fetchall():
+                            if on_ratio is not None and float(on_ratio) >= 0.95:
+                                active_faults.discard(tsn)
+                                gc, sn, ft, di = di_meta.get(tsn, ("", "", "", ""))
+                                stuck_di_issues.append({
+                                    "tagsn": tsn,
+                                    "sitename": sn, "facilitytype": ft, "datainfo": di,
+                                    "issue_type": "DI상시ON의심",
+                                    "detail": (
+                                        f"최근 7일 on 비율 {float(on_ratio)*100:.0f}% — "
+                                        f"접점 반전/고착 의심으로 설비 장애 판정 제외 ({gc})"
+                                    ),
+                                })
 
                 _gc_to_ft = {
                     "COMM_ERROR": "comm_error",
@@ -791,13 +800,26 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
             1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
         )
 
-    # 5단계: 데이터 품질 이상 감지
-    #   ① 결과에서 빠진 태그 (DEAD/홀딩) ② 결과에 포함됐지만 포화/고착 의심
-    dq_issues = _detect_data_quality_issues(rows, columns)
-    dq_issues = (dq_issues or []) + _detect_sensor_saturation(rows, columns)
+    # 5단계: 데이터 품질 이상 — 품질 계층 테이블(tb_tag_quality, 1h 배치) 참조.
+    # 테이블 미가용(콜드스타트/오류) 시에만 기존 스캔 시점 감지로 폴백
+    # (docs/tag-quality-layer-spec.md P1 일원화)
+    dq_issues: list[dict] = []
+    try:
+        import tag_quality
+        conn = _get_db_connection()
+        try:
+            cur = conn.cursor()
+            dq_issues = tag_quality.fetch_issues(cur)
+            cur.close()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"품질 테이블 조회 실패 — 스캔 시점 감지 폴백: {e}")
+        dq_issues = (_detect_data_quality_issues(rows, columns) or []) \
+            + _detect_sensor_saturation(rows, columns)
     if dq_issues:
         processed_data["data_quality_issues"] = dq_issues
-        logger.info(f"SCAN_ALL 데이터 품질 이상: {len(dq_issues)}건")
+        logger.info(f"SCAN_ALL 데이터 품질 이상: {len(dq_issues)}건 (품질 계층)")
 
     # 6단계: 설비 장애 역추적 (network_down + DI fault → 영향 태그)
     try:
