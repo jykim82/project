@@ -19,6 +19,8 @@
 
 **남은 판단:** boost 계수(+0.08/-0.05)가 적절한지 프로덕션에서 모니터링 필요. 너무 강하면 catalog에만 있는 실제 스펙 정보(dimension, 최대 사용 온도 등)를 묻힐 수 있음.
 
+**✅ 마감 (2026-07-23):** dev 에는 실사용 질의 데이터가 없어 추가 판단 근거 부재 — 현행 계수 유지. 대표 쿼리 재검증(ERR LED 점등 조치방법 → XGR-CPU p251 user_manual 1위) 정상. 실운영 데이터 축적 후 오답 피드백 루프에서 catalog 미노출 불만이 잡히면 재조정.
+
 ---
 
 ### 2. master-k 매뉴얼 1페이지만 추출됨 ✅ 해결 (slm@decb86c, 2026-04-15)
@@ -55,6 +57,8 @@
 - 재시작 안내: vision_agent의 `_ManualRagIndex`가 lazy-load 후 메모리 유지하므로 업로드·삭제 반영 위해 수동 재시작 필요 (hot-reload API는 미구현)
 
 **남은 판단:** vision_agent hot-reload API 도입 여부 (업로드 시 즉시 검색에 반영되게). 현재는 수동 `kill + python3 vision_agent.py`. 우선순위 낮음.
+
+**✅ 구현 (2026-07-23):** `POST /vision/manuals/reload` 신설 + admin 업로드/삭제가 인덱싱 후 best-effort 호출(성공 시 hint "검색 반영 완료"). 재시작 불필요. 주의: load() 가 append 방식이라 reload 시 _rows/_embeddings 완전 초기화 필수(중복 적재 2830→5660 버그 수정). 검증: 3회 연속 reload 2830 고정 + 검색 정상.
 
 ---
 
