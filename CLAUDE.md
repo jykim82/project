@@ -238,7 +238,7 @@ web/
 - `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
-- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-050)
+- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-051)
   - 1차 시도 실패 시: 전체 스캔 → 유사 패턴 확인 → 해결책 참고
   - 새 버그 해결 후: E-NNN 번호 부여 기록 (날짜/증상/원인/해결/재발방지)
   - 기록 대상: 포트 충돌, DB 연결 오류, SQL 오류, 서버 기동 실패, 환경변수 문제 등 **재발 가능성 있는 모든 에러**
