@@ -226,6 +226,108 @@ def _detect_data_quality_issues(rows: list, columns: list) -> list[dict]:
                 logger.warning(f"데이터 품질 conn.close 실패: {e}")
 
 
+def _detect_sensor_saturation(rows: list, columns: list) -> list[dict]:
+    """스캔 결과에 '포함된' 태그의 센서 포화·신호 고착 감지 (데이터 품질군).
+
+    _detect_data_quality_issues 는 결과에서 '빠진' 태그(DEAD/홀딩)만 다룬다.
+    성상1 유출압력처럼 값이 계측 상한(풀스케일)에 붙어 있으면 통계는 멀쩡해
+    보여 그대로 통과됨 (2026-07-23 이틀 포화 미검지 — docs/review-items.md).
+    - 센서포화의심: 최근 6h 버킷 80%+ 가 min·max 모두 90일 관측 상한(±0.1%)
+    - 신호고착의심: 최근 6h 90%+ flat(min=max)인데 직전 7일엔 변동 있던 신호
+    """
+    tagsn_idx = columns.index("tagsn") if "tagsn" in columns else None
+    if tagsn_idx is None:
+        return []
+    scan_tagsns = list({r[tagsn_idx] for r in rows})
+    if not scan_tagsns:
+        return []
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            WITH ceil AS (
+                SELECT tagsn, MAX(max_val) AS ceiling
+                FROM cagg_5min_raw_stats_ai
+                WHERE tagsn = ANY(%s) AND bucket >= now() - interval '90 days'
+                GROUP BY tagsn
+            ),
+            recent AS (
+                SELECT s.tagsn,
+                       COUNT(*) AS r_cnt,
+                       COUNT(*) FILTER (
+                         WHERE s.min_val >= c.ceiling * 0.999
+                           AND s.max_val >= c.ceiling * 0.999) AS pinned_cnt,
+                       COUNT(*) FILTER (WHERE s.min_val = s.max_val) AS flat_cnt
+                FROM cagg_5min_raw_stats_ai s
+                JOIN ceil c ON c.tagsn = s.tagsn
+                WHERE s.bucket >= now() - interval '6 hours'
+                GROUP BY s.tagsn
+            ),
+            week AS (
+                SELECT tagsn,
+                       COUNT(*) FILTER (WHERE min_val <> max_val) AS moving_cnt
+                FROM cagg_5min_raw_stats_ai
+                WHERE tagsn = ANY(%s)
+                  AND bucket BETWEEN now() - interval '7 days'
+                                 AND now() - interval '6 hours'
+                GROUP BY tagsn
+            )
+            SELECT r.tagsn, c.ceiling, r.r_cnt, r.pinned_cnt, r.flat_cnt,
+                   COALESCE(w.moving_cnt, 0)
+            FROM recent r
+            JOIN ceil c ON c.tagsn = r.tagsn
+            LEFT JOIN week w ON w.tagsn = r.tagsn
+            WHERE c.ceiling > 0.001
+        """, (scan_tagsns, scan_tagsns))
+        stats = cur.fetchall()
+
+        # 태그 메타 — 설정값 태그는 원래 상수라 제외
+        cur.execute("""
+            SELECT tagsn, sitename, facilitytype, datainfo
+            FROM tb_tag_info
+            WHERE tagsn = ANY(%s)
+              AND datainfo NOT LIKE '%%설정%%'
+              AND datainfo NOT LIKE '%%SET%%'
+        """, (scan_tagsns,))
+        meta = {r[0]: {"sitename": r[1], "facilitytype": r[2], "datainfo": r[3]}
+                for r in cur.fetchall()}
+        cur.close()
+
+        issues: list[dict] = []
+        for tagsn, ceiling, r_cnt, pinned, flat, moving in stats:
+            info = meta.get(tagsn)
+            if not info or not r_cnt:
+                continue
+            pinned_pct = pinned / r_cnt * 100
+            flat_pct = flat / r_cnt * 100
+            if pinned_pct >= 80:
+                issues.append({
+                    "tagsn": tagsn, **info,
+                    "issue_type": "센서포화의심",
+                    "detail": (
+                        f"최근 6시간의 {pinned_pct:.0f}% 가 90일 관측 상한 "
+                        f"{float(ceiling):g} 에 고정 — 계측기 풀스케일 고착 의심"
+                    ),
+                })
+            elif flat_pct >= 90 and moving > 12:
+                issues.append({
+                    "tagsn": tagsn, **info,
+                    "issue_type": "신호고착의심",
+                    "detail": "최근 6시간 값 변화 없음 (직전 7일은 정상 변동) — 계측·전송 정체 의심",
+                })
+        return issues
+    except Exception as e:
+        logger.warning(f"센서 포화/고착 감지 실패: {e}")
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # 설비 장애 역추적 (Equipment Failure Traceback)
 # ---------------------------------------------------------------------------
@@ -248,9 +350,10 @@ def _detect_equipment_failures(
     C) tb_equipment_tag_map: 역방향 매핑 (equipment → tags)
 
     Returns:
-        (impacts_list, tag_to_failure_map)
+        (impacts_list, tag_to_failure_map, stuck_di_issues)
         - impacts_list: 설비별 장애 요약 [{equipment_id, failure_type, affected_tag_count, ...}]
         - tag_to_failure_map: {tagsn: failure_type} per-row 뱃지용
+        - stuck_di_issues: 상시 ON 게이트로 제외된 DI (데이터 품질군 강등)
     """
     tagsn_idx = columns.index("tagsn") if "tagsn" in columns else None
     sn_idx = columns.index("sitename") if "sitename" in columns else None
@@ -302,10 +405,11 @@ def _detect_equipment_failures(
 
         # --- B. DI 장애 태그 (COMM_ERROR / EQUIP_FAULT / POWER_FAULT) ---
         site_faults: dict[tuple[str, str], str] = {}  # (sitename, facilitytype) → worst failure_type
+        stuck_di_issues: list[dict] = []  # 상시 ON 게이트 제외분 → 데이터 품질군
         try:
             # B-1: 대상 DI 태그 조회
             cur.execute("""
-                SELECT gm.tagsn, dg.group_code, ti.sitename, ti.facilitytype
+                SELECT gm.tagsn, dg.group_code, ti.sitename, ti.facilitytype, ti.datainfo
                 FROM tb_tag_group_map gm
                 JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
                 JOIN tb_tag_info ti ON gm.tagsn = ti.tagsn
@@ -315,7 +419,7 @@ def _detect_equipment_failures(
 
             if di_tags:
                 di_tagsn_list = [r[0] for r in di_tags]
-                di_meta = {r[0]: (r[1], r[2], r[3]) for r in di_tags}  # tagsn → (group_code, sitename, facilitytype)
+                di_meta = {r[0]: (r[1], r[2], r[3], r[4]) for r in di_tags}  # tagsn → (group_code, sitename, facilitytype, datainfo)
 
                 # B-2: 최근 10분 val=1 (장애 활성)
                 cur.execute("""
@@ -327,13 +431,40 @@ def _detect_equipment_failures(
                 """, (di_tagsn_list,))
                 active_faults = {r[0] for r in cur.fetchall()}
 
+                # B-2.5: 상시 ON 게이트 — 최근 7일 on 비율 95%+ DI 는 접점 반전/
+                # 고착 의심이라 "확정 사고" 판정에서 제외하고 데이터 품질로 강등.
+                # (죽동 '정전 발생' DI 30일 상시 1 → power_fault 상시 오경보,
+                #  동일 패턴 10개+ 사이트 — 2026-07-23, docs/review-items.md)
+                if active_faults:
+                    cur.execute("""
+                        SELECT tagsn,
+                               AVG(CASE WHEN val = 1 THEN 1.0 ELSE 0.0 END) AS on_ratio
+                        FROM tb_tag_raw_data
+                        WHERE tagsn = ANY(%s)
+                          AND logtime >= now() - interval '7 days'
+                        GROUP BY tagsn
+                    """, (list(active_faults),))
+                    for tsn, on_ratio in cur.fetchall():
+                        if on_ratio is not None and float(on_ratio) >= 0.95:
+                            active_faults.discard(tsn)
+                            gc, sn, ft, di = di_meta.get(tsn, ("", "", "", ""))
+                            stuck_di_issues.append({
+                                "tagsn": tsn,
+                                "sitename": sn, "facilitytype": ft, "datainfo": di,
+                                "issue_type": "DI상시ON의심",
+                                "detail": (
+                                    f"최근 7일 on 비율 {float(on_ratio)*100:.0f}% — "
+                                    f"접점 반전/고착 의심으로 설비 장애 판정 제외 ({gc})"
+                                ),
+                            })
+
                 _gc_to_ft = {
                     "COMM_ERROR": "comm_error",
                     "EQUIP_FAULT": "equip_fault",
                     "POWER_FAULT": "power_fault",
                 }
                 for tsn in active_faults:
-                    gc, sn, ft = di_meta[tsn]
+                    gc, sn, ft, _di = di_meta[tsn]
                     ftype = _gc_to_ft.get(gc, "comm_error")
                     key = (sn, ft)
                     existing = site_faults.get(key)
@@ -424,11 +555,11 @@ def _detect_equipment_failures(
         # 영향 태그 수 내림차순 정렬
         impacts.sort(key=lambda x: x["affected_tag_count"], reverse=True)
 
-        return impacts, tag_failure_map
+        return impacts, tag_failure_map, stuck_di_issues
 
     except Exception as e:
         logger.warning(f"설비 장애 감지 실패: {e}")
-        return [], {}
+        return [], {}, []
     finally:
         if conn:
             try:
@@ -660,15 +791,23 @@ def _compute_anomaly_scan_all() -> Optional[dict]:
             1 for r in rows if r[_vd_idx] in ("교차이상", "교차주의", "복합이상")
         )
 
-    # 5단계: 데이터 품질 이상 감지 (DEAD/홀딩 — 결과에서 빠진 태그)
+    # 5단계: 데이터 품질 이상 감지
+    #   ① 결과에서 빠진 태그 (DEAD/홀딩) ② 결과에 포함됐지만 포화/고착 의심
     dq_issues = _detect_data_quality_issues(rows, columns)
+    dq_issues = (dq_issues or []) + _detect_sensor_saturation(rows, columns)
     if dq_issues:
         processed_data["data_quality_issues"] = dq_issues
         logger.info(f"SCAN_ALL 데이터 품질 이상: {len(dq_issues)}건")
 
     # 6단계: 설비 장애 역추적 (network_down + DI fault → 영향 태그)
     try:
-        equip_impacts, tag_failure_map = _detect_equipment_failures(rows, columns)
+        equip_impacts, tag_failure_map, stuck_di = _detect_equipment_failures(rows, columns)
+        if stuck_di:
+            # 상시 ON 게이트 제외분은 데이터 품질군으로 노출 (오경보 → 점검 유도)
+            processed_data["data_quality_issues"] = (
+                processed_data.get("data_quality_issues") or []
+            ) + stuck_di
+            logger.info(f"SCAN_ALL DI 상시 ON 게이트: {len(stuck_di)}건 제외")
         if equip_impacts:
             processed_data["equipment_failure_impacts"] = equip_impacts
             processed_data["equipment_failure_count"] = len(equip_impacts)
