@@ -993,6 +993,50 @@ def _rebuild_causal_index_entry(sitename: str, facilitytype: str):
             conn.close()
 
 
+
+def convert_accum_rows_to_diff(rows, columns):
+    """label 에 '적산' 포함 시리즈를 구간 차분(적산차)으로 변환.
+
+    트렌드 메뉴(/trend/data)와 동일 규칙 (2026-07-23): 단조 증가 누적 원값은
+    정보가 없어, 채팅 트렌드 카드에서도 구간 사용량으로 표시. 음수(리셋·
+    롤오버)는 결측, 라벨에 " (적산차)" 표기. 변환 발생 시 (rows, True) 반환.
+    """
+    try:
+        li = columns.index("label")
+        vi = columns.index("val")
+        ti = columns.index("log_time")
+    except (ValueError, AttributeError):
+        return rows, False
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for idx, r in enumerate(rows):
+        groups[r[li]].append(idx)
+    accum_labels = [lb for lb in groups if lb and "적산" in str(lb)]
+    if not accum_labels:
+        return rows, False
+    out = [list(r) for r in rows]
+    for lb in accum_labels:
+        idxs = sorted(groups[lb], key=lambda i: str(out[i][ti]))
+        prev = None
+        for i in idxs:
+            v = out[i][vi]
+            if v is None:
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if prev is None:
+                out[i][vi] = None
+            else:
+                d = round(v - prev, 4)
+                out[i][vi] = d if d >= 0 else None
+            prev = v
+        new_lb = f"{lb} (적산차)"
+        for i in idxs:
+            out[i][li] = new_lb
+    return out, True
+
 def save_csv(rows: list, columns: list, intent: str, session_id: str) -> str:
     """SQL 결과를 CSV로 저장하고 파일명을 반환한다."""
     os.makedirs(CSV_EXPORT_DIR, exist_ok=True)
@@ -3310,6 +3354,12 @@ async def ask_stream(request: AskRequest):
             else:
                 response_data = [dict(zip(columns, row)) for row in rows]
         elif graph_type and graph_type != "none" and rows and columns:
+            # 적산계 시리즈 → 적산차 변환 (트렌드 메뉴와 동일 규칙, 2026-07-23)
+            if graph_type == "plot":
+                try:
+                    rows, _accum_converted = convert_accum_rows_to_diff(rows, columns)
+                except Exception as _e:
+                    logger.warning(f"적산차 변환 실패 (무시): {_e}")
             # 그래프용 데이터 (plot, bar 등): 행 수 제한 + 다운샘플링
             total_rows = len(rows)
             if len(rows) > MAX_GRAPH_ROWS:
