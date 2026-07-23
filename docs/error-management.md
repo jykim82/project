@@ -1732,6 +1732,7 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** slm-backend 컨테이너 이미지에 torch/chronos-forecasting 이 없어 `chronos_forecast` 가 항상 실패 → **모든 전망이 선형회귀 폴백**. 주기 신호의 하강 위상에서 선형 외삽하면 구조적으로 급락 (하드 클램프가 바닥만 막아줌). requirements.txt 에는 있었으나 이미지가 구버전
 - **해결:** 컨테이너에 chronos-forecasting 설치 후 재검증 — 동일 태그 method=chronos_bolt, 예측 1.58~1.8 (주기 범위 내 완만), "21시간 후 한계 접근"(실측상 합리적)
 - **재발 방지:** ① pip 컨테이너 설치는 **컨테이너 재생성 시 소실** — 다음 `docker compose build slm-backend` 로 이미지에 반영할 것 ② 전망 카드 method 필드(chronos_bolt|linear)를 확인하는 습관 — linear 로 장기간 고정이면 엔진 로드 실패 의심 ③ trend_forecast 는 로드 실패를 1회 로그 후 고정 폴백하므로 배포 후 로그에서 "Chronos 로드 실패" 검색
+- **✅ 마감 (2026-07-23):** `docker compose build backend` 로 이미지에 torch 2.13/chronos 영구 반영 — 재생성 후 method=chronos_bolt 48포인트+밴드 재검증. **부수 발견:** 이미지 재빌드로 sklearn 버전이 바뀌면 기존 GBT pkl 이 `No module named '_loss'` 로 로드 실패(내부 모듈 경로 변화) → **이미지 재빌드 후 `python -m trend_baseline train` 1회 필수** (폴백 안전하므로 무중단, 로그 "아티팩트 로드 실패" 검색으로 탐지)
 
 ### [E-049] 향후 전망 주기 왜곡 — Chronos 스텝 스케일 불일치 + 수위 상한 캡 오적용
 

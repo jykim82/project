@@ -135,4 +135,5 @@ DB(`tb_baseline_model_run`)에 적재되어 화면에서 추세를 확인할 수
 | `학습 가능 태그 없음 (데이터 부족)` | 학습창 내 14일 이상 데이터 가진 태그 없음 | dev 는 §1 검증용 env 로 하향 실행 |
 | 추론이 계속 `hourly_mean` | 아티팩트 미생성/로드 실패 | `ls /app/data/models/` 확인, 수동 train 1회 |
 | `ModuleNotFoundError: sklearn` | backend 이미지 sklearn 누락 | `docker compose build backend` 재빌드 |
+| 아티팩트 로드 실패 `No module named '_loss'` 등 | 이미지 재빌드로 sklearn 버전 변경 → 구버전 pkl 비호환 | 재빌드 후 `python -m trend_baseline train` 1회 (E-048 마감 노트) |
 | 신모델 후 오탐 급증 | 학습 데이터 이상 | archive 의 직전 pkl 을 현재 포인터로 복사(롤백) |
