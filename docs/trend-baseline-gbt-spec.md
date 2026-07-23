@@ -61,6 +61,12 @@
   `HistGradientBoostingRegressor` 학습 → holdout 예측 → **태그별 잔차 σ**·MAE·RMSE·
   커버리지 산출 → 아티팩트 + 메타 저장 → (P2)지표 테이블 적재.
 - 비교군: 동일 holdout 에서 `hourly_mean` MAE 도 계산 → **개선율** 기록.
+- **태그별 hm 게이트 (Migration 0114, 2026-07-23):** holdout 에서 태그별
+  `hourly_mean` MAE 도 산출해 `hm_mae < gbt_mae × 0.97` (마진 3% — 근소 우위
+  플래핑 방지, env `BASELINE_HM_GATE_MARGIN`) 인 태그는 게이트 대상으로 판정.
+  아티팩트에 `hm_gated_tags` set 저장, `tb_baseline_tag_metric` 에
+  `mae_hourly_mean`·`hm_gated` 박제. 배경: 2026-07-23 회차 전체 개선율 -3.6%
+  (실데이터 43.8일) — 일부 태그는 GBT 열세.
 
 ## 4. 추론 (요청 시)
 
@@ -68,6 +74,7 @@
   호출:
   1. 아티팩트 로드(프로세스 캐시, mtime 변경 시 리로드).
   2. 모델 없음/로드 실패/skip/데이터부족 → **`_hourly_pattern_baseline` 폴백**.
+     **`hm_gated_tags` 에 든 태그도 동일 폴백** (holdout 에서 hm 우세 — §3 게이트).
   3. target_times 각 시점의 피처 벡터(②lag 는 **실시간 최근 데이터**로 계산) → 예측.
   4. `baseline_series` = 예측값, `band = 예측 ± 2×태그σ`, `mean_stddev = 태그σ`.
 - 반환 형식은 `_hourly_pattern_baseline` 과 동일 → 이후 z-score·판정 로직 무변경.
@@ -289,3 +296,12 @@
   페이지는 `BaselineEvalView` 컴포넌트로 추출, 구 라우트 `/admin/baseline-eval`
   은 redirect. 메뉴 M100-13 → "AI 모델 평가"(migration 0093). 백엔드 API·로직
   불변.
+- 2026-07-23 재학습 공백 사후 대책 2종 — 배경: 주1회 cron 이 미등록 상태로
+  5주 방치돼 6/16 모델로 추론 중이었음(사용자 "평소 대비 패턴 불일치" 보고로
+  발견). ① **학습 최신성 배지**(`TrainFreshnessBadge`, baseline·IForest 공용):
+  마지막 학습이 주기+유예 1일 초과 시 지연 경고(amber), 주기 2배 초과 시
+  심각(red). baseline 주기 7일 / IForest 1일(내장 루프). ② **태그별 hm 게이트**
+  (Migration 0114): holdout 에서 hourly_mean 이 마진 3% 이상 우세한 태그는
+  추론을 hm 으로 자동 폴백 — 개선율 음수 회차에서도 태그 단위로 최적 방식
+  사용. 평가 화면: KPI 부제에 게이트 태그 수, 방식 컬럼 "게이트→평균" 배지
+  + 용어 해설 2건 추가.
