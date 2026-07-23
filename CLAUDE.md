@@ -222,8 +222,10 @@ web/
 - `docs/tweaks-layout-spec.md` — 테마/브랜드/레이아웃 Tweaks 패널
 
 ## 마케팅·영업 자산
-- `docs/catalog-draft.md` — 제품 카탈로그 초안 (A4 16p 구성 — 개요·차별화 4·기능군 4축·SKU·기술 사양·구축 프로세스. 캡처 15점 목록 + 확정 필요 항목 부록)
-- `docs/brochure-draft.md` — 제품 브로셔 초안 (A4 6p / 3단 접지 — 카탈로그 요약판. 관심 유발용, 캡처 7점)
+- `docs/catalog-draft.md` — 제품 카탈로그 초안 원고 (A4 16p 구성 — 개요·차별화 4·기능군 4축·SKU·기술 사양·구축 프로세스. 캡처 15점 목록 + 확정 필요 항목 부록)
+- `docs/brochure-draft.md` — 제품 브로셔 초안 원고 (A4 6p / 3단 접지 — 카탈로그 요약판. 관심 유발용, 캡처 7점)
+- `docs/catalog-draft.html` — 카탈로그 HTML 판 (자립형 16p, A4 인쇄 CSS. `[화면]` 자리를 임의 현장명(청수시·한빛배수지 등) HTML/CSS 목업으로 직접 구성 — 실 현장명 비노출)
+- `docs/brochure-draft.html` — 브로셔 HTML 판 (자립형 6p, 동일 목업 체계. 브라우저 인쇄 → PDF 제작 가능)
 
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성

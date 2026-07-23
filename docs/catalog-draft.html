@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLM 제품 카탈로그 (초안 v0.1)</title>
+<style>
+  /* ─── 기본 ─────────────────────────────────────────── */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root{
+    --navy:#0f1b2d; --navy2:#122238; --panel:#0d1526; --panel2:#111c30;
+    --line:#1e2a44; --cyan:#22d3ee; --blue:#3b82f6; --violet:#a78bfa;
+    --amber:#f59e0b; --red:#ef4444; --green:#10b981; --pink:#ec4899;
+    --ink:#1c2536; --sub:#5b6b85; --paper:#ffffff; --paper2:#f4f7fb;
+    --tblue:#0e7490;
+  }
+  html{ background:#dfe5ee; }
+  body{ font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+        color:var(--ink); line-height:1.55; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .page{ width:210mm; min-height:297mm; margin:8mm auto; background:var(--paper);
+         box-shadow:0 4px 24px rgba(15,27,45,.18); padding:16mm 15mm 14mm;
+         position:relative; page-break-after:always; overflow:hidden; }
+  @media print{
+    html{ background:#fff; }
+    .page{ margin:0; box-shadow:none; }
+    @page{ size:A4; margin:0; }
+  }
+  /* ─── 타이포 ───────────────────────────────────────── */
+  h1{ font-size:26px; letter-spacing:-.5px; }
+  h2{ font-size:19px; color:var(--navy); margin-bottom:10px; letter-spacing:-.3px; }
+  h3{ font-size:13.5px; color:var(--navy); margin:12px 0 6px; }
+  p, li{ font-size:11px; color:#33415c; }
+  .lead{ font-size:12.5px; color:#22314e; }
+  .muted{ color:var(--sub); }
+  .small{ font-size:9.5px; }
+  ul{ padding-left:16px; }
+  li{ margin:3px 0; }
+  /* ─── 공통 요소 ─────────────────────────────────────── */
+  .kicker{ display:inline-block; font-size:10px; font-weight:700; color:var(--tblue);
+           letter-spacing:2.5px; text-transform:uppercase; margin-bottom:6px; }
+  .rule{ height:3px; width:44px; background:linear-gradient(90deg,var(--cyan),var(--blue));
+         border-radius:2px; margin:8px 0 14px; }
+  .pageno{ position:absolute; bottom:8mm; right:15mm; font-size:9px; color:#9aa8bf; }
+  .foot-brand{ position:absolute; bottom:8mm; left:15mm; font-size:9px; color:#9aa8bf; letter-spacing:1px; }
+  table.spec{ width:100%; border-collapse:collapse; margin:8px 0; }
+  table.spec th{ background:var(--paper2); color:var(--navy); font-size:10.5px; text-align:left;
+                 padding:6px 8px; border:1px solid #e3e9f2; }
+  table.spec td{ font-size:10.5px; padding:6px 8px; border:1px solid #e3e9f2; color:#33415c; vertical-align:top; }
+  .cols{ display:flex; gap:14px; } .col{ flex:1; min-width:0; }
+  .callout{ background:var(--paper2); border-left:3px solid var(--cyan); padding:9px 12px;
+            border-radius:0 8px 8px 0; margin:10px 0; font-size:11px; color:#22314e; }
+  .tag{ display:inline-block; font-size:9px; font-weight:700; padding:2px 8px; border-radius:20px; margin-right:4px; }
+  .tag.cy{ background:#e0f7fb; color:#0e7490; } .tag.bl{ background:#e3edff; color:#1d4ed8; }
+  .tag.vi{ background:#f1ebff; color:#7c3aed; } .tag.am{ background:#fef3dd; color:#b45309; }
+  .tag.gr{ background:#e2f7ef; color:#047857; } .tag.rd{ background:#fde7e7; color:#b91c1c; }
+  .num-badge{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+              border-radius:50%; background:var(--navy); color:var(--cyan); font-weight:800; font-size:11px;
+              margin-right:8px; flex:none; }
+  /* ─── 목업 스크린 공통 ───────────────────────────────── */
+  .screen{ background:var(--panel); border:1px solid var(--line); border-radius:10px;
+           overflow:hidden; box-shadow:0 6px 18px rgba(10,18,32,.25); font-size:9px; color:#c4d2e8; }
+  .sc-bar{ display:flex; align-items:center; gap:5px; background:#0a1120; padding:5px 9px;
+           border-bottom:1px solid var(--line); }
+  .sc-dot{ width:6px; height:6px; border-radius:50%; }
+  .sc-title{ font-size:8.5px; color:#7f92b3; margin-left:6px; letter-spacing:.5px; }
+  .sc-body{ padding:8px; }
+  .caption{ font-size:9px; color:var(--sub); margin-top:4px; text-align:center; }
+  .kpi-grid{ display:grid; grid-template-columns:repeat(6,1fr); gap:5px; margin-bottom:7px; }
+  .kpi{ background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px 7px; }
+  .kpi .lb{ font-size:7.5px; color:#7f92b3; }
+  .kpi .v{ font-size:13px; font-weight:800; margin-top:1px; }
+  .mini-tbl{ width:100%; border-collapse:collapse; }
+  .mini-tbl th{ font-size:7.5px; color:#7f92b3; text-align:left; padding:3px 5px; border-bottom:1px solid var(--line); }
+  .mini-tbl td{ font-size:8px; color:#c4d2e8; padding:3px 5px; border-bottom:1px solid #16233c; }
+  .pill{ font-size:7px; font-weight:700; padding:1px 6px; border-radius:10px; }
+  .pill.warn{ background:rgba(239,68,68,.18); color:#f87171; }
+  .pill.cau{ background:rgba(245,158,11,.18); color:#fbbf24; }
+  .pill.ok{ background:rgba(16,185,129,.18); color:#34d399; }
+  .pill.info{ background:rgba(59,130,246,.18); color:#60a5fa; }
+  .pill.vio{ background:rgba(167,139,250,.20); color:#c4b5fd; }
+  .chat-q{ background:#1d4ed8; color:#eaf1ff; border-radius:10px 10px 2px 10px; padding:6px 9px;
+           font-size:8.5px; max-width:78%; margin:5px 0 5px auto; }
+  .chat-a{ background:var(--panel2); border:1px solid var(--line); color:#c4d2e8;
+           border-radius:10px 10px 10px 2px; padding:7px 9px; font-size:8.5px; max-width:88%; margin:5px 0; }
+  .ai-card{ background:rgba(124,58,237,.10); border:1px solid rgba(167,139,250,.45);
+            border-radius:8px; padding:6px 9px; font-size:8px; color:#cabffa; margin-top:5px; }
+  .sec-hd{ display:flex; align-items:baseline; gap:8px; margin-bottom:2px; }
+  .sec-hd .no{ font-size:24px; font-weight:900; color:#dbe4f0; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ p.1 표지 ════════════════ -->
+<section class="page" style="background:linear-gradient(160deg,#0a1120 0%,#0f1b2d 55%,#122a45 100%); color:#e8eef8; display:flex; flex-direction:column;">
+  <div style="margin-top:10mm;">
+    <div style="font-size:11px; letter-spacing:4px; color:var(--cyan); font-weight:700;">PRODUCT CATALOG</div>
+    <h1 style="font-size:56px; margin-top:6px; color:#fff;">SLM</h1>
+    <div style="font-size:15px; color:#9fb2ce; letter-spacing:1px;">Supervisory Lifecycle Management</div>
+    <div style="height:3px; width:70px; background:linear-gradient(90deg,var(--cyan),var(--blue)); border-radius:2px; margin:16px 0;"></div>
+    <p style="font-size:15px; color:#dbe6f5; line-height:1.7;">
+      상수도 관망의 감시·알람·설비·구축을 하나로.<br>
+      <b style="color:#fff;">폐쇄망에서 완결되는 AI 기반 상수도 통합 운영 플랫폼.</b>
+    </p>
+  </div>
+
+  <!-- 히어로: 종합 현황판 목업 -->
+  <div class="screen" style="margin-top:12mm;">
+    <div class="sc-bar">
+      <span class="sc-dot" style="background:#ff5f57"></span><span class="sc-dot" style="background:#febc2e"></span><span class="sc-dot" style="background:#28c840"></span>
+      <span class="sc-title">SLM · 종합 현황판 — 청수시 상수도</span>
+    </div>
+    <div class="sc-body">
+      <div class="kpi-grid">
+        <div class="kpi"><div class="lb">이상 감지</div><div class="v" style="color:#f87171">3</div></div>
+        <div class="kpi"><div class="lb">교차검증 이상</div><div class="v" style="color:#fb923c">1</div></div>
+        <div class="kpi"><div class="lb">설비 장애</div><div class="v" style="color:#c4b5fd">2</div></div>
+        <div class="kpi"><div class="lb">유량 불균형</div><div class="v" style="color:#22d3ee">1</div></div>
+        <div class="kpi"><div class="lb">진행중 경보</div><div class="v" style="color:#60a5fa">4</div></div>
+        <div class="kpi"><div class="lb">정상 시설</div><div class="v" style="color:#34d399">94%</div></div>
+      </div>
+      <div style="display:flex; gap:7px;">
+        <div style="flex:1.4; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px;">
+          <div style="font-size:8px; color:#7f92b3; margin-bottom:3px;">한빛배수지 · 수위 트렌드 (24h)</div>
+          <svg viewBox="0 0 300 80" width="100%" height="84">
+            <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#22d3ee" stop-opacity=".35"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+            </linearGradient></defs>
+            <line x1="0" y1="14" x2="300" y2="14" stroke="#ef4444" stroke-width=".8" stroke-dasharray="4 3"/>
+            <line x1="0" y1="68" x2="300" y2="68" stroke="#f59e0b" stroke-width=".8" stroke-dasharray="4 3"/>
+            <path d="M0,52 C25,44 45,30 70,32 S115,58 140,55 S185,26 215,28 S265,50 300,42 L300,80 L0,80 Z" fill="url(#g1)"/>
+            <path d="M0,52 C25,44 45,30 70,32 S115,58 140,55 S185,26 215,28 S265,50 300,42" fill="none" stroke="#22d3ee" stroke-width="1.6"/>
+            <text x="3" y="11" font-size="6" fill="#f87171">HH 4.50</text>
+            <text x="3" y="77" font-size="6" fill="#fbbf24">LL 1.20</text>
+          </svg>
+        </div>
+        <div style="flex:1; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px;">
+          <div style="font-size:8px; color:#7f92b3; margin-bottom:3px;">이상 시설 TOP</div>
+          <table class="mini-tbl">
+            <tr><th>시설</th><th>Z-Score</th><th>판정</th></tr>
+            <tr><td>동림가압장</td><td style="color:#f87171">2.41</td><td><span class="pill warn">경고</span></td></tr>
+            <tr><td>매화소블록</td><td style="color:#fbbf24">1.72</td><td><span class="pill cau">주의</span></td></tr>
+            <tr><td>서곡감압시설</td><td style="color:#fbbf24">1.55</td><td><span class="pill cau">주의</span></td></tr>
+            <tr><td>청호배수지</td><td>0.84</td><td><span class="pill ok">정상</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:auto; display:flex; justify-content:space-between; align-items:flex-end;">
+    <div>
+      <div style="font-size:12px; font-weight:800; color:#fff;">공급사명 (주)○○○○</div>
+      <div style="font-size:9.5px; color:#8fa2c0;">www.example.co.kr · sales@example.co.kr · 000-0000-0000</div>
+    </div>
+    <div style="font-size:9px; color:#6d7f9d;">v0.1 · 2026-07</div>
+  </div>
+</section>
+
+<!-- ════════════════ p.2 제품 개요 ════════════════ -->
+<section class="page">
+  <span class="kicker">Overview</span>
+  <h2>제품 개요 — Why SLM</h2>
+  <div class="rule"></div>
+
+  <h3>상수도 운영의 3가지 현실</h3>
+  <div class="cols" style="margin-top:6px;">
+    <div class="col callout" style="border-left-color:var(--red);"><b>① 데이터는 많지만 판단은 어렵다</b><br>
+      SCADA 태그 수천 개, 알람 수백 건. 무엇이 진짜 이상인지 걸러주는 체계가 없다.</div>
+    <div class="col callout" style="border-left-color:var(--amber);"><b>② 현장과 관제가 분리되어 있다</b><br>
+      알람은 관제실에, 조치 기록은 수첩에. 오탐·미검지 분석이 불가능하다.</div>
+    <div class="col callout" style="border-left-color:var(--blue);"><b>③ 폐쇄망이라 최신 AI를 못 쓴다</b><br>
+      클라우드 LLM 기반 솔루션은 상수도 보안 환경에 반입 자체가 불가하다.</div>
+  </div>
+
+  <h3 style="margin-top:16px;">SLM의 답 — 자산 전 수명주기(Lifecycle)를 하나의 시스템으로</h3>
+  <table class="spec">
+    <tr><th style="width:22%;">축</th><th>제공 가치</th></tr>
+    <tr><td><b>감시</b></td><td>실시간 계통도 · GIS 관망도 · 트렌드로 설비 상태 완전 가시화</td></tr>
+    <tr><td><b>알람</b></td><td>분류별 경보 + 오탐·미검지 분석 + 현장 조치 통합</td></tr>
+    <tr><td><b>장비 고장 관리</b></td><td>AI 채팅 진단 + 고장 케이스 DB + 조치 이력·교체 후보</td></tr>
+    <tr><td><b>관망 구축·조회</b></td><td>시설·설비·태그·매뉴얼·GIS를 일관된 모델로 구성</td></tr>
+  </table>
+
+  <div class="callout" style="border-left-color:var(--cyan); background:#eefbfd;">
+    <b>핵심 한 줄</b> — 모든 AI가 <b>로컬 서버에서 구동</b>됩니다. 외부 인터넷·클라우드 의존이
+    0인, <b>폐쇄망 완결형</b> 솔루션입니다. 지도 타일·AI 모델·폰트까지 오프라인 번들로 반입합니다.
+  </div>
+
+  <!-- 4축 아이콘 밴드 -->
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px;">
+    <div style="background:var(--navy); border-radius:10px; padding:12px; color:#dbe6f5; text-align:center;">
+      <div style="font-size:22px;">🖥️</div><div style="font-weight:800; font-size:11px; margin-top:4px;">감시</div>
+      <div style="font-size:8.5px; color:#8fa2c0; margin-top:2px;">계통도·GIS·트렌드</div></div>
+    <div style="background:var(--navy); border-radius:10px; padding:12px; color:#dbe6f5; text-align:center;">
+      <div style="font-size:22px;">🔔</div><div style="font-weight:800; font-size:11px; margin-top:4px;">알람</div>
+      <div style="font-size:8.5px; color:#8fa2c0; margin-top:2px;">다변량 감지·조치 연동</div></div>
+    <div style="background:var(--navy); border-radius:10px; padding:12px; color:#dbe6f5; text-align:center;">
+      <div style="font-size:22px;">🔧</div><div style="font-weight:800; font-size:11px; margin-top:4px;">장비 고장 관리</div>
+      <div style="font-size:8.5px; color:#8fa2c0; margin-top:2px;">AI 진단·케이스 DB</div></div>
+    <div style="background:var(--navy); border-radius:10px; padding:12px; color:#dbe6f5; text-align:center;">
+      <div style="font-size:22px;">🗺️</div><div style="font-weight:800; font-size:11px; margin-top:4px;">관망 구축·조회</div>
+      <div style="font-size:8.5px; color:#8fa2c0; margin-top:2px;">시설·태그·GIS 구축</div></div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">02</div>
+</section>
+
+<!-- ════════════════ p.3 타겟 사용자·도입 효과 ════════════════ -->
+<section class="page">
+  <span class="kicker">Users &amp; Value</span>
+  <h2>타겟 사용자와 도입 효과</h2>
+  <div class="rule"></div>
+
+  <h3>세 종류의 운영자, 하나의 시스템</h3>
+  <table class="spec">
+    <tr><th style="width:20%;">사용자</th><th style="width:40%;">주요 업무</th><th>SLM 제공 화면</th></tr>
+    <tr><td><b>수운영자</b></td><td>배수지·가압장·블록 일상 감시·대응</td><td>종합 현황판 · 시설 모니터링 · 트렌드</td></tr>
+    <tr><td><b>SCADA 운영자</b></td><td>알람·설비 통합 감시·통제</td><td>경보 현황 · 경보 분석 · 네트워크 토폴로지</td></tr>
+    <tr><td><b>상수관망 운영자</b></td><td>관망 구성·유량·압력 관리</td><td>GIS 관망도 · 용수 흐름 · EPANET 분석</td></tr>
+  </table>
+
+  <h3 style="margin-top:12px;">도입 효과</h3>
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:8px 0 14px;">
+    <div style="border:1px solid #e3e9f2; border-radius:10px; padding:10px; text-align:center;">
+      <div style="font-size:18px; font-weight:900; color:var(--tblue);">클릭 3회</div>
+      <div class="small muted" style="margin-top:3px;">알람 → 원인 분석 → 작업 등록</div></div>
+    <div style="border:1px solid #e3e9f2; border-radius:10px; padding:10px; text-align:center;">
+      <div style="font-size:18px; font-weight:900; color:var(--tblue);">오탐 식별</div>
+      <div class="small muted" style="margin-top:3px;">알람 ↔ 조치 이력 자동 대조</div></div>
+    <div style="border:1px solid #e3e9f2; border-radius:10px; padding:10px; text-align:center;">
+      <div style="font-size:18px; font-weight:900; color:var(--tblue);">보고서 자동</div>
+      <div class="small muted" style="margin-top:3px;">장애 조치·일 점검 자동 생성</div></div>
+    <div style="border:1px solid #e3e9f2; border-radius:10px; padding:10px; text-align:center;">
+      <div style="font-size:18px; font-weight:900; color:var(--tblue);">지식 자산화</div>
+      <div class="small muted" style="margin-top:3px;">고장 케이스 DB + 매뉴얼 RAG</div></div>
+  </div>
+
+  <!-- 역할별 3분할 화면 -->
+  <div class="cols">
+    <div class="col">
+      <div class="screen"><div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">시설 모니터링 · 한빛배수지</span></div>
+        <div class="sc-body">
+          <div style="display:flex; gap:4px; margin-bottom:5px;">
+            <div class="kpi" style="flex:1"><div class="lb">수위</div><div class="v" style="font-size:11px; color:#22d3ee;">3.42 m</div></div>
+            <div class="kpi" style="flex:1"><div class="lb">유출유량</div><div class="v" style="font-size:11px; color:#60a5fa;">128.4</div></div>
+          </div>
+          <svg viewBox="0 0 200 52" width="100%"><path d="M0,36 C20,30 40,20 60,23 S100,40 120,37 S160,18 200,24" fill="none" stroke="#22d3ee" stroke-width="1.5"/><line x1="0" y1="8" x2="200" y2="8" stroke="#ef4444" stroke-width=".7" stroke-dasharray="3 3"/></svg>
+        </div></div>
+      <div class="caption">수운영자 — 배수지 일상 감시</div>
+    </div>
+    <div class="col">
+      <div class="screen"><div class="sc-bar"><span class="sc-dot" style="background:#ff5f57"></span><span class="sc-title">경보 현황 · 진행중</span></div>
+        <div class="sc-body">
+          <table class="mini-tbl">
+            <tr><th>시각</th><th>시설</th><th>내용</th><th></th></tr>
+            <tr><td>09:12</td><td>동림가압장</td><td>토출압력 HH</td><td><span class="pill warn">경고</span></td></tr>
+            <tr><td>08:47</td><td>매화소블록</td><td>유량 급감</td><td><span class="pill cau">주의</span></td></tr>
+            <tr><td>07:58</td><td>노을감압시설</td><td>2차측 압력 상승</td><td><span class="pill cau">주의</span></td></tr>
+            <tr><td>06:31</td><td>미르배수지</td><td>통신이상 (RTU)</td><td><span class="pill info">통신</span></td></tr>
+          </table>
+        </div></div>
+      <div class="caption">SCADA 운영자 — 통합 경보 감시</div>
+    </div>
+    <div class="col">
+      <div class="screen"><div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">용수 흐름 · 한빛계통</span></div>
+        <div class="sc-body">
+          <svg viewBox="0 0 200 70" width="100%">
+            <line x1="30" y1="20" x2="100" y2="20" stroke="#3b82f6" stroke-width="4" opacity=".8"/>
+            <line x1="100" y1="20" x2="165" y2="42" stroke="#22d3ee" stroke-width="2.5" opacity=".8"/>
+            <line x1="100" y1="20" x2="150" y2="58" stroke="#22d3ee" stroke-width="2" opacity=".7"/>
+            <circle cx="30" cy="20" r="7" fill="#1d4ed8"/><circle cx="100" cy="20" r="6" fill="#f59e0b"/>
+            <circle cx="165" cy="42" r="5" fill="#10b981"/><circle cx="150" cy="58" r="5" fill="#8b5cf6"/>
+            <text x="18" y="9" font-size="6.5" fill="#c4d2e8">한빛배수지</text>
+            <text x="86" y="9" font-size="6.5" fill="#c4d2e8">동림가압장</text>
+            <text x="152" y="34" font-size="6.5" fill="#c4d2e8">매화소블록</text>
+            <text x="132" y="68" font-size="6.5" fill="#c4d2e8">달래소소블록</text>
+          </svg>
+        </div></div>
+      <div class="caption">관망 운영자 — 유량·계통 관리</div>
+    </div>
+  </div>
+
+  <p class="small muted" style="margin-top:10px;">※ 본 카탈로그의 화면 예시는 임의 현장명(청수시·한빛배수지 등)으로 구성한 데모 데이터입니다.</p>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">03</div>
+</section>
+
+<!-- ════════════════ p.4 차별화 ①② ════════════════ -->
+<section class="page">
+  <span class="kicker">Differentiators 1/2</span>
+  <h2>차별화 포인트 — 폐쇄망에서 동작하는 유일한 AI 접근</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col" style="flex:1.05;">
+      <h3><span class="num-badge">1</span>AI 멀티모달 현장 진단</h3>
+      <p>현장에서 찍은 설비 사진 한 장으로:</p>
+      <ul>
+        <li><b>장비 자동 식별</b> — PLC·인버터·RTU·모뎀·UPS 명판 파싱</li>
+        <li><b>매뉴얼 RAG</b> — 해당 장비 매뉴얼 PDF 관련 절 자동 인용</li>
+        <li><b>고장 케이스 DB</b> — 유사 고장 사례·조치 이력 자동 매칭</li>
+      </ul>
+      <div class="callout">모든 추론은 <b>로컬 GPU + Ollama</b>에서 수행됩니다.<br>사진이 외부로 나가지 않습니다.</div>
+
+      <h3 style="margin-top:14px;"><span class="num-badge">2</span>알람 ↔ 현장 조치 통합 분석</h3>
+      <p>자동 알람의 오탐·미검지를 실제 현장 조치 이력과 대조하여 <b>설비 교체 후보를 자동 식별</b>합니다.</p>
+      <ul>
+        <li>내용연수 · MTBF · 재발 지속 <b>3신호 융합</b> 교체 우선순위 Top 5</li>
+        <li>설비 건강성 대시보드 제공</li>
+      </ul>
+      <div class="screen" style="margin-top:8px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">설비 건강성 · 교체 우선순위 Top 5</span></div>
+        <div class="sc-body">
+          <table class="mini-tbl">
+            <tr><th>#</th><th>설비</th><th>시설</th><th>신호</th><th>점수</th></tr>
+            <tr><td>1</td><td>2호 펌프 인버터</td><td>동림가압장</td><td><span class="pill warn">재발</span> <span class="pill cau">MTBF</span></td><td style="color:#f87171">92</td></tr>
+            <tr><td>2</td><td>수위 트랜스미터</td><td>미르배수지</td><td><span class="pill cau">내용연수</span></td><td style="color:#fbbf24">81</td></tr>
+            <tr><td>3</td><td>RTU 통신모뎀</td><td>매화소블록</td><td><span class="pill warn">재발</span></td><td style="color:#fbbf24">77</td></tr>
+            <tr><td>4</td><td>UPS 배터리</td><td>서곡감압시설</td><td><span class="pill cau">내용연수</span></td><td>63</td></tr>
+            <tr><td>5</td><td>1호 펌프 베어링</td><td>남산가압장</td><td><span class="pill cau">MTBF</span></td><td>58</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="caption">알람·조치 이력·수명 3신호를 융합한 교체 우선순위</div>
+    </div>
+
+    <div class="col">
+      <!-- 사진 진단 목업 -->
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#ff5f57"></span><span class="sc-dot" style="background:#febc2e"></span><span class="sc-dot" style="background:#28c840"></span>
+          <span class="sc-title">AI 채팅 · 사진 진단</span></div>
+        <div class="sc-body">
+          <div class="chat-q">동림가압장 2번 펌프 인버터에서 경고등 점등. 사진 확인해줘 📎 IMG_0412.jpg</div>
+          <div style="width:78%; margin-left:auto; background:#0a1120; border:1px solid var(--line); border-radius:8px; padding:6px; text-align:center;">
+            <svg viewBox="0 0 120 62" width="82%">
+              <rect x="18" y="6" width="84" height="50" rx="4" fill="#1a2740" stroke="#31415f"/>
+              <rect x="26" y="13" width="38" height="16" rx="2" fill="#0d1526" stroke="#31415f"/>
+              <text x="29" y="24" font-size="7" fill="#f87171">E-07</text>
+              <circle cx="76" cy="18" r="3" fill="#ef4444"/><circle cx="86" cy="18" r="3" fill="#334155"/><circle cx="96" cy="18" r="3" fill="#10b981"/>
+              <rect x="26" y="36" width="70" height="4" rx="2" fill="#22304d"/><rect x="26" y="44" width="52" height="4" rx="2" fill="#22304d"/>
+            </svg>
+            <div style="font-size:7px; color:#5f7396;">현장 촬영 사진 (인버터 패널)</div>
+          </div>
+          <div class="chat-a">
+            <b style="color:#7dd3fc;">장비 식별</b> — ○○전기 인버터 <b>VX-220</b> (명판 인식 신뢰도 높음)<br>
+            <b style="color:#7dd3fc;">표시 코드</b> — E-07 : 출력 과전류 경보<br>
+            <span style="color:#8fa2c0;">📘 매뉴얼 인용 · VX-220 취급설명서 p.48 —</span> “E-07 발생 시 부하측 절연저항 점검 후 재기동…”<br>
+            <span style="color:#8fa2c0;">🗂 유사 케이스 2건</span> — 2025-11 남산가압장 동일 코드 → 냉각팬 교체로 해소
+          </div>
+          <div class="ai-card"><b>[AI 참고 의견]</b> 재발 이력을 볼 때 냉각 계통 점검을 우선 권장합니다. 판단 근거 수치는 좌측 DB 조회값을 확인하세요.</div>
+        </div>
+      </div>
+      <div class="caption">사진 업로드 → 장비 식별 + 매뉴얼 인용 + 유사 사례 매칭 (전 과정 로컬 AI)</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">04</div>
+</section>
+
+<!-- ════════════════ p.5 차별화 ③④ ════════════════ -->
+<section class="page">
+  <span class="kicker">Differentiators 2/2</span>
+  <h2>차별화 포인트 — 기록은 대화로, 판단은 데이터로</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3><span class="num-badge">3</span>자연어 장애·조치 기록</h3>
+      <p>현장 작업자가 <b>대화하듯</b> 기록합니다. 시설·설비·태그가 <b>자동 매칭</b>되고,
+         조치 완료까지 채팅으로 마감합니다. 모바일 <b>현장 모드</b>로 이동 중에도
+         알람 대응·일상 점검이 가능합니다.</p>
+      <div class="screen" style="margin-top:8px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">채팅 · 고장 등록</span></div>
+        <div class="sc-body">
+          <div class="chat-q">남산가압장 1번 펌프에서 소음 발생, 점검 필요. 사진 첨부 📎</div>
+          <div class="chat-a">
+            <b style="color:#7dd3fc;">장애 접수 완료</b> — 분류: <span class="pill cau">이상</span><br>
+            시설 <b>남산가압장</b> · 설비 <b>1호 펌프</b> 자동 매칭<br>
+            관련 태그: 토출압력 · 전류 · 진동 (3건 연결)<br>
+            <span style="color:#8fa2c0;">→ 조치 완료 시 “조치 끝났어”라고 입력하면 마감 처리됩니다.</span>
+          </div>
+        </div>
+      </div>
+      <div class="caption">자연어 → 시설·설비·태그 자동 매칭 · 분류 정책 자동 적용</div>
+
+      <div class="callout" style="margin-top:12px;">
+        <b>분류 정책 내장</b> — 알람 기반은 “이상”, 현장에서 확인된 것만 “고장”.
+        일관된 분류로 통계·교체 판단의 신뢰를 지킵니다.
+      </div>
+    </div>
+
+    <div class="col">
+      <h3><span class="num-badge">4</span>Zero-Hallucination 원칙</h3>
+      <p>AI 참고 의견은 DB 사실과 <b>시각적·구조적으로 분리</b>됩니다.</p>
+      <ul>
+        <li>별도 카드 + <b>[AI 참고 의견]</b> 접두어</li>
+        <li><b>수치 생성 차단</b> — 숫자는 DB 조회값만 표시</li>
+      </ul>
+      <div class="screen" style="margin-top:8px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">이상 진단 응답 구조</span></div>
+        <div class="sc-body">
+          <div class="chat-a" style="max-width:100%;">
+            <b style="color:#7dd3fc;">한빛배수지 이상 스캔 결과</b><br>
+            • 수위 3.42 m — 평소 대비 <b style="color:#34d399;">+2.6%</b> (정상 범위)<br>
+            • 유출유량 128.4 m³/h — 기대값 124.9 대비 <b style="color:#fbbf24;">+2.8%</b><br>
+            • 다변량 판정: <span class="pill ok">정상</span> (Tier-1 시설 모델)
+            <div style="font-size:7px; color:#5f7396; margin-top:3px;">↑ 전 수치 DB 실측·모델 산출값</div>
+          </div>
+          <div class="ai-card">
+            <b>[AI 참고 의견]</b> 야간 최소유량이 완만히 상승하는 추세입니다.
+            누수 의심 구간 메뉴에서 주간 CUSUM 추이 확인을 권장합니다.
+            <div style="font-size:7px; color:#8b7fc0; margin-top:3px;">↑ 별도 카드로 분리 — 수치 생성 없음</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">사실(DB)과 의견(AI)의 구조적 분리 — 운영 판단의 근거는 항상 실측 데이터</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">05</div>
+</section>
+
+<!-- ════════════════ p.6 감시: 실시간 모니터링 ════════════════ -->
+<section class="page">
+  <span class="kicker">Monitoring</span>
+  <h2>감시 — 실시간 모니터링</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>종합 현황판</h3>
+      <ul>
+        <li>KPI 6종 — 이상 감지·교차검증·설비 장애·유량 불균형·진행중 경보·정상 시설</li>
+        <li>이상 시설 TOP · 유량 불균형 TOP · 시설유형별 이상 분포</li>
+        <li>카드 클릭 → AI 진단 즉시 실행 (실시간 스트리밍)</li>
+      </ul>
+      <h3>시설 모니터링</h3>
+      <ul>
+        <li>배수지·가압장·블록·감압시설 전용 화면</li>
+        <li>모니터링 카탈로그 기반 — 사이트별 태그 구성 자유 정의</li>
+        <li>알람 한계선(HH/LL) 표시 · 30초 자동 갱신</li>
+      </ul>
+      <h3>트렌드 분석</h3>
+      <ul>
+        <li>다중 태그 비교 · 기간 자유 선택 · 통계 카드</li>
+        <li><b>평소 대비</b> — 머신러닝(GBT) 정상 기대값 대비 편차 판정</li>
+        <li><b>향후 전망</b> — 시계열 파운데이션 모델 단기 예측 밴드</li>
+      </ul>
+      <h3>실시간 계통도 (용수 흐름)</h3>
+      <ul>
+        <li>유량 비례 흐름 표현 · 상태 색상 · 24h 타임라인 재생</li>
+        <li>노드 클릭 → 트렌드/시설/알람/AI 진단 팝업</li>
+      </ul>
+    </div>
+    <div class="col" style="flex:1.15;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">트렌드 분석 · 평소 대비 + 향후 전망</span></div>
+        <div class="sc-body">
+          <div style="display:flex; gap:4px; margin-bottom:5px;">
+            <span class="pill info">한빛배수지 · 수위</span><span class="pill ok">평소 대비 +2.6%</span><span class="pill vio">전망 : 반복 주기 패턴</span>
+          </div>
+          <svg viewBox="0 0 320 96" width="100%">
+            <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#a78bfa" stop-opacity=".30"/><stop offset="1" stop-color="#a78bfa" stop-opacity="0"/></linearGradient></defs>
+            <path d="M0,60 C20,52 38,38 60,40 S100,66 122,63 S160,34 185,36 L210,42" fill="none" stroke="#22d3ee" stroke-width="1.8"/>
+            <path d="M0,55 C22,50 40,42 62,44 S102,60 124,58 S162,40 186,41 L210,45" fill="none" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/>
+            <path d="M210,30 C232,24 250,40 268,34 S300,44 320,38 L320,58 C300,64 285,52 268,56 S232,44 210,54 Z" fill="url(#g2)"/>
+            <path d="M210,42 C232,34 250,48 268,44 S300,52 320,47" fill="none" stroke="#a78bfa" stroke-width="1.6" stroke-dasharray="5 3"/>
+            <line x1="210" y1="6" x2="210" y2="92" stroke="#31415f" stroke-width=".8" stroke-dasharray="2 3"/>
+            <text x="150" y="90" font-size="6.5" fill="#7f92b3">← 실측</text>
+            <text x="216" y="90" font-size="6.5" fill="#c4b5fd">전망 밴드 →</text>
+            <text x="8" y="12" font-size="6.5" fill="#94a3b8">— 기대값(GBT)  · — 실측  · ┄ 전망</text>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">실측·기대값·전망 밴드를 한 화면에 — 이상 편차는 배지로 즉시 표시</div>
+
+      <div class="screen" style="margin-top:9px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">실시간 계통도 · 한빛계통</span></div>
+        <div class="sc-body">
+          <svg viewBox="0 0 320 108" width="100%">
+            <line x1="42" y1="30" x2="140" y2="30" stroke="#3b82f6" stroke-width="6" opacity=".85"/>
+            <line x1="140" y1="30" x2="230" y2="58" stroke="#22d3ee" stroke-width="3.5" opacity=".85"/>
+            <line x1="140" y1="30" x2="205" y2="90" stroke="#22d3ee" stroke-width="2.5" opacity=".75"/>
+            <line x1="230" y1="58" x2="295" y2="58" stroke="#38bdf8" stroke-width="2" opacity=".7"/>
+            <circle cx="42" cy="30" r="10" fill="#1d4ed8"/><text x="42" y="33" font-size="6" fill="#fff" text-anchor="middle">배</text>
+            <circle cx="140" cy="30" r="9" fill="#f59e0b"/><text x="140" y="33" font-size="6" fill="#fff" text-anchor="middle">가</text>
+            <circle cx="230" cy="58" r="8" fill="#10b981"/><circle cx="205" cy="90" r="8" fill="#8b5cf6"/>
+            <circle cx="295" cy="58" r="7" fill="#a78bfa"/>
+            <circle cx="140" cy="30" r="13" fill="none" stroke="#ef4444" stroke-width="1.2" opacity=".8"/>
+            <text x="30" y="14" font-size="7" fill="#c4d2e8">한빛배수지</text>
+            <text x="122" y="12" font-size="7" fill="#c4d2e8">동림가압장 <tspan fill="#f87171">⚠</tspan></text>
+            <text x="218" y="46" font-size="7" fill="#c4d2e8">매화소블록</text>
+            <text x="184" y="104" font-size="7" fill="#c4d2e8">달래소소블록</text>
+            <text x="278" y="46" font-size="7" fill="#c4d2e8">은행소블록</text>
+            <text x="70" y="44" font-size="6" fill="#7dd3fc">412 m³/h ▶</text>
+          </svg>
+          <div style="display:flex; gap:4px; margin-top:4px;">
+            <span class="pill info">실시간</span><span class="pill vio">타임라인 ◀◀ 24h 재생</span><span class="pill warn">알람 도트 표시</span>
+          </div>
+        </div>
+      </div>
+      <div class="caption">유량 비례 흐름 · 알람 노드 하이라이트 · 24시간 되감기 재생</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">06</div>
+</section>
+
+<!-- ════════════════ p.7 GIS ════════════════ -->
+<section class="page">
+  <span class="kicker">GIS</span>
+  <h2>감시 — GIS 관망도</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col" style="flex:1.35;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">GIS 관망도 · 청수시 (오프라인 지도)</span></div>
+        <div class="sc-body" style="padding:0;">
+          <svg viewBox="0 0 340 190" width="100%" style="display:block;">
+            <rect width="340" height="190" fill="#101a2c"/>
+            <!-- 블록경계 -->
+            <path d="M20,40 L120,20 L180,60 L150,130 L40,140 Z" fill="#10b981" opacity=".08" stroke="#10b981" stroke-opacity=".3"/>
+            <path d="M180,60 L300,40 L320,120 L220,160 L150,130 Z" fill="#8b5cf6" opacity=".08" stroke="#8b5cf6" stroke-opacity=".3"/>
+            <!-- 도로 -->
+            <path d="M0,100 C60,90 120,110 200,95 S300,80 340,88" stroke="#26344f" stroke-width="5" fill="none"/>
+            <path d="M90,0 C100,60 80,120 110,190" stroke="#26344f" stroke-width="4" fill="none"/>
+            <!-- 관로 -->
+            <path d="M60,60 L140,80 L230,70 L290,110" stroke="#3b82f6" stroke-width="2.2" fill="none" opacity=".9"/>
+            <path d="M140,80 L160,140" stroke="#22d3ee" stroke-width="1.6" fill="none" opacity=".8"/>
+            <!-- 마커 -->
+            <circle cx="60" cy="60" r="8" fill="#1D4ED8" stroke="#fff" stroke-width="1.2"/>
+            <circle cx="140" cy="80" r="7" fill="#F59E0B" stroke="#fff" stroke-width="1.2"/>
+            <circle cx="140" cy="80" r="11" fill="none" stroke="#ef4444" stroke-width="1.4"/>
+            <circle cx="230" cy="70" r="6" fill="#10B981" stroke="#fff" stroke-width="1"/>
+            <circle cx="160" cy="140" r="6" fill="#8B5CF6" stroke="#fff" stroke-width="1"/>
+            <circle cx="290" cy="110" r="6" fill="#a78bfa" stroke="#fff" stroke-width="1"/>
+            <text x="46" y="46" font-size="7" fill="#dbe6f5">한빛배수지</text>
+            <text x="120" y="102" font-size="7" fill="#fca5a5">동림가압장 ⚠</text>
+            <text x="214" y="58" font-size="7" fill="#dbe6f5">매화소블록</text>
+            <text x="140" y="158" font-size="7" fill="#dbe6f5">달래소소블록</text>
+            <text x="268" y="98" font-size="7" fill="#dbe6f5">서곡감압시설</text>
+            <!-- 확장 카드 -->
+            <g transform="translate(196,112)">
+              <rect width="132" height="66" rx="6" fill="#fffcf5" opacity=".97"/>
+              <text x="8" y="13" font-size="8" font-weight="bold" fill="#1c2536">한빛배수지</text>
+              <text x="96" y="13" font-size="6.5" fill="#047857">● 정상</text>
+              <text x="8" y="27" font-size="6.5" fill="#5b6b85">Q 유출 128.4 m³/h</text>
+              <text x="8" y="37" font-size="6.5" fill="#5b6b85">H 수위 3.42 m</text>
+              <text x="8" y="47" font-size="6.5" fill="#5b6b85">P 압력 4.2 kgf/cm²</text>
+              <rect x="8" y="52" width="26" height="9" rx="2" fill="#e3edff"/><text x="11" y="59" font-size="5.5" fill="#1d4ed8">트렌드</text>
+              <rect x="37" y="52" width="26" height="9" rx="2" fill="#e2f7ef"/><text x="42" y="59" font-size="5.5" fill="#047857">시설</text>
+              <rect x="66" y="52" width="26" height="9" rx="2" fill="#fde7e7"/><text x="71" y="59" font-size="5.5" fill="#b91c1c">알람</text>
+              <rect x="95" y="52" width="26" height="9" rx="2" fill="#f1ebff"/><text x="100" y="59" font-size="5.5" fill="#7c3aed">진단</text>
+            </g>
+            <!-- 타임라인 -->
+            <g transform="translate(10,172)">
+              <rect width="176" height="12" rx="6" fill="#0a1120" opacity=".9"/>
+              <line x1="10" y1="6" x2="166" y2="6" stroke="#31415f" stroke-width="1.5"/>
+              <circle cx="60" cy="6" r="2" fill="#ef4444"/><circle cx="118" cy="6" r="2" fill="#f59e0b"/>
+              <circle cx="90" cy="6" r="3.5" fill="#22d3ee"/>
+              <text x="14" y="8.5" font-size="5" fill="#7f92b3">-24h</text><text x="152" y="8.5" font-size="5" fill="#7f92b3">now</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">오프라인 지도 + 시설 마커 + 확장 카드(LOD) + 24h 타임라인 스크러버 — 임의 현장명 데모</div>
+    </div>
+
+    <div class="col">
+      <ul style="margin-top:4px;">
+        <li><b>오프라인 지도 내장</b> — 외부 지도 CDN 의존 없음 (폐쇄망 기본)</li>
+        <li><b>줌 자동 LOD</b> — 마커 → 축약 카드 → 확장 카드 (Q/H/P + 기능 버튼)</li>
+        <li>시설유형별 색상 체계 — 배수지·가압장·감압·블록</li>
+        <li>알람 상태 실시간 반영 — 경고=빨강 / 주의=주황</li>
+        <li>SHP 레이어 — 관로·밸브·블록경계 표시</li>
+        <li>타임라인 스크러버 — 24h 되감기·재생·알람 도트</li>
+        <li>EPANET 시뮬 오버레이 — 압력 히트맵·유량 방향 (옵션 모듈)</li>
+      </ul>
+      <div class="callout" style="margin-top:10px;">
+        <b>클릭 한 번으로 상황실 동선 완성</b> — 마커 확장 카드에서
+        트렌드·시설정보·알람·AI 진단 팝업으로 즉시 이동합니다.
+      </div>
+      <table class="spec" style="margin-top:8px;">
+        <tr><th>시설유형</th><th>마커 색상</th></tr>
+        <tr><td>배수지</td><td><span style="color:#1D4ED8;">●</span> 딥블루</td></tr>
+        <tr><td>가압장</td><td><span style="color:#F59E0B;">●</span> 앰버</td></tr>
+        <tr><td>감압시설</td><td><span style="color:#a78bfa;">●</span> 바이올렛</td></tr>
+        <tr><td>소블록 / 소소블록</td><td><span style="color:#10B981;">●</span> 에메랄드 / <span style="color:#8B5CF6;">●</span> 퍼플</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">07</div>
+</section>
+
+<!-- ════════════════ p.8 알람 ════════════════ -->
+<section class="page">
+  <span class="kicker">Alarm</span>
+  <h2>알람 — 경보 관리 체계</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>경보 현황·이력·분석</h3>
+      <ul>
+        <li>실시간 경보 대시보드 — 요약 카드·카테고리 도넛·시설별 집계</li>
+        <li>카테고리 9종 — 수위/압력/유량/밸브/펌프/통신/네트워크/UPS/수질</li>
+        <li>경보 분석 — 진단원인·대응방안·필터결과·운영현황 구조화 표출</li>
+      </ul>
+      <h3>지능형 이상 감지</h3>
+      <ul>
+        <li><b>시설 단위 다변량 이상 감지</b> — 누수 의심·펌프 공회전·하류 차단 등
+            단일 센서로는 못 잡는 복합 이상 탐지</li>
+        <li><b>센서 품질 감지</b> — 포화·고착·DI 반전 등 센서 자체 이상 분리</li>
+        <li><b>야간최소유량 CUSUM 누수 감지</b> — 자동 알림 + 선정 사유 서술</li>
+        <li>교차검증·물수지 불균형 검증</li>
+      </ul>
+      <h3>알람 → 작업 연동</h3>
+      <ul>
+        <li>알람 확인 → <b>작업 등록 원클릭</b> (시설·유형·카테고리 자동 채움)</li>
+        <li>예방정비 기간 중 해당 알람 억제 — 원인 추적 가능한 구조</li>
+        <li>알람 발생 시 위기대응 모달 (경고 모달 / 주의 토스트)</li>
+      </ul>
+    </div>
+
+    <div class="col" style="flex:1.15;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#ff5f57"></span><span class="sc-title">경보 분석 · 동림가압장 토출압력 HH</span></div>
+        <div class="sc-body">
+          <div style="display:flex; gap:6px;">
+            <div style="flex:1; border-right:1px solid var(--line); padding-right:6px;">
+              <div style="font-size:7.5px; color:#7f92b3; margin-bottom:3px;">7/23 (수)</div>
+              <div style="background:rgba(239,68,68,.10); border:1px solid rgba(239,68,68,.35); border-radius:5px; padding:4px 6px; margin-bottom:4px;">
+                <div style="font-size:8px; color:#f8b4b4;">09:12 동림가압장</div>
+                <div style="font-size:7px; color:#7f92b3;">토출압력 HH · 진행중</div></div>
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:4px 6px; margin-bottom:4px;">
+                <div style="font-size:8px;">08:47 매화소블록</div>
+                <div style="font-size:7px; color:#7f92b3;">유량 급감 · 진행중</div></div>
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:4px 6px;">
+                <div style="font-size:8px;">06:31 미르배수지</div>
+                <div style="font-size:7px; color:#7f92b3;">통신이상 · 필터링(작업)</div></div>
+            </div>
+            <div style="flex:1.5;">
+              <div style="font-size:8px; color:#7dd3fc; font-weight:700;">진단 원인</div>
+              <div style="font-size:7.5px; color:#c4d2e8; margin-bottom:4px;">2호 펌프 토출측 밸브 부분 폐쇄 상태에서 가동 지속 — 압력 상승 패턴이 밸브 저항 특성과 일치</div>
+              <div style="font-size:8px; color:#7dd3fc; font-weight:700;">대응 방안</div>
+              <div style="font-size:7.5px; color:#c4d2e8; margin-bottom:4px;">① 토출측 밸브 개도 확인 ② 압력 안정 후 재기동 ③ 반복 시 밸브 구동부 점검</div>
+              <div style="font-size:8px; color:#7dd3fc; font-weight:700;">운영 현황</div>
+              <div style="font-size:7.5px; color:#c4d2e8;">토출압력 6.8 → 5.1 kgf/cm² 하강 중 · 유량 회복 추세</div>
+              <div style="margin-top:5px;"><span class="pill info">작업 등록</span> <span class="pill vio">AI 진단</span> <span class="pill ok">확인</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">알람 목록 ↔ 구조화 분석(원인·대응·운영현황) 2패널 — 작업 등록 원클릭</div>
+
+      <div class="screen" style="margin-top:9px; max-width:74%;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#ff5f57"></span><span class="sc-title">위기대응 모달</span></div>
+        <div class="sc-body" style="text-align:center;">
+          <div style="font-size:16px;">🚨</div>
+          <div style="font-size:9.5px; font-weight:800; color:#f87171; margin:2px 0;">경고 — 동림가압장 토출압력 HH</div>
+          <div style="font-size:7.5px; color:#7f92b3;">09:12 발생 · 임계 6.5 초과 (6.8 kgf/cm²)</div>
+          <div style="margin-top:5px;"><span class="pill warn">경보 분석 열기</span> <span class="pill info">작업 등록</span></div>
+        </div>
+      </div>
+      <div class="caption">경고 등급은 전역 모달로 즉시 인지 (사이트 설정으로 ON/OFF)</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">08</div>
+</section>
+
+<!-- ════════════════ p.9 장비 고장 관리 ════════════════ -->
+<section class="page">
+  <span class="kicker">Maintenance</span>
+  <h2>장비 고장 관리</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>장애 이력 관리</h3>
+      <ul>
+        <li>장애 분류 4종 정책 (고장/이상/교체/점검) — 알람은 “이상”,
+            현장 확인된 것만 “고장” (오분류 방지 정책 내장)</li>
+        <li>채팅 자연어 등록 + 사진 첨부 + 조치 완료 기록</li>
+        <li>통계 대시보드 — 설비유형별·시설별 장애 추이</li>
+      </ul>
+      <h3>설비 건강성</h3>
+      <ul>
+        <li>교체 우선순위 Top 5 — 내용연수·MTBF·재발 3신호 융합</li>
+        <li>알람 오탐/미검지 ↔ 조치 이력 대조 분석</li>
+      </ul>
+      <h3>보고서 자동 생성</h3>
+      <ul>
+        <li><b>장애 조치 보고서</b> / <b>일 점검 보고서</b> 자동 양식</li>
+        <li>채팅으로 초안 생성 → 검토 → 확정 흐름</li>
+      </ul>
+      <h3>매뉴얼·고장 케이스 지식베이스</h3>
+      <ul>
+        <li>장비 매뉴얼 PDF 등록 → 임베딩 기반 검색·인용</li>
+        <li>고장 케이스 DB — 유사 사례 자동 추천</li>
+      </ul>
+    </div>
+
+    <div class="col" style="flex:1.1;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">장애 통계 · 최근 90일</span></div>
+        <div class="sc-body">
+          <div style="display:flex; gap:4px; margin-bottom:6px;">
+            <div class="kpi" style="flex:1"><div class="lb">고장</div><div class="v" style="font-size:12px; color:#f87171;">4</div></div>
+            <div class="kpi" style="flex:1"><div class="lb">이상</div><div class="v" style="font-size:12px; color:#fbbf24;">17</div></div>
+            <div class="kpi" style="flex:1"><div class="lb">교체</div><div class="v" style="font-size:12px; color:#c4b5fd;">3</div></div>
+            <div class="kpi" style="flex:1"><div class="lb">점검</div><div class="v" style="font-size:12px; color:#34d399;">26</div></div>
+          </div>
+          <svg viewBox="0 0 300 62" width="100%">
+            <g fill="#3b82f6" opacity=".85">
+              <rect x="12" y="34" width="16" height="24" rx="2"/><rect x="52" y="22" width="16" height="36" rx="2"/>
+              <rect x="92" y="40" width="16" height="18" rx="2"/><rect x="132" y="16" width="16" height="42" rx="2"/>
+              <rect x="172" y="30" width="16" height="28" rx="2"/><rect x="212" y="44" width="16" height="14" rx="2"/>
+              <rect x="252" y="36" width="16" height="22" rx="2"/>
+            </g>
+            <text x="8" y="61" font-size="5.5" fill="#7f92b3">펌프</text><text x="46" y="61" font-size="5.5" fill="#7f92b3">인버터</text>
+            <text x="90" y="61" font-size="5.5" fill="#7f92b3">밸브</text><text x="130" y="61" font-size="5.5" fill="#7f92b3">RTU</text>
+            <text x="170" y="61" font-size="5.5" fill="#7f92b3">계측기</text><text x="212" y="61" font-size="5.5" fill="#7f92b3">UPS</text>
+            <text x="250" y="61" font-size="5.5" fill="#7f92b3">모뎀</text>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">설비유형별 장애 분포 — 분류 정책이 일관 적용된 통계</div>
+
+      <div class="screen" style="margin-top:9px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">장애 조치 보고서 · 자동 생성</span></div>
+        <div class="sc-body">
+          <div style="background:#fff; color:#1c2536; border-radius:5px; padding:8px 10px; font-size:7.5px;">
+            <div style="font-weight:800; font-size:9px; border-bottom:1px solid #dfe5ee; padding-bottom:3px; margin-bottom:4px;">장애 조치 보고서 — 2026-07-23</div>
+            <table style="width:100%; border-collapse:collapse;">
+              <tr><td style="color:#5b6b85; width:26%; padding:2px 0;">시설/설비</td><td>남산가압장 · 1호 펌프</td></tr>
+              <tr><td style="color:#5b6b85; padding:2px 0;">분류</td><td>이상 (소음 발생)</td></tr>
+              <tr><td style="color:#5b6b85; padding:2px 0;">조치 내용</td><td>베어링 급유 및 커플링 정렬 재조정 후 소음 해소 확인</td></tr>
+              <tr><td style="color:#5b6b85; padding:2px 0;">첨부</td><td>현장 사진 2매 · 관련 태그 트렌드</td></tr>
+            </table>
+          </div>
+          <div style="margin-top:4px; text-align:right;"><span class="pill info">초안 검토</span> <span class="pill ok">확정</span></div>
+        </div>
+      </div>
+      <div class="caption">채팅 기록 → 보고서 초안 자동 조립 → 검토·확정</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">09</div>
+</section>
+
+<!-- ════════════════ p.10 관망 구축 + EPANET ════════════════ -->
+<section class="page">
+  <span class="kicker">Build &amp; Network</span>
+  <h2>관망 구축·조회</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>구축 메뉴군 — 시스템을 스스로 구성하는 도구</h3>
+      <ul>
+        <li>태그 마스터·설비 관리·배수지/가압장/감압/블록 관리 (CRUD + CSV 일괄)</li>
+        <li>용수 흐름 관리 — 상류→하류 연결 구성</li>
+        <li>GIS 설정 — 드래그 좌표 편집·SHP 레이어</li>
+        <li>인과 규칙 — 시설유형별 인과 체인·안전연동·역방향 진단 정의</li>
+        <li>캔버스 에디터 — 계통도 직접 작도 + 태그 링크</li>
+        <li>컬럼 잠금 — 현장제어/시스템제어 필드 보호</li>
+      </ul>
+      <div class="callout">
+        <b>구축 업체 관점</b> — 초기 구축(태그·시설·계통) 작업을 SLM 안에서
+        CSV 일괄 + 화면 CRUD로 수행. 별도 DB 작업을 최소화합니다.
+      </div>
+      <h3>EPANET 관망수리분석 <span class="tag bl">옵션 모듈 B1</span></h3>
+      <ul>
+        <li>SHP → INP 자동 변환 → 수리 시뮬레이션</li>
+        <li>누수 의심 구간·헤드손실 이상·차단밸브 영향범위·관로 파손 시뮬·
+            펌프 가동 변경·블록 교체 후보·관망 노후도·수질 체류시간</li>
+        <li>실측 유량 주입 → 시뮬 vs 실측 차이 분석</li>
+        <li>데이터 품질 게이트 — 준비 안 된 메뉴는 요구 데이터 안내</li>
+      </ul>
+    </div>
+
+    <div class="col" style="flex:1.1;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">EPANET 시뮬레이션 · 압력 분포</span></div>
+        <div class="sc-body" style="padding:0;">
+          <svg viewBox="0 0 320 130" width="100%" style="display:block; background:#0a1120;">
+            <path d="M30,40 L110,50 L190,44 L270,74" stroke="#3b82f6" stroke-width="3" fill="none"/>
+            <path d="M110,50 L140,104" stroke="#22d3ee" stroke-width="2" fill="none"/>
+            <path d="M190,44 L232,110" stroke="#38bdf8" stroke-width="2" fill="none"/>
+            <path d="M270,74 L300,50" stroke="#60a5fa" stroke-width="1.6" fill="none"/>
+            <circle cx="30" cy="40" r="9" fill="#06b6d4"/><text x="30" y="43" font-size="5.5" fill="#04252b" text-anchor="middle">R</text>
+            <circle cx="110" cy="50" r="6" fill="#3b82f6"/><circle cx="190" cy="44" r="6" fill="#818cf8"/>
+            <circle cx="270" cy="74" r="6" fill="#f59e0b"/><circle cx="140" cy="104" r="5.5" fill="#a78bfa"/>
+            <circle cx="232" cy="110" r="5.5" fill="#ef4444"/><circle cx="300" cy="50" r="5" fill="#60a5fa"/>
+            <text x="16" y="26" font-size="6.5" fill="#c4d2e8">한빛배수지 (수원)</text>
+            <text x="216" y="124" font-size="6.5" fill="#fca5a5">저압 노드 — 누수 의심</text>
+            <g transform="translate(238,10)">
+              <rect width="74" height="30" rx="4" fill="#0d1526" stroke="#1e2a44"/>
+              <text x="6" y="10" font-size="5.5" fill="#7f92b3">압력 (m)</text>
+              <rect x="6" y="14" width="62" height="6" rx="3" fill="url(#hg)"/>
+              <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#3b82f6"/><stop offset=".55" stop-color="#a78bfa"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
+              <text x="6" y="28" font-size="5" fill="#7f92b3">50</text><text x="60" y="28" font-size="5" fill="#7f92b3">12</text>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">압력 히트맵·유량 방향·저압 노드 식별 — GIS 오버레이 연동</div>
+
+      <div class="screen" style="margin-top:9px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">실측 유량 차이 분석</span></div>
+        <div class="sc-body">
+          <table class="mini-tbl">
+            <tr><th>구간</th><th>시뮬</th><th>실측</th><th>편차</th><th>판정</th></tr>
+            <tr><td>한빛배수지 → 동림가압장</td><td>412</td><td>408</td><td>-1.0%</td><td><span class="pill ok">정상</span></td></tr>
+            <tr><td>동림가압장 → 매화소블록</td><td>186</td><td>163</td><td style="color:#f87171">-12.4%</td><td><span class="pill warn">의심</span></td></tr>
+            <tr><td>매화소블록 → 은행소블록</td><td>74</td><td>71</td><td>-4.1%</td><td><span class="pill cau">관찰</span></td></tr>
+          </table>
+          <div style="font-size:7px; color:#5f7396; margin-top:3px;">단위 m³/h · 시뮬 = 실측 유량 주입 후 수리 계산값</div>
+        </div>
+      </div>
+      <div class="caption">시뮬 vs 실측 편차로 관망 이상 구간을 정량 식별</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">10</div>
+</section>
+
+<!-- ════════════════ p.11 AI 채팅 ════════════════ -->
+<section class="page">
+  <span class="kicker">AI Chat</span>
+  <h2>AI 채팅 — 전 기능의 관문</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <ul style="margin-top:4px;">
+        <li><b>64개 질의 인텐트</b> — 현황 조회·트렌드·이상 감지·분석·시설 정보·경보</li>
+        <li>실시간 스트리밍 + 4단계 진행 표시 (분류→추출→조회→렌더링)</li>
+        <li>시각화 8종 — 테이블·플롯·계통도·문서·표준편차·이상분석·파이</li>
+        <li>한국어 초성 자동완성 (“ㅂㅅ” → “배수지”) · 추천 질의(FAQ)</li>
+        <li><b>음성 입력</b> — 로컬 음성인식(STT), 도메인 용어 최적화</li>
+        <li><b>오답 피드백 루프</b> — “원하는 답이 아닌가요?” → 대안 인텐트 재질의,
+            피드백 텔레메트리로 지속 개선</li>
+      </ul>
+      <div class="callout" style="margin-top:10px;">
+        <b>화면을 몰라도 됩니다</b> — 운영자는 질문만 하면 됩니다.
+        조회·분석·기록·보고서까지 채팅 한 곳에서 시작됩니다.
+      </div>
+      <table class="spec" style="margin-top:8px;">
+        <tr><th>카테고리</th><th>예시 질의</th></tr>
+        <tr><td>현황 조회</td><td>“한빛배수지 현재 상태 보여줘”</td></tr>
+        <tr><td>트렌드</td><td>“동림가압장 토출압력 7일 트렌드”</td></tr>
+        <tr><td>이상 감지</td><td>“전체 센서 이상 스캔해줘”</td></tr>
+        <tr><td>경보</td><td>“어제 발생한 경보 이력 보여줘”</td></tr>
+        <tr><td>기록</td><td>“남산가압장 1호 펌프 점검 완료 기록해줘”</td></tr>
+      </table>
+    </div>
+
+    <div class="col" style="flex:1.1;">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">AI 채팅 · 이상 스캔</span></div>
+        <div class="sc-body">
+          <div class="chat-q">🎤 전체 센서 이상 스캔해줘</div>
+          <div style="display:flex; gap:3px; margin:4px 0;">
+            <span class="pill ok">분류</span><span class="pill ok">추출</span><span class="pill ok">조회</span><span class="pill info">렌더링</span>
+          </div>
+          <div class="chat-a" style="max-width:100%;">
+            <b style="color:#7dd3fc;">이상 스캔 결과 — 전체 83개 시설</b><br>
+            • 다변량 이상 <b style="color:#f87171;">2건</b> — 동림가압장(펌프 계통), 매화소블록(유량-압력 불일치)<br>
+            • 데이터 품질 <b style="color:#fbbf24;">3건</b> — 센서포화의심 1 · 신호고착의심 1 · DI상시ON의심 1<br>
+            • 교차검증 불일치 1건 · 물수지 불균형 1건
+            <div style="margin-top:5px; background:#0a1120; border:1px solid var(--line); border-radius:5px; padding:5px;">
+              <table class="mini-tbl">
+                <tr><th>시설</th><th>유형</th><th>Z</th><th>판정</th></tr>
+                <tr><td>동림가압장</td><td>가압장</td><td style="color:#f87171">2.41</td><td><span class="pill warn">경고</span></td></tr>
+                <tr><td>매화소블록</td><td>소블록</td><td style="color:#fbbf24">1.72</td><td><span class="pill cau">주의</span></td></tr>
+              </table>
+            </div>
+            <div style="margin-top:4px; font-size:7px; color:#5f7396;">추천 후속 질의 — “동림가압장 상세 진단” · “매화소블록 물수지 검증”</div>
+          </div>
+          <div style="text-align:right; margin-top:3px;"><span class="pill vio">원하는 답이 아닌가요?</span></div>
+        </div>
+      </div>
+      <div class="caption">음성 질의 → 스트리밍 진단 → 시각화 → 후속 질의 추천 — 오답 피드백 루프 내장</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">11</div>
+</section>
+
+<!-- ════════════════ p.12 협업·현장 ════════════════ -->
+<section class="page">
+  <span class="kicker">Collaboration</span>
+  <h2>협업·현장 지원</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>운영자 메신저 (내장 실시간 통신)</h3>
+      <ul>
+        <li>1:1 · 그룹 채팅 + 파일 전송</li>
+        <li>음성·영상 통화, 3~4인 회의 통화</li>
+        <li>폐쇄망 내 완결 — 외부망 사용 시에만 TURN 옵션</li>
+      </ul>
+      <h3>현장 모드</h3>
+      <ul>
+        <li>모바일 최적화 런처 — 알람 대응·시설 점검·장애 조치 완료·자유 입력</li>
+        <li>사진 촬영 → AI 진단 → 고장 기록까지 현장에서 완결</li>
+      </ul>
+      <h3>업무 메모 · 일정 알림</h3>
+      <ul>
+        <li>검색 + 달력 보기, 일정 등록 → 전역 팝업 알림</li>
+      </ul>
+      <h3>비상연락처</h3>
+      <ul>
+        <li>관리 UI + 채팅 질의(“○○ 비상연락처 알려줘”) 즉시 응답</li>
+      </ul>
+      <div class="callout" style="margin-top:10px;">
+        <b>별도 메신저 앱이 필요 없습니다</b> — 보안 정책상 카카오톡·텔레그램을
+        쓸 수 없는 폐쇄망 상황실에서, 통화·회의까지 SLM 안에서 해결합니다.
+      </div>
+    </div>
+
+    <div class="col" style="flex:1.1; display:flex; gap:10px;">
+      <div style="flex:1.2;">
+        <div class="screen">
+          <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">운영자 메신저 · 상황실 그룹</span></div>
+          <div class="sc-body">
+            <div class="chat-a" style="max-width:92%;"><b style="color:#7dd3fc;">김주임</b> · 동림가압장 현장 도착. 인버터 패널 사진 공유합니다 📎</div>
+            <div class="chat-q">확인. 냉각팬 상태 먼저 봐주세요.</div>
+            <div style="background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px; text-align:center; margin-top:5px;">
+              <div style="display:flex; justify-content:center; gap:5px; margin-bottom:4px;">
+                <div style="width:34px; height:24px; background:#1a2740; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:9px;">👷</div>
+                <div style="width:34px; height:24px; background:#1a2740; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:9px;">🧑‍💼</div>
+                <div style="width:34px; height:24px; background:#1a2740; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:9px;">👩‍🔧</div>
+              </div>
+              <div style="font-size:7.5px; color:#34d399;">● 영상 회의 진행 중 (3인) · 02:14</div>
+            </div>
+          </div>
+        </div>
+        <div class="caption">채팅·파일·음성/영상 회의 — 폐쇄망 내 완결</div>
+      </div>
+      <div style="flex:.8;">
+        <div class="screen" style="border-radius:16px;">
+          <div class="sc-bar" style="justify-content:center;"><span class="sc-title">현장 모드 (모바일)</span></div>
+          <div class="sc-body">
+            <div style="background:rgba(239,68,68,.10); border:1px solid rgba(239,68,68,.4); border-radius:7px; padding:5px 7px; margin-bottom:5px;">
+              <div style="font-size:8px; color:#f8b4b4; font-weight:700;">⚠ 대응 필요 알람 1건</div>
+              <div style="font-size:7px; color:#7f92b3;">동림가압장 토출압력 HH</div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:7px 4px; text-align:center; font-size:7.5px;">📷<br>사진 진단</div>
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:7px 4px; text-align:center; font-size:7.5px;">📝<br>고장 기록</div>
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:7px 4px; text-align:center; font-size:7.5px;">📘<br>매뉴얼</div>
+              <div style="background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:7px 4px; text-align:center; font-size:7.5px;">✅<br>조치 완료</div>
+            </div>
+            <div style="background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; margin-top:5px; font-size:7px; color:#7f92b3;">🔍 시설 선택 점검 — 일상점검·알람 없는 설비</div>
+          </div>
+        </div>
+        <div class="caption">이동 중에도 알람 대응·점검 완결</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">12</div>
+</section>
+
+<!-- ════════════════ p.13 SKU ════════════════ -->
+<section class="page">
+  <span class="kicker">Editions</span>
+  <h2>제품 구성 (SKU)</h2>
+  <div class="rule"></div>
+
+  <h3>기본 운영 (전 SKU 공통)</h3>
+  <p>실시간 감시 · 알람 · 작업 관리 · 사용자/권한/메뉴 관리 · GIS 관망도(시설 마커)</p>
+
+  <h3 style="margin-top:12px;">옵션 모듈</h3>
+  <table class="spec">
+    <tr><th style="width:24%;">모듈</th><th>내용</th><th style="width:30%;">요구 사항</th></tr>
+    <tr><td><b>B1 관망수리분석</b></td><td>EPANET 시뮬 기반 분석 11메뉴 + GIS 오버레이</td><td>관로 SHP·표고·수요 데이터</td></tr>
+    <tr><td><b>B2 AI 멀티모달 진단</b></td><td>사진 기반 장비 식별·진단</td><td>GPU (약 19GB VRAM)</td></tr>
+    <tr><td><b>B3 매뉴얼·케이스 RAG</b></td><td>매뉴얼 인용 + 유사 고장 사례</td><td>매뉴얼 PDF·케이스 등록</td></tr>
+    <tr><td><b>B4 트렌드 비교 분석</b></td><td>평소 대비 / 향후 전망</td><td>14일+ 데이터 (자동 누적)</td></tr>
+    <tr><td><b>B5 보고서 자동 생성</b></td><td>장애 조치 / 일 점검 보고서</td><td>작업·점검 기록</td></tr>
+  </table>
+
+  <h3 style="margin-top:12px;">권장 등급</h3>
+  <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:6px;">
+    <div style="border:1px solid #e3e9f2; border-radius:12px; padding:14px;">
+      <div style="font-size:15px; font-weight:900; color:var(--navy);">Basic</div>
+      <div class="small muted" style="margin:2px 0 8px;">데이터·인프라 미구축 신규 사이트</div>
+      <ul class="small" style="padding-left:14px;">
+        <li>기본 운영 전체</li><li>감시·알람·작업·GIS</li><li>AI 채팅 (조회·기록)</li>
+      </ul>
+    </div>
+    <div style="border:2px solid var(--cyan); border-radius:12px; padding:14px; position:relative;">
+      <div style="position:absolute; top:-9px; right:12px;" class="tag cy">인기</div>
+      <div style="font-size:15px; font-weight:900; color:var(--navy);">Plus</div>
+      <div class="small muted" style="margin:2px 0 8px;">관망 데이터 구축 완료 사이트</div>
+      <ul class="small" style="padding-left:14px;">
+        <li>Basic 전체</li><li>+ B1 관망수리분석</li><li>+ B4 트렌드 비교 분석</li>
+      </ul>
+    </div>
+    <div style="border:1px solid var(--navy); border-radius:12px; padding:14px; background:var(--navy); color:#dbe6f5;">
+      <div style="font-size:15px; font-weight:900; color:#fff;">Enterprise</div>
+      <div class="small" style="color:#8fa2c0; margin:2px 0 8px;">GPU 보유 · AI 차별화 활용</div>
+      <ul class="small" style="padding-left:14px; color:#c8d4e8;">
+        <li>Plus 전체</li><li>+ B2 AI 멀티모달 진단</li><li>+ B3 매뉴얼·케이스 RAG</li><li>+ B5 보고서 자동 생성</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:14px;">
+    모든 모듈은 <b>설치 후 마스터 토글</b>로 관리됩니다 — SKU 변경 시 재설치가 필요 없습니다.
+    모듈별 add-on 개별 판매도 가능합니다 (영업 정책 협의).
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">13</div>
+</section>
+
+<!-- ════════════════ p.14 기술 사양 ════════════════ -->
+<section class="page">
+  <span class="kicker">Technology</span>
+  <h2>기술 사양·아키텍처</h2>
+  <div class="rule"></div>
+
+  <!-- 아키텍처 다이어그램 -->
+  <div style="background:var(--navy); border-radius:12px; padding:14px; color:#dbe6f5;">
+    <svg viewBox="0 0 640 150" width="100%">
+      <rect x="10" y="52" width="120" height="44" rx="8" fill="#122238" stroke="#31415f"/>
+      <text x="70" y="70" font-size="11" fill="#dbe6f5" text-anchor="middle">운영자 브라우저</text>
+      <text x="70" y="86" font-size="8" fill="#7f92b3" text-anchor="middle">PC · 모바일 (HTTPS)</text>
+      <rect x="180" y="52" width="120" height="44" rx="8" fill="#122238" stroke="#22d3ee"/>
+      <text x="240" y="70" font-size="11" fill="#7dd3fc" text-anchor="middle">Next.js 프런트</text>
+      <text x="240" y="86" font-size="8" fill="#7f92b3" text-anchor="middle">BFF Proxy</text>
+      <rect x="350" y="52" width="120" height="44" rx="8" fill="#122238" stroke="#3b82f6"/>
+      <text x="410" y="70" font-size="11" fill="#93b8f8" text-anchor="middle">FastAPI 백엔드</text>
+      <text x="410" y="86" font-size="8" fill="#7f92b3" text-anchor="middle">분석·인텐트·인증</text>
+      <rect x="520" y="8" width="110" height="40" rx="8" fill="#122238" stroke="#10b981"/>
+      <text x="575" y="25" font-size="10" fill="#6ee7b7" text-anchor="middle">PostgreSQL</text>
+      <text x="575" y="39" font-size="8" fill="#7f92b3" text-anchor="middle">+ TimescaleDB</text>
+      <rect x="520" y="56" width="110" height="40" rx="8" fill="#122238" stroke="#a78bfa"/>
+      <text x="575" y="73" font-size="10" fill="#c4b5fd" text-anchor="middle">로컬 AI (Ollama)</text>
+      <text x="575" y="87" font-size="8" fill="#7f92b3" text-anchor="middle">LLM·Vision·STT</text>
+      <rect x="520" y="104" width="110" height="40" rx="8" fill="#122238" stroke="#f59e0b"/>
+      <text x="575" y="121" font-size="10" fill="#fcd34d" text-anchor="middle">수집·알람 플로우</text>
+      <text x="575" y="135" font-size="8" fill="#7f92b3" text-anchor="middle">SCADA 연계</text>
+      <g stroke="#31415f" stroke-width="1.6">
+        <line x1="130" y1="74" x2="180" y2="74"/><line x1="300" y1="74" x2="350" y2="74"/>
+        <line x1="470" y1="66" x2="520" y2="30"/><line x1="470" y1="74" x2="520" y2="76"/><line x1="470" y1="84" x2="520" y2="122"/>
+      </g>
+      <rect x="6" y="4" width="470" height="18" rx="9" fill="none" stroke="#22d3ee" stroke-dasharray="4 3" opacity=".6"/>
+      <text x="16" y="17" font-size="8.5" fill="#7dd3fc">폐쇄망 경계 — 외부 인터넷 연결 불필요 (지도·AI 모델 오프라인 번들 반입)</text>
+    </svg>
+  </div>
+
+  <div class="cols" style="margin-top:12px;">
+    <div class="col">
+      <h3>기술 스택</h3>
+      <table class="spec">
+        <tr><th style="width:30%;">항목</th><th>사양</th></tr>
+        <tr><td>프런트엔드</td><td>Next.js (App Router) + TypeScript, 다크/라이트 테마</td></tr>
+        <tr><td>백엔드</td><td>Python FastAPI</td></tr>
+        <tr><td>DB</td><td>PostgreSQL 16 + TimescaleDB (시계열 하이퍼테이블)</td></tr>
+        <tr><td>AI</td><td>로컬 Ollama — LLM·Vision(멀티모달)·임베딩·음성인식</td></tr>
+        <tr><td>배포</td><td>Docker Compose, 프로덕션 빌드 + TLS</td></tr>
+        <tr><td>접속</td><td>웹 브라우저 (설치 프로그램 불필요), 모바일 반응형</td></tr>
+      </table>
+      <h3>권장 서버 사양 (제안)</h3>
+      <table class="spec">
+        <tr><th>구성</th><th>최소</th><th>권장 (Enterprise)</th></tr>
+        <tr><td>CPU</td><td>8 core</td><td>16 core</td></tr>
+        <tr><td>RAM</td><td>32 GB</td><td>64 GB</td></tr>
+        <tr><td>GPU</td><td>— (B2 미사용 시)</td><td>VRAM 24 GB (B2 Vision)</td></tr>
+        <tr><td>저장소</td><td>SSD 512 GB</td><td>NVMe 2 TB (보존 기간에 따라)</td></tr>
+      </table>
+    </div>
+    <div class="col">
+      <h3>보안·격리</h3>
+      <ul>
+        <li><b>완전 폐쇄망 운영</b> — 외부 API·CDN·클라우드 LLM·원격 인증 의존 0</li>
+        <li>오프라인 자산 번들 — 지도 타일·AI 모델 웨이트·폰트 일체 반입</li>
+        <li>JWT 인증 + bcrypt 비밀번호 + 세션 관리 (잠금·강제 종료)</li>
+        <li><b>region 기반 멀티테넌시</b> — 고객·사업소별 데이터 격리</li>
+        <li>권한 3단계 (MASTER/ADMIN/USER) × 메뉴 단위 접근 제어</li>
+      </ul>
+      <div class="callout" style="margin-top:10px;">
+        <b>운영·유지보수 내장</b><br>
+        · 마이그레이션 기반 무중단 업그레이드 (롤백 절차 포함)<br>
+        · 모델 자동 재학습 스케줄 + 성능 평가 화면 내장<br>
+        · 학습 지연 경고 배지로 모델 신선도 상시 확인
+      </div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">14</div>
+</section>
+
+<!-- ════════════════ p.15 구축 프로세스 ════════════════ -->
+<section class="page">
+  <span class="kicker">Delivery</span>
+  <h2>구축·납품 프로세스</h2>
+  <div class="rule"></div>
+
+  <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin:10px 0 16px;">
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">1</div><div style="font-size:10px; font-weight:700;">요구 분석</div><div class="small muted">시설·태그·SCADA 연계 확인</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">2</div><div style="font-size:10px; font-weight:700;">기반 구축</div><div class="small muted">태그·시설·계통 CSV 일괄</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">3</div><div style="font-size:10px; font-weight:700;">연계 개발</div><div class="small muted">SCADA 수집 연동</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">4</div><div style="font-size:10px; font-weight:700;">모듈 활성화</div><div class="small muted">SKU 마스터 토글</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">5</div><div style="font-size:10px; font-weight:700;">자산 반입</div><div class="small muted">지도·AI 모델 번들</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">6</div><div style="font-size:10px; font-weight:700;">검수</div><div class="small muted">자동 E2E + 인수 시험</div></div>
+    <div style="text-align:center;"><div class="num-badge" style="margin:0 auto 5px;">7</div><div style="font-size:10px; font-weight:700;">인수인계</div><div class="small muted">가이드·체크리스트</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="col">
+      <h3>구축 업체(SI)에 제공되는 것</h3>
+      <ul>
+        <li>납품 체크리스트 — 오프라인 자산 반입·개발 요소 제거·배포 구성·검수·인수인계의 단일 진입점</li>
+        <li>자동 E2E 스모크 테스트 — 대표 질의 16종, 납품 검수 겸용</li>
+        <li>운영자 가이드 — 보고서 빠른 가이드·스케줄 등록 가이드</li>
+        <li>모델 웨이트·오프라인 지도 번들 스크립트 (무결성 검증 포함)</li>
+      </ul>
+      <h3>운영·유지보수</h3>
+      <ul>
+        <li>마이그레이션 기반 무중단 업그레이드 — 롤백 절차 명시</li>
+        <li>이상탐지·기대값 모델 자동 재학습 (주 1회) + 성능 평가 화면</li>
+        <li>고객사 커스터마이징은 config 분리 설계로 대응 — 하드코딩 없음</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">사이트 설정 · 기능 모듈 토글</span></div>
+        <div class="sc-body">
+          <div style="display:grid; gap:4px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:5px 8px;">
+              <span style="font-size:8.5px;">B1 관망수리분석 (EPANET)</span>
+              <span style="width:22px; height:11px; background:#22d3ee; border-radius:6px; display:inline-block; position:relative;"><span style="position:absolute; right:1px; top:1px; width:9px; height:9px; background:#fff; border-radius:50%;"></span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:5px 8px;">
+              <span style="font-size:8.5px;">B2 AI 멀티모달 진단</span>
+              <span style="width:22px; height:11px; background:#22d3ee; border-radius:6px; display:inline-block; position:relative;"><span style="position:absolute; right:1px; top:1px; width:9px; height:9px; background:#fff; border-radius:50%;"></span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:5px 8px;">
+              <span style="font-size:8.5px;">B3 매뉴얼·고장 케이스 RAG</span>
+              <span style="width:22px; height:11px; background:#334155; border-radius:6px; display:inline-block; position:relative;"><span style="position:absolute; left:1px; top:1px; width:9px; height:9px; background:#94a3b8; border-radius:50%;"></span></span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:5px 8px;">
+              <span style="font-size:8.5px;">B4 트렌드 비교 분석</span>
+              <span style="width:22px; height:11px; background:#22d3ee; border-radius:6px; display:inline-block; position:relative;"><span style="position:absolute; right:1px; top:1px; width:9px; height:9px; background:#fff; border-radius:50%;"></span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">모듈 ON/OFF는 관리 화면 토글로 — 재설치 없이 등급 전환</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM · Supervisory Lifecycle Management</div><div class="pageno">15</div>
+</section>
+
+<!-- ════════════════ p.16 뒷표지 ════════════════ -->
+<section class="page" style="background:linear-gradient(200deg,#0a1120 0%,#0f1b2d 60%,#122a45 100%); color:#e8eef8; display:flex; flex-direction:column; justify-content:center; text-align:center;">
+  <div>
+    <div style="font-size:12px; letter-spacing:4px; color:var(--cyan); font-weight:700;">SLM</div>
+    <h1 style="font-size:30px; color:#fff; margin-top:10px;">상수도 운영의 다음 표준</h1>
+    <div style="height:3px; width:60px; background:linear-gradient(90deg,var(--cyan),var(--blue)); border-radius:2px; margin:18px auto;"></div>
+    <p style="font-size:14px; color:#b9c8de; line-height:1.9;">
+      감시에서 구축까지, 알람에서 조치까지.<br>
+      폐쇄망 안에서 완결되는 AI 상수도 통합 운영 플랫폼.
+    </p>
+    <div style="margin-top:36px; font-size:11px; color:#8fa2c0; line-height:2;">
+      <b style="color:#dbe6f5; font-size:13px;">공급사명 (주)○○○○</b><br>
+      주소 · 대표 연락처 · sales@example.co.kr<br>
+      온사이트 데모 요청 환영
+    </div>
+    <div style="margin-top:30px; font-size:9px; color:#5d6f8e;">
+      © 2026 ○○○○. All rights reserved. · 카탈로그 v0.1 (2026-07)<br>
+      본 카탈로그의 화면 예시는 임의 현장명으로 구성한 데모 데이터입니다.
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

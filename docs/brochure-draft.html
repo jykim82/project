@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLM 제품 브로셔 (초안 v0.1)</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root{
+    --navy:#0f1b2d; --panel:#0d1526; --panel2:#111c30; --line:#1e2a44;
+    --cyan:#22d3ee; --blue:#3b82f6; --violet:#a78bfa; --amber:#f59e0b;
+    --red:#ef4444; --green:#10b981; --ink:#1c2536; --sub:#5b6b85;
+    --paper:#ffffff; --paper2:#f4f7fb; --tblue:#0e7490;
+  }
+  html{ background:#dfe5ee; }
+  body{ font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+        color:var(--ink); line-height:1.55; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .page{ width:210mm; min-height:297mm; margin:8mm auto; background:var(--paper);
+         box-shadow:0 4px 24px rgba(15,27,45,.18); padding:16mm 15mm 14mm;
+         position:relative; page-break-after:always; overflow:hidden; }
+  @media print{ html{ background:#fff; } .page{ margin:0; box-shadow:none; } @page{ size:A4; margin:0; } }
+  h1{ font-size:26px; letter-spacing:-.5px; }
+  h2{ font-size:20px; color:var(--navy); margin-bottom:10px; letter-spacing:-.3px; }
+  h3{ font-size:13.5px; color:var(--navy); margin:12px 0 6px; }
+  p, li{ font-size:11.5px; color:#33415c; }
+  .small{ font-size:9.5px; } .muted{ color:var(--sub); }
+  ul{ padding-left:16px; } li{ margin:3px 0; }
+  .kicker{ display:inline-block; font-size:10px; font-weight:700; color:var(--tblue);
+           letter-spacing:2.5px; text-transform:uppercase; margin-bottom:6px; }
+  .rule{ height:3px; width:44px; background:linear-gradient(90deg,var(--cyan),var(--blue)); border-radius:2px; margin:8px 0 14px; }
+  .pageno{ position:absolute; bottom:8mm; right:15mm; font-size:9px; color:#9aa8bf; }
+  .foot-brand{ position:absolute; bottom:8mm; left:15mm; font-size:9px; color:#9aa8bf; letter-spacing:1px; }
+  table.spec{ width:100%; border-collapse:collapse; margin:8px 0; }
+  table.spec th{ background:var(--paper2); color:var(--navy); font-size:10.5px; text-align:left; padding:6px 8px; border:1px solid #e3e9f2; }
+  table.spec td{ font-size:10.5px; padding:6px 8px; border:1px solid #e3e9f2; color:#33415c; vertical-align:top; }
+  .cols{ display:flex; gap:14px; } .col{ flex:1; min-width:0; }
+  .callout{ background:var(--paper2); border-left:3px solid var(--cyan); padding:9px 12px;
+            border-radius:0 8px 8px 0; margin:10px 0; font-size:11px; color:#22314e; }
+  .num-badge{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+              border-radius:50%; background:var(--navy); color:var(--cyan); font-weight:800; font-size:11px; margin-right:8px; flex:none; }
+  /* 목업 */
+  .screen{ background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;
+           box-shadow:0 6px 18px rgba(10,18,32,.25); font-size:9px; color:#c4d2e8; }
+  .sc-bar{ display:flex; align-items:center; gap:5px; background:#0a1120; padding:5px 9px; border-bottom:1px solid var(--line); }
+  .sc-dot{ width:6px; height:6px; border-radius:50%; }
+  .sc-title{ font-size:8.5px; color:#7f92b3; margin-left:6px; letter-spacing:.5px; }
+  .sc-body{ padding:8px; }
+  .caption{ font-size:9px; color:var(--sub); margin-top:4px; text-align:center; }
+  .kpi{ background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px 7px; }
+  .kpi .lb{ font-size:7.5px; color:#7f92b3; } .kpi .v{ font-size:13px; font-weight:800; margin-top:1px; }
+  .mini-tbl{ width:100%; border-collapse:collapse; }
+  .mini-tbl th{ font-size:7.5px; color:#7f92b3; text-align:left; padding:3px 5px; border-bottom:1px solid var(--line); }
+  .mini-tbl td{ font-size:8px; color:#c4d2e8; padding:3px 5px; border-bottom:1px solid #16233c; }
+  .pill{ font-size:7px; font-weight:700; padding:1px 6px; border-radius:10px; }
+  .pill.warn{ background:rgba(239,68,68,.18); color:#f87171; } .pill.cau{ background:rgba(245,158,11,.18); color:#fbbf24; }
+  .pill.ok{ background:rgba(16,185,129,.18); color:#34d399; } .pill.info{ background:rgba(59,130,246,.18); color:#60a5fa; }
+  .pill.vio{ background:rgba(167,139,250,.20); color:#c4b5fd; }
+  .chat-q{ background:#1d4ed8; color:#eaf1ff; border-radius:10px 10px 2px 10px; padding:6px 9px; font-size:8.5px; max-width:78%; margin:5px 0 5px auto; }
+  .chat-a{ background:var(--panel2); border:1px solid var(--line); color:#c4d2e8; border-radius:10px 10px 10px 2px; padding:7px 9px; font-size:8.5px; max-width:90%; margin:5px 0; }
+  .ai-card{ background:rgba(124,58,237,.10); border:1px solid rgba(167,139,250,.45); border-radius:8px; padding:6px 9px; font-size:8px; color:#cabffa; margin-top:5px; }
+  .badge3{ display:inline-block; background:rgba(34,211,238,.12); border:1px solid rgba(34,211,238,.5);
+           color:#7dd3fc; font-size:11px; font-weight:800; padding:5px 14px; border-radius:20px; margin:0 4px; }
+</style>
+</head>
+<body>
+
+<!-- ════════════ p.1 표지 ════════════ -->
+<section class="page" style="background:linear-gradient(160deg,#0a1120 0%,#0f1b2d 55%,#122a45 100%); color:#e8eef8; display:flex; flex-direction:column;">
+  <div style="margin-top:14mm; text-align:center;">
+    <div style="font-size:11px; letter-spacing:5px; color:var(--cyan); font-weight:700;">SLM · SUPERVISORY LIFECYCLE MANAGEMENT</div>
+    <h1 style="font-size:34px; color:#fff; margin-top:14px; line-height:1.4;">
+      상수도 관망 운영,<br>폐쇄망 안에서 AI로 완결하다
+    </h1>
+    <div style="margin-top:16px;">
+      <span class="badge3">폐쇄망 완결</span><span class="badge3">로컬 AI</span><span class="badge3">감시–알람–조치 통합</span>
+    </div>
+  </div>
+
+  <!-- 히어로 목업 -->
+  <div class="screen" style="margin-top:14mm;">
+    <div class="sc-bar">
+      <span class="sc-dot" style="background:#ff5f57"></span><span class="sc-dot" style="background:#febc2e"></span><span class="sc-dot" style="background:#28c840"></span>
+      <span class="sc-title">SLM · 종합 현황판 — 청수시 상수도</span>
+    </div>
+    <div class="sc-body">
+      <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:5px; margin-bottom:7px;">
+        <div class="kpi"><div class="lb">이상 감지</div><div class="v" style="color:#f87171">3</div></div>
+        <div class="kpi"><div class="lb">교차검증 이상</div><div class="v" style="color:#fb923c">1</div></div>
+        <div class="kpi"><div class="lb">설비 장애</div><div class="v" style="color:#c4b5fd">2</div></div>
+        <div class="kpi"><div class="lb">유량 불균형</div><div class="v" style="color:#22d3ee">1</div></div>
+        <div class="kpi"><div class="lb">진행중 경보</div><div class="v" style="color:#60a5fa">4</div></div>
+        <div class="kpi"><div class="lb">정상 시설</div><div class="v" style="color:#34d399">94%</div></div>
+      </div>
+      <div style="display:flex; gap:7px;">
+        <div style="flex:1.4; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px;">
+          <div style="font-size:8px; color:#7f92b3; margin-bottom:3px;">한빛배수지 · 수위 트렌드 (24h)</div>
+          <svg viewBox="0 0 300 74" width="100%">
+            <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#22d3ee" stop-opacity=".35"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></linearGradient></defs>
+            <line x1="0" y1="12" x2="300" y2="12" stroke="#ef4444" stroke-width=".8" stroke-dasharray="4 3"/>
+            <path d="M0,48 C25,40 45,26 70,28 S115,54 140,51 S185,22 215,24 S265,46 300,38 L300,74 L0,74 Z" fill="url(#g1)"/>
+            <path d="M0,48 C25,40 45,26 70,28 S115,54 140,51 S185,22 215,24 S265,46 300,38" fill="none" stroke="#22d3ee" stroke-width="1.6"/>
+            <text x="3" y="10" font-size="6" fill="#f87171">HH 4.50</text>
+          </svg>
+        </div>
+        <div style="flex:1; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px;">
+          <div style="font-size:8px; color:#7f92b3; margin-bottom:3px;">이상 시설 TOP</div>
+          <table class="mini-tbl">
+            <tr><th>시설</th><th>Z</th><th>판정</th></tr>
+            <tr><td>동림가압장</td><td style="color:#f87171">2.41</td><td><span class="pill warn">경고</span></td></tr>
+            <tr><td>매화소블록</td><td style="color:#fbbf24">1.72</td><td><span class="pill cau">주의</span></td></tr>
+            <tr><td>서곡감압시설</td><td style="color:#fbbf24">1.55</td><td><span class="pill cau">주의</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:auto; text-align:center;">
+    <div style="font-size:12px; font-weight:800; color:#fff;">공급사명 (주)○○○○</div>
+    <div style="font-size:9px; color:#6d7f9d; margin-top:2px;">브로셔 v0.1 · 2026-07 · 화면 예시는 임의 현장명 데모 데이터</div>
+  </div>
+</section>
+
+<!-- ════════════ p.2 왜 SLM인가 ════════════ -->
+<section class="page">
+  <span class="kicker">Why SLM</span>
+  <h2>왜 SLM인가</h2>
+  <div class="rule"></div>
+
+  <h3>지금 상수도 관제실의 고민</h3>
+  <div class="cols" style="margin-top:6px;">
+    <div class="col callout" style="border-left-color:var(--red);">태그 수천 개, 알람 수백 건 —<br><b>진짜 이상은 무엇인가?</b></div>
+    <div class="col callout" style="border-left-color:var(--amber);">알람은 관제실에, 조치 기록은 수첩에 —<br><b>오탐 분석이 안 된다</b></div>
+    <div class="col callout" style="border-left-color:var(--blue);">폐쇄망이라<br><b>클라우드 AI는 반입 불가</b></div>
+  </div>
+
+  <h3 style="margin-top:16px;">SLM은 다릅니다</h3>
+  <table class="spec">
+    <tr><td style="width:16%; text-align:center; font-size:18px;">🖥️</td><td style="width:24%;"><b>감시</b></td><td>실시간 계통도 · GIS 관망도 · 머신러닝 트렌드 분석</td></tr>
+    <tr><td style="text-align:center; font-size:18px;">🔔</td><td><b>알람</b></td><td>다변량 이상 감지 + 오탐·미검지 분석 + 조치 연동</td></tr>
+    <tr><td style="text-align:center; font-size:18px;">🔧</td><td><b>장비 고장 관리</b></td><td>사진 한 장으로 AI 진단 + 고장 케이스 DB</td></tr>
+    <tr><td style="text-align:center; font-size:18px;">🗺️</td><td><b>관망 구축·조회</b></td><td>시설·태그·계통·GIS를 화면에서 직접 구축</td></tr>
+  </table>
+
+  <div style="background:var(--navy); border-radius:12px; padding:16px 20px; margin-top:16px; color:#dbe6f5; text-align:center;">
+    <div style="font-size:14px; font-weight:800; color:#fff;">모든 AI는 서버 안에서 구동됩니다.</div>
+    <div style="font-size:11px; color:#8fa2c0; margin-top:4px;">외부 인터넷 연결 0회 — 지도까지 오프라인 내장. 사진·데이터가 밖으로 나가지 않습니다.</div>
+  </div>
+
+  <div class="foot-brand">SLM Brochure</div><div class="pageno">02</div>
+</section>
+
+<!-- ════════════ p.3 차별화 4 ════════════ -->
+<section class="page">
+  <span class="kicker">Differentiators</span>
+  <h2>핵심 차별화 4가지</h2>
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div class="col">
+      <h3><span class="num-badge">1</span>사진 한 장으로 현장 진단</h3>
+      <p>현장 설비 사진 업로드 → 장비 자동 식별 + 매뉴얼 인용 + 유사 고장 사례 매칭.
+         <b>폐쇄망에서 동작하는 유일한 멀티모달 AI 진단.</b></p>
+      <div class="screen" style="margin-top:8px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">AI 채팅 · 사진 진단</span></div>
+        <div class="sc-body">
+          <div class="chat-q">동림가압장 인버터 경고등 점등. 사진 확인해줘 📎</div>
+          <div class="chat-a">
+            <b style="color:#7dd3fc;">장비 식별</b> — 인버터 VX-220 · 코드 E-07 (출력 과전류)<br>
+            <span style="color:#8fa2c0;">📘 매뉴얼 p.48 인용 · 🗂 유사 케이스 2건 (냉각팬 교체로 해소)</span>
+          </div>
+          <div class="ai-card"><b>[AI 참고 의견]</b> 재발 이력상 냉각 계통 점검을 우선 권장합니다.</div>
+        </div>
+      </div>
+
+      <h3 style="margin-top:14px;"><span class="num-badge">3</span>대화로 기록하는 장애 관리</h3>
+      <p>“남산가압장 1번 펌프 소음, 사진 첨부” — 시설·설비 자동 매칭,
+         조치 완료·보고서 작성까지 채팅으로. 모바일 <b>현장 모드</b> 지원.</p>
+    </div>
+
+    <div class="col">
+      <h3><span class="num-badge">2</span>알람과 현장 조치를 잇다</h3>
+      <p>자동 알람 ↔ 실제 조치 이력 대조 → 오탐 패턴 식별 →
+         <b>설비 교체 우선순위 Top 5</b> 자동 산출 (내용연수·MTBF·재발 융합).</p>
+      <div class="screen" style="margin-top:8px;">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">교체 우선순위 Top 5</span></div>
+        <div class="sc-body">
+          <table class="mini-tbl">
+            <tr><th>#</th><th>설비</th><th>시설</th><th>점수</th></tr>
+            <tr><td>1</td><td>2호 펌프 인버터</td><td>동림가압장</td><td style="color:#f87171">92</td></tr>
+            <tr><td>2</td><td>수위 트랜스미터</td><td>미르배수지</td><td style="color:#fbbf24">81</td></tr>
+            <tr><td>3</td><td>RTU 통신모뎀</td><td>매화소블록</td><td style="color:#fbbf24">77</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <h3 style="margin-top:14px;"><span class="num-badge">4</span>AI는 참고, 판단은 데이터</h3>
+      <p>AI 의견은 항상 별도 카드로 분리, 수치는 DB 실측값만 표시.
+         <b>Zero-Hallucination 원칙</b>으로 운영 판단의 신뢰를 지킵니다.</p>
+      <div class="callout">숫자는 생성하지 않습니다 — 화면의 모든 수치는 DB 조회·모델 산출값입니다.</div>
+    </div>
+  </div>
+
+  <div class="foot-brand">SLM Brochure</div><div class="pageno">03</div>
+</section>
+
+<!-- ════════════ p.4 화면 6분할 ════════════ -->
+<section class="page">
+  <span class="kicker">Screens</span>
+  <h2>한눈에 보는 주요 화면</h2>
+  <div class="rule"></div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:11px;">
+    <!-- 1 대시보드 -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">종합 현황판</span></div>
+        <div class="sc-body">
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:4px;">
+            <div class="kpi"><div class="lb">이상 감지</div><div class="v" style="font-size:11px; color:#f87171">3</div></div>
+            <div class="kpi"><div class="lb">진행중 경보</div><div class="v" style="font-size:11px; color:#60a5fa">4</div></div>
+            <div class="kpi"><div class="lb">정상 시설</div><div class="v" style="font-size:11px; color:#34d399">94%</div></div>
+          </div>
+          <table class="mini-tbl" style="margin-top:4px;">
+            <tr><td>동림가압장</td><td style="color:#f87171">2.41</td><td><span class="pill warn">경고</span></td></tr>
+            <tr><td>매화소블록</td><td style="color:#fbbf24">1.72</td><td><span class="pill cau">주의</span></td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="caption">KPI 6종 + 이상 시설 TOP — 클릭 즉시 AI 진단</div>
+    </div>
+    <!-- 2 GIS -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#febc2e"></span><span class="sc-title">GIS 관망도 (오프라인 지도)</span></div>
+        <div class="sc-body" style="padding:0;">
+          <svg viewBox="0 0 300 92" width="100%" style="display:block;">
+            <rect width="300" height="92" fill="#101a2c"/>
+            <path d="M15,30 L100,15 L150,45 L120,80 L30,84 Z" fill="#10b981" opacity=".08" stroke="#10b981" stroke-opacity=".3"/>
+            <path d="M0,60 C60,52 140,66 300,50" stroke="#26344f" stroke-width="4" fill="none"/>
+            <path d="M45,40 L120,52 L200,44 L262,66" stroke="#3b82f6" stroke-width="2" fill="none" opacity=".9"/>
+            <circle cx="45" cy="40" r="7" fill="#1D4ED8" stroke="#fff" stroke-width="1"/>
+            <circle cx="120" cy="52" r="6" fill="#F59E0B" stroke="#fff" stroke-width="1"/>
+            <circle cx="120" cy="52" r="9.5" fill="none" stroke="#ef4444" stroke-width="1.2"/>
+            <circle cx="200" cy="44" r="5" fill="#10B981" stroke="#fff" stroke-width="1"/>
+            <circle cx="262" cy="66" r="5" fill="#a78bfa" stroke="#fff" stroke-width="1"/>
+            <text x="30" y="28" font-size="7" fill="#dbe6f5">한빛배수지</text>
+            <text x="100" y="72" font-size="7" fill="#fca5a5">동림가압장 ⚠</text>
+            <text x="184" y="32" font-size="7" fill="#dbe6f5">매화소블록</text>
+            <text x="240" y="84" font-size="7" fill="#dbe6f5">서곡감압시설</text>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">오프라인 지도 + 알람 상태 + 24h 타임라인 재생</div>
+    </div>
+    <!-- 3 계통도 -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">실시간 계통도</span></div>
+        <div class="sc-body">
+          <svg viewBox="0 0 280 66" width="100%">
+            <line x1="30" y1="24" x2="120" y2="24" stroke="#3b82f6" stroke-width="5" opacity=".85"/>
+            <line x1="120" y1="24" x2="200" y2="46" stroke="#22d3ee" stroke-width="3" opacity=".85"/>
+            <line x1="200" y1="46" x2="258" y2="46" stroke="#38bdf8" stroke-width="2" opacity=".7"/>
+            <circle cx="30" cy="24" r="9" fill="#1d4ed8"/><circle cx="120" cy="24" r="8" fill="#f59e0b"/>
+            <circle cx="200" cy="46" r="7" fill="#10b981"/><circle cx="258" cy="46" r="6" fill="#8b5cf6"/>
+            <text x="16" y="10" font-size="6.5" fill="#c4d2e8">한빛배수지</text>
+            <text x="104" y="10" font-size="6.5" fill="#c4d2e8">동림가압장</text>
+            <text x="186" y="62" font-size="6.5" fill="#c4d2e8">매화소블록</text>
+            <text x="64" y="36" font-size="6" fill="#7dd3fc">412 m³/h ▶</text>
+          </svg>
+        </div>
+      </div>
+      <div class="caption">유량 비례 흐름 애니메이션 — 노드 클릭 상세</div>
+    </div>
+    <!-- 4 채팅 -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">AI 채팅</span></div>
+        <div class="sc-body">
+          <div class="chat-q">🎤 한빛배수지 수위 7일 트렌드</div>
+          <div class="chat-a" style="max-width:100%;">
+            <svg viewBox="0 0 240 40" width="100%"><path d="M0,28 C20,22 40,12 60,15 S100,32 120,29 S160,10 185,12 L240,18" fill="none" stroke="#22d3ee" stroke-width="1.5"/></svg>
+            <span style="font-size:7px; color:#7f92b3;">평소 대비 +2.6% · 전망: 반복 주기 패턴</span>
+          </div>
+        </div>
+      </div>
+      <div class="caption">64개 질의 인텐트 · 음성 입력 · 한국어 자동완성</div>
+    </div>
+    <!-- 5 경보분석 -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#ff5f57"></span><span class="sc-title">경보 분석</span></div>
+        <div class="sc-body">
+          <div style="font-size:8px; color:#f8b4b4; font-weight:700;">동림가압장 토출압력 HH</div>
+          <div style="font-size:7.5px; color:#c4d2e8; margin:3px 0;"><b style="color:#7dd3fc;">원인</b> 토출측 밸브 부분 폐쇄 상태 가동 · <b style="color:#7dd3fc;">대응</b> 밸브 개도 확인 후 재기동</div>
+          <span class="pill info">작업 등록</span> <span class="pill vio">AI 진단</span> <span class="pill ok">확인</span>
+        </div>
+      </div>
+      <div class="caption">진단원인·대응방안 구조화 + 작업 등록 원클릭</div>
+    </div>
+    <!-- 6 메신저 -->
+    <div>
+      <div class="screen">
+        <div class="sc-bar"><span class="sc-dot" style="background:#28c840"></span><span class="sc-title">운영자 메신저</span></div>
+        <div class="sc-body">
+          <div class="chat-a" style="max-width:92%;"><b style="color:#7dd3fc;">김주임</b> · 현장 도착, 패널 사진 공유 📎</div>
+          <div style="background:var(--panel2); border:1px solid var(--line); border-radius:7px; padding:5px; text-align:center; margin-top:4px;">
+            <span style="font-size:8px; color:#34d399;">● 영상 회의 진행 중 (3인) · 02:14</span>
+          </div>
+        </div>
+      </div>
+      <div class="caption">폐쇄망 내 채팅·파일·음성·영상 회의</div>
+    </div>
+  </div>
+
+  <p class="small muted" style="margin-top:10px; text-align:center;">※ 화면 예시는 임의 현장명(청수시·한빛배수지 등) 데모 데이터로 구성했습니다.</p>
+
+  <div class="foot-brand">SLM Brochure</div><div class="pageno">04</div>
+</section>
+
+<!-- ════════════ p.5 구성·기술 ════════════ -->
+<section class="page">
+  <span class="kicker">Editions &amp; Tech</span>
+  <h2>제품 구성과 기술</h2>
+  <div class="rule"></div>
+
+  <h3>필요한 만큼 선택하는 모듈형 구성</h3>
+  <table class="spec">
+    <tr><th style="width:18%;">등급</th><th>구성</th><th style="width:30%;">이런 사이트에</th></tr>
+    <tr><td><b>Basic</b></td><td>감시·알람·작업·GIS 기본 운영</td><td>신규 구축 사이트</td></tr>
+    <tr><td><b>Plus</b></td><td>+ 관망수리분석(EPANET) + 트렌드 비교</td><td>관망 데이터 보유 사이트</td></tr>
+    <tr><td><b>Enterprise</b></td><td>+ AI 멀티모달 진단 + 매뉴얼 RAG + 자동 보고서</td><td>AI 차별화 활용 사이트</td></tr>
+  </table>
+  <p class="small muted">설치 후 관리 화면 토글로 모듈 관리 — 등급 변경 시 재설치 불필요</p>
+
+  <h3 style="margin-top:14px;">기술 스택 요약</h3>
+  <div class="cols">
+    <div class="col">
+      <ul>
+        <li>웹 기반 — 브라우저만으로 접속, 모바일 반응형</li>
+        <li>PostgreSQL + TimescaleDB 시계열 엔진</li>
+        <li>로컬 AI (LLM·비전·음성인식) — GPU 서버 1대로 구동</li>
+        <li>Docker 기반 설치 · region 멀티테넌시로 고객별 격리</li>
+        <li>무중단 업그레이드 경로 + 자동 모델 재학습 내장</li>
+      </ul>
+    </div>
+    <div class="col">
+      <div style="background:var(--navy); border-radius:10px; padding:12px; color:#dbe6f5;">
+        <svg viewBox="0 0 300 96" width="100%">
+          <rect x="4" y="34" width="76" height="30" rx="6" fill="#122238" stroke="#31415f"/>
+          <text x="42" y="52" font-size="8.5" fill="#dbe6f5" text-anchor="middle">브라우저</text>
+          <rect x="104" y="34" width="76" height="30" rx="6" fill="#122238" stroke="#22d3ee"/>
+          <text x="142" y="52" font-size="8.5" fill="#7dd3fc" text-anchor="middle">웹/백엔드</text>
+          <rect x="206" y="4" width="90" height="26" rx="6" fill="#122238" stroke="#10b981"/>
+          <text x="251" y="21" font-size="8" fill="#6ee7b7" text-anchor="middle">시계열 DB</text>
+          <rect x="206" y="36" width="90" height="26" rx="6" fill="#122238" stroke="#a78bfa"/>
+          <text x="251" y="53" font-size="8" fill="#c4b5fd" text-anchor="middle">로컬 AI</text>
+          <rect x="206" y="68" width="90" height="26" rx="6" fill="#122238" stroke="#f59e0b"/>
+          <text x="251" y="85" font-size="8" fill="#fcd34d" text-anchor="middle">SCADA 연계</text>
+          <g stroke="#31415f" stroke-width="1.4">
+            <line x1="80" y1="49" x2="104" y2="49"/><line x1="180" y1="44" x2="206" y2="18"/>
+            <line x1="180" y1="49" x2="206" y2="49"/><line x1="180" y1="54" x2="206" y2="80"/>
+          </g>
+        </svg>
+        <div style="font-size:8.5px; color:#7dd3fc; text-align:center; margin-top:4px;">┄ 폐쇄망 경계 안에서 전부 구동 ┄</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:10px;">
+    <b>보안 검토가 쉬운 제품</b> — 외부 API·CDN·클라우드 의존이 없어
+    폐쇄망 반입 심사 대응 자료가 단순합니다. 오프라인 자산 번들 절차 제공.
+  </div>
+
+  <div class="foot-brand">SLM Brochure</div><div class="pageno">05</div>
+</section>
+
+<!-- ════════════ p.6 뒷표지 ════════════ -->
+<section class="page" style="background:linear-gradient(200deg,#0a1120 0%,#0f1b2d 60%,#122a45 100%); color:#e8eef8; display:flex; flex-direction:column;">
+  <div style="margin-top:12mm;">
+    <span class="kicker" style="color:var(--cyan);">Getting Started</span>
+    <h2 style="color:#fff;">도입 절차</h2>
+    <div style="height:3px; width:44px; background:linear-gradient(90deg,var(--cyan),var(--blue)); border-radius:2px; margin:8px 0 16px;"></div>
+
+    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:8px;">
+      <div style="background:rgba(255,255,255,.05); border:1px solid #22304d; border-radius:10px; padding:10px 8px; text-align:center;">
+        <div style="font-size:16px; font-weight:900; color:var(--cyan);">1</div>
+        <div style="font-size:10px; font-weight:700; margin-top:3px;">요구 분석</div></div>
+      <div style="background:rgba(255,255,255,.05); border:1px solid #22304d; border-radius:10px; padding:10px 8px; text-align:center;">
+        <div style="font-size:16px; font-weight:900; color:var(--cyan);">2</div>
+        <div style="font-size:10px; font-weight:700; margin-top:3px;">기반 구축<br><span style="font-weight:400; font-size:8px; color:#8fa2c0;">CSV 일괄</span></div></div>
+      <div style="background:rgba(255,255,255,.05); border:1px solid #22304d; border-radius:10px; padding:10px 8px; text-align:center;">
+        <div style="font-size:16px; font-weight:900; color:var(--cyan);">3</div>
+        <div style="font-size:10px; font-weight:700; margin-top:3px;">SCADA 연계</div></div>
+      <div style="background:rgba(255,255,255,.05); border:1px solid #22304d; border-radius:10px; padding:10px 8px; text-align:center;">
+        <div style="font-size:16px; font-weight:900; color:var(--cyan);">4</div>
+        <div style="font-size:10px; font-weight:700; margin-top:3px;">검수<br><span style="font-weight:400; font-size:8px; color:#8fa2c0;">자동 E2E</span></div></div>
+      <div style="background:rgba(255,255,255,.05); border:1px solid #22304d; border-radius:10px; padding:10px 8px; text-align:center;">
+        <div style="font-size:16px; font-weight:900; color:var(--cyan);">5</div>
+        <div style="font-size:10px; font-weight:700; margin-top:3px;">인수인계</div></div>
+    </div>
+
+    <ul style="margin-top:16px; color:#b9c8de;">
+      <li style="color:#b9c8de;">구축 업체(SI) 파트너 공급 모델 — 파트너 문의 환영</li>
+      <li style="color:#b9c8de;">온사이트 데모 지원</li>
+      <li style="color:#b9c8de;">상세 기능·사양은 <b style="color:#fff;">제품 카탈로그(16p)</b> 참조</li>
+    </ul>
+  </div>
+
+  <div style="margin-top:auto; text-align:center;">
+    <div style="font-size:12px; letter-spacing:4px; color:var(--cyan); font-weight:700;">SLM</div>
+    <p style="font-size:13px; color:#dbe6f5; margin-top:8px; line-height:1.8;">
+      감시에서 구축까지, 알람에서 조치까지.<br>
+      <b style="color:#fff;">폐쇄망 안에서 완결되는 AI 상수도 통합 운영 플랫폼.</b>
+    </p>
+    <div style="margin-top:20px; font-size:10.5px; color:#8fa2c0; line-height:1.9;">
+      <b style="color:#dbe6f5;">공급사명 (주)○○○○</b> · 담당자 · 000-0000-0000 · sales@example.co.kr
+    </div>
+    <div style="margin-top:14px; font-size:8.5px; color:#5d6f8e;">© 2026 ○○○○. 브로셔 v0.1 · 화면 예시는 임의 현장명 데모 데이터입니다.</div>
+  </div>
+</section>
+
+</body>
+</html>
