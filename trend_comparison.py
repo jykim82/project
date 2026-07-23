@@ -610,59 +610,85 @@ def compute_comparison(
                 _bm = _dels[len(_dels) // 2]  # 중앙값 간격(분)
         _ctx_vals = vals
         if _bm and 0 < _bm < 30:
-            _agg = max(1, int(round(30.0 / _bm)))
-            if _agg > 1:
-                _coarse: list = []
-                for _i in range(0, len(vals), _agg):
-                    _chunk = [v for v in vals[_i:_i + _agg] if v is not None]
-                    _coarse.append(
-                        sum(_chunk) / len(_chunk) if _chunk else None)
-                _ctx_vals = _coarse
-        # ── 일주기 강신호는 계절 나이브(24h 전 동일 시각) 우선 (E-049) ──
-        # Chronos 중앙값은 위상 불확실성에서 진폭이 눌려 "실측과 다른 파형"
-        # 으로 보임. 24h 자기상관 r>=0.6 이면 어제 패턴 + 레벨 시프트(연속성
-        # 보정)가 진폭·위상·연결 모두 실측과 일치.
+            # 균일 30분 "시간 격자"에 배치 — 위치 기반 압축은 결측 구간에서
+            # 시간축이 줄어들어 주기 검출(ACF)·계절 패턴이 전부 어긋난다 (E-049)
+            try:
+                _t0 = times[0]
+                _slots = int((times[-1] - _t0).total_seconds() // 1800) + 1
+                if 0 < _slots <= 4096:
+                    _acc: list = [[] for _ in range(_slots)]
+                    for _t, _v in zip(times, vals):
+                        if _v is None:
+                            continue
+                        _acc[int((_t - _t0).total_seconds() // 1800)].append(_v)
+                    _ctx_vals = [
+                        (sum(c) / len(c)) if c else None for c in _acc
+                    ]
+            except Exception:
+                _agg = max(1, int(round(30.0 / _bm)))
+                if _agg > 1:
+                    _ctx_vals = [
+                        (lambda ch: sum(ch) / len(ch) if ch else None)(
+                            [v for v in vals[_i:_i + _agg] if v is not None])
+                        for _i in range(0, len(vals), _agg)
+                    ]
+        # ── 주기 신호는 계절 나이브(지배 주기 전 동일 위상) 우선 (E-049) ──
+        # 고정 24h 가 아니라 자기상관 스캔(8~36h)으로 지배 주기를 찾는다
+        # (난지마을 실측: 14h 주기 r=0.81 — 24h 고정 검사는 역위상 -0.74).
+        # r>=0.6 이면 "직전 주기 패턴 반복 + 연속성 앵커"가 실측과 같은
+        # 파형·진폭을 보장. Chronos 중앙값은 위상 불확실성에서 진폭이 눌림.
         _seasonal_done = False
-        _LAG = 48  # 30분 그리드 24h
-        if (_bm and len(f_times) <= _LAG and len(_ctx_vals) >= _LAG * 2 + 2):
-            _a = _ctx_vals[-(_LAG * 2):]
-            _prs = [(_a[i], _a[i + _LAG]) for i in range(_LAG)
-                    if _a[i] is not None and _a[i + _LAG] is not None]
-            if len(_prs) >= 24:
+        if _bm and len(_ctx_vals) >= 120:  # 30분 그리드 2.5일 이상
+            def _r_at(_lag: int):
+                _prs = [(_ctx_vals[_i], _ctx_vals[_i + _lag])
+                        for _i in range(len(_ctx_vals) - _lag)
+                        if _ctx_vals[_i] is not None
+                        and _ctx_vals[_i + _lag] is not None]
+                if len(_prs) < 40:
+                    return None
                 _mx = sum(x for x, _ in _prs) / len(_prs)
                 _my = sum(y for _, y in _prs) / len(_prs)
                 _num = sum((x - _mx) * (y - _my) for x, y in _prs)
                 _den = (sum((x - _mx) ** 2 for x, _ in _prs)
                         * sum((y - _my) ** 2 for _, y in _prs)) ** 0.5
-                _r = (_num / _den) if _den > 0 else 0.0
-                if _r >= 0.6:
-                    _pat = list(_ctx_vals[-_LAG:])  # 어제 이 시각 → 지금
-                    # 결측은 인접값으로 보간
-                    _lastv = None
-                    for _i in range(len(_pat)):
-                        if _pat[_i] is None:
-                            _pat[_i] = _lastv
-                        else:
-                            _lastv = _pat[_i]
-                    _lastv = None
-                    for _i in range(len(_pat) - 1, -1, -1):
-                        if _pat[_i] is None:
-                            _pat[_i] = _lastv
-                        else:
-                            _lastv = _pat[_i]
-                    _now_v = next((v for v in reversed(_ctx_vals)
+                return (_num / _den) if _den > 0 else 0.0
+
+            _best_r, _best_lag = 0.0, None
+            for _lag in range(16, min(73, len(_ctx_vals) // 2), 2):
+                _rv = _r_at(_lag)
+                if _rv is not None and _rv > _best_r:
+                    _best_r, _best_lag = _rv, _lag
+            if _best_lag and _best_r >= 0.6:
+                # 직전 주기 패턴 (결측은 인접값 보간)
+                _pat = list(_ctx_vals[-_best_lag:])
+                _fill = None
+                for _i in range(len(_pat)):
+                    if _pat[_i] is None:
+                        _pat[_i] = _fill
+                    else:
+                        _fill = _pat[_i]
+                _fill = None
+                for _i in range(len(_pat) - 1, -1, -1):
+                    if _pat[_i] is None:
+                        _pat[_i] = _fill
+                    else:
+                        _fill = _pat[_i]
+                if all(v is not None for v in _pat):
+                    _sv = [float(_pat[_i % _best_lag])
+                           for _i in range(len(f_times))]
+                    # 연속성 앵커 — 시작점을 마지막 실측에 맞추고 선형 점감
+                    _now_v = next((v for v in reversed(vals)
                                    if v is not None), None)
-                    _prev_same = _ctx_vals[-(_LAG + 1)] if len(_ctx_vals) > _LAG else None
-                    _shift = ((_now_v - _prev_same)
-                              if (_now_v is not None and _prev_same is not None)
-                              else 0.0)
-                    if all(v is not None for v in _pat):
-                        f_vals = [round(v + _shift, 3)
-                                  for v in _pat[:len(f_times)]]
-                        fc_method = "seasonal_24h"
-                        if len(f_vals) > 1 and forecast_hours:
-                            slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
-                        _seasonal_done = True
+                    if _now_v is not None:
+                        _off = _now_v - _sv[0]
+                        _nn = max(1, len(_sv) - 1)
+                        _sv = [round(v + _off * (1 - _i / _nn), 3)
+                               for _i, v in enumerate(_sv)]
+                    f_vals = _sv
+                    fc_method = f"seasonal_{_best_lag * 30 // 60}h"
+                    if len(f_vals) > 1 and forecast_hours:
+                        slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
+                    _seasonal_done = True
         _ch = None
         if not _seasonal_done:
             try:
