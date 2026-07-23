@@ -681,8 +681,12 @@ def compute_comparison(
                                    if v is not None), None)
                     if _now_v is not None:
                         _off = _now_v - _sv[0]
-                        _nn = max(1, len(_sv) - 1)
-                        _sv = [round(v + _off * (1 - _i / _nn), 3)
+                        # 오프셋은 초반 램프(~2h)에서만 소멸 — 전 구간 점감은
+                        # 패턴 고점을 관측 최대 위로 들어 올림 (사용자 지적:
+                        # 실측이 3을 넘은 적 없는데 예측 3.3)
+                        _ramp = max(1, min(4, len(_sv) - 1))
+                        _sv = [round(v + (_off * (1 - _i / _ramp)
+                                          if _i < _ramp else 0.0), 3)
                                for _i, v in enumerate(_sv)]
                     f_vals = _sv
                     fc_method = f"seasonal_{_best_lag * 30 // 60}h"
