@@ -31,6 +31,21 @@ logger = logging.getLogger("slm")
 
 router = APIRouter()
 
+# vision_agent 매뉴얼 RAG 인덱스 리로드 (E-025 P3 #5 — 업로드/삭제 즉시 반영)
+VISION_AGENT_URL = os.environ.get("VISION_AGENT_URL", "http://host.docker.internal:8100")
+
+
+def _notify_manual_reload() -> bool:
+    """업로드/삭제 후 vision_agent 인덱스 재로드 — best-effort (실패해도 본 작업 성공)."""
+    try:
+        import httpx
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(f"{VISION_AGENT_URL}/vision/manuals/reload")
+            return r.status_code == 200
+    except Exception as e:
+        logger.info(f"vision_agent manual reload skip: {e}")
+        return False
+
 # ---------------------------------------------------------------------------
 # ai_server.py에서 주입받는 의존성
 # ---------------------------------------------------------------------------
@@ -971,8 +986,8 @@ async def upload_equipment_manual(
 
     기존 `index_manuals.py` 로직을 재사용(`index_single_pdf`)하여 업로드 즉시
     RAG 인덱스에 반영한다. 동일 title이 이미 있으면 UPSERT (NPZ도 교체).
-    인덱싱 후 vision_agent가 새 매뉴얼을 검색 결과에 포함시키려면 **재시작 필요**
-    (`_ManualRagIndex._loaded=False`로 강제 재로드하는 API는 미구현 — 수동 restart).
+    인덱싱 후 vision_agent `/vision/manuals/reload` 를 호출해 **즉시 검색 반영**
+    (E-025 P3 #5). 리로드 실패 시에만 응답 hint 로 수동 재시작 안내.
     """
     # 파일 검증
     contents = await file.read()
@@ -1038,7 +1053,9 @@ async def upload_equipment_manual(
             cur.close()
 
         logger.info(f"매뉴얼 업로드+인덱싱 완료: {filename} → {result}")
-        return {"status": "OK", "result": result, "hint": "vision_agent 재시작 필요"}
+        _reloaded = _notify_manual_reload()
+        return {"status": "OK", "result": result,
+                "hint": "검색 반영 완료" if _reloaded else "vision_agent 재시작 필요 (reload 실패)"}
     except ValueError as e:
         logger.warning(f"매뉴얼 인덱싱 실패: {e}")
         return {"status": "ERROR", "message": str(e)}
@@ -1091,7 +1108,9 @@ async def delete_equipment_manual(manual_id: int):
             except Exception as e:
                 logger.warning(f"NPZ 삭제 실패: {e}")
 
-        return {"status": "OK", "hint": "vision_agent 재시작 필요"}
+        _reloaded = _notify_manual_reload()
+        return {"status": "OK",
+                "hint": "검색 반영 완료" if _reloaded else "vision_agent 재시작 필요 (reload 실패)"}
     except psycopg2.Error as e:
         logger.error(f"매뉴얼 삭제 실패: {e}")
         if conn:

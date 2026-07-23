@@ -1247,6 +1247,25 @@ def reload_fault_cases() -> dict:
         raise HTTPException(500, f"reload 실패: {e}")
 
 
+@app.post("/vision/manuals/reload")
+def reload_manuals() -> dict:
+    """매뉴얼 업로드/삭제 후 호출 — RAG 인덱스 강제 재로드 (재시작 불필요).
+
+    E-025 P3 검토 #5 마감: admin 업로드/삭제 endpoint 가 인덱싱 후 호출.
+    """
+    try:
+        # load() 는 _rows 에 append 하므로 재로드 전 상태를 완전 초기화해야
+        # 중복 적재(2830→5660)가 없다
+        _rag_index._loaded = False
+        _rag_index._rows = []
+        _rag_index._embeddings = None
+        _rag_index.load()
+        return {"status": "ok", "chunks": len(_rag_index._rows)}
+    except Exception as e:
+        logger.warning(f"manual reload 실패: {e}")
+        raise HTTPException(500, f"reload 실패: {e}")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # /vision/manual-search — 독립 RAG 엔드포인트
 # ─────────────────────────────────────────────────────────────────────
