@@ -707,20 +707,36 @@ def compute_comparison(
                 f_band_lower = _q10[:len(f_times)]
                 f_band_upper = _q90[:len(f_times)]
                 fc_method = "chronos_bolt"
-                # 연속성 앵커 (E-049) — 전망 시작점을 마지막 실측값에 맞추고
-                # 그 오프셋을 예측 구간에 걸쳐 선형 점감 (점프 없이 이어짐,
-                # 장기 수준은 모델 예측 유지)
+                # 연속성 앵커 (E-049) — 값 + **기울기** 연속.
+                # 값만 이으면 배수(톱니) 신호에서 전망이 곧바로 평균 쪽으로
+                # 꺾여 "당장 추세와 반대"로 보임 (사용자 검증: 합덕일반 수위2).
+                # 초반 4h 는 최근 6h 기울기 연장을 블렌드하고 점차 모델로 수렴.
                 _last_obs = next((v for v in reversed(vals) if v is not None), None)
                 if _last_obs is not None and f_vals:
+                    # 최근 6h 단순 기울기 (30분 격자 기준)
+                    _slope30 = 0.0
+                    if _ctx_vals and len(_ctx_vals) > 12:
+                        _recent = [v for v in _ctx_vals[-13:] if v is not None]
+                        if len(_recent) >= 4:
+                            _slope30 = (_recent[-1] - _recent[0]) / max(1, len(_recent) - 1)
                     _off = _last_obs - f_vals[0]
-                    _n = max(1, len(f_vals) - 1)
-                    f_vals = [round(v + _off * (1 - i / _n), 3)
-                              for i, v in enumerate(f_vals)]
+                    _ramp = max(1, min(8, len(f_vals) - 1))  # ~4h
+                    _out = []
+                    for i, v in enumerate(f_vals):
+                        _w = max(0.0, 1 - i / _ramp)  # 1→0 (초반 램프)
+                        _ext = _last_obs + _slope30 * (i + 1)  # 기울기 연장
+                        _out.append(round(_w * _ext + (1 - _w) * v
+                                          + _off * _w * 0.0, 3))
+                    # 시작점 정확 일치 보정 (블렌드 후 미세 격차 제거)
+                    _gap = _last_obs - _out[0] if _out else 0.0
+                    _out = [round(v + _gap * max(0.0, 1 - i / _ramp), 3)
+                            for i, v in enumerate(_out)]
+                    f_vals = _out
                     if f_band_lower:
-                        f_band_lower = [round(v + _off * (1 - i / _n), 3)
+                        f_band_lower = [round(v + _off * max(0.0, 1 - i / _ramp), 3)
                                         for i, v in enumerate(f_band_lower)]
                     if f_band_upper:
-                        f_band_upper = [round(v + _off * (1 - i / _n), 3)
+                        f_band_upper = [round(v + _off * max(0.0, 1 - i / _ramp), 3)
                                         for i, v in enumerate(f_band_upper)]
                 # slope 는 방향 지표 — 예측 곡선 전체 기울기로 재산출
                 if len(f_vals) > 1 and forecast_hours:
