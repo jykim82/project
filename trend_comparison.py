@@ -593,17 +593,35 @@ def compute_comparison(
     f_band_upper = None
     f_band_lower = None
     if f_times:
+        # Chronos 는 예측 스텝을 "입력 시계열 간격" 단위로 해석한다 (E-049).
+        # 전망 그리드(30분 간격)와 입력 버킷(예: 6분)이 다르면 시간축이
+        # 스케일되어 주기 신호가 늘어진 완만 곡선으로 왜곡 → 입력 간격
+        # 기준 스텝 수로 예측한 뒤 30분 그리드 지점만 추출한다.
+        _bm = None
+        if len(times) >= 3:
+            _dels = sorted(
+                (times[i + 1] - times[i]).total_seconds() / 60.0
+                for i in range(max(0, len(times) - 21), len(times) - 1)
+                if (times[i + 1] - times[i]).total_seconds() > 0
+            )
+            if _dels:
+                _bm = _dels[len(_dels) // 2]  # 중앙값 간격(분)
+        _stride = 1
+        _steps = len(f_times)
+        if _bm and 0 < _bm < 30:
+            _stride = max(1, int(round(30.0 / _bm)))
+            _steps = _stride * len(f_times)
         try:
             from trend_forecast import chronos_forecast
-            _ch = chronos_forecast(vals, len(f_times))
+            _ch = chronos_forecast(vals, _steps)
         except Exception:
             _ch = None
         if _ch:
             _med, _q10, _q90 = _ch
-            if len(_med) >= len(f_times):
-                f_vals = _med[:len(f_times)]
-                f_band_lower = _q10[:len(f_times)]
-                f_band_upper = _q90[:len(f_times)]
+            if len(_med) >= _steps:
+                f_vals = _med[_stride - 1::_stride][:len(f_times)]
+                f_band_lower = _q10[_stride - 1::_stride][:len(f_times)]
+                f_band_upper = _q90[_stride - 1::_stride][:len(f_times)]
                 fc_method = "chronos_bolt"
                 # slope 는 방향 지표 — 예측 곡선 전체 기울기로 재산출
                 if len(f_vals) > 1 and forecast_hours:
@@ -621,8 +639,11 @@ def compute_comparison(
                       (abs(_obs_max) * 0.05 if _obs_max is not None else 0.0), 0.05)
         if _obs_max is not None:
             _upper = _obs_max + _margin
-            # 수위는 만수위(탱크 상단)를 넘지 않게 추가 상한
-            if trend_kind == "level" and threshold is not None:
+            # 수위는 만수위(탱크 상단)를 넘지 않게 추가 상한 — 단, threshold 가
+            # 관측 최대보다 위일 때만 (저수위/운영 하한 임계에 적용하면 전망
+            # 상단이 잘려 주기가 납작해짐 — E-049 난지마을 사례)
+            if (trend_kind == "level" and threshold is not None
+                    and threshold > _obs_max):
                 _upper = min(_upper, round(threshold / 0.9, 3))
         else:
             _upper = None
