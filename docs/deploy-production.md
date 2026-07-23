@@ -96,7 +96,15 @@ scripts/switch-frontend-dev.sh    # 개발(HMR) 복귀
   `nohup scripts/watch-frontend-prod.sh >/tmp/slm-fe-watch.log 2>&1 &`
   (중지: `pkill -f watch-frontend-prod.sh`). fswatch 불필요.
 - backend/db 는 건드리지 않으므로 이상감지 캐시 등 유지.
-- DDNS(`*.asuscomm.com` 등)·LAN IP·새 IP 어디로 접속해도 HMR 이 없어 리로드 없음.
+- DDNS(`dnhigh98.duckdns.org` — 2026-07-23 LG U+ 라우터 전환으로 asuscomm 폐기,
+  Mac launchd `local.slm.duckdns` 5분 갱신)·LAN IP·새 IP 어디로 접속해도 HMR 이
+  없어 리로드 없음.
+- **LG U+ 공유기는 NAT 루프백 미지원** — LAN 안에서는 공개 도메인 접속이
+  타임아웃된다(정상). 내부는 `https://<LAN IP>:3000`, 외부는 도메인(443).
+  내부에서 도메인을 쓰려면 해당 PC hosts 에 `<LAN IP> dnhigh98.duckdns.org` 추가.
+- 외부망 통화(TURN)는 `.env` `TURN_HOST`(도메인)+`TURN_EXTERNAL_IP`(공인 IP,
+  **정적 — IP 변경 시 수동 갱신+coturn 재기동**) 소비. 검증:
+  `GET /call/turn-credentials`.
 - **주의**: 접속 도메인이 cert SAN 에 없으면 브라우저 1회 인증서 경고(리로드와
   무관, 클릭 통과). 경고 제거는 §인증서 참조.
 
