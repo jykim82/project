@@ -594,9 +594,11 @@ def compute_comparison(
     f_band_lower = None
     if f_times:
         # Chronos 는 예측 스텝을 "입력 시계열 간격" 단위로 해석한다 (E-049).
-        # 전망 그리드(30분 간격)와 입력 버킷(예: 6분)이 다르면 시간축이
-        # 스케일되어 주기 신호가 늘어진 완만 곡선으로 왜곡 → 입력 간격
-        # 기준 스텝 수로 예측한 뒤 30분 그리드 지점만 추출한다.
+        # 전망 그리드(30분)와 입력 버킷(예: 5~6분)이 다르면 시간축이 스케일돼
+        # 주기가 왜곡된다. 세분 예측 후 추출 방식은 Bolt 원생 한도(64스텝)를
+        # 넘겨 자기회귀 이어붙기로 주기가 다시 뭉개짐 → **컨텍스트를 30분
+        # 버킷으로 다운샘플**해 48스텝(≤64) 원샷 예측. 부수 효과로 컨텍스트
+        # 512스텝이 10일치가 되어 일주기를 여러 번 학습한다.
         _bm = None
         if len(times) >= 3:
             _dels = sorted(
@@ -606,23 +608,90 @@ def compute_comparison(
             )
             if _dels:
                 _bm = _dels[len(_dels) // 2]  # 중앙값 간격(분)
-        _stride = 1
-        _steps = len(f_times)
+        _ctx_vals = vals
         if _bm and 0 < _bm < 30:
-            _stride = max(1, int(round(30.0 / _bm)))
-            _steps = _stride * len(f_times)
-        try:
-            from trend_forecast import chronos_forecast
-            _ch = chronos_forecast(vals, _steps)
-        except Exception:
-            _ch = None
+            _agg = max(1, int(round(30.0 / _bm)))
+            if _agg > 1:
+                _coarse: list = []
+                for _i in range(0, len(vals), _agg):
+                    _chunk = [v for v in vals[_i:_i + _agg] if v is not None]
+                    _coarse.append(
+                        sum(_chunk) / len(_chunk) if _chunk else None)
+                _ctx_vals = _coarse
+        # ── 일주기 강신호는 계절 나이브(24h 전 동일 시각) 우선 (E-049) ──
+        # Chronos 중앙값은 위상 불확실성에서 진폭이 눌려 "실측과 다른 파형"
+        # 으로 보임. 24h 자기상관 r>=0.6 이면 어제 패턴 + 레벨 시프트(연속성
+        # 보정)가 진폭·위상·연결 모두 실측과 일치.
+        _seasonal_done = False
+        _LAG = 48  # 30분 그리드 24h
+        if (_bm and len(f_times) <= _LAG and len(_ctx_vals) >= _LAG * 2 + 2):
+            _a = _ctx_vals[-(_LAG * 2):]
+            _prs = [(_a[i], _a[i + _LAG]) for i in range(_LAG)
+                    if _a[i] is not None and _a[i + _LAG] is not None]
+            if len(_prs) >= 24:
+                _mx = sum(x for x, _ in _prs) / len(_prs)
+                _my = sum(y for _, y in _prs) / len(_prs)
+                _num = sum((x - _mx) * (y - _my) for x, y in _prs)
+                _den = (sum((x - _mx) ** 2 for x, _ in _prs)
+                        * sum((y - _my) ** 2 for _, y in _prs)) ** 0.5
+                _r = (_num / _den) if _den > 0 else 0.0
+                if _r >= 0.6:
+                    _pat = list(_ctx_vals[-_LAG:])  # 어제 이 시각 → 지금
+                    # 결측은 인접값으로 보간
+                    _lastv = None
+                    for _i in range(len(_pat)):
+                        if _pat[_i] is None:
+                            _pat[_i] = _lastv
+                        else:
+                            _lastv = _pat[_i]
+                    _lastv = None
+                    for _i in range(len(_pat) - 1, -1, -1):
+                        if _pat[_i] is None:
+                            _pat[_i] = _lastv
+                        else:
+                            _lastv = _pat[_i]
+                    _now_v = next((v for v in reversed(_ctx_vals)
+                                   if v is not None), None)
+                    _prev_same = _ctx_vals[-(_LAG + 1)] if len(_ctx_vals) > _LAG else None
+                    _shift = ((_now_v - _prev_same)
+                              if (_now_v is not None and _prev_same is not None)
+                              else 0.0)
+                    if all(v is not None for v in _pat):
+                        f_vals = [round(v + _shift, 3)
+                                  for v in _pat[:len(f_times)]]
+                        fc_method = "seasonal_24h"
+                        if len(f_vals) > 1 and forecast_hours:
+                            slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
+                        _seasonal_done = True
+        _ch = None
+        if not _seasonal_done:
+            try:
+                from trend_forecast import chronos_forecast
+                _ch = chronos_forecast(_ctx_vals, len(f_times))
+            except Exception:
+                _ch = None
         if _ch:
             _med, _q10, _q90 = _ch
-            if len(_med) >= _steps:
-                f_vals = _med[_stride - 1::_stride][:len(f_times)]
-                f_band_lower = _q10[_stride - 1::_stride][:len(f_times)]
-                f_band_upper = _q90[_stride - 1::_stride][:len(f_times)]
+            if len(_med) >= len(f_times):
+                f_vals = _med[:len(f_times)]
+                f_band_lower = _q10[:len(f_times)]
+                f_band_upper = _q90[:len(f_times)]
                 fc_method = "chronos_bolt"
+                # 연속성 앵커 (E-049) — 전망 시작점을 마지막 실측값에 맞추고
+                # 그 오프셋을 예측 구간에 걸쳐 선형 점감 (점프 없이 이어짐,
+                # 장기 수준은 모델 예측 유지)
+                _last_obs = next((v for v in reversed(vals) if v is not None), None)
+                if _last_obs is not None and f_vals:
+                    _off = _last_obs - f_vals[0]
+                    _n = max(1, len(f_vals) - 1)
+                    f_vals = [round(v + _off * (1 - i / _n), 3)
+                              for i, v in enumerate(f_vals)]
+                    if f_band_lower:
+                        f_band_lower = [round(v + _off * (1 - i / _n), 3)
+                                        for i, v in enumerate(f_band_lower)]
+                    if f_band_upper:
+                        f_band_upper = [round(v + _off * (1 - i / _n), 3)
+                                        for i, v in enumerate(f_band_upper)]
                 # slope 는 방향 지표 — 예측 곡선 전체 기울기로 재산출
                 if len(f_vals) > 1 and forecast_hours:
                     slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
