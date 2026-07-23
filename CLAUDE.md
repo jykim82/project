@@ -220,6 +220,10 @@ web/
 - `docs/startup-spec.md` — 시작 페이지
 - `docs/tweaks-layout-spec.md` — 테마/브랜드/레이아웃 Tweaks 패널
 
+## 마케팅·영업 자산
+- `docs/catalog-draft.md` — 제품 카탈로그 초안 (A4 16p 구성 — 개요·차별화 4·기능군 4축·SKU·기술 사양·구축 프로세스. 캡처 15점 목록 + 확정 필요 항목 부록)
+- `docs/brochure-draft.md` — 제품 브로셔 초안 (A4 6p / 3단 접지 — 카탈로그 요약판. 관심 유발용, 캡처 7점)
+
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성
 - `docs/chat-smoke-test-guide.md` — 채팅 스모크 테스트 (대표 인텐트 16개 자동 E2E. Backend `test_chat_smoke.py`+`chat_smoke_cases.json`. ai_server/인텐트 변경·리팩토링 후 필수 실행, 납품 검수 겸용)
