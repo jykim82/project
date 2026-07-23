@@ -406,3 +406,11 @@ Sankey와 달리 Bezier 곡선 대신 **직각 엘보우(elbow)** 라인 사용 
 4. **탭 vs 별도 페이지:** `/setup/flow-map` 내 탭 전환 vs `/setup/flow-diagram` 신규 라우트?
 5. **Base map:** 완전히 빈 캔버스 vs 간단한 격자(grid) 배경?
 6. **3방향 연계:** 노드 클릭 시 `/chat` 딥링크 + `/setup/gis` 딥링크 둘 다?
+
+## 펌프 호기별 가동 표시 (2026-07-23)
+
+pump_status 확장: `pumps: [{no, running}]` — flow_realtime 이 태그
+datainfo(가압펌프N/인버터N/직기동N)에서 호기 추출, 호기 단위 MAX 집계.
+계통도 노드(PumpFanRow lg)·GIS 시설 카드의 팬 아이콘에 **호기 번호 표기**
+(아이콘 순서=실제 호기. 이전엔 가동 대수만큼 앞에서 색칠 — 율사 사례:
+2호 가동인데 1호처럼 보임). pumps 없으면 기존 대수 표시 폴백.
