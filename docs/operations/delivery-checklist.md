@@ -26,6 +26,9 @@
       (docs/operations/*-cron.md)
 
 ## 4. 검수
+- [ ] **구축 완결성 검수** — `/setup/audit` (구축 > 구축 완결성 검수) 1회
+      실행: **warn 0 이 인수 기준**, info 항목(SCADA 임계·EPANET)은 발주처
+      결정 기록 (docs/setup-audit-spec.md)
 - [ ] **채팅 스모크 3층** — Tier1 `python test_chat_smoke.py` 16/16 +
       Tier2 e2e + Tier3 `/admin/chat-gallery` 육안 (docs/chat-smoke-test-guide.md)
 - [ ] 인터넷 차단 상태에서: GIS 지도·음성 입력·트렌드 전망(chronos_bolt)·
