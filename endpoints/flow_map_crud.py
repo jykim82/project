@@ -16,11 +16,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["flow-map"])
 
 _get_db_connection = None
+_rebuild_causal_entry = None  # (sitename, facilitytype) → 인과 인덱스 부분 재구축
 
 
-def init(get_db_connection_fn):
-    global _get_db_connection
+def init(get_db_connection_fn, rebuild_causal_entry_fn=None):
+    global _get_db_connection, _rebuild_causal_entry
     _get_db_connection = get_db_connection_fn
+    _rebuild_causal_entry = rebuild_causal_entry_fn
+
+
+def _refresh_causal(*facilities: tuple[str, str]):
+    """관계 변경 즉시 인과 인덱스 반영 — 재기동 의존 제거 (구축 고도화 ②).
+
+    물수지·교차검증·상류추적이 쓰는 _CAUSAL_INDEX 의 upstream/downstream
+    참조를 변경 시설 양쪽만 부분 재구축한다. best-effort (실패해도 CRUD 성공).
+    """
+    if _rebuild_causal_entry is None:
+        return
+    for sn, ft in facilities:
+        try:
+            _rebuild_causal_entry(sn, ft)
+        except Exception as e:
+            logger.info(f"causal 부분 재구축 건너뜀 ({sn} {ft}): {e}")
 
 
 def _get_conn():
@@ -171,6 +188,10 @@ async def create_flow_map(req: dict):
         ))
         conn.commit()
         cur.close()
+        _refresh_causal(
+            (req["upstream_sitename"], req["upstream_facilitytype"]),
+            (req["downstream_sitename"], req["downstream_facilitytype"]),
+        )
         return {"status": "OK"}
     except Exception as e:
         if conn:
@@ -205,6 +226,10 @@ async def delete_flow_map(
         deleted = cur.rowcount
         conn.commit()
         cur.close()
+        _refresh_causal(
+            (upstream_sitename, upstream_facilitytype),
+            (downstream_sitename, downstream_facilitytype),
+        )
         return {"status": "OK", "deleted": deleted}
     except Exception as e:
         if conn:

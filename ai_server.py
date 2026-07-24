@@ -932,8 +932,9 @@ def _rebuild_causal_index_entry(sitename: str, facilitytype: str):
 
         template = _CAUSAL_TEMPLATE_MAP.get(facilitytype)
         if not template or not tag_map:
+            # conn.close() 는 finally 에서만 — 여기서 닫으면 풀 이중 반환
+            # ("trying to put unkeyed connection") 으로 이후 호출이 깨진다
             cur.close()
-            conn.close()
             return
 
         # upstream/downstream 재조회
@@ -2353,8 +2354,13 @@ init_monitoring_catalogs(get_db_connection)
 app.include_router(monitoring_catalogs_router)
 
 # 용수 흐름 CRUD 엔드포인트 모듈 초기화
-init_flow_map_crud(get_db_connection)
+init_flow_map_crud(get_db_connection, _rebuild_causal_index_entry)
 app.include_router(flow_map_crud_router)
+
+# 계통도 자동 레이아웃 + 정합 lint (구축 고도화 ②)
+from endpoints.flow_diagram_layout import router as flow_diagram_layout_router, init as init_flow_diagram_layout
+init_flow_diagram_layout(get_db_connection, _rebuild_causal_index_entry)
+app.include_router(flow_diagram_layout_router)
 
 # CSV 일괄 가져오기 엔드포인트 모듈 초기화
 init_csv_import(get_db_connection)
