@@ -2573,6 +2573,11 @@ from endpoints.datainfo_rules import router as datainfo_rules_router, init as in
 init_datainfo_rules(get_db_connection)
 app.include_router(datainfo_rules_router)
 
+# 구축 완결성 검수 리포트 (구축 고도화 ③)
+from endpoints.setup_audit import router as setup_audit_router, init as init_setup_audit
+init_setup_audit(get_db_connection)
+app.include_router(setup_audit_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
