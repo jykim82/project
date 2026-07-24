@@ -14,6 +14,7 @@
 GET /monitoring/equipment-health/replacement-priority?limit=5&days=90
 """
 import logging
+from datetime import datetime as _dt, timezone as _tz
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -34,6 +35,9 @@ _SCORE_RECURRENCE = 3.0
 _SCORE_ALARM_SURGE = 3.0   # 기간 내 >=1000건 + 최근 7일에도 발생 (폭주 지속)
 _SCORE_ALARM_HIGH = 1.5    # 기간 내 >=100건
 _ALARM_HIGH_MIN = 100
+# 계측 품질 불량 지속 — 값이 아니라 계측기 자체 문제 신호 (교체보다 점검 유도)
+_SCORE_QUALITY_STUCK = 1.5
+_QUALITY_STUCK_MIN_DAYS = 7
 _ALARM_SURGE_MIN = 1000
 
 _LEVEL_VERY_HIGH = 5.0
@@ -131,6 +135,29 @@ def _alarm_trend_signals(cur, days: int) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def _quality_signals(cur) -> list[dict]:
+    """계측 품질 불량 지속 — 태그의 설비 그룹 단위 (P3, tag-quality-layer-spec).
+
+    tb_tag_quality 에서 7일+ 지속 이상 태그를 설비 유형으로 묶어 점검 후보로.
+    DI상시ON의심(접점/결선)·센서포화·고착 등은 교체가 아니라 계측기 점검
+    신호이므로 가중치는 낮게(1.5), 사유 라벨로 점검 방향을 명시한다.
+    """
+    cur.execute("""
+        SELECT ti.sitename, ti.facilitytype,
+               COALESCE(ti.equipmenttype, '계측기') AS equipmenttype,
+               COUNT(*) AS tag_cnt,
+               MIN(q.since) AS oldest_since,
+               STRING_AGG(DISTINCT q.reason, '·') AS reasons
+        FROM tb_tag_quality q
+        JOIN tb_tag_info ti ON ti.tagsn = q.tagsn
+        WHERE q.since <= now() - make_interval(days => %s)
+          AND ti.sitename IS NOT NULL
+        GROUP BY 1, 2, 3
+    """, (_QUALITY_STUCK_MIN_DAYS,))
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def _recurrence_signals(days: int) -> list[dict]:
     """조치 후 재발 지속 그룹 (sitename+facilitytype+equipmenttype 단위).
 
@@ -178,6 +205,11 @@ def replacement_priority(
         except Exception as e:
             logger.warning("실알람 추세 신호 집계 실패 — 나머지 신호로 동작: %s", e)
             alarm_trend = []
+        try:
+            quality = _quality_signals(cur)
+        except Exception as e:
+            logger.warning("계측 품질 신호 집계 실패 — 나머지 신호로 동작: %s", e)
+            quality = []
         cur.close()
     finally:
         conn.close()
@@ -253,6 +285,21 @@ def replacement_priority(
                 "type": "alarm_trend",
                 "label": f"최근 {days}일 알람 {cnt:,}건"
                          + (" · 지속 중" if int(r["recent7_cnt"]) > 0 else ""),
+            })
+
+    # 계측 품질 불량 지속 — 그룹 단위 (점검 유도 신호)
+    for r in quality:
+        group = (r["sitename"], r["facilitytype"], r["equipmenttype"])
+        matched = [e for k, e in entries.items() if k[:3] == group and k[3] is not None]
+        targets = matched or [_entry(*group, None)]
+        days_stuck = (0 if not r.get("oldest_since")
+                      else max(0, (_dt.now(_tz.utc) - r["oldest_since"]).days))
+        for e in targets:
+            e["score"] += _SCORE_QUALITY_STUCK
+            e["reasons"].append({
+                "type": "quality_stuck",
+                "label": f"계측 품질 이상 {r['tag_cnt']}건 {days_stuck}일+ 지속 "
+                         f"({r['reasons']}) — 계측기 점검 권장",
             })
 
     rows = sorted(entries.values(), key=lambda e: (-e["score"], -len(e["reasons"])))

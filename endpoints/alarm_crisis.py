@@ -162,20 +162,27 @@ async def get_alarm_notifications():
         """)
         ongoing_count = cur.fetchone()[0] or 0
 
+        # quality_suspect: 태그가 품질 계층(tb_tag_quality) 이상 상태 — 값 신뢰
+        # 불가라 프런트가 경고 모달 대신 완화 표시 (P3. 알람 자체는 보존 —
+        # feedback_no_auto_alarm_link 원칙, 노출 단계 분리만)
         cur.execute("""
             SELECT ar.tagsn,
                    ar.alarm_start_time,
                    COALESCE(ti.sitename, '알 수 없음') AS sitename,
                    COALESCE(ti.facilitytype, '') AS facilitytype,
                    COALESCE(ar.alarm_severity, '정상') AS severity,
-                   COALESCE(ar.alarm_msg, ar.alarm_category || ' 알람') AS message
+                   COALESCE(ar.alarm_msg, ar.alarm_category || ' 알람') AS message,
+                   (q.tagsn IS NOT NULL) AS quality_suspect,
+                   q.reason AS quality_reason
             FROM tb_equipment_alarm_report ar
             LEFT JOIN tb_tag_info ti ON ar.tagsn = ti.tagsn
+            LEFT JOIN tb_tag_quality q ON q.tagsn = ar.tagsn AND q.region = 'R01'
             WHERE ar.alarm_status = '진행중'
             ORDER BY ar.alarm_start_time DESC
             LIMIT 5
         """)
-        cols = ["tagsn", "alarm_start_time", "sitename", "facilitytype", "severity", "message"]
+        cols = ["tagsn", "alarm_start_time", "sitename", "facilitytype", "severity",
+                "message", "quality_suspect", "quality_reason"]
         items = [dict(zip(cols, row)) for row in cur.fetchall()]
         for item in items:
             if item["alarm_start_time"]:
