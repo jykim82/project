@@ -469,6 +469,13 @@ source 없으면 None 반환 → 응답에서 omit.
 
 ## 7. 프런트 — PlotChart 강화
 
+> **계측 품질 게이트 (2026-07-24):** 대상 태그가 `tb_tag_quality` 품질 이상이면
+> `compute_comparison` 이 `comparison.quality_issue` 를 내려보내고,
+> `ComparisonHeader` 가 평소 대비/전망 판정 배지를 violet
+> **"계측 품질 {reason} · 판정 신뢰 불가"** 로 대체한다 (오버레이 토글·차트는
+> 참고용 유지). 기준선 학습도 불량 구간(since~)을 제외 — 상세:
+> `docs/tag-quality-layer-spec.md` P2.
+
 ### 7.1 PlotData 타입 확장
 
 `src/lib/types/plot.ts`:
