@@ -1,6 +1,6 @@
 # DATAINFO 변환룰 사양 v1 — 구축 고도화 ①
 
-> **상태:** v1 (2026-07-24) — P1 구현 착수
+> **상태:** v1 — **P1 구현 완료 (2026-07-24)** + 태그 단위 정책(0118). 29룰 재현율 74.1%
 > **목적:** SCADA 원본 태그 설명(`datadesc`)을 SLM 조회 표준(`datainfo`)으로
 > **룰 기반 자동 변환**한다. 신규 구축 시 수천 태그의 datainfo 수동 입력
 > (오타 = 조회 실패)을 "자동 변환 + 예외만 검토" 워크플로로 대체.
@@ -15,13 +15,14 @@
   `datainfo` 키워드('유량·적산·수위·알람·SET' 등)에 의존.
 - 실측 (2026-07-24, 2,700태그): datadesc↔datainfo **완전 동일 26%** —
   74%는 변환돼 있고 패턴이 규칙적. **기본 룰 12개만으로 59% 재현**,
-  사전·문맥 룰 확장 시 90%+ 전망.
+  사전·문맥 룰 확장 시 90%+ 전망 (P1 시드 29룰 실측 74.1% — 잔여는
+  원본 축약 등 exclude/override 대상).
 - 대표 변환 유형: `#N`·`N호`→`N` / 영문 약어 표준화(FLT→FAULT, RUN→동작,
   AT→자동, REMOTE→원격) / `경보_`→`알람 ` / **조회 키워드 보강**
   ("순시유량(실선)"→"유량순시유량 실선" — '유량' 삽입) / 설비명 표준화
   ("펌프2호"→"가압펌프2", 시설유형 문맥 필요)
 
-## 2. 룰 모델 — 4계층 파이프라인 (우선순위 순차 적용)
+## 2. 룰 모델 — 변환 4계층 + 태그 정책 (우선순위 순차 적용)
 
 | # | rule_type | 동작 | 예 |
 |---|---|---|---|
@@ -31,15 +32,15 @@
 | 4 | `override` | 태그 단위 최종 결과 고정 (tagsn 키) | 룰로 못 잡는 예외 |
 | 5 | `exclude` | **태그 단위 변환 제외** — 현행 datainfo 유지, 일괄 적용에서도 스킵 (tagsn 키, Migration 0118) | 원본 축약("RE" 등)·룰이 오히려 훼손하는 태그 |
 
-- 적용 순서: priority ASC → 같은 priority 는 id ASC. override 는 항상 최후.
+- 적용 순서: priority ASC → 같은 priority 는 id ASC. 태그 정책(override/exclude)은 변환 룰보다 항상 우선.
 - region 별 룰셋 분리 (멀티테넌시) — **고객사 SCADA 명명 관례별 재사용 자산**.
 
 ## 3. 저장 — `tb_datainfo_rule` (Migration 0117)
 
 ```
-rule_id serial PK, region, rule_type(regex|dict|context|override),
+rule_id serial PK, region, rule_type(regex|dict|context|override|exclude — 0118),
 pattern, replacement, context_facilitytype, context_tagtype,
-target_tagsn(override 용), priority int, enabled bool,
+target_tagsn(override/exclude 용), priority int, enabled bool,
 notes, updated_at, updated_by
 ```
 
@@ -49,16 +50,17 @@ notes, updated_at, updated_by
 |---|---|---|
 | GET | `/setup/datainfo-rules` | 룰 목록 |
 | POST/PUT/DELETE | `/setup/datainfo-rules` | 룰 CRUD |
-| POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 그대로) / `match`(변환 결과=현 info) / `diff`(결과≠현 info) / 신규 태그는 `new` |
-| POST | `/setup/datainfo-rules/apply` | 선택 tagsn 목록의 datainfo 를 변환 결과로 UPDATE (적용 이력 로그) |
-| GET | `/setup/datainfo-rules/score` | **재현율 채점** — 기존 2,700쌍 대상 룰 적용 → 일치율% (룰셋 완성도 정량화) |
+| POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 동일) / `match`(변환=현 info — 룰 검증) / `diff`(≠현 info — 검토·적용 후보) / `excluded`(태그 정책 제외 — 현행 유지) / `manual`(override 확정) |
+| POST | `/setup/datainfo-rules/apply` | 선택 tagsn 의 datainfo UPDATE (이력 로그 → 롤백 가능). **exclude 태그는 전 경로 스킵** |
+| GET | `/setup/datainfo-rules/score` | **재현율 채점** — 기존 쌍 대상 일치율% (정책 태그는 분모 분리 — excluded/manual 별도 카운트) |
 
 ## 5. 구축 UI (`/setup/datainfo-rules`)
 
 - 좌: 룰 테이블 (유형·패턴·치환·우선순위·on/off) + 추가/수정
 - 상단: **재현율 스코어 카드** (룰 변경 즉시 재채점 — 룰셋 품질이 수치로 보임)
 - 우/하: 미리보기 테이블 — before/after diff 하이라이트, 분류 필터
-  (match=자동 적용 후보 / diff=검토 필요), 체크 선택 → 일괄 적용
+  (match=자동 적용 후보 / diff=검토 필요 / 변환 제외 / 수동 확정), 행별
+  **[제외]/[확정] 버튼**으로 태그 정책 지정, 체크 선택 → 일괄 적용
 - 신규 페이지 등록: `sidebar-menus.ts` + `tb_menu` INSERT (규칙 준수)
 
 ## 6. 안전 장치
