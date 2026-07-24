@@ -27,6 +27,7 @@ LOW_SIGNAL_RATIO = float(os.environ.get("TQ_LOW_SIGNAL_RATIO", "0.1"))  # Q5
 _REASON_STATUS = {
     "센서무응답": "bad",
     "데이터없음": "bad",
+    "통신두절의심": "bad",
     "센서포화의심": "suspect",
     "신호고착의심": "suspect",
     "데이터홀딩": "suspect",
@@ -35,7 +36,7 @@ _REASON_STATUS = {
 }
 # 복수 사유 시 우선순위 (심각한 것부터)
 _REASON_ORDER = [
-    "센서무응답", "데이터없음", "센서포화의심", "신호고착의심",
+    "통신두절의심", "센서무응답", "데이터없음", "센서포화의심", "신호고착의심",
     "데이터홀딩", "DI상시ON의심", "값이탈저신호",
 ]
 
@@ -145,8 +146,47 @@ def _check_analog(cur) -> dict:
     return issues
 
 
+def _site_liveliness(cur, sitenames: list[str]) -> dict[str, dict]:
+    """사이트별 통신 생존 신호 — DI 상시 ON 의 사유 구분용 (삼화 사례).
+
+    - ping_alive: 최근 15분 네트워크 체크에 성공 있음 (행 없으면 None=미감시)
+    - moving_analog: 최근 6h 값이 실제로 변한 Analog 태그 수 (0 = 전면 동결)
+    """
+    if not sitenames:
+        return {}
+    out: dict[str, dict] = {s: {"ping_alive": None, "moving": None} for s in sitenames}
+    cur.execute("""
+        SELECT e.sitename, BOOL_OR(ns.is_alive)
+        FROM tb_network_status ns
+        JOIN tb_equipment_info e ON e.equipment_id = ns.equipment_id
+        WHERE e.sitename = ANY(%s) AND ns.check_time > now() - interval '15 minutes'
+        GROUP BY e.sitename
+    """, (sitenames,))
+    for sn, alive in cur.fetchall():
+        out[sn]["ping_alive"] = bool(alive)
+    cur.execute("""
+        SELECT ti.sitename,
+               COUNT(DISTINCT s.tagsn) FILTER (WHERE s.min_val <> s.max_val) AS moving,
+               COUNT(DISTINCT s.tagsn) AS total
+        FROM cagg_5min_raw_stats_ai s
+        JOIN tb_tag_info ti ON ti.tagsn = s.tagsn
+        WHERE ti.sitename = ANY(%s) AND ti.tagtype = 'Analog Input'
+          AND s.bucket >= now() - interval '6 hours'
+        GROUP BY ti.sitename
+    """, (sitenames,))
+    for sn, moving, total in cur.fetchall():
+        out[sn]["moving"] = int(moving)
+        out[sn]["analog_total"] = int(total)
+    return out
+
+
 def _check_di(cur) -> dict:
-    """Q4 — 장애 그룹 DI 상시 ON (접점 반전/고착 의심, 죽동 정전 DI 사례)."""
+    """Q4 — 장애 그룹 DI 상시 ON. ping·아날로그 유동성 교차로 사유 구분:
+
+    - 통신두절의심: ping 실패 또는 사이트 아날로그 전면 동결 (삼화 유형)
+      → 통신망 복구 대상 (DI 가 사실을 말하는 경우)
+    - DI상시ON의심: 아날로그는 정상 유동 (죽동 유형) → 접점 반전/결선 점검
+    """
     cur.execute("""
         WITH di AS (
             SELECT gm.tagsn, dg.group_code, ti.sitename, ti.facilitytype, ti.datainfo
@@ -162,15 +202,38 @@ def _check_di(cur) -> dict:
         WHERE r.logtime >= now() - interval '7 days'
         GROUP BY d.tagsn, d.sitename, d.facilitytype, d.datainfo, d.group_code
     """)
+    stuck = [(tagsn, sn, ft, di, gc, float(on_ratio))
+             for tagsn, sn, ft, di, gc, on_ratio in cur.fetchall()
+             if on_ratio is not None and float(on_ratio) >= DI_ON_RATIO]
+    live = _site_liveliness(cur, sorted({sn for _, sn, *_ in stuck}))
+
     issues: dict[str, dict] = {}
-    for tagsn, sn, ft, di, gc, on_ratio in cur.fetchall():
-        if on_ratio is not None and float(on_ratio) >= DI_ON_RATIO:
+    for tagsn, sn, ft, di, gc, on_ratio in stuck:
+        lv = live.get(sn, {})
+        ping_dead = lv.get("ping_alive") is False
+        frozen = lv.get("moving") == 0 and (lv.get("analog_total") or 0) > 0
+        if ping_dead or frozen:
+            evidence = " · ".join(
+                (["PLC ping 실패"] if ping_dead else [])
+                + ([f"아날로그 {lv.get('analog_total')}태그 전면 동결"] if frozen else []))
+            issues[tagsn] = {
+                "sitename": sn, "facilitytype": ft, "datainfo": di,
+                "reason": "통신두절의심",
+                "detail": (f"7일 on {on_ratio*100:.0f}% + {evidence} — "
+                           f"실제 통신 두절로 판단, 통신망 복구 필요 ({gc})"),
+                "stats": {"on_ratio": round(on_ratio, 3), "group": gc,
+                          "ping_alive": lv.get("ping_alive"),
+                          "moving_analog": lv.get("moving")},
+            }
+        else:
             issues[tagsn] = {
                 "sitename": sn, "facilitytype": ft, "datainfo": di,
                 "reason": "DI상시ON의심",
-                "detail": (f"최근 7일 on 비율 {float(on_ratio)*100:.0f}% — "
-                           f"접점 반전/고착 의심으로 설비 장애 판정 제외 ({gc})"),
-                "stats": {"on_ratio": round(float(on_ratio), 3), "group": gc},
+                "detail": (f"최근 7일 on 비율 {on_ratio*100:.0f}% (다른 계측은 정상 유동) — "
+                           f"접점 반전/고착 의심, 결선 점검 필요 ({gc})"),
+                "stats": {"on_ratio": round(on_ratio, 3), "group": gc,
+                          "ping_alive": lv.get("ping_alive"),
+                          "moving_analog": lv.get("moving")},
             }
     return issues
 
@@ -261,9 +324,14 @@ def fetch_tag_issue(cur, tagsn: str, region: str = "R01") -> dict | None:
 
 
 def fetch_stuck_di_tagsns(cur, region: str = "R01") -> set:
-    """설비 장애 게이트용 — DI 상시 ON 태그 집합."""
+    """설비 장애 게이트용 — 상시 ON DI 태그 집합 (반전 의심 + 통신 두절 모두).
+
+    두 사유 다 '매 스캔 확정 사고' 반복 통보 대상이 아니다 — 반전은 오경보,
+    두절은 이미 아는 장기 상태 (데이터 품질군에서 사유별로 표시).
+    """
     cur.execute(
-        "SELECT tagsn FROM tb_tag_quality WHERE region=%s AND reason='DI상시ON의심'",
+        "SELECT tagsn FROM tb_tag_quality WHERE region=%s "
+        "AND reason IN ('DI상시ON의심', '통신두절의심')",
         (region,))
     return {r[0] for r in cur.fetchall()}
 
