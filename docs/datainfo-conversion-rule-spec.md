@@ -29,6 +29,7 @@
 | 2 | `dict` | 단어 사전 치환 (word boundary) | `FLT` → `FAULT` |
 | 3 | `context` | 조건부 치환 — 시설유형/tagtype 컨텍스트 매칭 시만 | 가압장+`펌프` → `가압펌프` |
 | 4 | `override` | 태그 단위 최종 결과 고정 (tagsn 키) | 룰로 못 잡는 예외 |
+| 5 | `exclude` | **태그 단위 변환 제외** — 현행 datainfo 유지, 일괄 적용에서도 스킵 (tagsn 키, Migration 0118) | 원본 축약("RE" 등)·룰이 오히려 훼손하는 태그 |
 
 - 적용 순서: priority ASC → 같은 priority 는 id ASC. override 는 항상 최후.
 - region 별 룰셋 분리 (멀티테넌시) — **고객사 SCADA 명명 관례별 재사용 자산**.
@@ -77,3 +78,9 @@ notes, updated_at, updated_by
 
 ## 변경 이력
 - 2026-07-24 v1 — 실측 기반 설계 (12룰 59% 재현 확인)
+- 2026-07-24 **태그 단위 정책 (exclude/확정) — Migration 0118** — 사용자
+  지적("치환이 맞을 때와 적용 안 될 때의 구분·필터 필요") 반영. 미리보기
+  분류에 `excluded`(변환 제외 — 현행 유지)·`manual`(override 확정) 추가,
+  행별 [제외]/[확정] 버튼으로 지정. 재현율 분모에서 정책 태그 분리 집계.
+  apply 는 exclude 태그를 어떤 경로로도 스킵. E2E: 지정→분류 전환→일괄
+  적용 스킵(applied 0/skipped 1)→score excluded 1 검증.
