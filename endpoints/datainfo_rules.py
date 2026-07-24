@@ -46,6 +46,14 @@ def _load_rules(cur, region: str) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def tag_policy(rules: list[dict], tagsn: str) -> Optional[str]:
+    """태그 단위 정책 — 'exclude'(변환 제외·현행 유지) | 'override'(확정) | None."""
+    for r in rules:
+        if r.get("target_tagsn") == tagsn and r["rule_type"] in ("exclude", "override"):
+            return r["rule_type"]
+    return None
+
+
 def apply_rules(desc: str, rules: list[dict],
                 facilitytype: str = "", tagtype: str = "",
                 tagsn: str = "") -> str:
@@ -120,8 +128,10 @@ def list_rules(region: str = Query("R01")):
 
 @router.post("")
 def create_rule(body: RuleBody, region: str = Query("R01"), user: str = Query("")):
-    if body.rule_type not in ("regex", "dict", "context", "override"):
+    if body.rule_type not in ("regex", "dict", "context", "override", "exclude"):
         raise HTTPException(400, "rule_type 오류")
+    if body.rule_type in ("override", "exclude") and not body.target_tagsn:
+        raise HTTPException(400, f"{body.rule_type} 룰은 target_tagsn 필수")
     if body.rule_type == "regex":
         try:
             re.compile(body.pattern)
@@ -214,17 +224,25 @@ def preview(region: str = Query("R01"), sitename: str = Query(""),
     """전/필터 태그에 룰 적용 미리보기.
 
     분류: unchanged(desc=현 info) / match(변환=현 info — 룰 재현 성공) /
-          diff(변환≠현 info — 검토·적용 후보)
+          diff(변환≠현 info — 검토·적용 후보) /
+          excluded(태그 단위 변환 제외 — 현행 유지) / manual(override 확정)
     """
     conn = _conn()
     try:
         cur = conn.cursor()
         rules = _load_rules(cur, region)
         rows = _fetch_tags(cur, sitename, keyword)
-        out, counts = [], {"unchanged": 0, "match": 0, "diff": 0}
+        out, counts = [], {"unchanged": 0, "match": 0, "diff": 0,
+                           "excluded": 0, "manual": 0}
         for tagsn, sn, ft, tt, desc, info in rows:
+            policy = tag_policy(rules, tagsn)
             converted = apply_rules(desc, rules, ft or "", tt or "", tagsn)
-            if _norm(desc) == _norm(info):
+            if policy == "exclude":
+                cat = "excluded"
+                converted = _norm(info)  # 제외 = 현행 유지
+            elif policy == "override":
+                cat = "manual"
+            elif _norm(desc) == _norm(info):
                 cat = "unchanged"
             elif converted == _norm(info):
                 cat = "match"
@@ -244,14 +262,25 @@ def preview(region: str = Query("R01"), sitename: str = Query(""),
 
 @router.get("/score")
 def score(region: str = Query("R01")):
-    """룰셋 재현율 — 기존 desc→info 쌍 대비 (룰셋 완성도 정량 지표)."""
+    """룰셋 재현율 — 기존 desc→info 쌍 대비 (룰셋 완성도 정량 지표).
+
+    제외(exclude)·확정(override) 태그는 룰 평가 대상이 아니므로 분모에서
+    빼고 별도 카운트로 보고한다.
+    """
     conn = _conn()
     try:
         cur = conn.cursor()
         rules = _load_rules(cur, region)
         rows = _fetch_tags(cur)
-        total = ok = raw_same = 0
+        total = ok = raw_same = excluded = manual = 0
         for tagsn, _sn, ft, tt, desc, info in rows:
+            policy = tag_policy(rules, tagsn)
+            if policy == "exclude":
+                excluded += 1
+                continue
+            if policy == "override":
+                manual += 1
+                continue
             total += 1
             if _norm(desc) == _norm(info):
                 raw_same += 1
@@ -261,6 +290,8 @@ def score(region: str = Query("R01")):
         return {"status": "OK", "total": total,
                 "raw_same": raw_same,
                 "reproduced": ok,
+                "excluded": excluded,
+                "manual": manual,
                 "score_pct": round(ok / total * 100, 1) if total else 0,
                 "rule_count": len(rules)}
     finally:
@@ -288,6 +319,10 @@ def apply_to_tags(tagsns: list[str] = Body(..., embed=True),
             (tagsns,))
         applied = skipped = 0
         for tagsn, ft, tt, desc, info in cur.fetchall():
+            # 제외 태그는 어떤 경로로도 변환 적용 금지 (현행 유지)
+            if tag_policy(rules, tagsn) == "exclude":
+                skipped += 1
+                continue
             converted = apply_rules(desc, rules, ft or "", tt or "", tagsn)
             if not converted or converted == _norm(info):
                 skipped += 1
