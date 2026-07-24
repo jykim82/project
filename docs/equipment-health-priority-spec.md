@@ -17,6 +17,9 @@ MTBF(개요 하단 표), 재발 지속(교체 후보 분석 탭). 운영자가 �
 | MTBF < 30일 (fault_cnt≥2) | v_equipment_mtbf | +3.0 |
 | MTBF < 90일 | 〃 | +1.5 |
 | 재발 지속 (replacement_candidate) | alarm_fault_correlation.equipment_status **직접 호출** | +3.0 |
+| 실알람 폭주 지속 (기간 ≥1000건+최근 7일 발생) | tb_equipment_alarm_report 그룹 집계 (v2) | +3.0 |
+| 실알람 다발 (기간 ≥100건) | 〃 | +1.5 |
+| 계측 품질 이상 7일+ 지속 (`quality_stuck`) | tb_tag_quality 그룹 집계 (P3, 2026-07-24) — 교체보다 **계측기·결선 점검 유도** 라벨 | +1.5 |
 
 - 레벨: score ≥5 `매우 높음` / ≥3 `높음` / 그 외 `보통`
 - **판정 로직 이원화 방지**: 재발 신호는 P5-rev `equipment_status()` 함수를

@@ -141,6 +141,12 @@
 
 ### 4.1 lastCheckedAt 기반
 - notification-store 이미 보유
+- **계측 품질 게이트 (P3, 2026-07-24)**: `/monitoring/alarm-notifications`
+  items 에 `quality_suspect`/`quality_reason`(tb_tag_quality 조인) 추가.
+  품질 이상 태그의 새 알람은 경고 모달·OS 알림·종합 카드 판정에서 제외하고
+  **info toast "계측 품질 의심"** 로만 안내 (값 신뢰 불가 — 센서 점검 유도).
+  알람 자체는 벨 목록·이력에 그대로 보존 (자동 해제·억제 없음 —
+  feedback_no_auto_alarm_link 원칙, 노출 단계 분리만).
 - 모달/toast 표시 후 자동 `markAsChecked()` → 다음 폴링에서 같은 알람 재노출 X
 
 ### 4.2 페이지 navigate 시
