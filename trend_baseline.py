@@ -95,9 +95,13 @@ def _load_hourly_frame(conn, region: str, window_days: int):
         SELECT r.tagsn, date_trunc('hour', r.logtime) AS ts, AVG(r.val) AS y
           FROM tb_tag_raw_data r
           JOIN tb_tag_info t ON t.tagsn = r.tagsn
+          LEFT JOIN tb_tag_quality q ON q.tagsn = r.tagsn AND q.region = r.region
          WHERE r.region = %s
            AND r.logtime > NOW() - (%s || ' days')::interval
            AND r.val IS NOT NULL
+           -- 품질 불량 진행 구간(since~) 제외 — 포화/고착 데이터의 학습 오염 차단
+           -- (docs/tag-quality-layer-spec.md P2. 정상 복귀 시 행 삭제 → 제외 없음)
+           AND (q.since IS NULL OR r.logtime < q.since)
            AND t.tagtype NOT LIKE %s
            AND COALESCE(t.datainfo,'') NOT LIKE %s
            AND COALESCE(t.datainfo,'') NOT LIKE %s

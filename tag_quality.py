@@ -247,6 +247,19 @@ def fetch_issues(cur, region: str = "R01", sitename: str | None = None) -> list[
     return out
 
 
+def fetch_tag_issue(cur, tagsn: str, region: str = "R01") -> dict | None:
+    """단일 태그의 현재 품질 이상 — 트렌드 카드 배지·판정 게이트용 (P2)."""
+    cur.execute(
+        "SELECT status, reason, detail, since FROM tb_tag_quality "
+        "WHERE region = %s AND tagsn = %s",
+        (region, tagsn))
+    r = cur.fetchone()
+    if not r:
+        return None
+    return {"status": r[0], "reason": r[1], "detail": r[2],
+            "since": r[3].isoformat() if r[3] else None}
+
+
 def fetch_stuck_di_tagsns(cur, region: str = "R01") -> set:
     """설비 장애 게이트용 — DI 상시 ON 태그 집합."""
     cur.execute(

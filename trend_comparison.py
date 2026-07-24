@@ -104,9 +104,13 @@ def _hourly_pattern_baseline(
              WHERE tagsn = %s
                AND logtime > NOW() - (%s || ' days')::interval
                AND val IS NOT NULL
+               -- 품질 불량 진행 구간 제외 — 포화/고착 값의 기준선 오염 차단 (P2)
+               AND logtime < COALESCE(
+                   (SELECT since FROM tb_tag_quality
+                     WHERE region = 'R01' AND tagsn = %s), 'infinity'::timestamptz)
              GROUP BY h
             """,
-            (tagsn, str(learning_days)),
+            (tagsn, str(learning_days), tagsn),
         )
         hourly_rows = cur.fetchall()
         if len(hourly_rows) < 24:        # 1일 미만 → 데이터 부족
@@ -545,6 +549,20 @@ def compute_comparison(
 
     out: dict = {"trend_kind": trend_kind,
                  "computed_at": datetime.now(timezone.utc).isoformat()}
+
+    # ── 계측 품질 게이트 (P2) ────────────────────────────
+    # 대상 태그가 품질 이상(포화·고착·무응답 등)이면 판정 신뢰 불가 플래그를
+    # 내려보낸다 — 프런트는 평소 대비/전망 배지 대신 품질 배지를 표시.
+    # baseline/forecast 자체는 계산 유지 (차트 오버레이 참고용).
+    try:
+        import tag_quality
+        _qcur = conn.cursor()
+        _qi = tag_quality.fetch_tag_issue(_qcur, tagsn)
+        _qcur.close()
+        if _qi:
+            out["quality_issue"] = _qi
+    except Exception as e:
+        logger.debug(f"trend_comparison: 품질 조회 건너뜀 ({e})")
 
     # ── baseline ─────────────────────────────────────────
     # GBT(정상 기대값) 우선, 실패/데이터부족 시 hourly_mean 폴백 (사양 §4).
