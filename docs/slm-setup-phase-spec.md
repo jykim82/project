@@ -1,5 +1,11 @@
 # 기초정보 구축 & 컬럼 잠금 기능 명세
 
+> **구축 고도화 3부작 (2026-07-24):** 본 사양의 구축 워크플로를 확장하는
+> 후속 — ① `docs/datainfo-conversion-rule-spec.md`(태그 datainfo 룰 변환)
+> ② `docs/flow-diagram-engineering-spec.md`(계통도 자동 배치·정합)
+> ③ `docs/setup-audit-spec.md`(구축 완결성 검수 — 기초정보 미등록 검사가
+> 본 사양의 구축 대상 테이블과 태그 마스터를 대조한다)
+
 > **상태 (2026-07-19): 컬럼 잠금은 미구현 상태로 UI·메뉴 제거됨** — 프런트가
 > mock 데이터·로컬 state 뿐이었고 백엔드 참조 0건, `tb_field_lock` 0행이라
 > 구축 메뉴 개편(Migration 0103)에서 잠금 관리 메뉴(M200-10)와 관련 컴포넌트를

@@ -3730,3 +3730,39 @@ realtime-comm-spec **확정판 v2**. LTE↔PC 외부망 실통화 성공으로 �
 목록 ↔ 달력 토글 (작성일 기준 월 그리드 + 선택일 목록 + 클릭 상세,
 월 100건 초과 안내). MemoCalendar 컴포넌트 — 일정 알림 달력과 동일 look.
 memo-schedule-spec §4 반영. 확장 후보: 메모→일정 등록 연계, 대상 날짜 필드.
+
+---
+
+## 품질 계층 완결 + SCAN_ALL 33× + 구축 고도화 3부작 (2026-07-23~24)
+
+**태그 품질 계층 P1~P3 (tag-quality-layer-spec)**
+- 검사 5종(포화·고착·무신호·DI 반전·값 이탈) 단일 배치 → tb_tag_quality
+  (0115) + 1h 내장 루프. 소비처 일원화(진단·요약·대시보드·DI 게이트)
+- P2: 기준선 학습 보호(since 이후 제외) + 트렌드 카드 "판정 신뢰 불가" 배지
+- P3: 품질 의심 알람 완화 표시(모달 제외→info toast) + 교체 우선순위
+  5번째 신호 quality_stuck(계측기 점검 라벨)
+- DI 사유 이원화: 통신두절의심(ping+아날로그 동결 교차 — 삼화·성북1리
+  실두절 발견) vs DI상시ON의심(접점 반전 — 죽동)
+
+**성능·모델 운영**
+- SCAN_ALL 캐시 1,217s→36.4s (33×) — cagg_1h(0116) + SQL 재작성, 289태그
+  전수 검증 후 교체. ANOMALY_COMPARE tag_scale 적용 (E-051 전 경로 마감)
+- baseline 재학습 cron 공백(5주) 발견 → launchd 등록 + 학습 지연 배지 +
+  태그별 hm 게이트(0114, 725/831). Chronos 이미지 영구 반영 (E-048 마감)
+
+**구축 고도화 3부작**
+- ① DATAINFO 변환룰 (0117, /setup/datainfo-rules M200-20) — 4계층 룰
+  엔진 + 미리보기·선별 적용·이력 롤백 + 재현율 채점 (29룰 74.1%)
+- ② 계통도 엔지니어링화 — relayout API(new_only/full) + lint(누락·고아·
+  순환) + 노드 배치 드래그 편집기 + CRUD→causal 즉시 리로드
+- ③ 구축 완결성 검수 (/setup/audit M200-21) — 검사 6종 집계, 납품 인수
+  기준(warn 0). 첫 실행에서 가압장 기초정보 미등록 11곳 검출
+
+**데이터 정합**
+- 합덕일반 datainfo 오타 2건·수청 계열 블록 기초정보 7곳·신펑1 오타 정정
+- SCADA 임계 전수 조사 (alarm-threshold-coverage) — 압력 33곳 공백(가압장
+  전원), 수위 완비, 유량=통계 감시 소관
+
+**인프라**
+- LG U+ 라우터 전환 + dnhigh98.duckdns.org 개통 (LE 443, launchd 갱신,
+  TURN 도메인·공인 IP 갱신). asuscomm 폐기
