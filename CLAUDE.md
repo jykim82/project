@@ -215,6 +215,7 @@ web/
 - `docs/field-mode-spec.md` — 현장 모드 v3 (/field — ①알람 대응(확장 액션: 사진 진단/고장 기록/매뉴얼/조치) ②시설 선택 작업(일상점검·알람 없는 설비) ③진행중 장애 조치 완료 ④자유 입력. 처리는 채팅 재사용, field-handoff 사진 전달, FieldModeBanner, Migration 0099 M009)
 - `docs/tag-quality-layer-spec.md` — 태그 품질 계층 v1 (포화·고착·무신호·DI 반전·값 이탈 5종 검사 통합 → tb_tag_quality + 1h 내장 루프. P1 일원화/P2 기준선 보호·판정 게이트/P3 알람 완화·점검 후보 — **전 단계 구현 완료 2026-07-24**)
 - `docs/alarm-threshold-coverage.md` — SCADA 알람 임계 보유 현황 조사 (2026-07-24. 압력 33곳 공백 — 가압장 전원. 수위 완비·유량은 통계 감시 소관 판정. 재조사 SQL + SCADA 보강 우선순위 + 셋업 검수 활용)
+- `docs/datainfo-conversion-rule-spec.md` — DATAINFO 변환룰 (구축 고도화 ①. datadesc→datainfo 룰 4계층(regex/dict/context/override) + 미리보기·선별 적용·이력 롤백 + 재현율 채점. Migration 0117, `/setup/datainfo-rules` M200-20. P1 구현 완료 — 29룰 74.1% 재현)
 - `docs/memo-schedule-spec.md` — 업무 메모 + 일정 알림 v1 (Migration 0105. 메모: 검색+달력 보기 토글, 삭제=본인+마스터. 일정: 달력 등록→30s 폴링 전역 팝업, 확인 전 재표시. SCADA 알람과 용어·시스템 분리)
 - `docs/realtime-comm-spec.md` — 실시간 통신 확정판 v2 (전 단계 완료: P1 메신저+그룹 채팅(0106·0113) / P2 파일 전송(0107) / P3 음성·P4 영상 통화(0108~0111) / 3~4인 회의 통화 풀메시(0112) / 외부망 TURN 옵션(coturn·이중 토글). REST 폴링+non-trickle ICE 설계. LTE 실통화 검증)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴

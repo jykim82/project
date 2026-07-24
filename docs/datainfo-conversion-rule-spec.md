@@ -1,0 +1,79 @@
+# DATAINFO 변환룰 사양 v1 — 구축 고도화 ①
+
+> **상태:** v1 (2026-07-24) — P1 구현 착수
+> **목적:** SCADA 원본 태그 설명(`datadesc`)을 SLM 조회 표준(`datainfo`)으로
+> **룰 기반 자동 변환**한다. 신규 구축 시 수천 태그의 datainfo 수동 입력
+> (오타 = 조회 실패)을 "자동 변환 + 예외만 검토" 워크플로로 대체.
+> **관련:** `docs/slm-setup-phase-spec.md`(구축 단계),
+> `docs/alarm-threshold-coverage.md`(datainfo 키워드 의존 실례)
+
+---
+
+## 1. 배경 — datainfo 는 조회 계약이다
+
+- 채팅 인텐트 SQL LIKE·trend_kind 감지·품질 계층·임계 조사 등 시스템 전반이
+  `datainfo` 키워드('유량·적산·수위·알람·SET' 등)에 의존.
+- 실측 (2026-07-24, 2,700태그): datadesc↔datainfo **완전 동일 26%** —
+  74%는 변환돼 있고 패턴이 규칙적. **기본 룰 12개만으로 59% 재현**,
+  사전·문맥 룰 확장 시 90%+ 전망.
+- 대표 변환 유형: `#N`·`N호`→`N` / 영문 약어 표준화(FLT→FAULT, RUN→동작,
+  AT→자동, REMOTE→원격) / `경보_`→`알람 ` / **조회 키워드 보강**
+  ("순시유량(실선)"→"유량순시유량 실선" — '유량' 삽입) / 설비명 표준화
+  ("펌프2호"→"가압펌프2", 시설유형 문맥 필요)
+
+## 2. 룰 모델 — 4계층 파이프라인 (우선순위 순차 적용)
+
+| # | rule_type | 동작 | 예 |
+|---|---|---|---|
+| 1 | `regex` | 정규식 치환 | `#(\d)` → `\1` |
+| 2 | `dict` | 단어 사전 치환 (word boundary) | `FLT` → `FAULT` |
+| 3 | `context` | 조건부 치환 — 시설유형/tagtype 컨텍스트 매칭 시만 | 가압장+`펌프` → `가압펌프` |
+| 4 | `override` | 태그 단위 최종 결과 고정 (tagsn 키) | 룰로 못 잡는 예외 |
+
+- 적용 순서: priority ASC → 같은 priority 는 id ASC. override 는 항상 최후.
+- region 별 룰셋 분리 (멀티테넌시) — **고객사 SCADA 명명 관례별 재사용 자산**.
+
+## 3. 저장 — `tb_datainfo_rule` (Migration 0117)
+
+```
+rule_id serial PK, region, rule_type(regex|dict|context|override),
+pattern, replacement, context_facilitytype, context_tagtype,
+target_tagsn(override 용), priority int, enabled bool,
+notes, updated_at, updated_by
+```
+
+## 4. API (`endpoints/datainfo_rules.py`)
+
+| 메서드 | 경로 | 기능 |
+|---|---|---|
+| GET | `/setup/datainfo-rules` | 룰 목록 |
+| POST/PUT/DELETE | `/setup/datainfo-rules` | 룰 CRUD |
+| POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 그대로) / `match`(변환 결과=현 info) / `diff`(결과≠현 info) / 신규 태그는 `new` |
+| POST | `/setup/datainfo-rules/apply` | 선택 tagsn 목록의 datainfo 를 변환 결과로 UPDATE (적용 이력 로그) |
+| GET | `/setup/datainfo-rules/score` | **재현율 채점** — 기존 2,700쌍 대상 룰 적용 → 일치율% (룰셋 완성도 정량화) |
+
+## 5. 구축 UI (`/setup/datainfo-rules`)
+
+- 좌: 룰 테이블 (유형·패턴·치환·우선순위·on/off) + 추가/수정
+- 상단: **재현율 스코어 카드** (룰 변경 즉시 재채점 — 룰셋 품질이 수치로 보임)
+- 우/하: 미리보기 테이블 — before/after diff 하이라이트, 분류 필터
+  (match=자동 적용 후보 / diff=검토 필요), 체크 선택 → 일괄 적용
+- 신규 페이지 등록: `sidebar-menus.ts` + `tb_menu` INSERT (규칙 준수)
+
+## 6. 안전 장치
+
+- **기존 운영 태그는 diff 검토 후 선별 적용** — datainfo 변경은 조회 계약
+  변경이라 전 시스템 파급. 자동 일괄은 `match`(현 info 재현) 확인용,
+  `diff` 는 명시 선택만 적용.
+- 적용 전 스냅샷: apply 시 (tagsn, old, new) 를 이력 테이블 기록 → 롤백 가능.
+- 미커버 잔여는 수동 입력 유지 — 100% 자동화가 목표가 아니라 "예외만 검토".
+
+## 7. Phase
+
+- **P1 (본 구현):** Migration + 엔진 + CRUD/미리보기/적용/채점 API + 시드
+  룰셋(실측 검증 유형) + setup UI + 재현율 실측 보고
+- P2 (추후): CSV 신규 태그 온보딩 플로 통합 (desc 만 있는 태그 일괄 변환),
+  lint (유량 태그 '유량' 키워드 부재 경고 등 조회 계약 검증)
+
+## 변경 이력
+- 2026-07-24 v1 — 실측 기반 설계 (12룰 59% 재현 확인)
