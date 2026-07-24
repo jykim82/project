@@ -2562,6 +2562,11 @@ from endpoints.epanet import router as epanet_router
 epanet_module.init(get_db_connection)
 app.include_router(epanet_router)
 
+# DATAINFO 변환룰 (구축 고도화 ①, Migration 0117)
+from endpoints.datainfo_rules import router as datainfo_rules_router, init as init_datainfo_rules
+init_datainfo_rules(get_db_connection)
+app.include_router(datainfo_rules_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
