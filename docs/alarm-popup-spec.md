@@ -141,6 +141,9 @@
 
 ### 4.1 lastCheckedAt 기반
 - notification-store 이미 보유
+- **팝업 신선도 컷 24h (2026-07-25)**: 발생 후 24시간 지난 진행중 알람은
+  첫 방문·localStorage 초기화 브라우저에서도 모달/toast 트리거 제외
+  (묵은 알람이 종합 카드로 쏟아지는 문제). 벨 목록·미확인 카운트는 유지.
 - **계측 품질 게이트 (P3, 2026-07-24)**: `/monitoring/alarm-notifications`
   items 에 `quality_suspect`/`quality_reason`(tb_tag_quality 조인) 추가.
   품질 이상 태그의 새 알람은 경고 모달·OS 알림·종합 카드 판정에서 제외하고
