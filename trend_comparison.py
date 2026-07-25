@@ -610,6 +610,8 @@ def compute_comparison(
     # 후처리는 엔진과 무관하게 아래에서 동일 적용된다.
     f_band_upper = None
     f_band_lower = None
+    # 전망 신뢰 낮음 — 변동이 큰 신호인데 지배 주기가 안 잡힌 경우 (배지 "참고" 톤)
+    fc_low_confidence = False
     if f_times:
         # Chronos 는 예측 스텝을 "입력 시계열 간격" 단위로 해석한다 (E-049).
         # 전망 그리드(30분)와 입력 버킷(예: 5~6분)이 다르면 시간축이 스케일돼
@@ -676,6 +678,15 @@ def compute_comparison(
                 _rv = _r_at(_lag)
                 if _rv is not None and _rv > _best_r:
                     _best_r, _best_lag = _rv, _lag
+            if not (_best_lag and _best_r >= 0.6):
+                # 주기 불안정 + 변동 유의(CV>15%) → "이 시설은 원래 예측이
+                # 어려움" — 확정 톤 대신 참고 톤으로 안내 (난지마을 유형)
+                _nn = [v for v in _ctx_vals if v is not None]
+                if _nn:
+                    _m = sum(_nn) / len(_nn)
+                    _sd = (sum((v - _m) ** 2 for v in _nn) / len(_nn)) ** 0.5
+                    if abs(_m) > 1e-9 and _sd / abs(_m) > 0.15:
+                        fc_low_confidence = True
             if _best_lag and _best_r >= 0.6:
                 # 직전 주기 패턴 (결측은 인접값 보간)
                 _pat = list(_ctx_vals[-_best_lag:])
@@ -828,6 +839,8 @@ def compute_comparison(
             "hours_to_threshold": hours_to,
             "status": f_status,
             "status_label": f_label,
+            # 주기 불안정·고변동 시설 — 프런트 배지 "참고" 톤 (확정 아님 안내)
+            "low_confidence": fc_low_confidence,
             # chronos 사용 시 10/90% 불확실성 밴드 (선형 폴백이면 None)
             "band_upper": f_band_upper,
             "band_lower": f_band_lower,
