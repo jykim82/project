@@ -217,7 +217,7 @@ web/
 - `docs/alarm-threshold-coverage.md` — SCADA 알람 임계 보유 현황 조사 (2026-07-24. 압력 33곳 공백 — 가압장 전원. 수위 완비·유량은 통계 감시 소관 판정. 재조사 SQL + SCADA 보강 우선순위 + 셋업 검수 활용)
 - `docs/flow-diagram-engineering-spec.md` — 계통도 엔지니어링화 (구축 고도화 ②. 자동 레이아웃 API(relayout new_only/full) + 정합 lint(누락·고아·순환·EPANET) + setup/diagram 노드 배치 탭(드래그 저장) + flow-map CRUD→causal 리로드. v1 구현 완료 2026-07-24)
 - `docs/setup-audit-spec.md` — 구축 완결성 검수 (구축 고도화 ③. 검사 6종(기초정보/임계/datainfo/계통도/품질/EPANET) 집계 `/setup/audit` M200-21 — 납품 검수 단일 진입점, warn 0=인수 기준. 첫 실행에서 가압장 기초정보 공백 11곳 검출. v1 완료 2026-07-24)
-- `docs/datainfo-conversion-rule-spec.md` — DATAINFO 변환룰 (구축 고도화 ①. datadesc→datainfo 룰 4계층(regex/dict/context/override) + 미리보기·선별 적용·이력 롤백 + 재현율 채점. Migration 0117·0118, `/setup/datainfo-rules` M200-20. P1 완료 — 29룰 74.1% + 태그 단위 정책 exclude(변환 제외)/override(확정) 행별 버튼)
+- `docs/datainfo-conversion-rule-spec.md` — DATAINFO 변환룰 (구축 고도화 ①. datadesc→datainfo 룰 4계층(regex/dict/context/override) + 미리보기·선별 적용·이력 롤백 + 재현율 채점. Migration 0117·0118, `/setup/datainfo-rules` M200-20. P1 완료 — 49룰 87.6% + 태그 단위 정책 exclude(변환 제외)/override(확정) 행별 버튼)
 - `docs/memo-schedule-spec.md` — 업무 메모 + 일정 알림 v1 (Migration 0105. 메모: 검색+달력 보기 토글, 삭제=본인+마스터. 일정: 달력 등록→30s 폴링 전역 팝업, 확인 전 재표시. SCADA 알람과 용어·시스템 분리)
 - `docs/realtime-comm-spec.md` — 실시간 통신 확정판 v2 (전 단계 완료: P1 메신저+그룹 채팅(0106·0113) / P2 파일 전송(0107) / P3 음성·P4 영상 통화(0108~0111) / 3~4인 회의 통화 풀메시(0112) / 외부망 TURN 옵션(coturn·이중 토글). REST 폴링+non-trickle ICE 설계. LTE 실통화 검증)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴
