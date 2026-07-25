@@ -1671,20 +1671,12 @@ async def lifespan(app: FastAPI):
         intent_embeddings._ollama_unavailable_until = _time_mod.time() + 60
         ollama_client._unavailable_until = _time_mod.time() + 60
 
-    # DDL 자동 생성 (캔버스 + 태그 그룹)
+    # DDL 자동 생성 (태그 그룹)
+    # tb_canvas_node_position 은 일원화로 폐기 — Migration 0120 rename
+    # (canvas-editor-unification-spec §6)
     try:
         _conn = get_db_connection()
         _cur = _conn.cursor()
-        _cur.execute("""
-            CREATE TABLE IF NOT EXISTS tb_canvas_node_position (
-                sitename     VARCHAR(100)       NOT NULL,
-                facilitytype VARCHAR(50)        NOT NULL,
-                pos_x        DOUBLE PRECISION   NOT NULL DEFAULT 0,
-                pos_y        DOUBLE PRECISION   NOT NULL DEFAULT 0,
-                updated_at   TIMESTAMPTZ        DEFAULT now(),
-                PRIMARY KEY (sitename, facilitytype)
-            )
-        """)
         _cur.execute("""
             CREATE TABLE IF NOT EXISTS tb_equipment_tag_map (
                 equipment_id VARCHAR(64)  NOT NULL,
@@ -2316,7 +2308,7 @@ init_network_crud(get_db_connection, snmp_poller=snmp_poller_instance)
 app.include_router(network_crud_router)
 
 # 캔버스 레이아웃 엔드포인트 모듈 초기화
-init_canvas_crud(get_db_connection)
+init_canvas_crud(get_db_connection, _rebuild_causal_index_entry)
 app.include_router(canvas_crud_router)
 
 # 인증 엔드포인트 모듈 초기화

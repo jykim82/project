@@ -5,13 +5,21 @@
 캔버스(위치도) 관련 API를 제공한다.
 
 ai_server.py에서 분리된 모듈 — init()으로 DB 커넥션 함수를 주입받아 사용.
+
+[일원화 v1 — docs/canvas-editor-unification-spec.md]
+좌표 정본을 tb_flow_diagram_node(경위도) 로 통일. 캔버스(px)와는 본 모듈의
+선형 변환 계층으로 사상 — 캔버스 편집이 실시간 계통도에 즉시 반영된다.
+tb_canvas_node_position 은 폐기 (Migration 0120 rename).
 """
 
-import json
 import logging
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from endpoints.flow_diagram_layout import (
+    ORIGIN_X, ORIGIN_Y, PARENT_X_GAP, ROW_Y_GAP, _node_row,
+)
 
 logger = logging.getLogger("slm")
 
@@ -19,12 +27,40 @@ router = APIRouter()
 
 # ai_server.py에서 주입
 _get_db_connection = None
+_rebuild_causal_entry = None
+
+# ── px ↔ 경위도 선형 사상 (사양 §3 — 백엔드 단독 소유) ──
+# 자동 배치 결과가 캔버스에서 레벨 간 240px·형제 간 56px 로 보이도록 선택
+CANVAS_DEG_PER_PX_X = PARENT_X_GAP / 240
+CANVAS_DEG_PER_PX_Y = ROW_Y_GAP / 56
 
 
-def init(get_db_connection_fn):
-    """ai_server.py에서 DB 커넥션 팩토리 함수를 주입받는다."""
-    global _get_db_connection
+def _deg_to_px(lon: float, lat: float) -> tuple[float, float]:
+    return ((lon - ORIGIN_X) / CANVAS_DEG_PER_PX_X,
+            (ORIGIN_Y - lat) / CANVAS_DEG_PER_PX_Y)
+
+
+def _px_to_deg(pos_x: float, pos_y: float) -> tuple[float, float]:
+    return (ORIGIN_X + pos_x * CANVAS_DEG_PER_PX_X,
+            ORIGIN_Y - pos_y * CANVAS_DEG_PER_PX_Y)
+
+
+def init(get_db_connection_fn, rebuild_causal_entry_fn=None):
+    """ai_server.py에서 DB 커넥션 팩토리·인과 인덱스 부분 재구축 함수를 주입받는다."""
+    global _get_db_connection, _rebuild_causal_entry
     _get_db_connection = get_db_connection_fn
+    _rebuild_causal_entry = rebuild_causal_entry_fn
+
+
+def _refresh_causal(*facilities: tuple[str, str]):
+    """관계 변경 즉시 인과 인덱스 부분 재구축 — best-effort (flow_map_crud 와 동일)."""
+    if _rebuild_causal_entry is None:
+        return
+    for sn, ft in set(facilities):
+        try:
+            _rebuild_causal_entry(sn, ft)
+        except Exception as e:
+            logger.info(f"causal 부분 재구축 건너뜀 ({sn} {ft}): {e}")
 
 
 # =============================================================================
@@ -57,18 +93,15 @@ async def get_canvas_layout():
             for r in cur.fetchall()
         ]
 
-        # 2) 엣지에서 고유 노드 추출
-        node_set: set[tuple[str, str]] = set()
-        for e in edges:
-            node_set.add((e["upstream_sitename"], e["upstream_facilitytype"]))
-            node_set.add((e["downstream_sitename"], e["downstream_facilitytype"]))
-
-        # 3) 저장된 위치 조회
-        cur.execute("SELECT sitename, facilitytype, pos_x, pos_y FROM tb_canvas_node_position")
-        pos_map = {(r[0], r[1]): (r[2], r[3]) for r in cur.fetchall()}
-        # 위치 테이블에만 있는 노드도 추가
-        for key in pos_map:
-            node_set.add(key)
+        # 2) 배치 정본 tb_flow_diagram_node → px 변환 (일원화 v1)
+        #    관계에 있으나 배치 없는 시설은 내려주지 않음 — lint missing_nodes 로
+        #    노출되고 "신규 시설 자동 배치" 버튼이 해소 경로
+        cur.execute("SELECT sitename, facilitytype, diagram_x, diagram_y FROM tb_flow_diagram_node")
+        pos_map = {
+            (r[0], r[1]): _deg_to_px(float(r[2]), float(r[3]))
+            for r in cur.fetchall()
+        }
+        node_set: set[tuple[str, str]] = set(pos_map)
 
         # 4) 설비 카운트 (테이블 없으면 빈 맵)
         equip_counts: dict[tuple, int] = {}
@@ -148,90 +181,95 @@ class CanvasEdgePayload(BaseModel):
     relation_type: str = "수계"
 
 
+class CanvasNodeKey(BaseModel):
+    sitename: str
+    facilitytype: str
+
+
 class CanvasLayoutPayload(BaseModel):
-    nodes: list[CanvasNodePos]
-    edges: list[CanvasEdgePayload]
+    """명시 diff — full-diff 는 스테일 클라이언트가 관계 정본을 전멸시킬 수
+    있어 폐지 (사양 §4). 프런트가 로드 스냅샷 대비 diff 를 계산해 보낸다."""
+    nodes: list[CanvasNodePos] = Field(default_factory=list)
+    added_edges: list[CanvasEdgePayload] = Field(default_factory=list)
+    removed_edges: list[CanvasEdgePayload] = Field(default_factory=list)
+    deleted_nodes: list[CanvasNodeKey] = Field(default_factory=list)
 
 
 @router.put("/canvas/layout")
 async def save_canvas_layout(body: CanvasLayoutPayload):
-    """캔버스 노드 위치 UPSERT + 엣지 diff (추가/삭제)."""
+    """캔버스 저장 — 배치 정본(tb_flow_diagram_node) upsert + 관계 명시 diff.
+
+    - 기존 노드는 좌표만 갱신 (box/label/zoom 메타 보존)
+    - 신규 노드는 _node_row() 메타로 생성 (계통도 LOD 즉시 유효)
+    - 관계 add/remove 후 인과 인덱스 부분 재구축 (재기동 불요)
+    """
     conn = None
     try:
         conn = _get_db_connection()
         cur = conn.cursor()
 
-        # 1) 노드 위치 UPSERT
-        if body.nodes:
-            from psycopg2.extras import execute_values
-            execute_values(
-                cur,
-                """
-                INSERT INTO tb_canvas_node_position (sitename, facilitytype, pos_x, pos_y)
-                VALUES %s
-                ON CONFLICT (sitename, facilitytype) DO UPDATE
-                SET pos_x = EXCLUDED.pos_x, pos_y = EXCLUDED.pos_y, updated_at = now()
-                """,
-                [(n.sitename, n.facilitytype, n.pos_x, n.pos_y) for n in body.nodes],
-            )
-
-        # 기존에 있지만 body에 없는 노드 위치 삭제
-        new_node_keys = {(n.sitename, n.facilitytype) for n in body.nodes}
-        cur.execute("SELECT sitename, facilitytype FROM tb_canvas_node_position")
-        db_node_keys = {(r[0], r[1]) for r in cur.fetchall()}
-        orphan_keys = db_node_keys - new_node_keys
-        for sn, ft in orphan_keys:
+        # 1) 노드 위치 upsert — px → 경위도
+        for n in body.nodes:
+            lon, lat = _px_to_deg(n.pos_x, n.pos_y)
             cur.execute(
-                "DELETE FROM tb_canvas_node_position WHERE sitename=%s AND facilitytype=%s",
-                (sn, ft),
+                """UPDATE tb_flow_diagram_node
+                   SET diagram_x=%s, diagram_y=%s, updated_at=now()
+                   WHERE sitename=%s AND facilitytype=%s""",
+                (round(lon, 6), round(lat, 6), n.sitename, n.facilitytype),
+            )
+            if cur.rowcount == 0:
+                row = _node_row(n.sitename, n.facilitytype, lon, lat)
+                cur.execute(
+                    """INSERT INTO tb_flow_diagram_node
+                        (sitename,facilitytype,group_level,diagram_x,diagram_y,
+                         box_width,box_height,label_text,display_from_z,display_to_z)
+                    VALUES (%(sitename)s,%(facilitytype)s,%(group_level)s,
+                            %(diagram_x)s,%(diagram_y)s,%(box_width)s,%(box_height)s,
+                            %(label_text)s,%(display_from_z)s,%(display_to_z)s)
+                    ON CONFLICT (sitename,facilitytype) DO NOTHING""", row)
+
+        # 2) 노드 명시 삭제
+        for k in body.deleted_nodes:
+            cur.execute(
+                "DELETE FROM tb_flow_diagram_node WHERE sitename=%s AND facilitytype=%s",
+                (k.sitename, k.facilitytype),
             )
 
-        # 2) 엣지 diff
-        cur.execute("""
-            SELECT upstream_sitename, upstream_facilitytype,
-                   downstream_sitename, downstream_facilitytype
-            FROM tb_facility_flow_map
-        """)
-        db_edges = {(r[0], r[1], r[2], r[3]) for r in cur.fetchall()}
-        new_edges = {
-            (e.upstream_sitename, e.upstream_facilitytype,
-             e.downstream_sitename, e.downstream_facilitytype)
-            for e in body.edges
-        }
-
-        # 추가할 엣지
-        added = 0
-        for e_key in new_edges - db_edges:
-            edge_data = next(
-                e for e in body.edges
-                if (e.upstream_sitename, e.upstream_facilitytype,
-                    e.downstream_sitename, e.downstream_facilitytype) == e_key
-            )
+        # 3) 관계 명시 diff
+        added = removed = 0
+        touched: list[tuple[str, str]] = []
+        for e in body.added_edges:
             cur.execute(
                 """INSERT INTO tb_facility_flow_map
                    (upstream_sitename, upstream_facilitytype,
                     downstream_sitename, downstream_facilitytype, relation_type)
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (*e_key, edge_data.relation_type),
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT DO NOTHING""",
+                (e.upstream_sitename, e.upstream_facilitytype,
+                 e.downstream_sitename, e.downstream_facilitytype, e.relation_type),
             )
-            added += 1
-
-        # 삭제할 엣지
-        removed = 0
-        for e_key in db_edges - new_edges:
+            added += cur.rowcount
+            touched += [(e.upstream_sitename, e.upstream_facilitytype),
+                        (e.downstream_sitename, e.downstream_facilitytype)]
+        for e in body.removed_edges:
             cur.execute(
                 """DELETE FROM tb_facility_flow_map
                    WHERE upstream_sitename=%s AND upstream_facilitytype=%s
                    AND downstream_sitename=%s AND downstream_facilitytype=%s""",
-                e_key,
+                (e.upstream_sitename, e.upstream_facilitytype,
+                 e.downstream_sitename, e.downstream_facilitytype),
             )
-            removed += 1
+            removed += cur.rowcount
+            touched += [(e.upstream_sitename, e.upstream_facilitytype),
+                        (e.downstream_sitename, e.downstream_facilitytype)]
 
         conn.commit()
         cur.close()
+        _refresh_causal(*touched)
         return {
             "status": "OK",
             "nodes_saved": len(body.nodes),
+            "nodes_deleted": len(body.deleted_nodes),
             "edges_added": added,
             "edges_removed": removed,
         }
