@@ -89,6 +89,85 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
 
+# ── 용어집 · 후보 단어 발굴 (구축 보조) ──────────────────
+
+# SLM 조회 계약 핵심 단어 — datainfo 가 이 표준 표기를 담아야 시스템 기능이
+# 매칭된다 (인텐트 SQL LIKE·품질 계층·임계 조사·분류 근거). 구축 시 변환
+# 목표 어휘로 안내.
+CORE_KEYWORDS: list[dict] = [
+    {"word": "유량", "why": "유량 트렌드·야간최소유량·물수지 조회의 LIKE 매칭 기준"},
+    {"word": "순시", "why": "순시(현재값) 계열 식별 — '유량순시유량' 표준형"},
+    {"word": "적산", "why": "적산차 변환·기준선 학습 제외 대상 식별"},
+    {"word": "수위", "why": "수위 트렌드·HH/LL 임계·만수위 캡 식별"},
+    {"word": "압력", "why": "압력 트렌드·임계 커버리지 조사 식별"},
+    {"word": "탁도", "why": "수질 계열 trend_kind 분류"},
+    {"word": "PH", "why": "수질 계열 trend_kind 분류"},
+    {"word": "잔류염소", "why": "수질 계열 trend_kind 분류"},
+    {"word": "전기전도도", "why": "수질 계열 trend_kind 분류"},
+    {"word": "알람", "why": "경보 DI 식별 (경보_ 접두는 '알람 '으로 표준화)"},
+    {"word": "SET", "why": "임계 설정값(AO) 식별 — 임계 보유 조사 정규식"},
+    {"word": "상태", "why": "알람 상태 DI 접미 표준"},
+    {"word": "통신이상", "why": "comm_error 판정·품질 계층 DI 그룹 매칭"},
+    {"word": "정전", "why": "POWER_FAULT 그룹·전원 계열 식별"},
+    {"word": "FAULT", "why": "설비 고장 DI 표준 (FLT 등 약어를 이걸로 통일)"},
+    {"word": "동작", "why": "가동 상태 DI 표준 (RUN→동작)"},
+    {"word": "정지", "why": "정지 상태 DI 표준 (STOP→정지)"},
+    {"word": "자동", "why": "제어 모드 표준 (AT/AUTO→자동)"},
+    {"word": "원격", "why": "제어 모드 표준 (REMOTE→원격)"},
+    {"word": "로컬", "why": "제어 모드 표준 (LOCAL→로컬)"},
+    {"word": "설정", "why": "제어 설정값 식별 — 임계(SET)와 구분·조회 제외 규칙"},
+    {"word": "가압펌프", "why": "가압장 설비 표준 명칭 ('펌프' 단독보다 우선)"},
+    {"word": "FULL OPEN / FULL CLOSE", "why": "밸브 전개/전폐 표준 (F_OPEN 등 통일)"},
+]
+
+_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z_/\.]{1,14}")
+
+
+@router.get("/vocab")
+def vocab(region: str = Query("R01"), min_count: int = Query(3, ge=1)):
+    """구축 보조 용어집 — ① 핵심 표준 단어(조회 계약) ② 룰 미등록 약어 후보.
+
+    후보 = datadesc 의 영문 토큰 중 (a) 어떤 룰 pattern/replacement 에도
+    없고 (b) 현행 datainfo 표준에도 안 남는 것 — 빈도순. 구축자가 이 목록을
+    보고 사전 룰을 정의하면 된다 (수동 시그니처 마이닝의 제품화).
+    """
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        rules = _load_rules(cur, region)
+        known = " ".join(
+            f"{r['pattern']} {r['replacement']}" for r in rules).upper()
+        core = " ".join(k["word"] for k in CORE_KEYWORDS).upper()
+        cur.execute("""
+            SELECT COALESCE(datadesc,''), COALESCE(datainfo,'')
+            FROM tb_tag_info WHERE datadesc IS NOT NULL AND datadesc <> ''
+        """)
+        from collections import Counter
+        cnt: Counter = Counter()
+        sample: dict[str, str] = {}
+        info_all: Counter = Counter()
+        for desc, info in cur.fetchall():
+            for t in set(_TOKEN_RE.findall(info.upper())):
+                info_all[t] += 1
+            for t in set(_TOKEN_RE.findall(desc.upper())):
+                cnt[t] += 1
+                sample.setdefault(t, desc)
+        candidates = []
+        for tok, n in cnt.most_common(200):
+            if n < min_count:
+                break
+            if tok in known or tok in core:
+                continue
+            # info 표준에도 흔히 남는 토큰(UPS·LTE 등 고유명)은 변환 불요 추정
+            if info_all.get(tok, 0) >= n * 0.8:
+                continue
+            candidates.append({"token": tok, "count": n, "sample": sample[tok]})
+        return {"status": "OK", "core_keywords": CORE_KEYWORDS,
+                "candidates": candidates[:40]}
+    finally:
+        conn.close()
+
+
 # ── CRUD ─────────────────────────────────────────────────
 
 class RuleBody(BaseModel):
