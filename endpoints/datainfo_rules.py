@@ -168,6 +168,132 @@ def vocab(region: str = Query("R01"), min_count: int = Query(3, ge=1)):
         conn.close()
 
 
+# ── 신규 태그 온보딩 (P2 — CSV 일괄 변환·등록) ───────────
+
+def _lint_row(datainfo: str, tagtype: str, desc: str) -> list[str]:
+    """조회 계약 lint — 변환 결과가 시스템 매칭 요건을 충족하는지 (P2)."""
+    warns: list[str] = []
+    up = datainfo.upper()
+    # 유량 계열인데 '유량' 키워드 부재 → 유량 조회·물수지 매칭 실패
+    if re.search(r"FLOW|유량|순시|적산", desc.upper()) and "유량" not in datainfo \
+            and "적산" not in datainfo and "순시" not in datainfo:
+        warns.append("유량 계열로 보이나 '유량/순시/적산' 키워드 없음")
+    # 적산 흔적인데 표기 누락 → 적산차 변환·학습 제외 미적용
+    if re.search(r"적산|누적|TOTAL", desc.upper()) and "적산" not in datainfo and "누적" not in datainfo:
+        warns.append("적산 계열로 보이나 '적산' 표기 없음")
+    # 미변환 영문 약어 잔존 (사전 미등록 — 표준화 필요 신호)
+    for tok in _TOKEN_RE.findall(datainfo):
+        if tok.upper() in ("UPS", "PLC", "RTU", "LTE", "PH", "SET", "FAULT",
+                           "FULL", "OPEN", "CLOSE", "DIRECT", "INVERTER", "HZ"):
+            continue
+        if re.fullmatch(r"[A-Z]{2,}[A-Z_/\.]*", tok):
+            warns.append(f"미변환 약어 잔존: {tok}")
+            break
+    # DI 인데 상태 어휘 전무 → 알람/품질 분류 미매칭
+    if (tagtype or "").startswith("Digital") and not re.search(
+            r"알람|상태|동작|정지|자동|원격|로컬|FAULT|통신이상|정전|침수|OPEN|CLOSE", up):
+        warns.append("DI 인데 상태 어휘(알람/동작/FAULT 등) 없음")
+    return warns
+
+
+@router.post("/onboard/preview")
+def onboard_preview(rows: list[dict] = Body(..., embed=True),
+                    region: str = Query("R01")):
+    """신규 태그 CSV 행 일괄 변환 미리보기 — 등록 전 검증 (P2).
+
+    행 필드: tagsn, tagtype, sitename, facilitytype, equipmenttype?, datadesc, unit?
+    상태: new(등록 가능) / exists(이미 존재 — 스킵) / invalid(필수 누락) /
+          dup(파일 내 tagsn 중복)
+    """
+    if not rows or len(rows) > 5000:
+        raise HTTPException(400, "rows 1~5000행")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        rules = _load_rules(cur, region)
+        cur.execute("SELECT tagsn FROM tb_tag_info WHERE tagsn = ANY(%s)",
+                    ([str(r.get("tagsn", "")) for r in rows],))
+        existing = {r[0] for r in cur.fetchall()}
+        seen: set[str] = set()
+        out = []
+        counts = {"new": 0, "exists": 0, "invalid": 0, "dup": 0, "warn": 0}
+        for r in rows:
+            tagsn = str(r.get("tagsn", "")).strip()
+            desc = str(r.get("datadesc", "")).strip()
+            ft = str(r.get("facilitytype", "")).strip()
+            tt = str(r.get("tagtype", "")).strip()
+            if not tagsn or not desc or not r.get("sitename"):
+                stat, converted, warns = "invalid", "", ["tagsn/sitename/datadesc 필수"]
+            elif tagsn in seen:
+                stat, converted, warns = "dup", "", ["파일 내 tagsn 중복"]
+            elif tagsn in existing:
+                stat, converted, warns = "exists", "", []
+            else:
+                converted = apply_rules(desc, rules, ft, tt, tagsn)
+                warns = _lint_row(converted, tt, desc)
+                stat = "new"
+            seen.add(tagsn)
+            counts[stat] += 1
+            if warns and stat == "new":
+                counts["warn"] += 1
+            out.append({**{k: r.get(k, "") for k in
+                           ("tagsn", "tagtype", "sitename", "facilitytype",
+                            "equipmenttype", "datadesc", "unit")},
+                        "converted": converted, "status": stat, "warnings": warns})
+        return {"status": "OK", "counts": counts, "rows": out}
+    finally:
+        conn.close()
+
+
+@router.post("/onboard/apply")
+def onboard_apply(rows: list[dict] = Body(..., embed=True),
+                  region: str = Query("R01"), user: str = Query("")):
+    """미리보기 승인분 등록 — tb_tag_info INSERT (datainfo=변환 결과).
+
+    안전: 이미 존재하는 tagsn 은 스킵 (UPDATE 아님 — 기존 태그 보호).
+    datainfo 확정값은 행의 converted (프런트에서 수정 반영 가능).
+    """
+    if not rows or len(rows) > 5000:
+        raise HTTPException(400, "rows 1~5000행")
+    conn = _conn()
+    try:
+        cur = conn.cursor()
+        inserted = skipped = 0
+        for r in rows:
+            tagsn = str(r.get("tagsn", "")).strip()
+            info = str(r.get("converted", "")).strip()
+            if not tagsn or not info or not r.get("sitename") or not r.get("datadesc"):
+                skipped += 1
+                continue
+            cur.execute("SELECT 1 FROM tb_tag_info WHERE tagsn = %s", (tagsn,))
+            if cur.fetchone():
+                skipped += 1
+                continue
+            cur.execute(
+                """
+                INSERT INTO tb_tag_info
+                  (tagsn, tagtype, sitename, facilitytype, equipmenttype,
+                   datadesc, datainfo, unit)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (tagsn, r.get("tagtype") or None, r["sitename"],
+                 r.get("facilitytype") or None, r.get("equipmenttype") or None,
+                 r["datadesc"], info, r.get("unit") or None))
+            cur.execute(
+                """
+                INSERT INTO tb_datainfo_apply_log
+                  (region, tagsn, old_datainfo, new_datainfo, applied_by)
+                VALUES (%s,%s,NULL,%s,%s)
+                """,
+                (region, tagsn, info, user or None))
+            inserted += 1
+        conn.commit()
+        logger.info(f"태그 온보딩: {inserted}건 등록 (스킵 {skipped})")
+        return {"status": "OK", "inserted": inserted, "skipped": skipped}
+    finally:
+        conn.close()
+
+
 # ── CRUD ─────────────────────────────────────────────────
 
 class RuleBody(BaseModel):
