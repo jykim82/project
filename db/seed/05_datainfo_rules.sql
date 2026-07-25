@@ -1,0 +1,58 @@
+-- db/seed/05_datainfo_rules.sql — DATAINFO 변환룰 시드 (49룰, 재현율 87.6%)
+-- docs/datainfo-conversion-rule-spec.md. 신규 고객 구축 시 기본 룰셋 —
+-- 고객사 SCADA 명명 관례에 맞춰 /setup/datainfo-rules 에서 조정한다.
+-- 재적용 안전: 기존 R01 룰 전체 삭제 후 삽입 (override/exclude 는 태그
+-- 정책이라 고객 데이터 — 본 시드에 포함하지 않음, WHERE 로 제외).
+
+DELETE FROM tb_datainfo_rule WHERE region='R01' AND rule_type NOT IN ('override','exclude');
+INSERT INTO tb_datainfo_rule (region, rule_type, pattern, replacement, context_facilitytype, context_tagtype, priority, notes) VALUES
+('R01','regex','^경보_','알람 ',NULL,NULL,10,'경보_ 접두 → 알람'),
+('R01','regex',E'#(\\d)',E'\\1',NULL,NULL,20,'펌프#2 → 펌프2'),
+('R01','regex',E'([가-힣])(\\d)호',E'\\g<1>\\g<2>',NULL,NULL,21,'인버터1호 → 인버터1'),
+('R01','regex','저수위_알람','저수위 알람',NULL,NULL,25,'언더스코어 해체'),
+('R01','dict','밧데리','배터리',NULL,NULL,29,'표기 표준화'),
+('R01','regex',E'_FLT\\b',' FAULT',NULL,NULL,29,'언더스코어 결합 약어 (사전 word boundary 미매치 보완)'),
+('R01','regex',E'_RUN\\b',' 동작',NULL,NULL,29,NULL),
+('R01','dict','FLT','FAULT',NULL,NULL,30,NULL),
+('R01','dict','F_OPEN','FULL OPEN',NULL,NULL,30,NULL),
+('R01','dict','F_CLOSE','FULL CLOSE',NULL,NULL,30,NULL),
+('R01','dict','REMOTE','원격',NULL,NULL,30,NULL),
+('R01','dict','LOCAL','로컬',NULL,NULL,30,NULL),
+('R01','dict','INVERTER','인버터',NULL,NULL,30,NULL),
+('R01','dict','INV','인버터',NULL,NULL,30,NULL),
+('R01','dict','LOLO','LL',NULL,NULL,30,NULL),
+('R01','dict','HIHI','HH',NULL,NULL,30,NULL),
+('R01','dict','RUN','동작',NULL,NULL,31,NULL),
+('R01','dict','AT','자동',NULL,NULL,31,'AT(auto) → 자동'),
+('R01','regex',E'\\bHIGH\\b','H',NULL,NULL,31,'HIGH → H 표준'),
+('R01','regex',E'\\bLOW\\b','L',NULL,NULL,31,'LOW → L 표준'),
+('R01','dict','STOP','정지',NULL,NULL,31,NULL),
+('R01','dict','AUTO','자동',NULL,NULL,31,NULL),
+('R01','dict','LO','L',NULL,NULL,31,'LO → L 표준'),
+('R01','regex',E'\\bLow ALM\\b','L 알람',NULL,NULL,32,NULL),
+('R01','regex',E'\\bHigh ALM\\b','H 알람',NULL,NULL,32,NULL),
+('R01','regex',E'\\bUPS ON\\b','UPS 동작',NULL,NULL,32,NULL),
+('R01','dict','ALM','알람',NULL,NULL,33,NULL),
+('R01','regex',' 경보$',' 알람',NULL,NULL,34,'접미 경보 → 알람'),
+('R01','regex',E'([A-Za-z가-힣0-9\\)])_([A-Za-z가-힣])',E'\\1 \\2',NULL,NULL,35,'언더스코어 해체 (영문 포함 일반)'),
+('R01','regex','(?<!유량)순시유량','유량순시유량',NULL,NULL,40,'순시유량 앞 유량 보강'),
+('R01','regex','(?<!유량)적산유량','유량적산유량',NULL,NULL,40,'적산유량 앞 유량 보강'),
+('R01','regex',E'\\(실선\\)',' 실선',NULL,NULL,41,'괄호 해체'),
+('R01','regex',E'\\(무선\\)',' 무선',NULL,NULL,41,NULL),
+('R01','regex','(HH|LL) 상태$',E'\\1 알람 상태',NULL,NULL,42,'경보 DI: HH/LL 상태 → HH/LL 알람 상태'),
+('R01','regex','(유입|유출) (순시유량|적산유량)',E'\\1\\2',NULL,NULL,42,'공백 접합'),
+('R01','regex','(유입유량|유출유량|공급유량) (순시|적산)$',E'\\1\\2',NULL,NULL,42,'공백 접합(어순)'),
+('R01','regex',E'(수위\\d+) (HH|LL)$',E'\\1 \\2 알람',NULL,'Digital Input',43,'수위N HH → 수위N HH 알람 (DI)'),
+('R01','regex','유입유량 적산$','유입유량적산',NULL,NULL,44,'공백 접합'),
+('R01','context','(HH|LL)$',E'\\1 알람',NULL,'Digital Input',44,'DI 접미 HH/LL → 알람 보강'),
+('R01','regex','유입유량$','유입유량순시',NULL,NULL,45,'말미 유입유량 → 순시 보강 (AI)'),
+('R01','regex','가압장침수$','가압장침수 알람',NULL,NULL,45,'침수 DI 접미 보강'),
+('R01','regex','설정압력R?$',' 설정압력 ',NULL,NULL,46,'설정압력R → 설정압력 (유산 공백)'),
+('R01','regex',' 설정압력 피드백$','  설정압력 ',NULL,NULL,46,'피드백 접미 제거 (유산)'),
+('R01','context','(?<!가압)펌프','가압펌프','가압장',NULL,50,'가압장 문맥: 펌프 → 가압펌프'),
+('R01','regex','(HH?|LL?)설정$',E'\\1  SET',NULL,NULL,58,'붙은 설정 → SET'),
+('R01','regex','HI 설정$','HI  SET',NULL,NULL,59,'HI 설정 → HI SET'),
+('R01','regex','LO 설정$','L  SET',NULL,NULL,59,'LO 설정 → L SET (LO는 L 표준)'),
+('R01','regex','압력설정$','압력  SET',NULL,NULL,59,NULL),
+('R01','regex',E'(\\bL{1,2}|\\bH{1,2}) 설정$',E'\\1  SET',NULL,NULL,60,'L 설정 → L  SET (유산 이중공백은 비교 정규화로 흡수)')
+;
