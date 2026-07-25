@@ -224,7 +224,9 @@ def preview(region: str = Query("R01"), sitename: str = Query(""),
     """전/필터 태그에 룰 적용 미리보기.
 
     분류: unchanged(desc=현 info) / match(변환=현 info — 룰 재현 성공) /
-          diff(변환≠현 info — 검토·적용 후보) /
+          diff(변환≠현 info — 룰 후보) /
+          hard(**룰 원리상 불가 의심** — 동일 desc 가 다른 info 로 갈리거나,
+               desc 에 없는 정보가 info 에 추가됨 → 제외/확정 지정 대상) /
           excluded(태그 단위 변환 제외 — 현행 유지) / manual(override 확정)
     """
     conn = _conn()
@@ -232,8 +234,24 @@ def preview(region: str = Query("R01"), sitename: str = Query(""),
         cur = conn.cursor()
         rules = _load_rules(cur, region)
         rows = _fetch_tags(cur, sitename, keyword)
+
+        # 룰 불가 신호 1 — 동일 desc(정규화)가 서로 다른 info 로 매핑:
+        # 룰은 결정적(같은 입력=같은 출력)이라 원리상 분기 불가 (예: "밸브 RE"
+        # → 자동/원격). 전체 셋 기준 선계산.
+        desc_info: dict[str, set] = {}
+        for _tagsn, _sn, _ft, _tt, desc, info in rows:
+            desc_info.setdefault(_norm(desc), set()).add(_norm(info))
+        ambiguous_desc = {d for d, infos in desc_info.items() if len(infos) > 1}
+
+        def _info_added(desc: str, conv: str, info: str) -> bool:
+            """룰 불가 신호 2 — info 에만 있는 실질 토큰 (desc 로 도출 불가 정보)."""
+            for tok in re.findall(r"[가-힣]{2,}|\d지", _norm(info)):
+                if tok not in desc and tok not in conv:
+                    return True
+            return False
+
         out, counts = [], {"unchanged": 0, "match": 0, "diff": 0,
-                           "excluded": 0, "manual": 0}
+                           "hard": 0, "excluded": 0, "manual": 0}
         for tagsn, sn, ft, tt, desc, info in rows:
             policy = tag_policy(rules, tagsn)
             converted = apply_rules(desc, rules, ft or "", tt or "", tagsn)
@@ -246,6 +264,8 @@ def preview(region: str = Query("R01"), sitename: str = Query(""),
                 cat = "unchanged"
             elif converted == _norm(info):
                 cat = "match"
+            elif _norm(desc) in ambiguous_desc or _info_added(desc, converted, info):
+                cat = "hard"
             else:
                 cat = "diff"
             counts[cat] += 1
