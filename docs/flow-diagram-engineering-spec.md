@@ -18,6 +18,10 @@
   장애·물수지) / EPANET 매핑 / 상류 원인 설명
 - `tb_flow_diagram_node` 는 **배치만** 저장 (좌표·박스·줌레벨)
 
+> **승계 (2026-07-26)**: 노드 배치 편집 UI 는
+> `docs/canvas-editor-unification-spec.md` 에 따라 캔버스 에디터로 일원화.
+> relayout·lint API 는 본 사양 그대로 유지·재사용.
+
 ## 2. 공백과 해소 (v1 구현)
 
 | 공백 | 해소 |
