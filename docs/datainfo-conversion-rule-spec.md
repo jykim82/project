@@ -52,6 +52,7 @@ notes, updated_at, updated_by
 | POST/PUT/DELETE | `/setup/datainfo-rules` | 룰 CRUD |
 | POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 동일) / `match`(변환=현 info — 룰 검증) / `diff`(≠현 info — 룰 후보) / `hard`(**룰 불가 의심 자동 판별** — 동일 desc 다중 매핑 or desc 에 없는 정보 추가. 제외/확정 지정 대상) / `excluded`(태그 정책 제외 — 현행 유지) / `manual`(override 확정) |
 | POST | `/setup/datainfo-rules/apply` | 선택 tagsn 의 datainfo UPDATE (이력 로그 → 롤백 가능). **exclude 태그는 전 경로 스킵** |
+| GET | `/setup/datainfo-rules/vocab` | **용어집** — 핵심 표준 단어 23종(조회 계약 근거 포함) + desc 영문 토큰 중 룰 미등록 약어 후보(빈도순, 클릭→룰 초안) |
 | GET | `/setup/datainfo-rules/score` | **재현율 채점** — 기존 쌍 대상 일치율% (정책 태그는 분모 분리 — excluded/manual 별도 카운트) |
 
 ## 5. 구축 UI (`/setup/datainfo-rules`)
@@ -98,3 +99,9 @@ notes, updated_at, updated_by
   건 별도 표시?")에서 diff 가 룰 후보와 불가 유형 혼재임을 확인. 판별 신호
   2종(동일 desc 다중 매핑 · info 전용 실질 토큰) 으로 hard 분리 —
   실측 diff 24 / hard 312 (합 336 정합). rose 칩 + 정책 버튼 대상.
+- 2026-07-25 **용어집·후보 발굴 (구축 보조)** — 사용자 요청("규칙·핵심
+  단어를 별도로 알 수 있게"). `/vocab`: ① 핵심 표준 단어 23종 — 각 단어가
+  어떤 기능(인텐트 LIKE·품질 계층·임계 조사 등)에 의존하는지 근거 툴팁
+  ② 미등록 약어 자동 발굴(사전·표준에 없는 desc 영문 토큰 빈도순 — 수동
+  시그니처 마이닝의 제품화, 검증 9종: FAIL·KEPCO·FLOAT 등). 화면 접이식
+  카드 + 약어 클릭 시 사전 룰 초안 프리필.
