@@ -2578,6 +2578,11 @@ from endpoints.setup_audit import router as setup_audit_router, init as init_set
 init_setup_audit(get_db_connection)
 app.include_router(setup_audit_router)
 
+# AI 채팅 대화 목록 서버 영속화 (Migration 0119, chat-history-server-spec)
+from endpoints.chat_history import router as chat_history_router, init as init_chat_history
+init_chat_history(get_db_connection)
+app.include_router(chat_history_router)
+
 
 def _split_sql_statements(sql: str) -> list:
     """세미콜론으로 SQL을 분리하되, 문자열 리터럴('...')안의 세미콜론은 무시한다."""
