@@ -50,7 +50,7 @@ notes, updated_at, updated_by
 |---|---|---|
 | GET | `/setup/datainfo-rules` | 룰 목록 |
 | POST/PUT/DELETE | `/setup/datainfo-rules` | 룰 CRUD |
-| POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 동일) / `match`(변환=현 info — 룰 검증) / `diff`(≠현 info — 검토·적용 후보) / `excluded`(태그 정책 제외 — 현행 유지) / `manual`(override 확정) |
+| POST | `/setup/datainfo-rules/preview` | 전 태그(또는 필터) desc→룰 적용 결과 — 분류: `unchanged`(desc=info 동일) / `match`(변환=현 info — 룰 검증) / `diff`(≠현 info — 룰 후보) / `hard`(**룰 불가 의심 자동 판별** — 동일 desc 다중 매핑 or desc 에 없는 정보 추가. 제외/확정 지정 대상) / `excluded`(태그 정책 제외 — 현행 유지) / `manual`(override 확정) |
 | POST | `/setup/datainfo-rules/apply` | 선택 tagsn 의 datainfo UPDATE (이력 로그 → 롤백 가능). **exclude 태그는 전 경로 스킵** |
 | GET | `/setup/datainfo-rules/score` | **재현율 채점** — 기존 쌍 대상 일치율% (정책 태그는 분모 분리 — excluded/manual 별도 카운트) |
 
@@ -94,3 +94,7 @@ notes, updated_at, updated_by
   유형이 지배**: RE→자동(72)/RE→원격(10) 동일 축약의 이중 의미(override
   필수), 매방리 REMOTE 설비명 문맥(12), 행정 신설 수위→N지 정보 추가(26).
   스모크 16/16.
+- 2026-07-25 **룰 불가 의심(hard) 자동 판별** — 사용자 질문("필터링 안되는
+  건 별도 표시?")에서 diff 가 룰 후보와 불가 유형 혼재임을 확인. 판별 신호
+  2종(동일 desc 다중 매핑 · info 전용 실질 토큰) 으로 hard 분리 —
+  실측 diff 24 / hard 312 (합 336 정합). rose 칩 + 정책 버튼 대상.
