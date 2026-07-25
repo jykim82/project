@@ -1,7 +1,9 @@
 # 캔버스 에디터 일원화 사양 v1
 
-> 작성 2026-07-26 · Migration 0120 · Backend `endpoints/canvas_crud.py` 재작성 ·
-> Frontend `canvas-editor/` 영속화 전환 + `setup/diagram` 탭 정리
+> 작성 2026-07-26 · Migration 0120·0121 · Backend `endpoints/canvas_crud.py`
+> 재작성 · Frontend `canvas-editor/` 영속화 전환 + `setup/diagram` 탭 정리
+> **P1+P2 구현 완료 2026-07-26** — 캔버스 실드래그 → tb_flow_diagram_node
+> 반영 E2E 검증, /setup/canvas redirect·M200-11 메뉴 제거·노드 배치 탭 제거
 
 ## 1. 배경 — 좌표 정본 이원화
 
@@ -109,7 +111,7 @@ ALTER TABLE tb_canvas_node_position RENAME TO tb_canvas_node_position_legacy;
 - `ai_server.py` 의 `CREATE TABLE IF NOT EXISTS tb_canvas_node_position`
   lifespan 구문 제거
 
-## 7. P2 — 탭·메뉴 정리 + 시설 생성 연동
+## 7. P2 — 탭·메뉴 정리 + 시설 생성 연동 (구현 완료)
 
 1. `setup/diagram` 탭: "용수 흐름 | 캔버스 에디터" 2탭 (노드 배치 탭 제거).
    노드 배치 탭의 잔여 가치(캔버스 높이 동적 산정 등)는 캔버스가 흡수
