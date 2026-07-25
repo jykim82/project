@@ -181,6 +181,18 @@ async def relayout(mode: str = Query("new_only", pattern="^(new_only|full)$")):
             rows = []
             # 깊이 순(상류 먼저) 배치 — 부모가 같은 배치 회차의 신규여도 좌표 참조 가능
             placed = dict(existing)
+
+            def _avoid_overlap(x: float, y: float) -> float:
+                """같은 X 열의 기존 노드와 ROW_Y_GAP 미만으로 붙으면 아래로 밀기.
+                형제 회피(sib_ys)만으로는 다른 서브트리 노드와 겹칠 수 있다."""
+                col_ys = sorted(
+                    (py for (px, py) in placed.values() if abs(px - x) < PARENT_X_GAP * 0.5),
+                    reverse=True,
+                )
+                while any(abs(y - oy) < ROW_Y_GAP * 0.99 for oy in col_ys):
+                    y -= ROW_Y_GAP
+                return y
+
             for (s, f) in sorted(missing, key=lambda n: depth.get(f"{n[0]}__{n[1]}", 9)):
                 k = f"{s}__{f}"
                 pk = parent_of.get(k)
@@ -193,6 +205,7 @@ async def relayout(mode: str = Query("new_only", pattern="^(new_only|full)$")):
                 else:
                     floor_y -= TREE_Y_GAP
                     x, y = ORIGIN_X, floor_y
+                y = _avoid_overlap(x, y)
                 placed[k] = (x, y)
                 rows.append(_node_row(s, f, x, y))
 
