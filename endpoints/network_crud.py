@@ -179,9 +179,13 @@ async def get_network_topology():
                 (n.ip_address IS NOT NULL) AS has_ip,
                 ns.rtt_ms,
                 TO_CHAR(ns.check_time, 'HH24:MI:SS') AS check_time,
-                n.meta->'canvas_pos' AS canvas_pos
+                CASE WHEN cl.node_key IS NULL THEN NULL
+                     ELSE jsonb_build_object('x', cl.x, 'y', cl.y) END AS canvas_pos
             FROM tb_equipment_info e
             LEFT JOIN tb_network_info n ON e.equipment_id = n.equipment_id
+            -- 배치 좌표는 대장이 아니라 표시 전용 테이블에서 (Migration 0126)
+            LEFT JOIN tb_canvas_layout cl
+                ON cl.layer = 'network' AND cl.node_key = e.equipment_id
             LEFT JOIN tb_network_status ns
                 ON ns.equipment_id = e.equipment_id
                 AND ns.check_time = (SELECT ct FROM latest_network)
@@ -510,8 +514,9 @@ async def create_network_info(req: dict = Body(...)):
 async def save_canvas_positions(req: dict = Body(...)):
     """링크 에디터 노드 배치 일괄 저장 (network-link-editor-spec §2.2).
 
-    meta 병합 — gateway 등 기존 키 보존 (PUT /network/infos 는 meta 전체
-    덮어쓰기라 좌표 저장에 부적합).
+    좌표는 표시 전용 테이블 tb_canvas_layout 에 저장한다 (Migration 0126).
+    과거엔 tb_network_info.meta 에 넣었는데, 그건 통신 장비 "대장"이라
+    배치 저장만으로 대장 행이 생겨나는 부수효과가 있었다 [E-054].
     """
     positions = req.get("positions", [])
     if not isinstance(positions, list):
@@ -521,35 +526,20 @@ async def save_canvas_positions(req: dict = Body(...)):
         conn = _get_db_connection()
         cur = conn.cursor()
         saved = 0
-        created = 0
         for p in positions[:2000]:
             eid = p.get("equipment_id")
             if not eid:
                 continue
-            # 시리얼 장비 등 tb_network_info 행이 없어도 배치 저장 가능하도록
-            # UPSERT (ip_address NULL 행 — has_ip 판정에 무해).
-            # 다만 "배치 저장이 장비 대장을 늘리는" 부수효과는 조용히 일어나면
-            # 안 되므로 신규 등록 건수를 돌려주고 UI 가 알린다 (xmax=0 → INSERT).
             cur.execute("""
-                INSERT INTO tb_network_info (equipment_id, meta)
-                VALUES (%s, jsonb_build_object('canvas_pos',
-                        jsonb_build_object('x', %s::float, 'y', %s::float)))
-                ON CONFLICT (equipment_id) DO UPDATE
-                SET meta = COALESCE(tb_network_info.meta, '{}'::jsonb)
-                           || jsonb_build_object('canvas_pos',
-                               jsonb_build_object(
-                                   'x', (EXCLUDED.meta->'canvas_pos'->>'x')::float,
-                                   'y', (EXCLUDED.meta->'canvas_pos'->>'y')::float)),
-                    updated_at = now()
-                RETURNING (xmax = 0) AS inserted
+                INSERT INTO tb_canvas_layout (layer, node_key, x, y)
+                VALUES ('network', %s, %s::float, %s::float)
+                ON CONFLICT (layer, node_key) DO UPDATE
+                SET x = EXCLUDED.x, y = EXCLUDED.y, updated_at = now()
             """, [eid, p.get("x", 0), p.get("y", 0)])
-            row = cur.fetchone()
             saved += 1
-            if row and row[0]:
-                created += 1
         conn.commit()
         cur.close()
-        return {"status": "OK", "saved": saved, "created": created}
+        return {"status": "OK", "saved": saved}
     except Exception as e:
         if conn:
             conn.rollback()
