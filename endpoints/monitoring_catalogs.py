@@ -1,6 +1,12 @@
 """
 모니터링 카탈로그 CRUD API
-tb_monitoring_catalog + tb_trend_catalog 참조
+
+[일원화 v1 — docs/trend-catalog-unification-spec.md]
+정본 = tb_trend_catalog 하나 (tb_monitoring_catalog 는 0122 로 이관·폐기).
+- 모니터링 화면 노출은 meta.show_monitoring=true 행만 (큐레이션)
+- 채팅·이상감지는 전체 행 소비 — UI 생성 트렌드도 즉시 채팅 조회 가능
+- 응답 키는 기존 유지 (catalog_id/catalog_name/items) — 프런트 무변경
+- meta.monitoring(이상감지 알람 감시 플래그)과 show_monitoring 은 별개
 """
 
 import json
@@ -164,7 +170,7 @@ async def get_monitoring_catalogs(
     facilitytype: str = "",
     sitename: str = "",
 ):
-    """모니터링 카탈로그 목록 조회 (tb_monitoring_catalog)"""
+    """모니터링 카탈로그 목록 조회 (tb_trend_catalog — show_monitoring 행만)"""
     if not facilitytype:
         return {"status": "ERROR", "message": "facilitytype 필수"}
     ftypes = [f.strip() for f in facilitytype.split(",") if f.strip()]
@@ -172,7 +178,10 @@ async def get_monitoring_catalogs(
     try:
         conn = _get_conn()
         cur = conn.cursor()
-        conditions = [f"facilitytype IN ({','.join(['%s'] * len(ftypes))})"]
+        conditions = [
+            f"facilitytype IN ({','.join(['%s'] * len(ftypes))})",
+            "COALESCE((meta->>'show_monitoring')::boolean, false) = true",
+        ]
         params = list(ftypes)
         if sitename:
             conditions.append("sitename = %s")
@@ -180,8 +189,12 @@ async def get_monitoring_catalogs(
         where = " AND ".join(conditions)
         cols = ["catalog_id", "sitename", "facilitytype", "catalog_name", "display_order", "items", "description", "created_at", "updated_at"]
         cur.execute(
-            f"SELECT {', '.join(cols)} FROM tb_monitoring_catalog WHERE {where} "
-            f"ORDER BY sitename, display_order, catalog_name",
+            f"SELECT trend_id AS catalog_id, sitename, facilitytype, "
+            f"trend_name AS catalog_name, display_order, "
+            f"COALESCE(meta->'items', '[]'::jsonb) AS items, description, "
+            f"created_at, updated_at "
+            f"FROM tb_trend_catalog WHERE {where} "
+            f"ORDER BY sitename, display_order, trend_name",
             params,
         )
         rows = cur.fetchall()
@@ -205,7 +218,11 @@ async def get_monitoring_catalogs(
 
 @router.post("/monitoring/catalogs")
 async def create_monitoring_catalog(request: Request):
-    """모니터링 카탈로그 생성 (tb_monitoring_catalog) — 이름 충돌 시 자동 접미사"""
+    """모니터링 카탈로그 생성 (tb_trend_catalog) — 이름 충돌 시 자동 접미사.
+
+    생성 행은 show_monitoring=true → 모니터링 화면 표시 + 채팅 트렌드 조회
+    양쪽에 즉시 유효 (일원화 목적).
+    """
     body = await request.json()
     sitename = body.get("sitename", "")
     facilitytype = body.get("facilitytype", "")
@@ -219,11 +236,12 @@ async def create_monitoring_catalog(request: Request):
     try:
         conn = _get_conn()
         cur = conn.cursor()
-        # 이름 충돌 확인 → 자동 접미사 부여
+        # 이름 충돌 확인 → 자동 접미사 부여 (시드 트렌드 포함 전체 행 대상 —
+        # 채팅 조회는 trend_name 으로 매칭되므로 시드와의 충돌도 회피)
         final_name = catalog_name
         cur.execute(
-            "SELECT catalog_name FROM tb_monitoring_catalog "
-            "WHERE sitename = %s AND facilitytype = %s AND catalog_name LIKE %s",
+            "SELECT trend_name FROM tb_trend_catalog "
+            "WHERE sitename = %s AND facilitytype = %s AND trend_name LIKE %s",
             (sitename, facilitytype, catalog_name + "%"),
         )
         existing_names = {r[0] for r in cur.fetchall()}
@@ -233,11 +251,12 @@ async def create_monitoring_catalog(request: Request):
                 if candidate not in existing_names:
                     final_name = candidate
                     break
-        items_json = json.dumps(items, ensure_ascii=False)
+        meta_json = json.dumps(
+            {"items": items, "show_monitoring": True}, ensure_ascii=False)
         cur.execute(
-            "INSERT INTO tb_monitoring_catalog (sitename, facilitytype, catalog_name, display_order, items, description) "
-            "VALUES (%s, %s, %s, %s, %s::jsonb, %s) RETURNING catalog_id",
-            (sitename, facilitytype, final_name, display_order, items_json, description),
+            "INSERT INTO tb_trend_catalog (sitename, facilitytype, trend_name, display_order, meta, description) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s) RETURNING trend_id",
+            (sitename, facilitytype, final_name, display_order, meta_json, description),
         )
         catalog_id = cur.fetchone()[0]
         conn.commit()
@@ -254,33 +273,42 @@ async def create_monitoring_catalog(request: Request):
 
 @router.put("/monitoring/catalogs/{catalog_id}")
 async def update_monitoring_catalog(catalog_id: int, request: Request):
-    """모니터링 카탈로그 수정 (tb_monitoring_catalog)"""
+    """모니터링 카탈로그 수정 (tb_trend_catalog — show_monitoring 행만).
+
+    items 는 meta 병합으로 갱신 — monitoring(이상감지 감시) 등 기존 meta
+    키 보존. 시드 행(플래그 없음)은 UI 편집 대상 아님.
+    """
     body = await request.json()
     fields, params = [], []
     if "catalog_name" in body:
-        fields.append("catalog_name = %s")
+        fields.append("trend_name = %s")
         params.append(body["catalog_name"])
     if "display_order" in body:
         fields.append("display_order = %s")
         params.append(body["display_order"])
     if "items" in body:
-        fields.append("items = %s::jsonb")
+        fields.append("meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('items', %s::jsonb)")
         params.append(json.dumps(body["items"], ensure_ascii=False))
     if "description" in body:
         fields.append("description = %s")
         params.append(body["description"])
     if not fields:
         return {"status": "ERROR", "message": "수정할 필드 없음"}
+    fields.append("updated_at = now()")
     params.append(catalog_id)
     conn = None
     try:
         conn = _get_conn()
         cur = conn.cursor()
         cur.execute(
-            f"UPDATE tb_monitoring_catalog SET {', '.join(fields)} WHERE catalog_id = %s",
+            f"UPDATE tb_trend_catalog SET {', '.join(fields)} "
+            f"WHERE trend_id = %s AND meta ? 'show_monitoring'",
             params,
         )
+        updated = cur.rowcount
         conn.commit()
+        if updated == 0:
+            return {"status": "ERROR", "message": "대상 없음 (시드 트렌드는 UI 편집 불가)"}
         return {"status": "OK"}
     except Exception as e:
         if conn:
@@ -294,13 +322,20 @@ async def update_monitoring_catalog(catalog_id: int, request: Request):
 
 @router.delete("/monitoring/catalogs/{catalog_id}")
 async def delete_monitoring_catalog(catalog_id: int):
-    """모니터링 카탈로그 삭제 (tb_monitoring_catalog)"""
+    """모니터링 카탈로그 삭제 (tb_trend_catalog — show_monitoring 행만.
+    시드 트렌드는 채팅·이상감지 정본이므로 UI 삭제 차단)."""
     conn = None
     try:
         conn = _get_conn()
         cur = conn.cursor()
-        cur.execute("DELETE FROM tb_monitoring_catalog WHERE catalog_id = %s", (catalog_id,))
+        cur.execute(
+            "DELETE FROM tb_trend_catalog WHERE trend_id = %s AND meta ? 'show_monitoring'",
+            (catalog_id,),
+        )
+        deleted = cur.rowcount
         conn.commit()
+        if deleted == 0:
+            return {"status": "ERROR", "message": "대상 없음 (시드 트렌드는 삭제 불가)"}
         return {"status": "OK"}
     except Exception as e:
         if conn:

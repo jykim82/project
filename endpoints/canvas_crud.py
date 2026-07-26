@@ -116,12 +116,13 @@ async def get_canvas_layout():
             logger.warning(f"캔버스 설비 카운트 조회 실패: {e}")
             conn.rollback()
 
-        # 5) 카탈로그 카운트 (테이블 없으면 빈 맵)
+        # 5) 카탈로그 카운트 — 트렌드 정본 중 모니터링 표시 행 (일원화 0122)
         catalog_counts: dict[tuple, int] = {}
         try:
             cur.execute("""
                 SELECT sitename, facilitytype, COUNT(*) as cnt
-                FROM tb_monitoring_catalog
+                FROM tb_trend_catalog
+                WHERE COALESCE((meta->>'show_monitoring')::boolean, false) = true
                 GROUP BY sitename, facilitytype
             """)
             catalog_counts = {(r[0], r[1]): r[2] for r in cur.fetchall()}
@@ -306,11 +307,13 @@ async def get_canvas_node_detail(sitename: str, facilitytype: str):
             for r in cur.fetchall()
         ]
 
-        # 카탈로그 목록
+        # 카탈로그 목록 — 트렌드 정본 중 모니터링 표시 행 (일원화 0122)
         cur.execute("""
-            SELECT catalog_id, catalog_name, display_order, items
-            FROM tb_monitoring_catalog
+            SELECT trend_id AS catalog_id, trend_name AS catalog_name,
+                   display_order, COALESCE(meta->'items', '[]'::jsonb) AS items
+            FROM tb_trend_catalog
             WHERE sitename=%s AND facilitytype=%s
+              AND COALESCE((meta->>'show_monitoring')::boolean, false) = true
             ORDER BY display_order
         """, (sitename, facilitytype))
         catalogs = [
