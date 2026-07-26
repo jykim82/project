@@ -647,16 +647,63 @@ async def get_tag_groups():
 
 
 # =============================================================================
+# DELETE /tags/{tagsn} — 태그 마스터 삭제 (2026-07-26 UI 검증 — 삭제 경로 부재)
+# =============================================================================
+
+
+@router.delete("/tags/{tagsn}")
+async def delete_tag(tagsn: str):
+    """태그 마스터 삭제 — 오등록 정리용.
+
+    계측 원본(tb_tag_raw_data)은 하이퍼테이블 이력이므로 삭제하지 않는다
+    (재등록 시 이력 복원). 응답에 raw_rows 를 담아 프런트 confirm 이 데이터
+    존재를 고지. DI 라벨 오버라이드는 함께 정리.
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, database=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM tb_tag_raw_data WHERE tagsn = %s LIMIT 1)",
+                (tagsn,),
+            )
+            has_raw = cur.fetchone()[0]
+            cur.execute("DELETE FROM tb_tag_di_label WHERE tagsn = %s", (tagsn,))
+            cur.execute("DELETE FROM tb_tag_info WHERE tagsn = %s", (tagsn,))
+            deleted = cur.rowcount
+        conn.commit()
+        if deleted == 0:
+            raise HTTPException(status_code=404, detail="태그를 찾을 수 없습니다")
+        logger.info(f"[tags] 태그 삭제: {tagsn} (raw 데이터 존재: {has_raw})")
+        return {"status": "OK", "deleted": tagsn, "had_raw_data": bool(has_raw)}
+    except HTTPException:
+        raise
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"태그 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail="태그 삭제에 실패했습니다")
+    finally:
+        if conn:
+            conn.close()
+
+
+# =============================================================================
 # POST /tags — 태그 마스터 생성
 # =============================================================================
 
 class TagCreate(BaseModel):
     tagsn: str = Field(..., min_length=1, max_length=100)
     tagtype: Optional[str] = Field(None, max_length=50)
-    sitename: Optional[str] = Field(None, max_length=100)
-    facilitytype: Optional[str] = Field(None, max_length=50)
+    # 필수 승격 (2026-07-26 UI 검증 발견) — 현장·시설·데이터항목 없는 태그는
+    # 조회·검수·품질 어느 경로에도 못 걸리는 유령 행이 됨
+    sitename: str = Field(..., min_length=1, max_length=100)
+    facilitytype: str = Field(..., min_length=1, max_length=50)
     equipmenttype: Optional[str] = Field(None, max_length=50)
-    datainfo: Optional[str] = Field(None, max_length=200)
+    datainfo: str = Field(..., min_length=1, max_length=200)
     datadesc: Optional[str] = Field(None, max_length=500)
     unit: Optional[str] = Field(None, max_length=30)
     alarm_tag_yn: Optional[int] = Field(0, ge=0, le=1)
