@@ -521,12 +521,15 @@ async def save_canvas_positions(req: dict = Body(...)):
         conn = _get_db_connection()
         cur = conn.cursor()
         saved = 0
+        created = 0
         for p in positions[:2000]:
             eid = p.get("equipment_id")
             if not eid:
                 continue
             # 시리얼 장비 등 tb_network_info 행이 없어도 배치 저장 가능하도록
-            # UPSERT (ip_address NULL 행 — has_ip 판정에 무해)
+            # UPSERT (ip_address NULL 행 — has_ip 판정에 무해).
+            # 다만 "배치 저장이 장비 대장을 늘리는" 부수효과는 조용히 일어나면
+            # 안 되므로 신규 등록 건수를 돌려주고 UI 가 알린다 (xmax=0 → INSERT).
             cur.execute("""
                 INSERT INTO tb_network_info (equipment_id, meta)
                 VALUES (%s, jsonb_build_object('canvas_pos',
@@ -538,11 +541,15 @@ async def save_canvas_positions(req: dict = Body(...)):
                                    'x', (EXCLUDED.meta->'canvas_pos'->>'x')::float,
                                    'y', (EXCLUDED.meta->'canvas_pos'->>'y')::float)),
                     updated_at = now()
+                RETURNING (xmax = 0) AS inserted
             """, [eid, p.get("x", 0), p.get("y", 0)])
-            saved += cur.rowcount
+            row = cur.fetchone()
+            saved += 1
+            if row and row[0]:
+                created += 1
         conn.commit()
         cur.close()
-        return {"status": "OK", "saved": saved}
+        return {"status": "OK", "saved": saved, "created": created}
     except Exception as e:
         if conn:
             conn.rollback()
