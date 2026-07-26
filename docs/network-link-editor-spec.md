@@ -35,12 +35,17 @@
 - 링크 CRUD 는 **기존 API 그대로** — 캔버스처럼 배치 스냅샷 diff 가 아닌
   즉시 반영 (연결마다 폼 확정이 개입하므로 직접 CRUD 가 자연스러움)
 
-### 2.2 배치 좌표
-- 저장: `tb_network_info.meta.canvas_pos = {x, y}` — **스키마 변경 없음**
-- 신규 API `PUT /network/canvas-positions` `{positions:[{equipment_id,x,y}]}`
-  — `meta = COALESCE(meta,'{}') || {"canvas_pos": …}` 병합 (gateway 등
-  기존 meta 키 보존. 기존 PUT /network/infos 는 meta 전체 덮어쓰기라 부적합)
-- 로드: `/network/topology` nodes 에 `canvas_pos` 필드 추가 (meta 유도 —
+### 2.2 배치 좌표 (v1.2 — Migration 0126 으로 저장 위치 변경)
+- 저장: **`tb_canvas_layout(layer='network', node_key=equipment_id, x, y)`**
+  — 표시 전용 테이블
+- ~~v1: `tb_network_info.meta.canvas_pos`~~ → **폐기.** 그 테이블은 통신 장비
+  *대장*이라, 배치 저장이 UPSERT 로 대장 행을 만들어 자동 정렬 1회에 대장이
+  180 → 295 로 늘었다 [E-054]. 좌표는 자산 대장에 저장하지 않는다
+- 참고: 계통도(용수 계통) 좌표는 `tb_flow_diagram_node.diagram_x/y` 유지 —
+  그 테이블은 애초에 다이어그램 테이블(box·label·표시 줌)이라 대장 오염이 아님
+- API `PUT /network/canvas-positions` `{positions:[{equipment_id,x,y}]}`
+  — `tb_canvas_layout` UPSERT (경로만 바뀌고 계약은 동일)
+- 로드: `/network/topology` nodes 에 `canvas_pos` 필드 (LEFT JOIN 유도 —
   기존 소비처엔 무해한 추가 필드)
 - 초기 배치(canvas_pos 없는 장비): sitename 그룹 열 배치 (그룹당 세로
   나열) — 클라이언트 계산. 네트워크 배치는 지리 정본이 없는 순수 표시
@@ -102,8 +107,9 @@
   밀어냄** (기존엔 저장 좌표를 무시하고 0,0 부터 깔아 겹침 발생)
 - lint 에 `겹침 N` 추가 — 자동 정렬로 0 이 되는지로 검증
 
-### 8.3 배치 저장의 대장 부수효과 고지 [E-054]
-배치 저장은 `tb_network_info` UPSERT 라 미등록 장비의 행을 새로 만든다(시리얼
-장비 좌표 저장을 위해 의도된 설계). 다만 **조용히 대장이 늘면 안 되므로**
-`PUT /network/canvas-positions` 는 `created`(신규 등록 수)를 반환하고,
-자동 정렬 확인창이 사전 고지 + 완료 토스트가 등록 수를 표시한다.
+### 8.3 배치 저장은 장비 대장을 건드리지 않는다 [E-054 마감]
+배치 좌표는 표시 전용 테이블 `tb_canvas_layout` 에 저장된다(Migration 0126).
+따라서 자동 정렬로 295건을 저장해도 장비 대장(`tb_network_info`)은 그대로다.
+
+> 중간 단계였던 "신규 등록 수 `created` 고지"(사전 확인창·토스트)는 원인 자체가
+> 사라져 제거했다. 부수효과를 알리는 것보다 부수효과를 없애는 것이 근본책.
