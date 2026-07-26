@@ -178,7 +178,8 @@ async def get_network_topology():
                 COALESCE(ns.status_code, ss.status_code, '정상') AS status_code,
                 (n.ip_address IS NOT NULL) AS has_ip,
                 ns.rtt_ms,
-                TO_CHAR(ns.check_time, 'HH24:MI:SS') AS check_time
+                TO_CHAR(ns.check_time, 'HH24:MI:SS') AS check_time,
+                n.meta->'canvas_pos' AS canvas_pos
             FROM tb_equipment_info e
             LEFT JOIN tb_network_info n ON e.equipment_id = n.equipment_id
             LEFT JOIN tb_network_status ns
@@ -193,7 +194,7 @@ async def get_network_topology():
         node_cols = [
             "id", "name", "category", "equipmenttype",
             "sitename", "ip_address", "status", "has_ip",
-            "rtt_ms", "check_time",
+            "rtt_ms", "check_time", "canvas_pos",
         ]
         nodes = [dict(zip(node_cols, row)) for row in cur.fetchall()]
         for node in nodes:
@@ -503,6 +504,53 @@ async def create_network_info(req: dict = Body(...)):
         return {"status": "ERROR", "message": str(e)}
     finally:
         if conn: conn.close()
+
+
+@router.put("/network/canvas-positions")
+async def save_canvas_positions(req: dict = Body(...)):
+    """링크 에디터 노드 배치 일괄 저장 (network-link-editor-spec §2.2).
+
+    meta 병합 — gateway 등 기존 키 보존 (PUT /network/infos 는 meta 전체
+    덮어쓰기라 좌표 저장에 부적합).
+    """
+    positions = req.get("positions", [])
+    if not isinstance(positions, list):
+        return {"status": "ERROR", "message": "positions 배열 필수"}
+    conn = None
+    try:
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        saved = 0
+        for p in positions[:2000]:
+            eid = p.get("equipment_id")
+            if not eid:
+                continue
+            # 시리얼 장비 등 tb_network_info 행이 없어도 배치 저장 가능하도록
+            # UPSERT (ip_address NULL 행 — has_ip 판정에 무해)
+            cur.execute("""
+                INSERT INTO tb_network_info (equipment_id, meta)
+                VALUES (%s, jsonb_build_object('canvas_pos',
+                        jsonb_build_object('x', %s::float, 'y', %s::float)))
+                ON CONFLICT (equipment_id) DO UPDATE
+                SET meta = COALESCE(tb_network_info.meta, '{}'::jsonb)
+                           || jsonb_build_object('canvas_pos',
+                               jsonb_build_object(
+                                   'x', (EXCLUDED.meta->'canvas_pos'->>'x')::float,
+                                   'y', (EXCLUDED.meta->'canvas_pos'->>'y')::float)),
+                    updated_at = now()
+            """, [eid, p.get("x", 0), p.get("y", 0)])
+            saved += cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "saved": saved}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"캔버스 배치 저장 실패: {e}")
+        return {"status": "ERROR", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()
 
 
 @router.put("/network/infos/{equipment_id}")
