@@ -217,6 +217,7 @@ web/
 - `docs/alarm-threshold-coverage.md` — SCADA 알람 임계 보유 현황 조사 (2026-07-24. 압력 33곳 공백 — 가압장 전원. 수위 완비·유량은 통계 감시 소관 판정. 재조사 SQL + SCADA 보강 우선순위 + 셋업 검수 활용)
 - `docs/flow-diagram-engineering-spec.md` — 계통도 엔지니어링화 (구축 고도화 ②. 자동 레이아웃 API(relayout new_only/full) + 정합 lint(누락·고아·순환·EPANET) + setup/diagram 노드 배치 탭(드래그 저장) + flow-map CRUD→causal 리로드. v1 구현 완료 2026-07-24)
 - `docs/canvas-editor-unification-spec.md` — 캔버스 에디터 일원화 (좌표 정본 tb_flow_diagram_node 통일 — tb_canvas_node_position 폐기(0120 rename)·M200-11 메뉴 제거(0121). px↔경위도 백엔드 변환(레벨240px·형제56px), PUT full-diff→명시 diff+causal 리로드, relayout·lint 툴바 이식, 노드 배치 탭 제거·/setup/canvas redirect. **P1+P2 완료 2026-07-26**)
+- `docs/network-link-editor-spec.md` — 네트워크 링크 에디터 (setup/networks 3탭 — 링크 에디터 기본. React Flow 드래그 연결→기존 링크 폼 프리필 POST, 배치=tb_network_info.meta.canvas_pos 병합(PUT /network/canvas-positions), lint 배지 미연결·IP중복. 계통도 캔버스와 별개 에디터. **v1 완료 2026-07-26**, 0124 프로토콜 마스터 신설 [E-052])
 - `docs/trend-catalog-unification-spec.md` — 트렌드 카탈로그 일원화 (정본 tb_trend_catalog 하나 — tb_monitoring_catalog 이관·legacy(0122). 모니터링 화면=meta.show_monitoring 큐레이션, 채팅·이상감지=전체. UI 생성 트렌드 즉시 채팅 조회 가능. 시드 행 UI 편집·삭제 차단. **v1 완료 2026-07-26**, 프런트 무변경)
 - `docs/setup-audit-spec.md` — 구축 완결성 검수 (구축 고도화 ③. 검사 6종(기초정보/임계/datainfo/계통도/품질/EPANET) 집계 `/setup/audit` M200-21 — 납품 검수 단일 진입점, warn 0=인수 기준. 첫 실행에서 가압장 기초정보 공백 11곳 검출. v1 완료 2026-07-24)
 - `docs/datainfo-conversion-rule-spec.md` — DATAINFO 변환룰 (구축 고도화 ①. datadesc→datainfo 룰 4계층(regex/dict/context/override) + 미리보기·선별 적용·이력 롤백 + 재현율 채점. Migration 0117·0118. 메뉴는 2026-07-26 "태그 설정"(/setup/tags) 탭으로 통합 — /setup/datainfo-rules 는 redirect, M200-20 제거(0123). P1 완료 — 49룰 87.6% + 태그 단위 정책 exclude(변환 제외)/override(확정) 행별 버튼)
@@ -252,7 +253,7 @@ web/
 - `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
-- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-051)
+- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-052)
   - 1차 시도 실패 시: 전체 스캔 → 유사 패턴 확인 → 해결책 참고
   - 새 버그 해결 후: E-NNN 번호 부여 기록 (날짜/증상/원인/해결/재발방지)
   - 기록 대상: 포트 충돌, DB 연결 오류, SQL 오류, 서버 기동 실패, 환경변수 문제 등 **재발 가능성 있는 모든 에러**
