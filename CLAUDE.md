@@ -188,6 +188,7 @@ web/
 - `docs/voice-input-spec.md` — 음성 입력 (로컬 Whisper STT, 채팅 마이크 버튼. 도메인 용어 프롬프트 바이어스. 웨이트 1.5GB git 제외 — 납품 번들)
 - `docs/tag-monitoring-spec.md` — 태그 모니터링 (모니터링 그룹 — 현재값 컬럼 + 이상 카테고리 9종 필터 + 컬럼 정렬 + 우클릭 트랜드 보기, CSV·태그추가 제외, 4 Phase)
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
+- `docs/alarm-chattering-spec.md` — 반복 경보(채터링) 정리 v1 (죽동 탁도계 1건이 30일 경보의 80.7%·확인율 0.3% → 목록 접기 "반복 N회" + 순위표 `/crisis/alarm-dashboard?tab=repeat`. 판정=평균 지속 15분(시간당 횟수 기준은 실측 오분류로 폐기), 채터링=SCADA 데드밴드/만성=설비 검토로 조치 분리. 자동 억제 없음)
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉
 - `docs/chat-feedback-telemetry-spec.md` — 오답 피드백 루프 텔레메트리
 - `docs/chat-photo-upload-scenario-spec.md` — 사진 업로드 4 시나리오 (P1~P3)
@@ -209,6 +210,7 @@ web/
 - `docs/alarm-popup-spec.md` — 알람 발생 시 위기대응 모달 (경고 모달 / 주의 toast / 종합 카드 + SITE_SETTING.ALARM_POPUP_ENABLED 마스터 토글)
 - `docs/alarm-diagnosis-control-mode-spec.md` — 알람 진단 펌프 제어모드 게이트 (Node-RED diagnosed_cause 오분류 수정: pump_control_mode 게이트 + 실가동 검증 + 경합 제거. 죽동 HH "펌프 미가동" 오분류 분석에서 도출. Phase A 사양/B 구현)
 - `docs/performance/alarm-notifications-index.md` — 알람 폴링·인덱스 최적화 (features fetch 5분 + invalidate event + dynamic import + Migration 0081 부분 인덱스)
+- `docs/performance/tag-raw-scan-optimization.md` — 태그 원시데이터 스캔 최적화 (Migration 0128 압축 segmentby=tagsn 135~300× + **전 청크 스캔 3건 제거** — 알람 해제 루프 14분30초→6.9ms·경보 이력 332초→0.16초·max(logtime) 7.6초→3.5ms. `tb_tag_raw_data` 조회는 logtime 하한 필수 [E-056])
 - `docs/equipment-health-priority-spec.md` — 설비 교체 우선순위 Top 5 (개요 탭 카드. 3신호 융합: 내용연수·MTBF·재발 지속. `slm/endpoints/replacement_priority.py` + ReplacementPriorityCard)
 - `docs/flow-diagram-mode-spec.md` + `docs/flow-diagram-mode-enhancement.md` — 실시간 계통도 모드 + 개선
 - `docs/leak-alert-spec.md` — 누수 의심 알림 (야간최소유량 CUSUM 자동 감지·확인 + 선정 사유 서술. 판정=cusum_max, Migration 0100 reason 컬럼)
@@ -254,7 +256,7 @@ web/
 - `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
-- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-052)
+- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-056)
   - 1차 시도 실패 시: 전체 스캔 → 유사 패턴 확인 → 해결책 참고
   - 새 버그 해결 후: E-NNN 번호 부여 기록 (날짜/증상/원인/해결/재발방지)
   - 기록 대상: 포트 충돌, DB 연결 오류, SQL 오류, 서버 기동 실패, 환경변수 문제 등 **재발 가능성 있는 모든 에러**

@@ -1794,3 +1794,12 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** `_build_tree()` 가 배치 대상을 **`tb_facility_flow_map`(상하류 관계)에서만** 뽑는다. 갓 등록해 아직 아무 곳에도 연결하지 않은 시설은 관계가 없어 대상에서 빠진다 — **화면에 없으니 연결도 못 하는 닭-달걀**. 현 DB 에 이렇게 등록만 되고 계통도에 없던 시설이 24곳 있었음
 - **해결:** 배치 대상을 "관계 ∪ 기초정보(배수지·가압장·감압시설·블록 4테이블)"로 확장(`_base_info_facilities`). 다만 시설 1건 등록이 미배치 24건을 함께 만들어내는 일괄 부수효과를 막기 위해 `relayout?sitename=&facilitytype=` 로 **대상 한정** 파라미터 추가 — 마법사는 방금 만든 1건만 배치(검증: inserted=1, 캔버스 99→100)
 - **재발 방지:** ① 자동 배치·자동 생성 API 는 "전부 쓸어 담기"가 기본이면 안 된다 — 호출자가 대상을 좁힐 수 있어야 한다([E-054]와 같은 계열) ② "등록했는데 화면에 없다"는 **파생 데이터(계통도 노드)의 생성 조건**을 먼저 확인 ③ 관계 없는 시설은 이제 계통도 lint 의 `orphan` 으로 잡히므로 구축 검수에서 연결 유도
+
+### [E-056] 백그라운드 알람 해제 루프가 DB 를 상시 점유 — 최신값 1건에 전 이력 스캔
+
+- **날짜:** 2026-07-27
+- **증상:** DB 부하가 상시 높고 다른 작업이 락에 막힘. `pg_stat_activity` 를 볼 때마다 같은 `WITH stale …` 쿼리가 잡혀 있고 실행 시간이 **14분 30초**. 압축 작업(`compress_chunk`)이 이 쿼리 뒤에 줄 서면서 Node-RED 알람 INSERT 까지 9분간 연쇄 차단
+- **원인:** `ai_server.py` `_release_stale_alarms` 가 진행중 알람마다 태그 최신값을 `SELECT DISTINCT ON (tagsn) … FROM tb_tag_raw_data WHERE tagsn = a.tagsn`(**logtime 하한 없음**)으로 조회. 하한이 없으면 플래너가 청크 제외를 못 해 하이퍼테이블 **26 청크 전부를 Merge Append** 로 연다 — 진행중 디지털 알람 43건 × 26청크 = 매 주기 1,118회 스캔. 루프 주기가 2분인데 1회 실행이 14분이라 **사실상 상시 실행**
+- **해결:** `CROSS JOIN LATERAL (… WHERE logtime > now() - interval '1 day' ORDER BY logtime DESC LIMIT 1)` 로 재작성 → **14분 30초 → 6.9 ms**. 같은 패턴 2건 추가 제거 — `endpoints/alarm_crisis.py` 설정값(AMC/LEC)·측정값(LEI) 배치 조회(**332초 → 0.16초**), `endpoints/flow_realtime.py` 무범위 `max(logtime)`(**7.6초 → 3.5 ms**, 폴백은 NULL 일 때만 전 구간 조회로 보존)
+- **부수 효과(개선):** 무제한 조회는 몇 달 전 마지막 값으로 알람을 해제할 수 있었다. 시간 창 밖이면 "확인 불가"로 보고 진행중을 유지 — 통신 두절 태그의 알람이 유지되는 쪽이 옳다
+- **재발 방지:** ① `tb_tag_raw_data` 조회에는 **반드시 `logtime` 하한** (예외는 청크를 직접 지정하는 `shared/timeseries.py` 계열뿐) ② "최신값 1건"의 표준형은 `WHERE tagsn=%s AND logtime > now()-interval '…' ORDER BY logtime DESC LIMIT 1` — 창 밖이면 값이 없는 것이 정상 동작 ③ 창을 좁히기 전 **해당 태그군의 갱신 주기를 데이터로 확인**할 것(설정값 태그 392개 중 387개가 1일 내 갱신, 5개는 이력 자체 없음을 확인하고 적용) ④ 상시 루프의 쿼리가 `pg_stat_activity` 에 계속 잡히면 "느린 쿼리"가 아니라 **점유**를 의심 — 실행시간 > 루프 주기면 항상 돌고 있는 것 ⑤ 상세: `docs/performance/tag-raw-scan-optimization.md`
