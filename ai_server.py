@@ -111,6 +111,9 @@ from endpoints.alarm_chattering import (
 from endpoints.shift_handover import (
     router as shift_handover_router, init as init_shift_handover,
 )
+from endpoints.inspection_due import (
+    router as inspection_due_router, init as init_inspection_due,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -2411,6 +2414,10 @@ app.include_router(alarm_chattering_router)
 # 교대 인수인계 브리핑
 init_shift_handover(get_db_connection)
 app.include_router(shift_handover_router)
+
+# 설비 점검 도래
+init_inspection_due(get_db_connection)
+app.include_router(inspection_due_router)
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
