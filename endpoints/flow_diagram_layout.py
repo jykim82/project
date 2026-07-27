@@ -52,6 +52,38 @@ BOX_SIZES = {0: (180, 60), 1: (160, 52), 2: (140, 44), 3: (120, 36)}
 DISPLAY_FROM_Z = {0: 8.0, 1: 9.5, 2: 9.5, 3: 10.0}
 
 
+# 기초정보 테이블 → 시설유형 (관계가 없는 시설도 계통도에 올리기 위해)
+BASE_INFO_SOURCES = [
+    ("tb_service_reservoir_info", "배수지", None),
+    ("tb_service_booster_station_info", "가압장", None),
+    ("tb_pressure_reducing_facility_info", "감압시설", None),
+    # 블록은 한 테이블에 레벨 컬럼으로 구분
+    ("tb_block_info", None, "block_level"),
+]
+
+
+def _base_info_facilities(cur) -> set[tuple[str, str]]:
+    """기초정보에 등록된 전체 시설.
+
+    관계(tb_facility_flow_map)만 보면 **갓 등록해 아직 아무 데도 연결하지 않은
+    시설이 계통도에 영원히 나타나지 않는다** — 화면에 없으니 연결도 못 하는
+    닭-달걀. 그래서 배치 대상은 "관계 ∪ 기초정보"로 잡는다.
+    """
+    found: set[tuple[str, str]] = set()
+    for table, fixed_type, type_col in BASE_INFO_SOURCES:
+        try:
+            col = type_col or "NULL"
+            cur.execute(f"SELECT sitename, {col} FROM {table}")
+            for sitename, ftype in cur.fetchall():
+                t = (ftype or fixed_type or "").strip()
+                if sitename and t:
+                    found.add((sitename, t))
+        except Exception as e:  # 테이블 부재 등은 치명적이지 않다
+            logger.warning(f"기초정보 조회 건너뜀 ({table}): {e}")
+            cur.connection.rollback()
+    return found
+
+
 def _build_tree(cur):
     cur.execute(
         "SELECT upstream_sitename, upstream_facilitytype, "
@@ -151,19 +183,30 @@ def _upsert_nodes(cur, rows) -> tuple[int, int]:
 
 
 @router.post("/flow-diagram/relayout")
-async def relayout(mode: str = Query("new_only", pattern="^(new_only|full)$")):
+async def relayout(
+    mode: str = Query("new_only", pattern="^(new_only|full)$"),
+    sitename: str | None = Query(None),
+    facilitytype: str | None = Query(None),
+):
     """관계 정본 기준 노드 자동 배치.
 
     - new_only: 다이어그램에 없는 시설만 배치 — **기존 수동 미세조정 보존**.
       신규 노드는 상류 노드 옆(X+간격), 상류의 기존 자식들 아래에 삽입.
       상류도 미배치(신규 루트)면 전체 최저 Y 아래 새 행.
     - full: 전체 재배치 (수동 조정 소실 — 확인 후 사용)
+
+    sitename+facilitytype 을 주면 **그 시설 하나만** 배치한다. 시설 등록
+    마법사처럼 "방금 만든 것 하나"를 올릴 때 쓴다 — 지정하지 않으면 미배치
+    시설을 전부 쓸어 담아, 한 건 등록이 수십 건을 만드는 부수효과가 된다.
     """
     conn = None
     try:
         conn = _conn()
         cur = conn.cursor()
         all_nodes, children, roots, depth, parent_of, _ = _build_tree(cur)
+        # 관계가 아직 없는 신규 시설도 배치 대상에 포함 (연결은 캔버스에서)
+        orphans = _base_info_facilities(cur) - all_nodes
+        all_nodes = all_nodes | orphans
 
         cur.execute("SELECT sitename, facilitytype, diagram_x, diagram_y FROM tb_flow_diagram_node")
         existing = {f"{s}__{f}": (float(x), float(y)) for s, f, x, y in cur.fetchall()}
@@ -173,10 +216,12 @@ async def relayout(mode: str = Query("new_only", pattern="^(new_only|full)$")):
             rows = [_node_row(s, f, *positions[f"{s}__{f}"]) for (s, f) in all_nodes]
         else:
             missing = [(s, f) for (s, f) in all_nodes if f"{s}__{f}" not in existing]
+            if sitename and facilitytype:
+                missing = [n for n in missing if n == (sitename, facilitytype)]
             if not missing:
                 cur.close()
                 return {"status": "OK", "mode": mode, "inserted": 0, "updated": 0,
-                        "message": "신규 배치 대상 없음 — 관계의 모든 시설이 이미 배치됨"}
+                        "message": "신규 배치 대상 없음 — 모든 시설이 이미 배치됨"}
             floor_y = min((y for _, y in existing.values()), default=ORIGIN_Y)
             rows = []
             # 깊이 순(상류 먼저) 배치 — 부모가 같은 배치 회차의 신규여도 좌표 참조 가능

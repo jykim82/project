@@ -119,6 +119,18 @@ def _build_reservoir_general_overview(body: dict) -> dict:
     return go
 
 
+def _friendly_error(e: Exception) -> str:
+    """DB 원문 대신 운영자가 이해할 수 있는 메시지.
+
+    현장명 중복은 구축 중 가장 흔한 실패인데, 원문(duplicate key value violates
+    unique constraint ...)을 그대로 띄우면 무엇을 고쳐야 할지 알 수 없다.
+    """
+    text = str(e)
+    if "duplicate key" in text or "unique constraint" in text:
+        return "이미 등록된 현장명입니다. 다른 이름을 쓰거나 기존 시설을 수정하세요."
+    return text
+
+
 @router.get("/reservoirs")
 async def get_reservoirs(
     keyword: Optional[str] = Query(None),
@@ -268,7 +280,7 @@ async def create_reservoir(request: Request, actor: dict = Depends(get_actor)):
         if conn:
             conn.rollback()
         logger.error(f"배수지 추가 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -335,7 +347,7 @@ async def update_reservoir(sitename: str, request: Request, actor: dict = Depend
         if conn:
             conn.rollback()
         logger.error(f"배수지 수정 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -590,7 +602,7 @@ async def create_booster(request: Request, actor: dict = Depends(get_actor)):
         if conn:
             conn.rollback()
         logger.error(f"가압장 추가 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -661,7 +673,7 @@ async def update_booster(sitename: str, request: Request, actor: dict = Depends(
         if conn:
             conn.rollback()
         logger.error(f"가압장 수정 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -878,7 +890,7 @@ async def create_pressure(request: Request, actor: dict = Depends(get_actor)):
         if conn:
             conn.rollback()
         logger.error(f"감압시설 추가 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -934,7 +946,7 @@ async def update_pressure(sitename: str, request: Request, actor: dict = Depends
         if conn:
             conn.rollback()
         logger.error(f"감압시설 수정 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -1178,7 +1190,7 @@ async def create_block(request: Request, actor: dict = Depends(get_actor)):
         if conn:
             conn.rollback()
         logger.error(f"블록 추가 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
@@ -1244,7 +1256,7 @@ async def update_block(sitename: str, request: Request, actor: dict = Depends(ge
         if conn:
             conn.rollback()
         logger.error(f"블록 수정 실패: {e}")
-        return {"status": "ERROR", "message": str(e)}
+        return {"status": "ERROR", "message": _friendly_error(e)}
     finally:
         if conn:
             conn.close()
