@@ -105,6 +105,9 @@ from endpoints.csv_import import router as csv_import_router, init as init_csv_i
 from endpoints.trend import router as trend_router, init as init_trend
 from endpoints.causal import router as causal_router, init as init_causal
 from endpoints.alarm_crisis import router as alarm_crisis_router, init as init_alarm_crisis
+from endpoints.alarm_chattering import (
+    router as alarm_chattering_router, init as init_alarm_chattering,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -201,6 +204,15 @@ _iforest_task: Optional[asyncio.Task] = None
 _anomaly_scan_task: Optional[asyncio.Task] = None
 _ollama_keepwarm_task: Optional[asyncio.Task] = None
 snmp_poller_instance: Optional[SnmpPoller] = None
+
+# ── 알람 자동 해제 ───────────────────────────────────────────
+# 최신값 조회 창. 이 창이 없으면 태그별 최신값 1건을 얻으려고 하이퍼테이블
+# 전 청크(수억 행)를 Merge Append 로 훑는다 — 진행중 알람 수만큼 반복되어
+# 1회 실행이 14분+ 걸렸다(2분 주기 루프라 사실상 상시 점유). 창을 주면
+# 청크 제외가 걸려 최근 1개 청크만 본다.
+# 부수 효과로 판정도 더 안전해진다 — 무제한 조회는 몇 달 전 마지막 값으로
+# 알람을 해제할 수 있으나, 창 밖이면 "확인 불가"로 보고 진행중을 유지한다.
+_ALARM_RELEASE_LOOKBACK = "1 day"
 
 # ── ANOMALY_SCAN_ALL 백그라운드 캐시 ──────────────────────────
 _ANOMALY_SCAN_CACHE: Optional[dict] = None
@@ -1564,21 +1576,24 @@ def _release_stale_alarms() -> int:
     try:
         cur = conn.cursor()
         # DI 태그 최신값이 0인 진행중 알람을 '알람해제'로 업데이트
-        cur.execute("""
+        # LATERAL + LIMIT 1 + 시간 창: 태그당 최신 1행에서 멈춘다
+        # (_ALARM_RELEASE_LOOKBACK 주석 참조 — 무제한 조회는 전 청크 스캔)
+        cur.execute(f"""
             WITH stale AS (
                 SELECT a.tagsn, a.alarm_start_time
                 FROM tb_equipment_alarm_report a
                 JOIN tb_tag_info ti ON a.tagsn = ti.tagsn
+                CROSS JOIN LATERAL (
+                    SELECT r.val
+                    FROM tb_tag_raw_data r
+                    WHERE r.tagsn = a.tagsn
+                      AND r.logtime > now() - interval '{_ALARM_RELEASE_LOOKBACK}'
+                    ORDER BY r.logtime DESC
+                    LIMIT 1
+                ) latest
                 WHERE a.alarm_status = '진행중'
                   AND ti.tagtype = 'Digital Input'
-                  AND EXISTS (
-                      SELECT 1 FROM (
-                          SELECT DISTINCT ON (tagsn) tagsn, val
-                          FROM tb_tag_raw_data
-                          WHERE tagsn = a.tagsn
-                          ORDER BY tagsn, logtime DESC
-                      ) latest WHERE latest.val = 0
-                  )
+                  AND latest.val = 0
             )
             UPDATE tb_equipment_alarm_report a
             SET alarm_status = '알람해제',
@@ -2385,6 +2400,10 @@ app.include_router(causal_router)
 # 경보/위기관리 엔드포인트 모듈 초기화
 init_alarm_crisis(get_db_connection)
 app.include_router(alarm_crisis_router)
+
+# 반복 경보(채터링) 분석
+init_alarm_chattering(get_db_connection)
+app.include_router(alarm_chattering_router)
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():

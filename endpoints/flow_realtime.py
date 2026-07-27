@@ -29,6 +29,12 @@ _LEVEL_ALARM_SETTING_RE = re.compile(
     r'(HH|LL|H설정|L설정|_H_|_L_|설정값)', re.IGNORECASE
 )
 
+# 최신 적재 시각을 찾을 때 먼저 훑는 창.
+# 범위 없는 max(logtime) 은 하이퍼테이블 전 청크(26개)를 여느라 7.6초가 걸린다.
+# 이 화면은 폴링이라 매 주기 그 비용을 문다. 적재가 살아 있으면 최신값은 항상
+# 이 창 안에 있으므로 3.5ms 로 끝난다.
+_MAX_LOGTIME_PROBE = "2 days"
+
 
 def _group_priority(gc: str) -> int:
     """유량 그룹 우선순위 — OUTLET > INSTANT > INLET > 기타."""
@@ -220,9 +226,17 @@ async def get_flow_map_realtime():
 
         latest_values: dict[str, float] = {}
         if all_tagsns:
-            # DB에 최근 1시간 데이터가 없으면 최신 데이터 기준으로 쿼리 창 이동
-            cur.execute("SELECT max(logtime) FROM tb_tag_raw_data")
+            # DB에 최근 1시간 데이터가 없으면 최신 데이터 기준으로 쿼리 창 이동.
+            # 창을 준 조회로 먼저 끝내고(_MAX_LOGTIME_PROBE 주석 참조), 그래도
+            # 없을 때만 — 적재가 멈춘 dev 상황 — 전 구간을 훑는다.
+            cur.execute(
+                "SELECT max(logtime) FROM tb_tag_raw_data "
+                f"WHERE logtime > now() - interval '{_MAX_LOGTIME_PROBE}'"
+            )
             _max_row = cur.fetchone()
+            if not (_max_row and _max_row[0]):
+                cur.execute("SELECT max(logtime) FROM tb_tag_raw_data")
+                _max_row = cur.fetchone()
             _max_logtime = _max_row[0] if _max_row and _max_row[0] else datetime.now()
             # 최신 데이터 시점이 1시간 이내면 now() 사용, 그보다 오래됐으면 최신 시점 + 10분 버퍼
             if (datetime.now() - _max_logtime.replace(tzinfo=None)).total_seconds() > 3600:

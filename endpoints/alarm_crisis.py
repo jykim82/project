@@ -51,6 +51,13 @@ _ALARM_CATEGORY_NAMES = frozenset(
     ["전체", "수위", "압력", "유량", "펌프", "밸브", "통신", "네트워크", "UPS", "수질"]
 )
 
+# 태그 최신값 조회 창. 창이 없으면 최신 1건을 얻으려고 하이퍼테이블 전 청크를
+# 훑는다(경보 이력 화면을 열 때마다 수억 행 스캔). 창을 주면 청크 제외로
+# 최근 1개 청크만 본다. 설정값(AMC/LEC)·측정값(LEI) 모두 SCADA 가 상시
+# 기록하므로(실측 392개 중 387개가 1일 내 갱신, 나머지 5개는 이력 자체 없음)
+# 1일 창으로 잃는 값은 없다.
+_LATEST_VAL_LOOKBACK = "1 day"
+
 
 def _extract_alarm_level(alarm_msg: str) -> str:
     """alarm_msg에서 HH/H/L/LL 레벨 추출"""
@@ -253,10 +260,11 @@ async def get_alarm_list(
         sp_vals: dict[str, float] = {}
         uniq_sp = list(set(sp_map.values()))
         if uniq_sp:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT DISTINCT ON (tagsn) tagsn, val
                 FROM tb_tag_raw_data
                 WHERE tagsn = ANY(%s)
+                  AND logtime > now() - interval '{_LATEST_VAL_LOOKBACK}'
                 ORDER BY tagsn, logtime DESC
             """, (uniq_sp,))
             for tagsn, val in cur.fetchall():
@@ -268,10 +276,11 @@ async def get_alarm_list(
         ms_units: dict[str, str] = {}
         uniq_ms = list(set(ms_map.values()))
         if uniq_ms:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT DISTINCT ON (tagsn) tagsn, val
                 FROM tb_tag_raw_data
                 WHERE tagsn = ANY(%s)
+                  AND logtime > now() - interval '{_LATEST_VAL_LOOKBACK}'
                 ORDER BY tagsn, logtime DESC
             """, (uniq_ms,))
             for tagsn, val in cur.fetchall():
@@ -439,7 +448,12 @@ async def get_alarm_reports(
                 false_alarm_notes,
                 info_updated,
                 COALESCE(tagtype, '') AS tagtype,
-                stat
+                stat,
+                -- 조회 구간 안에서 같은 (현장, 경보메시지) 가 몇 번 울렸는지.
+                -- 목록에서 반복 경보를 한 줄로 접고 "반복 N회" 로 보여주기 위한 값
+                -- (docs/alarm-chattering-spec.md). 윈도 함수는 LIMIT 이전에
+                -- 계산되므로 잘린 500행이 아니라 필터 전체 기준이다.
+                COUNT(*) OVER (PARTITION BY sitename, alarm_msg) AS repeat_count
             FROM tb_equipment_alarm_report
             {where_clause}
             ORDER BY alarm_start_time DESC
