@@ -264,6 +264,7 @@ web/
 ## 작업 이력 / 로드맵
 - `docs/work-history.md` — 완료/진행중/남은 항목 + 태그 분류 체계
 - `docs/slm-project-roadmap-v2.md` — DB 개선 + 개발 순서
+- `docs/slm-feature-roadmap-draft.md` — **기능 로드맵 검토안 (미래 계획, 착수 대상 아님)**. A 제한적 에이전트 루프 / B 현장별 지식 카드 UI / C 오탐 피드백 루프 / D 상황보고서 1·2보 초안 / E 현장 점검 모바일. **방향성 참조용 — 이 문서를 근거로 선제 구현하지 말 것**. 부록 A 에 기존 구현 대조 (What-if 시뮬은 이미 B1 EPANET 로 출시됨 · OCR 파이프라인은 부재로 신규 스택 · 오탐 라벨은 이미 수집 중)
 - `docs/review-items.md` — 검토 필요 항목
 
 ## 대화 이력 (세션별)
