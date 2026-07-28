@@ -1649,6 +1649,8 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **추가 사례 ⑤ (2026-07-19):** /trend 재진입에서 재재현 — silentUpdate 는 **fetch 완료 후에만** 세워져, 재진입 **마운트 첫 렌더**(캐시 데이터)가 애니메이션을 다시 시작하고 직후 백그라운드 갱신이 이를 끊음. 해결: TrendChart `animationKey`(조회 조건 키) — 모듈 싱글턴 Set 으로 **같은 조회 조건은 세션 동안 최초 1회만 애니메이션** (SPA 라우팅 간 유지). 재진입 스크린샷 t0/t+2s 픽셀 동일 검증. **빈발 증상 — 진단 체크리스트를 chart-rendering-policy §이중 렌더 방지에 상비**
 - **추가 사례 ⑦ (2026-07-19, 최종):** 배수지 모니터링에서 ④⑥ 수정 후에도 영상 재현 — 포렌식(ECharts 인스턴스 ID 추적) 결과 **마운트 0.6s 뒤 인스턴스가 통째로 교체**(ec_...423→426, dispose 훅 미경유 = next/dynamic(LoadableComponent) 경계의 간헐 리마운트). 근원은 라이브러리 레이어라 통제 불가로 판단 → **animationKey(같은 조회 조건 1회 애니메이션)를 MonitoringTrendBlock 에도 적용**해 재init 이 일어나도 무음 렌더. 검증: 재선택 후 SVG 애니메이션 변이 0건 (이전 +2,000×2 버스트). **교훈: 차트 재-draw 계열은 원인 차단과 별개로 animationKey 로 시각 재시작을 구조적으로 봉쇄할 것**
 
+- **추가 사례 ⑧ (2026-07-28):** **채팅 트렌드 카드**(PlotChart)에서 재발 — "AI 질문에서 트렌드를 표기할 때만 갱신". 원인은 ②와 동일 패턴이 **PlotChart 에 남아 있던 것**: 다중 tag 비교의 worst-status 활성 tag 를 effect 로 결정 → 마운트 직후 state 변경 → comparison undefined→값 → 옵션 재계산 → notMerge 전체 리드로우. 실측: 차트 등장 1초 뒤 MutationObserver 변이 **202건 버스트** → 수정 후 **8건**(스트리밍 마무리 미세 변이, 이후 0). 처방 ②와 동일 — 기본값은 렌더 중 파생(useMemo), 사용자 선택만 state(`userTagId`). **교훈: ② 수정 시 같은 패턴을 쓰는 형제 컴포넌트(TrendChart↔PlotChart)를 함께 스캔했어야 했다 — 패턴 수정은 `selectWorstTag`/`setActiveTagId` 같은 시그니처로 전 코드 검색 후 일괄 적용할 것**
+
 ### [E-040] GIS 소블록경계가 관할 전체를 진회색으로 덮음 — SHP 임포트 스키마 불일치
 
 - **날짜:** 2026-07-18
