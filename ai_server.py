@@ -114,6 +114,9 @@ from endpoints.shift_handover import (
 from endpoints.inspection_due import (
     router as inspection_due_router, init as init_inspection_due,
 )
+from endpoints.alarm_approach import (
+    router as alarm_approach_router, init as init_alarm_approach,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -2418,6 +2421,10 @@ app.include_router(shift_handover_router)
 # 설비 점검 도래
 init_inspection_due(get_db_connection)
 app.include_router(inspection_due_router)
+
+# 임계 도달 예측
+init_alarm_approach(get_db_connection)
+app.include_router(alarm_approach_router)
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
