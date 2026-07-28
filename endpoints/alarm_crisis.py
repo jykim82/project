@@ -451,6 +451,9 @@ async def get_alarm_reports(
                 stat,
                 confirmed_by,
                 TO_CHAR(confirmed_at, 'YYYY-MM-DD HH24:MI:SS') AS confirmed_at,
+                anomaly_label,
+                labeled_by,
+                TO_CHAR(labeled_at, 'YYYY-MM-DD HH24:MI:SS') AS labeled_at,
                 -- 조회 구간 안에서 같은 (현장, 경보메시지) 가 몇 번 울렸는지.
                 -- 목록에서 반복 경보를 한 줄로 접고 "반복 N회" 로 보여주기 위한 값
                 -- (docs/alarm-chattering-spec.md). 윈도 함수는 LIMIT 이전에
