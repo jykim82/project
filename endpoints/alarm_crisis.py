@@ -449,6 +449,8 @@ async def get_alarm_reports(
                 info_updated,
                 COALESCE(tagtype, '') AS tagtype,
                 stat,
+                confirmed_by,
+                TO_CHAR(confirmed_at, 'YYYY-MM-DD HH24:MI:SS') AS confirmed_at,
                 -- 조회 구간 안에서 같은 (현장, 경보메시지) 가 몇 번 울렸는지.
                 -- 목록에서 반복 경보를 한 줄로 접고 "반복 N회" 로 보여주기 위한 값
                 -- (docs/alarm-chattering-spec.md). 윈도 함수는 LIMIT 이전에
@@ -853,12 +855,19 @@ async def get_alarm_dashboard_summary(
 
 @router.put("/crisis/alarm-reports/confirm")
 async def confirm_alarm_report_api(request: Request):
-    """경보 확인 처리 (alarm_confirm_yn = 'Y')"""
+    """경보 확인 처리 (alarm_confirm_yn = 'Y').
+
+    확인자·시각을 함께 기록한다 (Migration 0131) — "누가 인지했는가"의
+    감사 답변이자, 교대 간 확인 책임의 증발 방지.
+    이미 확인된 건은 confirmed_by/at 을 덮어쓰지 않는다 — 최초 확인자가
+    책임 기록이다 (재확인 클릭이 기록을 바꾸면 감사가 무의미).
+    """
     conn = None
     try:
         body = await request.json()
         tagsn = body.get("tagsn", "")
         alarm_start_time = body.get("alarm_start_time", "")
+        user_id = (body.get("user_id") or "").strip()
         if not tagsn or not alarm_start_time:
             return {"status": "error", "message": "tagsn, alarm_start_time 필수"}
 
@@ -866,9 +875,13 @@ async def confirm_alarm_report_api(request: Request):
         cur = conn.cursor()
         cur.execute("""
             UPDATE tb_equipment_alarm_report
-            SET alarm_confirm_yn = 'Y', info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            SET alarm_confirm_yn = 'Y',
+                confirmed_by = CASE WHEN confirmed_by IS NULL AND %s <> ''
+                                    THEN %s ELSE confirmed_by END,
+                confirmed_at = COALESCE(confirmed_at, NOW()),
+                info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
             WHERE tagsn = %s AND alarm_start_time = %s::timestamp
-        """, [tagsn, alarm_start_time])
+        """, [user_id, user_id, tagsn, alarm_start_time])
         conn.commit()
         cur.close()
         return {"status": "OK"}
@@ -900,6 +913,7 @@ async def resolve_alarm_reports_api(request: Request):
         body = await request.json()
         alarms: list[dict] = body.get("alarms") or []
         note: str = (body.get("resolution_note") or "").strip()
+        user_id: str = (body.get("user_id") or "").strip()
 
         if not alarms:
             return {"status": "error", "message": "alarms 필수"}
@@ -912,18 +926,23 @@ async def resolve_alarm_reports_api(request: Request):
             tagsn = a.get("tagsn")
             if not alarm_start_time or not tagsn:
                 continue
+            # 해제도 확인의 한 형태 — 확인자 기록 규칙은 confirm 과 동일
+            # (최초 기록 보존, Migration 0131)
             cur.execute(
                 """
                 UPDATE tb_equipment_alarm_report
                 SET alarm_end_time = NOW(),
                     alarm_confirm_yn = 'Y',
+                    confirmed_by = CASE WHEN confirmed_by IS NULL AND %s <> ''
+                                        THEN %s ELSE confirmed_by END,
+                    confirmed_at = COALESCE(confirmed_at, NOW()),
                     user_cause_description = COALESCE(user_cause_description || ' | ', '') || %s,
                     info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
                 WHERE tagsn = %s
                   AND alarm_start_time = %s::timestamp
                   AND alarm_end_time IS NULL
                 """,
-                [note or "[비전 점검 해제]", tagsn, alarm_start_time],
+                [user_id, user_id, note or "[비전 점검 해제]", tagsn, alarm_start_time],
             )
             resolved += cur.rowcount
         conn.commit()
