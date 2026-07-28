@@ -1045,10 +1045,10 @@ async def create_task(body: dict = Body(...)):
                 (sitename, facilitytype, task_category, task_start_time, task_end_time,
                  suspend_alarm_types, task_content, alarm_report_id, vision_session_id,
                  equipment_id, equipmenttype, fault_category, severity,
-                 recorded_by, status)
+                 recorded_by, status, inspection_type, linked_task_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s)
+                    %s, %s, %s, %s)
             RETURNING task_id
         """, (
             body.get("sitename", ""),
@@ -1066,6 +1066,9 @@ async def create_task(body: dict = Body(...)):
             body.get("severity") or None,
             body.get("recorded_by") or None,
             body.get("status") or "진행중",
+            # 점검 기원 (inspection-origin-spec): 일상/요청. 점검 외 카테고리는 NULL
+            body.get("inspection_type") or None,
+            body.get("linked_task_id") or None,
         ))
         task_id = cur.fetchone()[0]
         # [E-025] vision_session에 linked_task_id 역방향 업데이트

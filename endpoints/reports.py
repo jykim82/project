@@ -541,6 +541,12 @@ def list_candidate_tasks(
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     inspection_type: Optional[str] = Query(None),
+    include_faults: bool = Query(
+        False,
+        description="점검 후보에 같은 기간의 고장보고 기록도 포함 "
+        "(inspection-origin-spec — 점검 중 발견·조치한 고장을 일 점검 "
+        "보고서 한 장으로 문서화. 별도 장애 보고서 강제 방지)",
+    ),
     limit: int = Query(200, le=1000),
 ):
     if category not in ("고장보고", "점검"):
@@ -550,19 +556,27 @@ def list_candidate_tasks(
         cur = conn.cursor()
         # 현재 환경엔 region 컬럼이 시설 마스터에 없음 → 단일 region 가정.
         # 멀티테넌시 도입 시 ei.region / f.region 조인 추가 (사양 §3.2)
+        # 점검 + include_faults: 당일 고장보고도 후보에 포함 — 문서 편입은
+        # 선택이고 고장 카운트는 기록 기반이라 이중 집계가 없다
+        if category == "점검" and include_faults:
+            cat_cond = "t.task_category IN ('점검', '고장보고')"
+            params: list[Any] = []
+        else:
+            cat_cond = "t.task_category = %s"
+            params = [category]
         sql = [
-            """
+            f"""
             SELECT t.task_id, t.sitename, t.facilitytype, t.equipmenttype,
-                   t.fault_category, t.inspection_type,
+                   t.fault_category, t.inspection_type, t.task_category,
+                   t.linked_task_id,
                    t.task_start_time, t.resolved_at,
                    t.task_content, t.resolution_note,
                    (COALESCE(jsonb_array_length(t.photo_urls), 0) +
                     COALESCE(jsonb_array_length(t.resolution_photo_urls), 0)) > 0 AS has_photo
               FROM tb_task_master t
-             WHERE t.task_category = %s
+             WHERE {cat_cond}
             """
         ]
-        params: list[Any] = [category]
         if date_from:
             sql.append("AND t.task_start_time >= %s"); params.append(date_from)
         if date_to:
@@ -581,6 +595,8 @@ def list_candidate_tasks(
                 "equipmenttype":    r["equipmenttype"],
                 "fault_category":   r["fault_category"],
                 "inspection_type":  r["inspection_type"],
+                "task_category":    r["task_category"],
+                "linked_task_id":   r["linked_task_id"],
                 "task_start_time":  r["task_start_time"].isoformat() if r["task_start_time"] else None,
                 "resolved_at":      r["resolved_at"].isoformat() if r["resolved_at"] else None,
                 "task_content":     r["task_content"],
