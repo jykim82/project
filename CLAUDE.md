@@ -188,6 +188,7 @@ web/
 - `docs/voice-input-spec.md` — 음성 입력 (로컬 Whisper STT, 채팅 마이크 버튼. 도메인 용어 프롬프트 바이어스. 웨이트 1.5GB git 제외 — 납품 번들)
 - `docs/tag-monitoring-spec.md` — 태그 모니터링 (모니터링 그룹 — 현재값 컬럼 + 이상 카테고리 9종 필터 + 컬럼 정렬 + 우클릭 트랜드 보기, CSV·태그추가 제외, 4 Phase)
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
+- `docs/incident-report-spec.md` — 상황보고 1·2보 v1 (로드맵 D P1, Migration 0133 — tb_incident_report 섹션 jsonb·parent_id 차수 체인. 자동 채움은 생성 1회(경보 접기·조치·전조 60분), 후속보는 직전 보 이후 구간만. 확정 후 수정 불가·체인 삭제 보호. 세대수 데이터 부재로 영향 범위는 수동. LLM 없음)
 - `docs/alarm-label-feedback-spec.md` — 경보 판정 라벨 v1 (로드맵 C P1, Migration 0132 — 3분법 real/false/check, 정본 anomaly_label·is_false_alarm 파생 동기화, 백필 1,457건(판정자 소급 금지). 이력 1클릭 판정 + "오탐 분석" 탭 주별 오탐률 추이. 가중치 조정은 P2 — 분류별 30건 미만 유보. 채팅 오답 피드백과 별도 체계)
 - `docs/alarm-approach-spec.md` — 임계 도달 예측 v1 (수위 LEI↔LEC 페어 41개 — 최근 60분 원시 선형회귀 외삽, R²>0.5·기울기>0.001·4시간 horizon 게이트. 알람 테이블에 안 씀(예측≠경보), 경보관리 현황 탭 패널. Chronos 향후 전망과 목적 구분 §5. 원시 직접 집계 — 5분 cagg 는 refresh 지연으로 부적합 실측)
 - `docs/alarm-confirm-audit-spec.md` — 경보 확인 책임 추적 v1 (Migration 0131 confirmed_by/at — 최초 확인만 기록·소급 추정 금지·자동해제는 기록 안 함. confirm/resolve 양쪽 기록, 목록 확인자 표시. P2=미확인 메신저 상신)
@@ -228,8 +229,8 @@ web/
 - `docs/setup-audit-spec.md` — 구축 완결성 검수 (구축 고도화 ③. 검사 6종(기초정보/임계/datainfo/계통도/품질/EPANET) 집계 `/setup/audit` M200-21 — 납품 검수 단일 진입점, warn 0=인수 기준. 첫 실행에서 가압장 기초정보 공백 11곳 검출. v1 완료 2026-07-24)
 - `docs/datainfo-conversion-rule-spec.md` — DATAINFO 변환룰 (구축 고도화 ①. datadesc→datainfo 룰 4계층(regex/dict/context/override) + 미리보기·선별 적용·이력 롤백 + 재현율 채점. Migration 0117·0118. 메뉴는 2026-07-26 "태그 설정"(/setup/tags) 탭으로 통합 — /setup/datainfo-rules 는 redirect, M200-20 제거(0123). P1 완료 — 49룰 87.6% + 태그 단위 정책 exclude(변환 제외)/override(확정) 행별 버튼)
 - `docs/chat-history-server-spec.md` — 채팅 대화 목록 서버 계정 전환 (localStorage→tb_ai_chat_group/tb_ai_chat_message jsonb, Migration 0119. 서버-우선+로컬 폴백, 일회성 이관 멱등 import. ai 메모리 세션·/ask/stream 불변. **v1+P2 완료 2026-07-25** — 본문 검색 q·지연 purge 30일·소유자 검증 404+경합 흡수)
-- `docs/inspection-cycle-spec.md` — 설비 점검 주기 도래 v1 (tb_inspection_cycle 유형 단위 마스터 + 조회 시점 계산(cron 없음) `GET /inspection/due`. 표시=인수인계 화면 섹션, never 261대는 한 줄 요약(목록 잠식 방지), "일정 등록"은 명시 행동 — 자동 생성 없음. Migration 0130. 주기 편집 UI 는 P2)
-- `docs/shift-handover-spec.md` — 교대 인수인계 브리핑 v1 (`/reports/shift-handover` M005-5. 신규 테이블 0 — 경보·작업·메모·일정 집계. "넘겨받는 것"(구간 끝 시점 진행중·미확인)을 최상단. 교대 경계는 SITE_SETTING.SHIFT_BOUNDARIES 로 config 분리(빈 값=24h 단일). 경보 목록은 (현장,메시지) 접기 필수 — 안 접으면 채터링이 목록 잠식. Migration 0129)
+- `docs/inspection-cycle-spec.md` — 설비 점검 주기 도래 v1 (tb_inspection_cycle 유형 단위 마스터 + `GET /inspection/due` 조회 시점 계산. **표시처 없음** — v1 표시처(인수인계)가 폐기됨, API·데이터는 유지. Migration 0130)
+- `docs/shift-handover-spec.md` — **폐기 (2026-07-28 사용자 결정, Migration 0134)** — 교대 인수인계 화면·API·메뉴 전면 제거. 재제안 금지. 문서는 이력 보존
 - `docs/memo-schedule-spec.md` — 업무 메모 + 일정 알림 v1 (Migration 0105. 메모: 검색+달력 보기 토글, 삭제=본인+마스터. 일정: 달력 등록→30s 폴링 전역 팝업, 확인 전 재표시. SCADA 알람과 용어·시스템 분리)
 - `docs/realtime-comm-spec.md` — 실시간 통신 확정판 v2 (전 단계 완료: P1 메신저+그룹 채팅(0106·0113) / P2 파일 전송(0107) / P3 음성·P4 영상 통화(0108~0111) / 3~4인 회의 통화 풀메시(0112) / 외부망 TURN 옵션(coturn·이중 토글). REST 폴링+non-trickle ICE 설계. LTE 실통화 검증)
 - `docs/inspector-pattern-spec.md` — 우측 인스펙터 패턴

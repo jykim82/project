@@ -55,7 +55,13 @@ tb_inspection_cycle (
 - 정렬: overdue(경과일 큰 순) → due_soon → never. `ok` 는 기본 미포함
   (`include_ok=1` 로 요청 시만).
 
-## 4. 표시 — 인수인계 화면 섹션 (신규 메뉴 없음)
+## 4. 표시 — **현재 표시처 없음 (2026-07-28)**
+
+v1 표시처였던 인수인계 화면이 메뉴째 폐기됐다 (shift-handover-spec 참조).
+`GET /inspection/due` API 와 `tb_inspection_cycle`(0130)은 유지 — 표시처
+재결정 시 재사용한다 (후보: 일 점검 보고서 화면·설비 건강성).
+
+### 4.1 (폐기된 v1 표시안 — 이력)
 
 `/reports/shift-handover` 의 "다음 근무 예정 일정" 아래 **"점검 도래 설비"**
 섹션. 교대 시 "이번 근무에 할 점검"으로 넘어가는 것이 자연스럽고, 점검
