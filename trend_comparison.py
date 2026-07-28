@@ -274,12 +274,19 @@ def _lookup_level_lower(conn, sitename: str) -> Optional[float]:
 
 
 def _flow_hourly_profile(conn, tagsn: str) -> Optional[dict]:
-    """유량(소비 신호) 시간대 프로파일 — 최근 14일 시간별 평균·표준편차.
+    """유량(소비 신호) 시간대 프로파일 — 최근 14일 시간별 중앙값·p10/p90.
 
     소비 유량은 사람 활동이 결정해 시간대 모양이 안정적이다 (배수지 수위의
     패턴 투영 기각 사유 — 펌프 운영 결정 — 가 적용되지 않는 유형).
-    전수 백테스트(순시유량 81태그·7일): 레벨보정 프로파일이 수평 대비
-    74/81 우세·중앙값 +27% (2026-07-29, 남산1 괴리 보고에서 출발).
+
+    평균이 아니라 **중앙값**인 이유 — 배수지 유입처럼 켜짐(~300)/꺼짐(0)
+    이봉 신호에서 평균은 "실제로 없는 값"(예: 새벽 110)을 그린다. 사용자
+    실사(신평 유입: 실측은 0 을 찍는데 전망만 안 내려감). 중앙값은 다수
+    상태를 따라 실측처럼 0 까지 내려가고, MAE 도 더 좋다 — 전수 백테스트
+    (순시유량 81태그·7일): 수평 대비 76/81 우세·개선율 중앙값 +29%
+    (평균+레벨보정은 74/81·+27%. 신평 유입 55.4→38.9, 남산1 21.9→18.0).
+    밴드는 p10~p90 — 이봉 구간에선 0~300 전폭으로 벌어져 불확실성을
+    정직하게 보여준다.
 
     게이트: 전반 7일 vs 후반 7일 프로파일 상관(split-half) r>=0.3 —
     공업 유량처럼 시간대 모양이 없는 신호(실측 석문공업 r=-0.13,
@@ -293,8 +300,9 @@ def _flow_hourly_profile(conn, tagsn: str) -> Optional[dict]:
         cur.execute(
             """
             SELECT extract(hour from logtime)::int AS h,
-                   avg(val),
-                   stddev_pop(val),
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY val),
+                   percentile_cont(0.1) WITHIN GROUP (ORDER BY val),
+                   percentile_cont(0.9) WITHIN GROUP (ORDER BY val),
                    avg(val) FILTER (WHERE logtime <= now() - interval '7 days'),
                    avg(val) FILTER (WHERE logtime >  now() - interval '7 days')
             FROM tb_tag_raw_data
@@ -307,10 +315,11 @@ def _flow_hourly_profile(conn, tagsn: str) -> Optional[dict]:
         rows = cur.fetchall()
         if len(rows) < 20:
             return None
-        mean = {int(r[0]): float(r[1]) for r in rows}
-        std = {int(r[0]): float(r[2] or 0.0) for r in rows}
-        halves = [(float(r[3]), float(r[4])) for r in rows
-                  if r[3] is not None and r[4] is not None]
+        med = {int(r[0]): float(r[1]) for r in rows}
+        p10 = {int(r[0]): float(r[2]) for r in rows}
+        p90 = {int(r[0]): float(r[3]) for r in rows}
+        halves = [(float(r[4]), float(r[5])) for r in rows
+                  if r[4] is not None and r[5] is not None]
         if len(halves) < 20:
             return None
         xs, ys = zip(*halves)
@@ -321,10 +330,10 @@ def _flow_hourly_profile(conn, tagsn: str) -> Optional[dict]:
         r_stable = (num / den) if den > 0 else 0.0
         if r_stable < 0.3:
             return None
-        pm = sum(mean.values()) / len(mean)
+        pm = sum(med.values()) / len(med)
         if pm <= 0:
             return None
-        return {"mean": mean, "std": std, "profile_mean": pm,
+        return {"median": med, "p10": p10, "p90": p90, "profile_mean": pm,
                 "split_half_r": round(r_stable, 2)}
     except Exception:
         return None
@@ -855,11 +864,9 @@ def compute_comparison(
         if not _seasonal_done and trend_kind == "flow":
             _prof = _flow_hourly_profile(conn, tagsn)
             if _prof and f_times:
-                _recent = [v for t, v in zip(times, vals)
-                           if v is not None
-                           and (times[-1] - t).total_seconds() <= 86400]
-                _shift = ((sum(_recent) / len(_recent)) - _prof["profile_mean"]
-                          if _recent else 0.0)
+                # 레벨 보정(전일 평균 이동) 없음 — 이봉 신호에서 꺼짐 구간까지
+                # 함께 밀어올려 오히려 손해 (백테스트: 보정 +27% vs 원판 +29%).
+                # 이음새 연속성은 아래 2h 램프가 담당한다.
                 _pv, _bu, _bl = [], [], []
                 for _ft in f_times:
                     try:
@@ -869,14 +876,15 @@ def compute_comparison(
                     _h = _t.hour
                     _h2 = (_h + 1) % 24
                     _frac = _t.minute / 60.0
-                    _m = _prof["mean"]
-                    _base = (_m.get(_h, _prof["profile_mean"]) * (1 - _frac)
-                             + _m.get(_h2, _prof["profile_mean"]) * _frac)
-                    _sd = _prof["std"].get(_h, 0.0)
-                    _v = max(_base + _shift, 0.0)
-                    _pv.append(round(_v, 3))
-                    _bu.append(round(_v + 1.28 * _sd, 3))
-                    _bl.append(round(max(_v - 1.28 * _sd, 0.0), 3))
+                    _pm = _prof["profile_mean"]
+
+                    def _at(_d: dict, _hh: int, _hh2: int, _fr: float) -> float:
+                        return (_d.get(_hh, _pm) * (1 - _fr)
+                                + _d.get(_hh2, _pm) * _fr)
+
+                    _pv.append(round(max(_at(_prof["median"], _h, _h2, _frac), 0.0), 3))
+                    _bu.append(round(max(_at(_prof["p90"], _h, _h2, _frac), 0.0), 3))
+                    _bl.append(round(max(_at(_prof["p10"], _h, _h2, _frac), 0.0), 3))
                 if len(_pv) == len(f_times):
                     # 연속성 앵커 — 시작점을 마지막 실측에 맞추고 초반 2h 램프
                     _now_v = next((v for v in reversed(vals)
