@@ -3766,3 +3766,46 @@ memo-schedule-spec §4 반영. 확장 후보: 메모→일정 등록 연계, 대
 **인프라**
 - LG U+ 라우터 전환 + dnhigh98.duckdns.org 개통 (LE 443, launchd 갱신,
   TURN 도메인·공인 IP 갱신). asuscomm 폐기
+
+## 저사양 최적화 + 알람 신뢰 회복 사이클 (2026-07-27~28)
+
+"서버가 고사양이 아닌 것을 감안한 기능 제안" 요청에서 출발 — DB 실측 기반
+제안 → 전 항목 구현. 관통 주제는 **알람 체계의 신뢰 회복** (확인율 0.3%).
+
+**⓪ 원시데이터 압축 (Migration 0128)**
+- tb_tag_raw_data 447M행 **120 GB → 14 GB** (segmentby=tagsn, 압축비
+  135~300×). 1년 조회 25.2초 → 2.0초 (12.6×). 무결성 2,700태그 전수 일치
+- 정책 job 새벽 3시 + compress_after 14일 (최근 청크 비압축 — 적재 보호).
+  compress_chunk 배타 락 실측(Node-RED INSERT 9분 차단) → lock_timeout
+  절차 문서화, delivery-checklist 반영
+
+**[E-056] 전 청크 스캔 3건 제거 — 압축보다 큰 효과**
+- 알람 자동해제 루프(2분 주기) 1회 **14분 30초 → 6.9ms** (사실상 DB 상시
+  점유였음), 경보 이력 설정값 조회 332초 → 0.16초, max(logtime) 7.6초 →
+  3.5ms. 원칙: tb_tag_raw_data 조회는 logtime 하한 필수
+
+**A-1 반복 경보(채터링) — alarm-chattering-spec**
+- 실측: 죽동 탁도계 1건이 30일 경보의 80.7%(2,866건). 채터링 6건 = 87%
+- /crisis/alarm-chattering + 경보관리 "반복 경보" 탭 + 이력 접기(500→20행)
+- 판정=평균 지속 15분 단독 (시간당 횟수 기준은 실측 오분류로 폐기)
+
+**A-2 교대 인수인계 — shift-handover-spec (0129)**
+- /reports/shift-handover (M005-5). 신규 테이블 0 — 경보·작업·메모·일정
+  집계. "넘겨받는 것"(구간 끝 시점 상태) 최상단. SHIFT_BOUNDARIES config
+- 점검 도래 섹션 (inspection-cycle-spec, 0130) — tb_inspection_cycle 유형
+  단위 마스터 + 기록 기반 조회 시점 계산. "일정 등록"은 명시 행동
+
+**A-4 확인 책임 추적 — alarm-confirm-audit-spec (0131)**
+- confirmed_by/at — 최초 확인만 기록, 소급 추정 금지, 자동해제는 기록 안 함
+
+**A-3 임계 도달 예측 — alarm-approach-spec**
+- 수위 LEI↔LEC 페어 41개, 최근 60분 원시 선형회귀 외삽 (89ms). R²·기울기·
+  4시간 horizon 게이트. 알람 테이블에 안 씀(예측≠경보). 현황 탭 패널
+
+**제외 결정 (재제안 금지, memory)**
+- 유수율/MNF 순위 — 검침량 데이터 부재 · QR 설비 라벨 — 현장 부담 대비
+  가치 낮음 · 에너지 원단위 — 전력 태그 0개
+
+**로드맵 검토안 편입** — docs/slm-feature-roadmap-draft.md (방향 참조용,
+선제 구현 금지). 부록 A: 원안 전제 3건이 기존 구현과 다름(What-if 시뮬은
+기출시 B1, OCR 파이프라인 부재, PDF는 브라우저 인쇄)
