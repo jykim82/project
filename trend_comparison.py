@@ -225,6 +225,54 @@ def _lookup_threshold(conn, trend_kind: str, sitename: str, facilitytype: str) -
         cur.close()
 
 
+def _lookup_level_lower(conn, sitename: str) -> Optional[float]:
+    """수위 하한(LL) — 공급량 부족 방향의 임계.
+
+    상한(만수위 90% 근사)과 달리 하한은 근사할 기준이 없어 SCADA 실측
+    임계를 쓴다: LEI(수위 측정) ↔ LEC(임계 설정, datainfo LL) 페어
+    (alarm_approach 와 동일 명명 규칙 — 41페어 실측 검증). 복수면 가장
+    높은 LL — 먼저 도달하는 하한이 보수적(이른) 경보다. 페어 없으면 None
+    (임의 하한을 만들어내지 않는다).
+    """
+    if not sitename:
+        return None
+    cur = conn.cursor()
+    try:
+        # E-056: tb_tag_raw_data 조회는 logtime 하한 필수.
+        # LIKE 패턴은 파라미터로 — 쿼리 본문의 % 는 psycopg2 플레이스홀더와
+        # 충돌한다 (alarm_approach 와 동일 처리)
+        cur.execute(
+            """
+            WITH lei AS (
+                SELECT split_part(tagsn, '_', 2) AS dev
+                FROM tb_tag_info
+                WHERE tagsn LIKE %s AND sitename = %s
+                  AND datainfo ~ '수위'
+            ),
+            lec AS (
+                SELECT tagsn FROM tb_tag_info
+                WHERE tagsn LIKE %s AND datainfo ~ 'LL'
+                  AND split_part(tagsn, '_', 2) IN (SELECT dev FROM lei)
+            ),
+            latest AS (
+                SELECT DISTINCT ON (tagsn) val
+                FROM tb_tag_raw_data
+                WHERE logtime > now() - interval '1 day'
+                  AND tagsn IN (SELECT tagsn FROM lec)
+                ORDER BY tagsn, logtime DESC
+            )
+            SELECT max(val) FROM latest WHERE val > 0
+            """,
+            ("%\\_LEI\\_%", sitename, "%\\_LEC\\_%"),
+        )
+        r = cur.fetchone()
+        return round(float(r[0]), 2) if r and r[0] is not None else None
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+
 def _linear_forecast(
     times: list[datetime], vals: list[Optional[float]],
     forecast_hours: int = 24, step_minutes: int = 30,
@@ -456,14 +504,24 @@ def compute_causal_hint(
         except Exception: pass
 
 
-def _forecast_status(hours_to_threshold: Optional[float]) -> tuple[str, str]:
+def _forecast_status(
+    hours_to_threshold: Optional[float], threshold_label: Optional[str] = None,
+) -> tuple[str, str]:
+    # 수위는 방향이 두 개다 — 넘침(HH)과 부족(LL). 배지 문구에 어느 쪽
+    # 한계인지 밝힌다. 그 외 유형은 임계가 하나라 기존 "한계" 유지.
+    word = ""
+    if threshold_label:
+        if "LL" in threshold_label:
+            word = "저수위 "
+        elif "HH" in threshold_label:
+            word = "만수위 "
     if hours_to_threshold is None:
         return "normal", "안전 (24시간+)"
     if hours_to_threshold > 24:
         return "normal", "안전 (24시간+)"
     if hours_to_threshold > 6:
-        return "warning", f"{hours_to_threshold:.0f}시간 후 한계 접근"
-    return "alert", f"{hours_to_threshold:.1f}시간 후 한계 도달"
+        return "warning", f"{hours_to_threshold:.0f}시간 후 {word}한계 접근"
+    return "alert", f"{hours_to_threshold:.1f}시간 후 {word}한계 도달"
 
 
 def _is_skip_target(conn, tagsn: str) -> Optional[str]:
@@ -603,6 +661,13 @@ def compute_comparison(
 
     # ── forecast ─────────────────────────────────────────
     threshold, threshold_label = _lookup_threshold(conn, trend_kind, sitename or "", facilitytype or "")
+    # 수위는 상한(넘침·HH)과 하한(공급 부족·LL)이 둘 다 위험이다.
+    # 응답 계약(threshold_value 단일)은 유지 — 아래 교차 스캔에서
+    # 추세가 실제로 향하는 쪽 임계를 골라 내려준다.
+    level_lower = (
+        _lookup_level_lower(conn, sitename or "")
+        if trend_kind == "level" else None
+    )
     f_times, f_vals, slope = _linear_forecast(times, vals, forecast_hours)
     fc_method = "linear"
     # [2026-07-16] Chronos-Bolt 우선 (백테스트 +46.9% — 사양 §5.4).
@@ -814,28 +879,61 @@ def compute_comparison(
 
         # 임계 도달 시점 — 블렌딩 forecast 시리즈에서 첫 교차를 직접 스캔(곡선과 일관).
         # 선형 slope 로 계산하면 평균회귀로 평탄해진 곡선과 어긋나므로 시리즈 기준.
+        # 수위는 상한·하한 후보를 모두 스캔해 먼저 교차하는 쪽으로 판정한다.
         last_val = next((v for v in reversed(vals) if v is not None), None)
+        # direction: 'upper'=상한(넘침, 상향 교차만 위험) / 'lower'=하한(부족,
+        # 하향 교차만 위험) / None=단일 임계 기존 방향 추론 유지 (압력·수질).
+        # 방향을 명시하는 이유 — 이미 LL 아래인 현장(실측: 난지관광 0.11<0.5)
+        # 에서 방향 추론은 "회복해서 LL 로 올라옴"을 도달로 오판한다.
+        _candidates = [
+            (threshold, threshold_label,
+             "upper" if trend_kind == "level" else None),
+        ]
+        if level_lower is not None:
+            _candidates.append((level_lower, "저수위 한계 (LL)", "lower"))
         hours_to = None
-        if last_val is not None and threshold is not None and f_vals and f_times:
-            rising = threshold > last_val
+        resp_threshold, resp_label = threshold, threshold_label
+        if last_val is not None and f_vals and f_times:
             _last_t = next((t for t, v in zip(reversed(times), reversed(vals)) if v is not None), None)
-            for i, fv in enumerate(f_vals):
-                if (fv >= threshold) if rising else (fv <= threshold):
-                    try:
-                        _ct = datetime.fromisoformat(f_times[i])
-                        if _last_t is not None:
-                            hours_to = round((_ct - _last_t).total_seconds() / 3600.0, 1)
-                    except (ValueError, TypeError):
-                        hours_to = round((i + 1) * 30 / 60.0, 1)
-                    break
-        f_status, f_label = _forecast_status(hours_to)
+            for _th, _th_label, _dir in _candidates:
+                if _th is None:
+                    continue
+                if _dir == "upper":
+                    if last_val >= _th:   # 이미 초과 — 미래 사건이 아니다
+                        continue
+                    rising = True
+                elif _dir == "lower":
+                    if last_val <= _th:   # 이미 미달 — 회복 교차는 도달이 아니다
+                        continue
+                    rising = False
+                else:
+                    rising = _th > last_val
+                _h = None
+                for i, fv in enumerate(f_vals):
+                    if (fv >= _th) if rising else (fv <= _th):
+                        try:
+                            _ct = datetime.fromisoformat(f_times[i])
+                            if _last_t is not None:
+                                _h = round((_ct - _last_t).total_seconds() / 3600.0, 1)
+                        except (ValueError, TypeError):
+                            _h = round((i + 1) * 30 / 60.0, 1)
+                        break
+                if _h is not None and (hours_to is None or _h < hours_to):
+                    hours_to = _h
+                    resp_threshold, resp_label = _th, _th_label
+            # 교차 없으면 추세가 향하는 쪽 임계를 표시 — 하강 중인 배수지에
+            # 만수위 선만 보여주는 게 이 작업이 고친 공백이다
+            if (hours_to is None and level_lower is not None
+                    and slope is not None and slope < 0):
+                resp_threshold, resp_label = level_lower, "저수위 한계 (LL)"
+        f_status, f_label = _forecast_status(hours_to, resp_label)
         out["forecast"] = {
             "series": f_vals,
             "forecast_times": f_times,
             "method": fc_method,
             "forecast_hours": forecast_hours,
-            "threshold_value": threshold,
-            "threshold_label": threshold_label,
+            "threshold_value": resp_threshold,
+            "threshold_label": resp_label,
             "hours_to_threshold": hours_to,
             "status": f_status,
             "status_label": f_label,
