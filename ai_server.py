@@ -120,6 +120,9 @@ from endpoints.alarm_label import (
 from endpoints.incident_report import (
     router as incident_report_router, init as init_incident_report,
 )
+from endpoints.site_knowledge import (
+    router as site_knowledge_router, init as init_site_knowledge,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -2432,6 +2435,10 @@ app.include_router(alarm_label_router)
 # 상황보고 1보/2보
 init_incident_report(get_db_connection)
 app.include_router(incident_report_router)
+
+# 현장 지식 카드 (로드맵 B P1)
+init_site_knowledge(get_db_connection)
+app.include_router(site_knowledge_router)
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
