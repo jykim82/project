@@ -208,7 +208,7 @@ web/
 - `docs/epanet-menu-spec.md` — EPANET 활용 메뉴 사양 v1 (3 그룹 10 메뉴 트리 + 데이터 품질 게이트 + DataQualityCard UX + Phase 2.7~6 로드맵)
 - `docs/epanet-flow-injection-spec.md` — EPANET 실측 유량 주입 사양 (B-1: 시설별 outflow 매핑 → INP demand IDW 보간, Migration 0071)
 - `docs/epanet-flow-deviation-spec.md` — 시뮬 vs 실측 유량 차이 분석 사양 (B-2: 시설 단위 패널 + GIS 오버레이, Migration 0072 메뉴 등록)
-- `docs/trend-comparison-spec.md` — 트렌드 비교 지표 v1 (평소 대비 / 향후 전망 두 토글 + KPI 배지, anomaly_detector z-score 알람과 통일, NMF/CUSUM 흡수)
+- `docs/trend-comparison-spec.md` — 트렌드 비교 지표 v1 (평소 대비 / 향후 전망 두 토글 + KPI 배지, anomaly_detector z-score 알람과 통일, NMF/CUSUM 흡수. **2026-07-29 확장 3건**: ① 수위 하한 판정 — 하강 추세는 실측 LL 임계로 "저수위 한계 도달" ② 유량 시간대 중앙값 프로파일(`hourly_profile`) — 계절 게이트 미달 시 Chronos 대신, 백테스트 81태그 76승·+29%, 이봉 신호에 실재값만·밴드 p10~p90 ③ 전망 렌더 재보간 [E-059] — category 축 시간 비례)
 - `docs/trend-baseline-gbt-spec.md` — 트렌드 정상 기대값 GBT baseline v1 (평소 대비의 기대값을 hourly_mean→HistGradientBoosting 으로 고도화, 주1회 학습 cron + hourly_mean 폴백, 성능평가 통합화면 `/admin/model-eval?model=baseline`. forecast/z-score 판정 불변)
 - `docs/iforest-eval-spec.md` — IForest 이상탐지 모델 영속화·평가 v1 (인메모리 → 디스크 .pkl + 지표 DB. 비지도라 calibration_err·coverage% 로 평가(P1), 레이블 기반 정밀도 P2 보류. CLI `python -m anomaly_iforest train` + 주1회 cron + 성능평가 통합화면 `/admin/model-eval?model=iforest`)
 - `docs/feature-sku-spec.md` — 기능 SKU·feature flag (v1, B1 EPANET Phase 1 구현 + B2~B5 예고)
