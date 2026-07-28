@@ -190,6 +190,7 @@ web/
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
 - `docs/inspection-origin-spec.md` — 점검 기원 v1 (Migration 0135 — inspection_type 일상/요청 확정 + linked_task_id 유발 고장 링크. "기록은 하나, 문서는 기원 따라": 일 점검 보고서 후보에 고장보고 포함(include_faults, 「점검 중 조치」·「요청 점검」 배지) — 별도 보고서 강제 방지, 카운트는 기록 기반이라 이중 집계 없음. 채팅 반영·장애보고서 경과 표시는 P2)
 - `docs/incident-report-spec.md` — 상황보고 1·2보 v1 (로드맵 D P1, Migration 0133 — tb_incident_report 섹션 jsonb·parent_id 차수 체인. 자동 채움은 생성 1회(경보 접기·조치·전조 60분), 후속보는 직전 보 이후 구간만. 확정 후 수정 불가·체인 삭제 보호. 세대수 데이터 부재로 영향 범위는 수동. LLM 없음)
+- `docs/site-knowledge-spec.md` — 현장 지식 카드 v1 (로드맵 B P1, Migration 0136 — 운영자 암묵지를 웹 UI 카드로 등록. 유형 4종(주기/특성/예외/절차)·대상 AND 매칭·요일/시간 조건·revision 감사 추적. **P1=조회·기록만, 알람 억제 없음** — 안전 신호 불가침(부록 B.2), 억제 반영은 통합 억제 로그 설계 후 P2. 영향 미리보기 + 경보 분석 상세 amber 카드. `/crisis/site-knowledge` M006-8)
 - `docs/alarm-label-feedback-spec.md` — 경보 판정 라벨 v1 (로드맵 C P1, Migration 0132 — 3분법 real/false/check, 정본 anomaly_label·is_false_alarm 파생 동기화, 백필 1,457건(판정자 소급 금지). 이력 1클릭 판정 + "오탐 분석" 탭 주별 오탐률 추이. 가중치 조정은 P2 — 분류별 30건 미만 유보. 채팅 오답 피드백과 별도 체계)
 - `docs/alarm-approach-spec.md` — 임계 도달 예측 v1 (수위 LEI↔LEC 페어 41개 — 최근 60분 원시 선형회귀 외삽, R²>0.5·기울기>0.001·4시간 horizon 게이트. 알람 테이블에 안 씀(예측≠경보), 경보관리 현황 탭 패널. Chronos 향후 전망과 목적 구분 §5. 원시 직접 집계 — 5분 cagg 는 refresh 지연으로 부적합 실측)
 - `docs/alarm-confirm-audit-spec.md` — 경보 확인 책임 추적 v1 (Migration 0131 confirmed_by/at — 최초 확인만 기록·소급 추정 금지·자동해제는 기록 안 함. confirm/resolve 양쪽 기록, 목록 확인자 표시. P2=미확인 메신저 상신)
