@@ -108,9 +108,6 @@ from endpoints.alarm_crisis import router as alarm_crisis_router, init as init_a
 from endpoints.alarm_chattering import (
     router as alarm_chattering_router, init as init_alarm_chattering,
 )
-from endpoints.shift_handover import (
-    router as shift_handover_router, init as init_shift_handover,
-)
 from endpoints.inspection_due import (
     router as inspection_due_router, init as init_inspection_due,
 )
@@ -119,6 +116,9 @@ from endpoints.alarm_approach import (
 )
 from endpoints.alarm_label import (
     router as alarm_label_router, init as init_alarm_label,
+)
+from endpoints.incident_report import (
+    router as incident_report_router, init as init_incident_report,
 )
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
@@ -2417,10 +2417,6 @@ app.include_router(alarm_crisis_router)
 init_alarm_chattering(get_db_connection)
 app.include_router(alarm_chattering_router)
 
-# 교대 인수인계 브리핑
-init_shift_handover(get_db_connection)
-app.include_router(shift_handover_router)
-
 # 설비 점검 도래
 init_inspection_due(get_db_connection)
 app.include_router(inspection_due_router)
@@ -2432,6 +2428,10 @@ app.include_router(alarm_approach_router)
 # 경보 판정 라벨 (오탐 피드백)
 init_alarm_label(get_db_connection)
 app.include_router(alarm_label_router)
+
+# 상황보고 1보/2보
+init_incident_report(get_db_connection)
+app.include_router(incident_report_router)
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
