@@ -939,3 +939,13 @@ hover 툴팁으로 method/학습 윈도우/임계 등을 표시한다.
 - 채팅 plot 경로: ai_server `convert_accum_rows_to_diff` — 동일 규칙 +
   라벨 " (적산차)" (트렌드 메뉴/채팅 규칙 단일화)
 - 비교 지표(baseline/전망)는 적산 태그 제외 (원값 학습 정합)
+
+---
+
+## 부기 (2026-07-28) — 다중 tag worst 선택의 렌더 규칙 [E-039⑧]
+
+§7.7 의 worst-status 활성 tag 선택을 **effect 로 구현하면 안 된다** —
+채팅 카드(PlotChart)에서 마운트 직후 state 변경 → comparison 확정 →
+옵션 재계산 → 전체 리드로우가 재발했다 (실측 202건 변이 버스트).
+기본값은 렌더 중 파생(useMemo), 사용자 선택만 state. TrendChart·PlotChart
+모두 이 규칙으로 통일 (chart-rendering-policy §이중 렌더 방지 6항).

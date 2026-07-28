@@ -1805,3 +1805,19 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **해결:** `CROSS JOIN LATERAL (… WHERE logtime > now() - interval '1 day' ORDER BY logtime DESC LIMIT 1)` 로 재작성 → **14분 30초 → 6.9 ms**. 같은 패턴 2건 추가 제거 — `endpoints/alarm_crisis.py` 설정값(AMC/LEC)·측정값(LEI) 배치 조회(**332초 → 0.16초**), `endpoints/flow_realtime.py` 무범위 `max(logtime)`(**7.6초 → 3.5 ms**, 폴백은 NULL 일 때만 전 구간 조회로 보존)
 - **부수 효과(개선):** 무제한 조회는 몇 달 전 마지막 값으로 알람을 해제할 수 있었다. 시간 창 밖이면 "확인 불가"로 보고 진행중을 유지 — 통신 두절 태그의 알람이 유지되는 쪽이 옳다
 - **재발 방지:** ① `tb_tag_raw_data` 조회에는 **반드시 `logtime` 하한** (예외는 청크를 직접 지정하는 `shared/timeseries.py` 계열뿐) ② "최신값 1건"의 표준형은 `WHERE tagsn=%s AND logtime > now()-interval '…' ORDER BY logtime DESC LIMIT 1` — 창 밖이면 값이 없는 것이 정상 동작 ③ 창을 좁히기 전 **해당 태그군의 갱신 주기를 데이터로 확인**할 것(설정값 태그 392개 중 387개가 1일 내 갱신, 5개는 이력 자체 없음을 확인하고 적용) ④ 상시 루프의 쿼리가 `pg_stat_activity` 에 계속 잡히면 "느린 쿼리"가 아니라 **점유**를 의심 — 실행시간 > 루프 주기면 항상 돌고 있는 것 ⑤ 상세: `docs/performance/tag-raw-scan-optimization.md`
+
+### [E-057] 코드로 탭을 전환해도 화면이 안 바뀜 — Radix Tabs 비제어(defaultValue) 사용
+
+- **날짜:** 2026-07-27 (반복 경보 → 이력 이동 구현 중 발견)
+- **증상:** 반복 경보 순위표 행 클릭 시 URL 은 `?tab=history` 로 바뀌는데 화면은 그대로 순위표에 머무름. 새로고침해야 이동됨
+- **원인:** `Tabs` 를 `defaultValue`(비제어)로 사용 — Radix 비제어 컴포넌트는 마운트 후 내부 state 가 정본이라 **코드(라우터 포함)로 탭을 옮길 수 없다**. 사용자 클릭만 동작해 결함이 평소엔 드러나지 않음
+- **해결:** `value={activeTab}` + `onValueChange` 제어 컴포넌트로 전환, 딥링크(`?tab=`)도 같은 state 로 수렴
+- **재발 방지:** ① 탭·아코디언 등 Radix 컴포넌트에서 **코드로 상태를 바꿀 가능성이 있으면 처음부터 제어 모드** ② "URL 은 바뀌는데 화면이 안 바뀐다"는 비제어 컴포넌트 의심 신호 ③ 딥링크 파라미터를 받는 화면은 비제어 금지
+
+### [E-058] 세션 사용자 식별이 조용히 실패 — session.user.id 는 없는 키
+
+- **날짜:** 2026-07-27 (점검 도래 "일정 등록" 버튼이 무반응이던 원인)
+- **증상:** 버튼 클릭 시 아무 요청도 안 나가고 토스트도 순간 사라짐 — 네트워크 탭에 POST 부재로 발견
+- **원인:** `session?.user?.id` 로 읽음 — 이 프로젝트의 next-auth 세션 타입(next-auth.d.ts)은 **`user_id`** 다. 표준 next-auth 관성으로 `id` 를 쓰면 undefined 가 되어 가드에서 조기 리턴 — 컴파일도 통과(옵셔널 체이닝)하고 런타임 에러도 없어 **조용히 실패**한다
+- **해결:** `session?.user?.user_id` 로 통일 (memo·schedule 등 기존 화면과 동일 패턴)
+- **재발 방지:** ① 세션에서 사용자 식별은 항상 `user_id` — 기존 화면(`reports/memo/page.tsx`)을 복사 기준으로 ② "버튼이 조용히 무반응"이면 네트워크 탭에서 요청 자체가 나갔는지부터 확인 ③ 조기 리턴 가드에는 토스트를 넣어 침묵 실패를 없앨 것

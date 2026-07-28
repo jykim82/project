@@ -191,5 +191,14 @@ const chartRef = useRef<EChartHandle>(null);
 3. 전역 store 캐시 + 마운트 자동 재조회? (silentUpdate / animationKey)
 4. 자동 갱신 훅 즉시 실행이 초기 로드와 중복? (immediate:false + 가드)
 5. fetch 로그로 이중 호출 실측 (window.fetch 패치로 /trend/data 타임라인)
+   — DOM 쪽은 MutationObserver 타임라인 (E-039⑧ 실측: 등장 1초 뒤
+   202건 버스트 = setOption 리드로우 서명. 수정 후 8건)
+6. **같은 패턴을 쓰는 형제 컴포넌트까지 시그니처 검색으로 일괄 수정**
+   — ② 를 TrendChart 만 고치고 PlotChart(채팅 카드)를 놓쳐 1년 뒤
+   같은 신고가 재발했다 [E-039⑧]. `selectWorstTag`·`setActiveTagId` 처럼
+   결함 패턴의 시그니처로 전 코드 grep 후 함께 고칠 것.
 — 신규 차트 화면은 위 1~4 를 처음부터 적용해 재발 자체를 차단.
+— 적용 완료 컴포넌트: TrendChart(②③⑤) · MonitoringTrendBlock(⑦) ·
+  **PlotChart(⑧ 2026-07-28)** — 셋 다 "기본값은 렌더 중 파생, 사용자
+  선택만 state" 규칙을 따른다.
 
