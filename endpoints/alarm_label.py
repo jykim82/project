@@ -186,3 +186,62 @@ def get_alarm_label_stats(weeks: int = Query(12, ge=2, le=52)):
     finally:
         if conn:
             conn.close()
+
+
+@router.put("/crisis/alarm-reports/label-group")
+async def set_alarm_label_group(request: Request):
+    """(현장, 경보메시지) 그룹 일괄 판정 — 반복 경보 순위표에서 호출.
+
+    죽동 탁도계처럼 수천 건 반복되는 경보를 행별로 판정하는 것은 비현실이라
+    그룹 단위로 채운다 (spec §6). 규칙:
+
+    - **미판정 건만 채운다** — 일괄이 기존 개별 판정을 덮으면 정성 들인
+      판정이 사라진다. 정정은 행별로.
+    - 해제(null)는 그룹 단위로 지원하지 않는다 — 일괄 삭제는 위험하다.
+
+    Body: { sitename, alarm_msg, label: real|false|check, days, user_id }
+    """
+    conn = None
+    try:
+        body = await request.json()
+        sitename = (body.get("sitename") or "").strip()
+        alarm_msg = body.get("alarm_msg") or ""
+        label = body.get("label")
+        days = int(body.get("days") or 30)
+        user_id = (body.get("user_id") or "").strip()
+
+        if not sitename or not alarm_msg:
+            return {"status": "error", "message": "sitename, alarm_msg 필수"}
+        if label not in _VALID_LABELS:
+            return {"status": "error", "message": f"label 은 {_VALID_LABELS} (그룹 해제 미지원)"}
+        if not 1 <= days <= 365:
+            return {"status": "error", "message": "days 는 1~365"}
+
+        conn = _get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            UPDATE tb_equipment_alarm_report
+            SET anomaly_label = %s,
+                labeled_by = CASE WHEN %s <> '' THEN %s ELSE labeled_by END,
+                labeled_at = NOW(),
+                is_false_alarm = CASE WHEN %s = 'false' THEN 'Y' ELSE 'N' END,
+                info_updated = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            WHERE sitename = %s AND alarm_msg = %s
+              AND alarm_start_time > now() - interval '{days} days'
+              AND anomaly_label IS NULL
+            """,
+            [label, user_id, user_id, label, sitename, alarm_msg],
+        )
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+        return {"status": "OK", "labeled": updated}
+    except Exception as e:
+        logger.error(f"경보 그룹 판정 실패: {e}")
+        if conn:
+            conn.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        if conn:
+            conn.close()

@@ -90,6 +90,7 @@ async def get_alarm_chattering(
                 SELECT sitename, facilitytype, equipmenttype, tagsn,
                        alarm_msg, alarm_category, alarm_severity,
                        alarm_start_time, alarm_end_time, alarm_confirm_yn,
+                       anomaly_label,
                        LEAD(alarm_start_time) OVER (
                            PARTITION BY sitename, alarm_msg
                            ORDER BY alarm_start_time
@@ -108,6 +109,7 @@ async def get_alarm_chattering(
                     MIN(alarm_severity) AS alarm_severity,
                     COUNT(*)           AS cnt,
                     COUNT(*) FILTER (WHERE alarm_confirm_yn = 'Y') AS confirmed,
+                    COUNT(*) FILTER (WHERE anomaly_label IS NOT NULL) AS labeled,
                     MIN(alarm_start_time) AS first_seen,
                     MAX(alarm_start_time) AS last_seen,
                     AVG(EXTRACT(epoch FROM (
@@ -129,7 +131,7 @@ async def get_alarm_chattering(
             SELECT
                 sitename, facilitytype, equipmenttype, tagsn,
                 alarm_msg, alarm_category, alarm_severity,
-                cnt, confirmed,
+                cnt, confirmed, labeled,
                 TO_CHAR(first_seen, 'YYYY-MM-DD HH24:MI:SS'),
                 TO_CHAR(last_seen,  'YYYY-MM-DD HH24:MI:SS'),
                 ROUND(avg_dur_min::numeric, 1),
@@ -157,8 +159,8 @@ async def get_alarm_chattering(
         items = []
         for r in rows:
             cnt = int(r[7])
-            avg_dur = float(r[11]) if r[11] is not None else 0.0
-            per_hour = float(r[13]) if r[13] is not None else 0.0
+            avg_dur = float(r[12]) if r[12] is not None else 0.0
+            per_hour = float(r[14]) if r[14] is not None else 0.0
             items.append({
                 "sitename": r[0] or "",
                 "facilitytype": r[1] or "",
@@ -169,12 +171,14 @@ async def get_alarm_chattering(
                 "alarm_severity": r[6] or "",
                 "count": cnt,
                 "confirmed": int(r[8]),
+                # 판정 진행도 — 그룹 일괄 판정 후 남은 미판정을 보여준다
+                "labeled": int(r[9]),
                 "confirm_rate": round(int(r[8]) / cnt * 100, 1) if cnt else 0.0,
                 "share_pct": round(cnt / total * 100, 1) if total else 0.0,
-                "first_seen": r[9],
-                "last_seen": r[10],
+                "first_seen": r[10],
+                "last_seen": r[11],
                 "avg_duration_min": avg_dur,
-                "median_gap_min": float(r[12]) if r[12] is not None else None,
+                "median_gap_min": float(r[13]) if r[13] is not None else None,
                 "per_hour": per_hour,
                 "kind": (
                     "chattering"
