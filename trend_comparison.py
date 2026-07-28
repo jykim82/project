@@ -273,6 +273,65 @@ def _lookup_level_lower(conn, sitename: str) -> Optional[float]:
         cur.close()
 
 
+def _flow_hourly_profile(conn, tagsn: str) -> Optional[dict]:
+    """유량(소비 신호) 시간대 프로파일 — 최근 14일 시간별 평균·표준편차.
+
+    소비 유량은 사람 활동이 결정해 시간대 모양이 안정적이다 (배수지 수위의
+    패턴 투영 기각 사유 — 펌프 운영 결정 — 가 적용되지 않는 유형).
+    전수 백테스트(순시유량 81태그·7일): 레벨보정 프로파일이 수평 대비
+    74/81 우세·중앙값 +27% (2026-07-29, 남산1 괴리 보고에서 출발).
+
+    게이트: 전반 7일 vs 후반 7일 프로파일 상관(split-half) r>=0.3 —
+    공업 유량처럼 시간대 모양이 없는 신호(실측 석문공업 r=-0.13,
+    송악1공업 0.08)에 가짜 일주기를 입히지 않는다.
+    """
+    if not tagsn:
+        return None
+    cur = conn.cursor()
+    try:
+        # E-056: logtime 하한 필수 (14일)
+        cur.execute(
+            """
+            SELECT extract(hour from logtime)::int AS h,
+                   avg(val),
+                   stddev_pop(val),
+                   avg(val) FILTER (WHERE logtime <= now() - interval '7 days'),
+                   avg(val) FILTER (WHERE logtime >  now() - interval '7 days')
+            FROM tb_tag_raw_data
+            WHERE tagsn = %s AND logtime > now() - interval '14 days'
+              AND val IS NOT NULL
+            GROUP BY 1
+            """,
+            (tagsn,),
+        )
+        rows = cur.fetchall()
+        if len(rows) < 20:
+            return None
+        mean = {int(r[0]): float(r[1]) for r in rows}
+        std = {int(r[0]): float(r[2] or 0.0) for r in rows}
+        halves = [(float(r[3]), float(r[4])) for r in rows
+                  if r[3] is not None and r[4] is not None]
+        if len(halves) < 20:
+            return None
+        xs, ys = zip(*halves)
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        num = sum((x - mx) * (y - my) for x, y in halves)
+        den = (sum((x - mx) ** 2 for x in xs)
+               * sum((y - my) ** 2 for y in ys)) ** 0.5
+        r_stable = (num / den) if den > 0 else 0.0
+        if r_stable < 0.3:
+            return None
+        pm = sum(mean.values()) / len(mean)
+        if pm <= 0:
+            return None
+        return {"mean": mean, "std": std, "profile_mean": pm,
+                "split_half_r": round(r_stable, 2)}
+    except Exception:
+        return None
+    finally:
+        cur.close()
+
+
 def _linear_forecast(
     times: list[datetime], vals: list[Optional[float]],
     forecast_hours: int = 24, step_minutes: int = 30,
@@ -784,6 +843,54 @@ def compute_comparison(
                                for _i, v in enumerate(_sv)]
                     f_vals = _sv
                     fc_method = f"seasonal_{_best_lag * 30 // 60}h"
+                    if len(f_vals) > 1 and forecast_hours:
+                        slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
+                    _seasonal_done = True
+        # ── 유량은 시간대 프로파일 투영 (계절 게이트 미달 시) ──
+        # 소비 유량은 스파이크 시각이 매일 달라 30분 격자 ACF 가 낮지만
+        # (남산1 실측 r@24h=0.044) 시간대 평균 모양은 안정적이다. Chronos
+        # 중앙값의 진폭 압축(평평한 전망) 대신 14일 프로파일 모양 + 최근
+        # 24h 수준 보정을 투영한다. 스파이크는 예측하지 않는다 — 밴드
+        # (시간대 ±1.28σ ≈ 10~90%)가 일간 변동 폭을 정직하게 보여준다.
+        if not _seasonal_done and trend_kind == "flow":
+            _prof = _flow_hourly_profile(conn, tagsn)
+            if _prof and f_times:
+                _recent = [v for t, v in zip(times, vals)
+                           if v is not None
+                           and (times[-1] - t).total_seconds() <= 86400]
+                _shift = ((sum(_recent) / len(_recent)) - _prof["profile_mean"]
+                          if _recent else 0.0)
+                _pv, _bu, _bl = [], [], []
+                for _ft in f_times:
+                    try:
+                        _t = datetime.fromisoformat(_ft)
+                    except (ValueError, TypeError):
+                        break
+                    _h = _t.hour
+                    _h2 = (_h + 1) % 24
+                    _frac = _t.minute / 60.0
+                    _m = _prof["mean"]
+                    _base = (_m.get(_h, _prof["profile_mean"]) * (1 - _frac)
+                             + _m.get(_h2, _prof["profile_mean"]) * _frac)
+                    _sd = _prof["std"].get(_h, 0.0)
+                    _v = max(_base + _shift, 0.0)
+                    _pv.append(round(_v, 3))
+                    _bu.append(round(_v + 1.28 * _sd, 3))
+                    _bl.append(round(max(_v - 1.28 * _sd, 0.0), 3))
+                if len(_pv) == len(f_times):
+                    # 연속성 앵커 — 시작점을 마지막 실측에 맞추고 초반 2h 램프
+                    _now_v = next((v for v in reversed(vals)
+                                   if v is not None), None)
+                    if _now_v is not None:
+                        _off = _now_v - _pv[0]
+                        _ramp = max(1, min(4, len(_pv) - 1))
+                        _pv = [round(v + (_off * (1 - _i / _ramp)
+                                          if _i < _ramp else 0.0), 3)
+                               for _i, v in enumerate(_pv)]
+                    f_vals = _pv
+                    f_band_upper = _bu
+                    f_band_lower = _bl
+                    fc_method = "hourly_profile"
                     if len(f_vals) > 1 and forecast_hours:
                         slope = round((f_vals[-1] - f_vals[0]) / forecast_hours, 4)
                     _seasonal_done = True
