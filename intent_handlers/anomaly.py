@@ -167,7 +167,8 @@ class AnomalyFilterOnlyHandler(AnomalyFilterPrepareMixin, IntentHandler):
 
 @intent_handler
 class AnomalyFacilityDetailHandler(IntentHandler):
-    """시설 상세 이상 — stale 데이터 대응 시간창 조정 (max bucket 기준)."""
+    """시설 상세 이상 — stale 데이터 대응 시간창 조정 (max bucket 기준)
+    + 진단 근거 팩 수집 (agent-loop-spec, 로드맵 A P1)."""
     intents = ("ANOMALY_FACILITY_DETAIL",)
 
     async def pre_sql(self, ctx: IntentContext) -> None:
@@ -184,6 +185,65 @@ class AnomalyFacilityDetailHandler(IntentHandler):
                 )
         except Exception as _e:
             logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
+
+    async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:
+        """근거 팩 — 룰 라우터가 조회 도구를 골라 병렬 실행. 실패해도
+        진단 응답은 그대로 나간다 (근거는 부가물)."""
+        try:
+            from evidence_agent import collect_evidence
+
+            sitename = (ctx.params.get("sitename") or "").strip().strip("%")
+            facilitytype = (ctx.params.get("facilitytype") or "").strip().strip("%")
+            if not sitename:
+                return
+
+            # 이상 태그: |z| 상위 (z>=2) 최대 3건 — 스캔 행에서 추출
+            anomaly_tags = []
+            cols = ctx.columns or []
+            if ctx.rows and cols:
+                idx = {c: i for i, c in enumerate(cols)}
+                if "z_score" in idx:
+                    scored = []
+                    for r in ctx.rows:
+                        try:
+                            z = abs(float(r[idx["z_score"]] or 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if z >= 2.0:
+                            scored.append((z, r))
+                    scored.sort(key=lambda x: -x[0])
+                    for _z, r in scored[:3]:
+                        anomaly_tags.append({
+                            "tagsn": r[idx["tagsn"]] if "tagsn" in idx else "",
+                            "datainfo": r[idx["datainfo"]] if "datainfo" in idx else "",
+                            "current_val": r[idx["current_val"]] if "current_val" in idx else None,
+                        })
+
+            # 상류 시설 — causal index 에서 sitename 만 추출
+            upstreams: list[str] = []
+            causal_index = (service("get_causal_index") or (lambda: None))()
+            if causal_index:
+                entry = causal_index.get((sitename, facilitytype)) or {}
+                for up in entry.get("upstream") or []:
+                    up_sn = up[0] if isinstance(up, (list, tuple)) else (
+                        up.get("sitename") if isinstance(up, dict) else None)
+                    if up_sn and up_sn not in upstreams:
+                        upstreams.append(up_sn)
+
+            pack = await collect_evidence(service("get_db_connection"), {
+                "sitename": sitename,
+                "facilitytype": facilitytype,
+                "anomaly_tags": anomaly_tags,
+                "upstreams": upstreams,
+            })
+            if pack:
+                ctx.extras["evidence_pack"] = pack
+        except Exception as e:
+            logger.warning(f"[SSE] FACILITY_DETAIL 근거 수집 실패: {e}")
+
+    def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
+        pack = ctx.extras.get("evidence_pack")
+        return {"evidence_pack": pack} if pack else {}
 
 
 @intent_handler

@@ -298,19 +298,13 @@ def _match_targets(targets: dict, sitename: str, facilitytype: str,
     return True
 
 
-@router.get("/site-knowledge/match")
-def match_knowledge(
-    region: str = Query("R01"),
-    sitename: str = Query(""),
-    facilitytype: str = Query(""),
-    tagsn: str = Query(""),
-    category: str = Query(""),
-    at: str = Query(""),  # 경보 발생 시각 "YYYY-MM-DD HH:MM:SS" — 없으면 now
-):
-    conn = None
+def find_matching_cards(conn, sitename: str, facilitytype: str = "",
+                        tagsn: str = "", category: str = "",
+                        at: str | None = None,
+                        region: str = "R01") -> list[dict]:
+    """문맥에 매칭되는 active 카드 — 엔드포인트·evidence_agent 공용 코어."""
+    cur = conn.cursor()
     try:
-        conn = _get_db_connection()
-        cur = conn.cursor()
         cur.execute(
             f"""
             SELECT {_SELECT_COLS}, now() FROM tb_site_knowledge
@@ -323,16 +317,35 @@ def match_knowledge(
         rows = cur.fetchall()
         cur.execute("SELECT COALESCE(%s::timestamptz, now())", [at or None])
         at_ts = cur.fetchone()[0]
+    finally:
         cur.close()
 
-        items = []
-        for r in rows:
-            targets = r[3] or {}
-            if not _match_targets(targets, sitename, facilitytype, tagsn, category):
-                continue
-            if not _match_conditions(r[4] or {}, at_ts):
-                continue
-            items.append(_row_to_card(r))
+    items = []
+    for r in rows:
+        targets = r[3] or {}
+        if not _match_targets(targets, sitename, facilitytype, tagsn, category):
+            continue
+        if not _match_conditions(r[4] or {}, at_ts):
+            continue
+        items.append(_row_to_card(r))
+    return items
+
+
+@router.get("/site-knowledge/match")
+def match_knowledge(
+    region: str = Query("R01"),
+    sitename: str = Query(""),
+    facilitytype: str = Query(""),
+    tagsn: str = Query(""),
+    category: str = Query(""),
+    at: str = Query(""),  # 경보 발생 시각 "YYYY-MM-DD HH:MM:SS" — 없으면 now
+):
+    conn = None
+    try:
+        conn = _get_db_connection()
+        items = find_matching_cards(
+            conn, sitename, facilitytype, tagsn, category, at or None, region,
+        )
         return {"status": "OK", "items": items}
     except Exception as e:
         logger.error(f"지식 카드 매칭 실패: {e}")

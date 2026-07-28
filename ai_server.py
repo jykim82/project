@@ -2241,6 +2241,8 @@ init_intent_handler_services(
     # execute_sql 은 이 지점보다 뒤에 정의 — lambda 로 호출 시점 조회
     execute_sql=lambda *a, **k: execute_sql(*a, **k),
     get_site_profiler=lambda: site_profiler,
+    # 진단 근거 팩(evidence_agent) — 도구별 독립 커넥션 팩토리
+    get_db_connection=lambda: get_db_connection(),
 )
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()
@@ -3473,6 +3475,7 @@ async def ask_stream(request: AskRequest):
         # 테이블 교체 등 응답 조립 직전 보강 (intent_handlers/)
         _stddev_stats = None
         _cusum_chart_data = None
+        _evidence_pack = None
         if _handler is not None:
             _hctx.response_data = response_data
             _hctx.table_columns = table_columns
@@ -3481,6 +3484,7 @@ async def ask_stream(request: AskRequest):
             _hextras = _handler.response_extras(_hctx, processed_data) or {}
             _stddev_stats = _hextras.get("stddev_stats")
             _cusum_chart_data = _hextras.get("cusum_chart_data")
+            _evidence_pack = _hextras.get("evidence_pack")
             response_data = _hctx.response_data
             table_columns = _hctx.table_columns
             if _hctx.total_rows is not None:
@@ -3535,6 +3539,7 @@ async def ask_stream(request: AskRequest):
             plot_type=_plot_type,
             stddev_stats=_stddev_stats,
             cusum_chart_data=_cusum_chart_data,
+            evidence_pack=_evidence_pack,
             anomaly_zones=_anomaly_zones,
         comparison=_comparison,
         comparison_map=_comparison_map or None,

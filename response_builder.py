@@ -1108,6 +1108,9 @@ def build_success_response(
                     "ml_features_used"):
         if kwargs.get(_ml_key) is not None:
             response[_ml_key] = kwargs[_ml_key]
+    # 진단 근거 팩 (agent-loop-spec — ANOMALY_FACILITY_DETAIL)
+    if kwargs.get("evidence_pack"):
+        response["evidence_pack"] = kwargs["evidence_pack"]
     # [아키텍처 3단계] card_type — example3.json 인텐트 선언에서 자동 주입.
     # 프런트는 이 값으로 카드 렌더·평문 억제를 결정 (인텐트 하드코딩 목록의
     # 단일 소스화). 과거 저장 응답(히스토리)에는 없으므로 프런트는 인텐트 폴백 유지.
