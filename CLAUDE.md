@@ -188,6 +188,7 @@ web/
 - `docs/voice-input-spec.md` — 음성 입력 (로컬 Whisper STT, 채팅 마이크 버튼. 도메인 용어 프롬프트 바이어스. 웨이트 1.5GB git 제외 — 납품 번들)
 - `docs/tag-monitoring-spec.md` — 태그 모니터링 (모니터링 그룹 — 현재값 컬럼 + 이상 카테고리 9종 필터 + 컬럼 정렬 + 우클릭 트랜드 보기, CSV·태그추가 제외, 4 Phase)
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
+- `docs/alarm-approach-spec.md` — 임계 도달 예측 v1 (수위 LEI↔LEC 페어 41개 — 최근 60분 원시 선형회귀 외삽, R²>0.5·기울기>0.001·4시간 horizon 게이트. 알람 테이블에 안 씀(예측≠경보), 경보관리 현황 탭 패널. Chronos 향후 전망과 목적 구분 §5. 원시 직접 집계 — 5분 cagg 는 refresh 지연으로 부적합 실측)
 - `docs/alarm-confirm-audit-spec.md` — 경보 확인 책임 추적 v1 (Migration 0131 confirmed_by/at — 최초 확인만 기록·소급 추정 금지·자동해제는 기록 안 함. confirm/resolve 양쪽 기록, 목록 확인자 표시. P2=미확인 메신저 상신)
 - `docs/alarm-chattering-spec.md` — 반복 경보(채터링) 정리 v1 (죽동 탁도계 1건이 30일 경보의 80.7%·확인율 0.3% → 목록 접기 "반복 N회" + 순위표 `/crisis/alarm-dashboard?tab=repeat`. 판정=평균 지속 15분(시간당 횟수 기준은 실측 오분류로 폐기), 채터링=SCADA 데드밴드/만성=설비 검토로 조치 분리. 자동 억제 없음)
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉
