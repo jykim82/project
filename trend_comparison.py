@@ -1041,6 +1041,19 @@ def compute_comparison(
             if (hours_to is None and level_lower is not None
                     and slope is not None and slope < 0):
                 resp_threshold, resp_label = level_lower, "저수위 한계 (LL)"
+        # 진폭 압축 → "참고" 톤 — 전망 범위가 관측 진동의 40% 미만이면
+        # 개별 진동을 그리지 못하는 중앙 경로 전망이다 (합덕인더스 생활수위
+        # 실측: 진동 2.65~3.52 vs 전망 3.14~3.35, 펌프 주기 불규칙 ACF 0.13).
+        # CV 게이트(>15%)는 평균이 큰 수위 신호(CV 5.6%)를 놓친다.
+        # 유의 진동(관측 범위가 수준의 10% 초과)일 때만 — 평탄 신호의
+        # 평탄 전망은 압축이 아니라 정상이다.
+        if (_obs_max is not None and _obs_min is not None and f_vals):
+            _obs_range = _obs_max - _obs_min
+            _f_range = max(f_vals) - min(f_vals)
+            if (_obs_range > 0
+                    and _obs_range / max(abs(_obs_max), 1e-9) > 0.1
+                    and _f_range < 0.4 * _obs_range):
+                fc_low_confidence = True
         f_status, f_label = _forecast_status(hours_to, resp_label)
         out["forecast"] = {
             "series": f_vals,
