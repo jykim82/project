@@ -62,7 +62,10 @@ File 객체는 URL 로 전달 불가 → 모듈 싱글턴 stash/take (1회 소�
 ## 메뉴 / 배너
 - `sidebar-menus.ts` M009 "현장 모드" (HardHat) + Migration 0099 (권한 M002 동일)
 - `FieldModeBanner` — 모바일 뷰포트 하단 고정 전환 제안, sessionStorage
-  dismiss, pathname ∉ {/field, /chat}. `(dashboard)/layout.tsx` 마운트
+  dismiss, pathname ∉ {/field, /chat, **/monitoring/gis**}.
+  `(dashboard)/layout.tsx` 마운트. GIS 제외 사유(2026-07-29 실측): 전체화면
+  지도라 하단 배너(z-40)가 타임라인 버튼·스크러버(z-10)를 덮어 모바일에서
+  탭 불가 — 지도 화면에선 배너를 띄우지 않는다
 
 ## 향후 후보 (미착수)
 - PWA (manifest·홈화면 설치) — 사용자 결정 시
