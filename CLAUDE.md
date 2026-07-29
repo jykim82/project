@@ -190,6 +190,7 @@ web/
 - `docs/alarm-category-summary-spec.md` — 분류별 경보 현황
 - `docs/inspection-origin-spec.md` — 점검 기원 v1 (Migration 0135 — inspection_type 일상/요청 확정 + linked_task_id 유발 고장 링크. "기록은 하나, 문서는 기원 따라": 일 점검 보고서 후보에 고장보고 포함(include_faults, 「점검 중 조치」·「요청 점검」 배지) — 별도 보고서 강제 방지, 카운트는 기록 기반이라 이중 집계 없음. 채팅 반영·장애보고서 경과 표시는 P2)
 - `docs/incident-report-spec.md` — 상황보고 1·2보 v1 (로드맵 D P1, Migration 0133 — tb_incident_report 섹션 jsonb·parent_id 차수 체인. 자동 채움은 생성 1회(경보 접기·조치·전조 60분), 후속보는 직전 보 이후 구간만. 확정 후 수정 불가·체인 삭제 보호. 세대수 데이터 부재로 영향 범위는 수동. LLM 없음)
+- `docs/vision-input-spec.md` — 비전 입력 계층 v1 (로드맵 E 재정의 — 명판→설비 제원 우선. 실물 5장 사전 검증: 정상 화질 실용 수준·흐림 환각 실증. 동적 키-값(meta.nameplate)+표준 키 승격+수치 수정 개방+사진 정본+검증 계층. 신규 OCR 스택 없음 — gemma4 재사용)
 - `docs/agent-loop-spec.md` — 제한적 에이전트 루프 v1 (로드맵 A P1 — 시설 정밀 진단(ANOMALY_FACILITY_DETAIL)에서 **룰 기반 라우터**(B.1, LLM 도구선택 금지)가 조회 도구 4종(동일 시간대 분포/상류 알람/지식 카드/조치 이력)을 병렬 실행 → 근거 팩 + 결정적 종합 소견. 루프 제한: 도구 4·개당 3s·전체 8s, 실패도 팩에 표시(감사 추적). `slm/evidence_agent.py` + 채팅 카드 "진단 근거" 섹션. LLM 문체 서술·조건부 2차 도구는 P2)
 - `docs/site-knowledge-spec.md` — 현장 지식 카드 v1 (로드맵 B P1, Migration 0136 — 운영자 암묵지를 웹 UI 카드로 등록. 유형 4종(주기/특성/예외/절차)·대상 AND 매칭·요일/시간 조건·revision 감사 추적. **P1=조회·기록만, 알람 억제 없음** — 안전 신호 불가침(부록 B.2), 억제 반영은 통합 억제 로그 설계 후 P2. 영향 미리보기 + 경보 분석 상세 amber 카드. `/crisis/site-knowledge` M006-8)
 - `docs/alarm-label-feedback-spec.md` — 경보 판정 라벨 v1 (로드맵 C P1, Migration 0132 — 3분법 real/false/check, 정본 anomaly_label·is_false_alarm 파생 동기화, 백필 1,457건(판정자 소급 금지). 이력 1클릭 판정 + "오탐 분석" 탭 주별 오탐률 추이. 가중치 조정은 P2 — 분류별 30건 미만 유보. 채팅 오답 피드백과 별도 체계)
