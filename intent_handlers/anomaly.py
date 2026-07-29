@@ -165,30 +165,15 @@ class AnomalyFilterOnlyHandler(AnomalyFilterPrepareMixin, IntentHandler):
     intents = ("ANOMALY_PREDICT", "ANOMALY_PATTERN", "ANOMALY_HISTORY")
 
 
-@intent_handler
-class AnomalyFacilityDetailHandler(IntentHandler):
-    """시설 상세 이상 — stale 데이터 대응 시간창 조정 (max bucket 기준)
-    + 진단 근거 팩 수집 (agent-loop-spec, 로드맵 A P1)."""
-    intents = ("ANOMALY_FACILITY_DETAIL",)
+class EvidencePackMixin:
+    """진단 근거 팩 수집 (agent-loop-spec) — post_process 에서 룰 라우터가
+    조회 도구를 골라 병렬 실행. 실패해도 본 응답은 그대로 나간다.
 
-    async def pre_sql(self, ctx: IntentContext) -> None:
-        if not ctx.sql:
-            return
-        try:
-            from anomaly_scan import adjust_sql_time_window_to_max_bucket
-
-            execute_sql = service("execute_sql")
-            _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
-            if _mb_rows and _mb_rows[0][0]:
-                ctx.sql = adjust_sql_time_window_to_max_bucket(
-                    ctx.sql, _mb_rows[0][0], label="[SSE] FACILITY_DETAIL",
-                )
-        except Exception as _e:
-            logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
+    적용 인텐트 조건: params 에 sitename 문맥이 있는 진단·원인 분석 계열.
+    z_score 컬럼이 없으면 동일 시간대 도구만 빠지고 나머지는 동작한다.
+    """
 
     async def post_process(self, ctx: IntentContext, processed_data: dict) -> None:
-        """근거 팩 — 룰 라우터가 조회 도구를 골라 병렬 실행. 실패해도
-        진단 응답은 그대로 나간다 (근거는 부가물)."""
         try:
             from evidence_agent import collect_evidence
 
@@ -239,11 +224,33 @@ class AnomalyFacilityDetailHandler(IntentHandler):
             if pack:
                 ctx.extras["evidence_pack"] = pack
         except Exception as e:
-            logger.warning(f"[SSE] FACILITY_DETAIL 근거 수집 실패: {e}")
+            logger.warning(f"[SSE] 근거 수집 실패 ({ctx.intent}): {e}")
 
     def response_extras(self, ctx: IntentContext, processed_data: dict) -> dict:
         pack = ctx.extras.get("evidence_pack")
         return {"evidence_pack": pack} if pack else {}
+
+
+@intent_handler
+class AnomalyFacilityDetailHandler(EvidencePackMixin, IntentHandler):
+    """시설 상세 이상 — stale 데이터 대응 시간창 조정 (max bucket 기준)
+    + 진단 근거 팩 수집 (agent-loop-spec, 로드맵 A P1)."""
+    intents = ("ANOMALY_FACILITY_DETAIL",)
+
+    async def pre_sql(self, ctx: IntentContext) -> None:
+        if not ctx.sql:
+            return
+        try:
+            from anomaly_scan import adjust_sql_time_window_to_max_bucket
+
+            execute_sql = service("execute_sql")
+            _mb_rows, _ = execute_sql("SELECT max(bucket) FROM cagg_5min_raw_stats_ai", {})
+            if _mb_rows and _mb_rows[0][0]:
+                ctx.sql = adjust_sql_time_window_to_max_bucket(
+                    ctx.sql, _mb_rows[0][0], label="[SSE] FACILITY_DETAIL",
+                )
+        except Exception as _e:
+            logger.warning(f"[SSE] FACILITY_DETAIL: max(bucket) 확인 실패: {_e}")
 
 
 @intent_handler

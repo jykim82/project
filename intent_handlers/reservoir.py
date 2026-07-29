@@ -5,6 +5,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
+from .anomaly import EvidencePackMixin
 from .base import IntentContext, IntentHandler, intent_handler
 
 logger = logging.getLogger(__name__)
@@ -66,8 +67,9 @@ class HuntingCheckHandler(IntentHandler):
 
 
 @intent_handler
-class LevelCauseHandler(IntentHandler):
-    """수위 변동 원인 분석."""
+class LevelCauseHandler(EvidencePackMixin, IntentHandler):
+    """수위 변동 원인 분석 + 진단 근거 팩 (agent-loop-spec P2 — 원인 분석
+    계열 확대. 상류 알람·지식 카드·조치 이력이 원인 후보의 근거가 된다)."""
     intents = ("RESERVOIR_LEVEL_CAUSE_ANALYSIS",)
 
     async def pre_sql(self, ctx: IntentContext) -> None:
