@@ -2442,6 +2442,36 @@ app.include_router(incident_report_router)
 init_site_knowledge(get_db_connection)
 app.include_router(site_knowledge_router)
 
+
+def _attach_site_knowledge(resp, params: dict) -> None:
+    """채팅 응답에 현장 지식 카드 첨부 — site-knowledge-spec P2 (채팅 주입).
+
+    sitename 문맥이 있는 성공 응답에만, active 매칭 카드 최대 3장.
+    실패해도 응답을 막지 않는다 (카드는 부가물).
+    """
+    try:
+        if not isinstance(resp, dict) or resp.get("status") != "OK":
+            return
+        sn = (params.get("sitename") or "").strip().strip("%")
+        if not sn:
+            return
+        ft = (params.get("facilitytype") or "").strip().strip("%")
+        from endpoints.site_knowledge import find_matching_cards
+
+        conn = get_db_connection()
+        try:
+            cards = find_matching_cards(conn, sn, ft)[:3]
+        finally:
+            conn.close()
+        if cards:
+            resp["site_knowledge_cards"] = [
+                {"k_type": c["k_type"], "title": c["title"],
+                 "description": c["description"]}
+                for c in cards
+            ]
+    except Exception as e:
+        logger.debug(f"지식 카드 첨부 실패 (응답은 유지): {e}")
+
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
     return (_ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME)
@@ -3210,6 +3240,7 @@ async def ask_stream(request: AskRequest):
                 if _hctx.progress_message is not None:
                     _p_step, _p_msg = _hctx.progress_message
                     yield _sse_event("progress", {"step": _p_step, "message": _p_msg})
+                _attach_site_knowledge(_hctx.final_response, params)
                 yield _sse_event("result", _hctx.final_response)
                 return
 
@@ -3567,6 +3598,7 @@ async def ask_stream(request: AskRequest):
             ml_features_used=processed_data.get("ml_features_used"),
         )
 
+        _attach_site_knowledge(final_response, params)
         yield _sse_event("result", final_response)
 
     return StreamingResponse(
