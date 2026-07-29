@@ -61,7 +61,14 @@ collect_evidence(conn_factory, ctx) -> {items: [...], summary, elapsed_ms}
 
 - LLM 도구 선택 없음 · 제어 도구 없음 · 다회 왕복(도구 결과를 보고 추가
   도구 결정) 없음 — 라우터는 1회 계획·병렬 실행. "제한적" 루프의 P1 해석
-- 다른 인텐트 확장 없음 (RESERVOIR_LEVEL_CAUSE_ANALYSIS 등은 P2 후보)
+
+## 5.1 P2 확대 — 원인 분석 인텐트 (2026-07-29 완료)
+
+`EvidencePackMixin` 으로 수집 로직 공용화 —
+`RESERVOIR_LEVEL_CAUSE_ANALYSIS`(수위 하락 원인)에도 적용. z_score 컬럼이
+없는 인텐트는 동일 시간대 도구만 자동 제외되고 나머지(상류 알람·지식
+카드·조치 이력)가 동작한다. anomaly 카드 외 인텐트는 BotMessage 레벨에서
+`EvidencePackSection` 렌더 (anomaly 카드는 기존 위치 — 이중 렌더 방지).
 
 ## 6. 후속 (P2+)
 
