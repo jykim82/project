@@ -68,3 +68,16 @@ confirmed_at = COALESCE(confirmed_at, NOW())
   상신 (폐쇄망이라 SMS 대신 기존 메신저 재사용). 표시 계층의 에스컬레이션
   (미조치 경과 타이머)은 이미 있음 — 상신은 별도 결정 필요
 - 확인율 추이 통계 (confirmed_at 기반) — 반복 경보 정리 효과 측정과 연동
+
+
+## P2 — 미확인 경보 메신저 상신 (구현 완료 2026-09-01, Migration 0140)
+
+경고(심각) 경보가 기준 분째 미확인이면 메신저 **전체 채널**에 'system'
+발신으로 1회 상신한다 (`endpoints/alarm_escalation.py`, 60초 루프 +
+`POST /alarm/escalation/run` 수동 트리거).
+
+- 기준: `SITE_SETTING.ALARM_ESCALATION_MIN` (기본 10분, **0=끔**)
+- **건당 1회 멱등** — `escalated_at` 기록 (채터링을 메신저로 옮기지 않는다).
+  escalated_at 은 판정 데이터가 아니라 이 경보 자신의 발송 감사 이력
+- 검증: 합성 경보 5회 × (상신 1·재실행 멱등 0·메시지 1건·escalated_at 기록)
+  전부 통과, 데이터 원복

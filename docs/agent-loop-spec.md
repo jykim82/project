@@ -72,6 +72,11 @@ collect_evidence(conn_factory, ctx) -> {items: [...], summary, elapsed_ms}
 
 ## 6. 후속 (P2+)
 
-- LLM 문체 서술 (`shared.llm_narrative` 수치 검증 + 결정적 폴백)
+- ~~LLM 문체 서술~~ → **구현 완료 (2026-09-01)**: 결정적 summary 는 정본
+  유지, LLM 서술은 별도 `narrative` 필드 — 수치 검증(shared.llm_narrative,
+  사실 텍스트의 수치만 허용) 통과분만, 실패·타임아웃(12s)·빈 응답이면
+  생략(결정적 소견만). 프런트는 "[AI 참고 의견]" violet 톤으로 구분
+  (Zero-Hallucination). llm_narrative_log 관찰 연동. 구현 중 [E-063]
+  (Ollama thinking 기본화로 전 생성 빈 응답) 발견·수정
 - 결과 조건부 2차 도구 (예: 상류 알람 발견 시 상류의 상류 추가 조회)
 - 원인 분석 계열 인텐트로 확대, 도구 실행 로그 텔레메트리

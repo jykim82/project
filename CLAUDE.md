@@ -196,7 +196,7 @@ web/
 - `docs/site-knowledge-spec.md` — 현장 지식 카드 v1 (로드맵 B P1, Migration 0136 — 운영자 암묵지를 웹 UI 카드로 등록. 유형 4종(주기/특성/예외/절차)·대상 AND 매칭·요일/시간 조건·revision 감사 추적. **P1=조회·기록만, 알람 억제 없음** — 안전 신호 불가침(부록 B.2), 억제 반영은 통합 억제 로그 설계 후 P2. 영향 미리보기 + 경보 분석 상세 amber 카드. `/crisis/site-knowledge` M006-8)
 - `docs/alarm-label-feedback-spec.md` — 경보 판정 라벨 v1 (로드맵 C P1, Migration 0132 — 3분법 real/false/check, 정본 anomaly_label·is_false_alarm 파생 동기화, 백필 1,457건(판정자 소급 금지). 이력 1클릭 판정 + "오탐 분석" 탭 주별 오탐률 추이. 가중치 조정은 P2 — 분류별 30건 미만 유보. 채팅 오답 피드백과 별도 체계)
 - `docs/alarm-approach-spec.md` — 임계 도달 예측 v1 (수위 LEI↔LEC 페어 41개 — 최근 60분 원시 선형회귀 외삽, R²>0.5·기울기>0.001·4시간 horizon 게이트. 알람 테이블에 안 씀(예측≠경보), 경보관리 현황 탭 패널. Chronos 향후 전망과 목적 구분 §5. 원시 직접 집계 — 5분 cagg 는 refresh 지연으로 부적합 실측)
-- `docs/alarm-confirm-audit-spec.md` — 경보 확인 책임 추적 v1 (Migration 0131 confirmed_by/at — 최초 확인만 기록·소급 추정 금지·자동해제는 기록 안 함. confirm/resolve 양쪽 기록, 목록 확인자 표시. P2=미확인 메신저 상신)
+- `docs/alarm-confirm-audit-spec.md` — 경보 확인 책임 추적 v1 (Migration 0131 confirmed_by/at — 최초 확인만 기록·소급 추정 금지·자동해제는 기록 안 함. confirm/resolve 양쪽 기록, 목록 확인자 표시. P2 미확인 메신저 상신 완료(0140 — 전체 채널 1회 멱등·기준분 설정·0=끔))
 - `docs/alarm-chattering-spec.md` — 반복 경보(채터링) 정리 v1 (죽동 탁도계 1건이 30일 경보의 80.7%·확인율 0.3% → 목록 접기 "반복 N회" + 순위표 `/crisis/alarm-dashboard?tab=repeat`. 판정=평균 지속 15분(시간당 횟수 기준은 실측 오분류로 폐기), 채터링=SCADA 데드밴드/만성=설비 검토로 조치 분리. 자동 억제 없음)
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉
 - `docs/chat-feedback-telemetry-spec.md` — 오답 피드백 루프 텔레메트리
@@ -267,7 +267,7 @@ web/
 - `docs/START.md` — 빠른 시작 (GIS Demo)
 
 ## 에러관리
-- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-062)
+- `docs/error-management.md` — E-NNN 번호 체계 (현재 E-063)
   - 1차 시도 실패 시: 전체 스캔 → 유사 패턴 확인 → 해결책 참고
   - 새 버그 해결 후: E-NNN 번호 부여 기록 (날짜/증상/원인/해결/재발방지)
   - 기록 대상: 포트 충돌, DB 연결 오류, SQL 오류, 서버 기동 실패, 환경변수 문제 등 **재발 가능성 있는 모든 에러**

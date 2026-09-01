@@ -1853,3 +1853,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** ANOMALY_SCAN_ALL 캐시가 순수 인메모리 — 기동마다 소실되고 첫 빌드에 ~51초 (SQL+IForest+교차검증)
 - **해결:** 캐시 디스크 영속화 (`files/cache/anomaly_scan_cache.pkl`, 원자 교체) — 기동 시 직전 캐시 즉시 로드(나이 표시는 정직 유지, 24h 초과분 폐기) 후 백그라운드 첫 빌드가 갈아끼움. 검증: 재기동+즉시 질의 ×5 전부 293행 즉답
 - **재발 방지:** ① 빌드가 수십 초인 인메모리 캐시는 영속화+stale 로드를 기본 설계로 ② "준비 중" 류 안내 응답이 나오면 배포 직후 공백인지 캐시 수명 구조를 먼저 볼 것
+
+### [E-063] Ollama 0.20.x + gemma4 — 모든 LLM 생성이 빈 응답 (thinking 모드 기본화)
+
+- **날짜:** 2026-09-01 (근거 팩 LLM 서술 구현 중 발견)
+- **증상:** `generate()` 가 항상 빈 문자열 — LLM 서술·AI 요약 등 생성 계열 전부 침묵 실패. 로그에 "Ollama 빈 응답" 산발 경고 (일부는 4분 주기 keep-warm 1토큰 핑의 정상 빈 응답이라 혼재돼 원인 발견 지연)
+- **원인:** Ollama 0.20.x 부터 gemma4 계열이 `think` 미지정 시 **thinking 모드**로 동작 — 생성 토큰 전량이 `thinking` 필드로 가고 `response` 는 빔 (실측: 400토큰 소모, response='', done_reason=length)
+- **해결:** `OllamaClient.generate` 에 `payload["think"]=False` 기본 명시 (파라미터로 개방). keep-warm(num_predict=1) 빈 응답 경고는 debug 강등 — 진짜 빈 응답과 분리
+- **재발 방지:** ① Ollama/모델 업그레이드 후엔 **직접 curl 로 response 필드 실측** (클라이언트 경유 전) ② "빈 응답" 경고가 keep-warm 주기(4분)와 일치하면 소음, 불일치하면 실제 장애 ③ 신규 thinking 모델 도입 시 think 파라미터 정책 먼저 결정
