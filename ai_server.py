@@ -129,6 +129,9 @@ from endpoints.nameplate import (
 from endpoints.module_version import (
     router as module_version_router, init as init_module_version,
 )
+from endpoints.module_update import (
+    router as module_update_router, init as init_module_update,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -2460,6 +2463,38 @@ app.include_router(nameplate_router)
 # 모듈 버전·라이선스 (module-version-spec P1)
 init_module_version(get_db_connection)
 app.include_router(module_version_router)
+
+# 업데이트 번들 (module-version-spec P2/P3 — 적용은 호스트 에이전트)
+init_module_update(get_db_connection)
+app.include_router(module_update_router)
+
+# 백엔드 버전 자동 스탬핑 (P2) — /app/VERSION 이 정본, 변경 시에만 갱신
+def _stamp_backend_version() -> None:
+    try:
+        ver = "dev"
+        if os.path.exists("/app/VERSION"):
+            ver = open("/app/VERSION", encoding="utf-8").read().strip() or "dev"
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE tb_module_version
+                SET version = %s, installed_at = now(), installed_by = 'startup',
+                    updated_at = now()
+                WHERE module_key = 'backend' AND version <> %s
+                """,
+                (ver, ver),
+            )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
+    except Exception as _e:  # 스탬핑 실패가 기동을 막으면 안 된다
+        logger.debug(f"버전 스탬핑 실패: {_e}")
+
+
+_stamp_backend_version()
 
 
 def _attach_site_knowledge(resp, params: dict) -> None:
