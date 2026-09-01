@@ -152,14 +152,16 @@ def parse_fault_text(text: str, cur=None) -> dict[str, Any]:
     }
     t = text.strip()
 
-    # 0) inspection_type 우선 추출 (점검 sub-type)
-    #    매칭 시 fault_category='점검', task_category_hint='점검' 으로 자동 셋업
-    if re.search(r"(일상\s*점검|일점검)", t):
+    # 0) inspection_type 우선 추출 — 값 체계는 0135 확정 2종(일상/요청)
+    #    (inspection-origin-spec: 일상=정기 순회 계열, 요청=고장 이벤트 기인.
+    #     기존 정기/월간/분기는 일상 계열로, 특별/긴급은 요청 계열로 정규화)
+    if re.search(r"(일상\s*점검|일점검|정기\s*점검|월간\s*점검|연간\s*점검|분기\s*점검|순회\s*점검)", t):
         result["inspection_type"] = "일상"
-    elif re.search(r"(정기\s*점검|월간\s*점검|연간\s*점검|분기\s*점검)", t):
-        result["inspection_type"] = "정기"
-    elif re.search(r"(특별\s*점검|긴급\s*점검)", t):
-        result["inspection_type"] = "특별"
+    elif re.search(r"(요청\s*점검|점검\s*요청|특별\s*점검|긴급\s*점검)", t):
+        result["inspection_type"] = "요청"
+    elif re.search(r"고장\s*건.{0,8}점검|점검.{0,8}고장\s*건", t):
+        # "죽동 펌프 고장 건 점검했어" — 고장 이벤트가 기원인 요청 점검
+        result["inspection_type"] = "요청"
     if result["inspection_type"]:
         result["fault_category"] = "점검"
         result["task_category_hint"] = "점검"
@@ -375,6 +377,30 @@ def build_fault_draft(
     if replacement_info:
         merged_replacement.update({k: v for k, v in replacement_info.items() if v})  # 명시 입력 우선
 
+    # 요청 점검 → 유발 고장 링크 (inspection-origin-spec P2)
+    # 같은 현장의 가장 최근 진행중 고장보고를 후보로 — 확정은 사람(confirm)
+    linked_task_id = None
+    linked_task_label = None
+    if parsed.get("inspection_type") == "요청" and parsed.get("sitename"):
+        try:
+            cur.execute(
+                """
+                SELECT task_id, COALESCE(equipmenttype, ''),
+                       left(COALESCE(task_content, ''), 40)
+                FROM tb_task_master
+                WHERE sitename = %s AND task_category = '고장보고'
+                  AND task_end_time IS NULL
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (parsed["sitename"],),
+            )
+            row = cur.fetchone()
+            if row:
+                linked_task_id = int(row[0])
+                linked_task_label = f"#{row[0]} {row[1]} {row[2]}".strip()
+        except Exception:
+            pass
+
     draft: dict[str, Any] = {
         **parsed,
         "equipment_id": equipment_id,
@@ -382,6 +408,8 @@ def build_fault_draft(
         "original_text": text,
         "photo_urls": list(photo_urls or []),
         "replacement_info": merged_replacement or None,
+        "linked_task_id": linked_task_id,
+        "linked_task_label": linked_task_label,
     }
 
     required = ["sitename", "facilitytype", "equipmenttype", "fault_category"]
@@ -421,6 +449,10 @@ def build_fault_draft(
             if ri.get("serial"):       parts.append(f"S/N {ri['serial']}")
             if parts:
                 msg += f"\n• 교체정보: {' · '.join(parts)}"
+        if draft.get("inspection_type"):
+            msg += f"\n• 점검 기원: {draft['inspection_type']}"
+            if draft.get("linked_task_label"):
+                msg += f" — 유발 고장 {draft['linked_task_label']}"
         msg += "\n이대로 기록할까요?"
         if suggested:
             msg += f"\n\n※ 관련 진행중 알람 {len(suggested)}건 발견 — 함께 해제할지 선택할 수 있습니다."
@@ -544,12 +576,12 @@ def confirm_draft(req: ConfirmRequest):
                equipment_id, equipmenttype, fault_category, severity,
                linked_alarm_start, linked_alarm_tagsn,
                task_content, recorded_by, status, photo_urls, replacement_info,
-               inspection_type)
+               inspection_type, linked_task_id)
             VALUES (%s, %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s,
                     %s, %s, '진행중', %s::jsonb, %s::jsonb,
-                    %s)
+                    %s, %s)
             RETURNING task_id
             """,
             (
@@ -560,6 +592,7 @@ def confirm_draft(req: ConfirmRequest):
                 draft.get("original_text"), req.user_id,
                 photo_urls_json, replacement_json,
                 inspection_type_value,
+                draft.get("linked_task_id"),
             ),
         )
         task_id = cur.fetchone()[0]
