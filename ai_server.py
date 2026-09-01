@@ -132,6 +132,10 @@ from endpoints.module_version import (
 from endpoints.module_update import (
     router as module_update_router, init as init_module_update,
 )
+from endpoints.alarm_escalation import (
+    router as alarm_escalation_router, init as init_alarm_escalation,
+    run_once as run_alarm_escalation,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -1880,6 +1884,7 @@ async def lifespan(app: FastAPI):
     global _anomaly_scan_task
     _anomaly_scan_task = asyncio.create_task(_anomaly_scan_cache_loop())
     _flow_balance_task = asyncio.create_task(_flow_balance_cache_loop())
+    _alarm_escalation_task = asyncio.create_task(_alarm_escalation_loop())
     _flow_baseline_task = asyncio.create_task(_flow_baseline_cache_loop())
     _night_min_flow_task = asyncio.create_task(_night_min_flow_cache_loop())
 
@@ -2510,6 +2515,21 @@ app.include_router(module_version_router)
 # 업데이트 번들 (module-version-spec P2/P3 — 적용은 호스트 에이전트)
 init_module_update(get_db_connection)
 app.include_router(module_update_router)
+
+# 미확인 경보 메신저 상신 (alarm-confirm-audit P2, Migration 0140)
+init_alarm_escalation(get_db_connection)
+app.include_router(alarm_escalation_router)
+
+
+async def _alarm_escalation_loop():
+    """백그라운드: 60초 주기 미확인 경보 상신 (설정 0=끔, 건당 1회 멱등)."""
+    await asyncio.sleep(90)   # 기동 직후 폭주 방지
+    while True:
+        try:
+            await asyncio.to_thread(run_alarm_escalation)
+        except Exception as e:
+            logger.warning(f"경보 상신 루프 오류: {e}")
+        await asyncio.sleep(60)
 
 # 백엔드 버전 자동 스탬핑 (P2) — /app/VERSION 이 정본, 변경 시에만 갱신
 def _stamp_backend_version() -> None:
