@@ -488,6 +488,11 @@ def _compute_comparison_map(rows, columns, intent, params, intent_def, get_conn)
     comparison_map: dict = {}
     if not (rows and columns) or "tagsn" not in columns:
         return comparison_map, None
+    # 야간최소유량 일별 집계 시계열 — 원시 기준선과 물리량이 달라 범용
+    # 비교가 무의미 (NMF 판정은 누수 CUSUM 전담). intent_handlers/trend.py
+    # fast-path 가 세우는 턴 파생 플래그.
+    if params.get("_nmf_series"):
+        return comparison_map, None
     try:
         from trend_comparison import compute_comparison
         ts_idx = columns.index("tagsn")

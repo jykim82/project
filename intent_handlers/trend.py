@@ -97,6 +97,13 @@ class FacilityTrendHandler(IntentHandler):
             }
         }
 
+        # 야간최소유량 시계열에는 범용 트렌드 비교(평소 대비/향후 전망)를
+        # 붙이지 않는다 — 일별 야간최소(예: 20)를 원시 시간평균 기준선
+        # (예: 64)과 비교해 무의미한 편차(-68%)에 '정상' 배지가 붙던 결함
+        # (2026-09-01 남산1 실사). NMF 이상 판정은 누수 CUSUM 이 전담.
+        # E-037: 턴 파생 params 는 `_` 접두.
+        ctx.params["_nmf_series"] = True
+
         _nmf_sn = ctx.params.get("sitename", "전체")
         _nmf_ft = ctx.params.get("facilitytype", "소블록")
         _nmf_from = ctx.params.get("from_ts", "")
