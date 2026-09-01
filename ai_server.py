@@ -2298,6 +2298,8 @@ init_intent_handler_services(
     get_site_profiler=lambda: site_profiler,
     # 진단 근거 팩(evidence_agent) — 도구별 독립 커넥션 팩토리
     get_db_connection=lambda: get_db_connection(),
+    # 근거 팩 LLM 서술 (P2) — 호출 시점 조회
+    get_ollama=lambda: ollama_client,
 )
 
 FACILITY_ALIAS_MAP = load_facility_aliases_from_db()

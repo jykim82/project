@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 
@@ -186,10 +187,85 @@ def _compose_summary(sitename: str, results: list[dict]) -> str:
     return f"{sitename} 진단 근거 — " + " · ".join(parts) if parts else ""
 
 
-async def collect_evidence(conn_factory, ctx: dict) -> dict | None:
+# ── LLM 문체 서술 (P2) ──────────────────────────────────────────
+# 결정적 summary 는 정본으로 유지하고, LLM 서술은 별도 narrative 필드 —
+# 프런트가 "[AI 참고 의견]" violet 톤으로 구분 표시 (Zero-Hallucination:
+# AI 의견은 DB 사실과 시각·구조적으로 분리).
+# gemma4 26B 가 2~3문장 생성에 5~10초 — 진단 응답 자체가 ~20초라 수용 범위
+_NARRATE_TIMEOUT_S = 12.0
+
+_NARRATE_PROMPT = """당신은 상수도 관제 시스템의 진단 보조자다. 아래 '수집된 사실'만으로
+현장 운영자가 읽을 2~3문장 한국어 소견을 써라.
+규칙: 사실에 없는 수치·원인·추측을 만들지 말 것. 제공된 수치는 그대로 인용.
+조치 지시는 하지 말 것 (판단은 운영자 몫). 문장만 출력.
+
+[수집된 사실]
+{facts}"""
+
+
+def _fact_lines(sitename: str, results: list[dict]) -> str:
+    lines = [f"- 대상 시설: {sitename}"]
+    for r in results:
+        if r["status"] in ("ok", "empty"):
+            lines.append(f"- {r['label']}: {r['summary']}")
+            for item in (r.get("items") or [])[:3]:
+                # DB Decimal 등 비직렬 타입은 문자열로 (default=str)
+                lines.append(f"  · {json.dumps(item, ensure_ascii=False, default=str)}")
+    return "\n".join(lines)
+
+
+async def _narrate(ollama, sitename: str, results: list[dict]) -> str | None:
+    """LLM 서술 — 수치 검증 실패·타임아웃이면 None (결정적 summary 만 표시)."""
+    if ollama is None:
+        return None
+    try:
+        from shared.llm_narrative import (
+            extract_numbers, strip_identifier_strings, validate_numbers_in_text,
+        )
+
+        facts = _fact_lines(sitename, results)
+        t0 = time.monotonic()
+        text = await asyncio.wait_for(
+            asyncio.to_thread(
+                ollama.generate, _NARRATE_PROMPT.format(facts=facts),
+                num_predict=180, timeout=_NARRATE_TIMEOUT_S,
+            ),
+            _NARRATE_TIMEOUT_S + 1,
+        )
+        text = (text or "").strip()
+        if not text:
+            logger.info("[evidence] LLM 서술 빈 응답 — 결정적 소견만 표시")
+            return None
+        # 허용 수치 = 사실 텍스트의 수치 전부. 시설명 등 식별 문자열은 제거
+        allowed = extract_numbers(strip_identifier_strings(facts, [sitename]))
+        ok, violations = validate_numbers_in_text(text, allowed, [sitename])
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        try:
+            from llm_narrative_log import log_narrative
+            log_narrative(
+                "evidence_narrative", params={"sitename": sitename},
+                llm_generate_ms=elapsed_ms, llm_rejected=not ok,
+                allowed_count=len(allowed), violations=violations or None,
+            )
+        except Exception:
+            pass
+        if not ok:
+            logger.info(f"[evidence] LLM 서술 수치 위반 기각: {violations}")
+            return None
+        return text
+    except asyncio.TimeoutError:
+        logger.info("[evidence] LLM 서술 타임아웃 — 결정적 소견만 표시")
+        return None
+    except Exception as e:
+        logger.info(f"[evidence] LLM 서술 실패 (결정적 소견만 표시): {e}")
+        return None
+
+
+async def collect_evidence(conn_factory, ctx: dict, ollama=None) -> dict | None:
     """근거 팩 수집. ctx = {sitename, facilitytype, anomaly_tags, upstreams}.
 
     실패해도 예외를 밖으로 던지지 않는다 — 근거는 진단 응답의 부가물이다.
+    ollama 주입 시 LLM 서술(narrative) 시도 — 검증 실패·타임아웃이면 생략.
     """
     try:
         plan = [(n, l, f) for n, l, f, ok in _TOOLS if ok(ctx)][:_MAX_TOOLS]
@@ -202,11 +278,15 @@ async def collect_evidence(conn_factory, ctx: dict) -> dict | None:
             ]),
             _TOTAL_TIMEOUT_S,
         )
+        sitename = ctx.get("sitename") or ""
         pack = {
             "items": results,
-            "summary": _compose_summary(ctx.get("sitename") or "", results),
+            "summary": _compose_summary(sitename, results),
             "elapsed_ms": int((time.monotonic() - t0) * 1000),
         }
+        narrative = await _narrate(ollama, sitename, results)
+        if narrative:
+            pack["narrative"] = narrative
         logger.info(
             f"[evidence] {ctx.get('sitename')} 도구 {len(results)}개 "
             f"{pack['elapsed_ms']}ms — " +

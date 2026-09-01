@@ -95,6 +95,7 @@ class OllamaClient:
         backoff_seconds: float = _BACKOFF_SECONDS,
         keep_alive: Optional[str] = None,
         format: Optional[str] = None,
+        think: bool = False,
     ) -> str:
         """
         Ollama /api/generate 호출하여 텍스트 응답을 반환한다.
@@ -140,6 +141,10 @@ class OllamaClient:
         # format='json' 시 Ollama 가 JSON-only 출력을 강제 (분류·구조화 응답에 유용)
         if format:
             payload["format"] = format
+        # [E-063] Ollama 0.20.x + gemma4: think 미지정 시 thinking 모드로
+        # 동작해 전 토큰이 thinking 필드로 새고 response 가 빈다 — 산발적
+        # "Ollama 빈 응답" 경고의 근본 원인. 기본 명시 차단.
+        payload["think"] = think
 
         try:
             resp = httpx.post(
@@ -166,6 +171,10 @@ class OllamaClient:
         response_text = data.get("response", "").strip()
 
         if not response_text:
-            logger.warning(f"Ollama 빈 응답: model={use_model}")
+            # keep-warm 1토큰 핑은 빈 응답이 정상 — 소음 방지 위해 debug 로
+            if num_predict == 1:
+                logger.debug(f"Ollama keep-warm 핑 (빈 응답 정상): model={use_model}")
+            else:
+                logger.warning(f"Ollama 빈 응답: model={use_model}")
 
         return response_text

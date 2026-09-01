@@ -215,12 +215,16 @@ class EvidencePackMixin:
                     if up_sn and up_sn not in upstreams:
                         upstreams.append(up_sn)
 
-            pack = await collect_evidence(service("get_db_connection"), {
-                "sitename": sitename,
-                "facilitytype": facilitytype,
-                "anomaly_tags": anomaly_tags,
-                "upstreams": upstreams,
-            })
+            pack = await collect_evidence(
+                service("get_db_connection"),
+                {
+                    "sitename": sitename,
+                    "facilitytype": facilitytype,
+                    "anomaly_tags": anomaly_tags,
+                    "upstreams": upstreams,
+                },
+                ollama=(service("get_ollama") or (lambda: None))(),
+            )
             if pack:
                 ctx.extras["evidence_pack"] = pack
         except Exception as e:

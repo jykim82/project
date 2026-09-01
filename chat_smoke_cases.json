@@ -24,7 +24,9 @@
       "question": "물 수지 검증해줘",
       "intent": "ANOMALY_FLOW_BALANCE",
       "graph_type": "none",
-      "require_fields": ["flow_balance_summary"]
+      "require_fields": [
+        "flow_balance_summary"
+      ]
     },
     {
       "question": "최근 이상 이력 보여줘",
@@ -46,7 +48,9 @@
       "intent": "FACILITY_TREND",
       "graph_type": "plot",
       "min_rows": 1,
-      "require_fields": ["comparison_map"],
+      "require_fields": [
+        "comparison_map"
+      ],
       "regression": "2026-07-11 다중 tag 비교 맵. comparison_map 은 트렌드 비교 v1 구조"
     },
     {
@@ -54,7 +58,9 @@
       "intent": "LEAK_CUSUM_ANALYSIS",
       "graph_type": "table",
       "min_rows": 1,
-      "require_fields": ["cusum_chart_data"]
+      "require_fields": [
+        "cusum_chart_data"
+      ]
     },
     {
       "question": "남산 배수지 수위 현황을 알려줘",
@@ -72,7 +78,9 @@
       "intent": "FACILITY_NIGHT_MIN_FLOW_STDDEV_ANALYSIS",
       "graph_type": "table",
       "min_rows": 1,
-      "require_fields": ["stddev_stats"],
+      "require_fields": [
+        "stddev_stats"
+      ],
       "regression": "2026-07-11 /trend/data event loop 블로킹으로 10.8s 지연 (perf)"
     },
     {
@@ -100,6 +108,13 @@
       "question": "남산 배수지 용수공급가능 시간은?",
       "intent": "RESERVOIR_SUPPLY_AVAILABLE_HOURS",
       "graph_type": "none"
+    },
+    {
+      "question": "전체 배수지의 유출유량을 표로 보여줘",
+      "intent": "FACILITY_CATALOG_TREND_TABLE",
+      "graph_type": "table",
+      "min_rows": 1,
+      "regression": "2026-09-01 E-060 — 리팩토링 import 누락 NameError 가 '데이터 없음'으로 위장. 이 인텐트가 스모크에 없어 침묵 회귀"
     }
   ]
 }
