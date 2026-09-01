@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>SLM 상황실 키오스크 모드 — 프로토타입</title>
+<style>
+  /* 자립형 — 외부 리소스 없음 (폐쇄망). 임의 현장명(청수시 등) 사용 */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#070c14; color:#dce6f2; font-family:'Pretendard','Apple SD Gothic Neo',sans-serif; overflow:hidden; height:100vh; }
+
+  /* ── 헤더 ── */
+  header { display:flex; align-items:center; gap:18px; padding:14px 28px; border-bottom:1px solid #1b2940;
+           background:linear-gradient(180deg,#0b1322,#070c14); }
+  .logo { display:flex; align-items:center; gap:10px; font-size:19px; font-weight:800; letter-spacing:.5px; }
+  .logo .mark { width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg,#38bdf8,#2563eb);
+                box-shadow:0 0 14px #38bdf880; }
+  .sub { color:#5b7290; font-size:12px; margin-top:2px; }
+  .clock { margin-left:auto; text-align:right; }
+  .clock .t { font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:1px; }
+  .clock .d { font-size:11px; color:#5b7290; }
+  .statusdot { display:flex; align-items:center; gap:7px; font-size:12px; color:#34d399; margin-left:26px; }
+  .statusdot i { width:8px; height:8px; border-radius:50%; background:#34d399; box-shadow:0 0 8px #34d399; animation:pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity:.4; } }
+
+  /* ── 회전 패널 ── */
+  .stage { position:relative; height:calc(100vh - 132px); }
+  .panel { position:absolute; inset:0; padding:22px 28px; opacity:0; transition:opacity .8s; pointer-events:none; }
+  .panel.active { opacity:1; pointer-events:auto; }
+  h2 { font-size:15px; color:#8fb4dd; font-weight:600; margin-bottom:14px; display:flex; gap:10px; align-items:center; }
+  h2 .chip { font-size:10px; padding:2px 8px; border:1px solid #27405f; border-radius:99px; color:#5b7290; font-weight:400; }
+
+  /* KPI */
+  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:18px; }
+  .kpi { background:linear-gradient(160deg,#0d1626,#0a111d); border:1px solid #1b2940; border-radius:14px; padding:18px 20px; }
+  .kpi .lab { font-size:12px; color:#5b7290; }
+  .kpi .val { font-size:34px; font-weight:800; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .kpi .delta { font-size:11px; margin-top:4px; }
+  .up { color:#34d399; } .warn { color:#fbbf24; } .bad { color:#f87171; }
+  .kpi.alert { border-color:#f8717155; box-shadow:0 0 22px #f8717122 inset; }
+
+  /* GIS 모사 — SVG 관망 + 흐름 애니메이션 */
+  .mapwrap { position:relative; background:radial-gradient(120% 100% at 30% 20%, #0c1930 0%, #070c14 70%);
+             border:1px solid #1b2940; border-radius:16px; height:calc(100% - 40px); overflow:hidden; }
+  .pipe { fill:none; stroke:#1e3a5f; stroke-width:5; stroke-linecap:round; }
+  .flow { fill:none; stroke:#38bdf8; stroke-width:2.6; stroke-linecap:round;
+          stroke-dasharray:4 14; animation:flow 1.1s linear infinite; filter:drop-shadow(0 0 4px #38bdf8aa); }
+  .flow.slow { animation-duration:2.4s; stroke:#22d3ee; }
+  .flow.rev  { stroke:#fb923c; animation-direction:reverse; filter:drop-shadow(0 0 4px #fb923caa); }
+  @keyframes flow { to { stroke-dashoffset:-18; } }
+  .node circle { stroke-width:2.5; }
+  .node text { font-size:12.5px; fill:#b8cbe4; font-weight:600; }
+  .node .cap { font-size:10px; fill:#5b7290; font-weight:400; }
+  .ripple { fill:none; stroke:#f87171; stroke-width:2; opacity:0; animation:rip 2.1s ease-out infinite; }
+  .ripple.r2 { animation-delay:.7s; } .ripple.r3 { animation-delay:1.4s; }
+  @keyframes rip { 0% { r:10; opacity:.9; } 100% { r:46; opacity:0; } }
+  .maplegend { position:absolute; right:16px; bottom:14px; background:#0b1322dd; border:1px solid #1b2940;
+               border-radius:10px; padding:10px 14px; font-size:11px; color:#8fa8c5; line-height:1.9; }
+  .lg { display:inline-block; width:22px; height:3px; border-radius:2px; vertical-align:middle; margin-right:7px; }
+
+  /* 계통도 모사 */
+  .diagramwrap { background:#0a111d; border:1px solid #1b2940; border-radius:16px; height:calc(100% - 40px);
+                 display:flex; align-items:center; justify-content:center; }
+
+  /* 알람 패널 */
+  .alarmwrap { background:linear-gradient(160deg,#1a0f14,#0a0d14); border:1px solid #f8717144; border-radius:16px;
+               height:calc(100% - 40px); padding:30px 36px; }
+  .bigalarm { display:flex; gap:22px; align-items:center; padding:26px; border-radius:14px;
+              background:#f871711a; border:1px solid #f8717155; margin-bottom:22px; }
+  .bigalarm .icon { font-size:44px; animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.35; } }
+  .bigalarm .title { font-size:26px; font-weight:800; color:#fca5a5; }
+  .bigalarm .meta { color:#8fa8c5; font-size:13px; margin-top:6px; }
+  .actions { display:flex; gap:12px; margin-top:14px; }
+  .btn { padding:9px 20px; border-radius:9px; font-size:13px; font-weight:600; border:1px solid #27405f;
+         background:#101c30; color:#cfe0f4; cursor:pointer; }
+  .btn.primary { background:linear-gradient(135deg,#ef4444,#b91c1c); border:none; color:#fff; }
+  .evrow { display:flex; gap:10px; align-items:baseline; padding:9px 4px; border-bottom:1px solid #ffffff0d; font-size:13.5px; }
+  .evrow .k { color:#5b7290; width:150px; flex:none; font-size:12px; }
+
+  /* 하단 티커 + 진행 표시 */
+  footer { position:fixed; left:0; right:0; bottom:0; height:56px; background:#0b1322; border-top:1px solid #1b2940;
+           display:flex; align-items:center; padding:0 24px; gap:22px; }
+  .rotdots { display:flex; gap:8px; }
+  .rotdots i { width:26px; height:5px; border-radius:3px; background:#1e3a5f; overflow:hidden; position:relative; }
+  .rotdots i.on::after { content:''; position:absolute; inset:0; background:#38bdf8; transform-origin:left;
+                          animation:prog var(--dur,9s) linear forwards; }
+  @keyframes prog { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+  .ticker { flex:1; overflow:hidden; white-space:nowrap; font-size:13px; color:#8fa8c5; }
+  .ticker span { display:inline-block; padding-left:100%; animation:tick 28s linear infinite; }
+  @keyframes tick { to { transform:translateX(-100%); } }
+  .ticker b.warn { color:#fbbf24; } .ticker b.bad { color:#f87171; }
+  .kioskbadge { font-size:11px; color:#5b7290; border:1px solid #27405f; padding:3px 10px; border-radius:99px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo"><div class="mark"></div> SLM 통합 상황실</div>
+    <div class="sub">청수시 상수도 관제 — 키오스크 모드</div>
+  </div>
+  <div class="statusdot"><i></i> 전 시스템 정상 수신 중</div>
+  <div class="clock"><div class="t" id="clock">14:32:07</div><div class="d" id="date">2026-09-01 (월)</div></div>
+</header>
+
+<div class="stage">
+
+  <!-- ① GIS 관망 현황 -->
+  <section class="panel active" id="p0">
+    <h2>관망 현황 <span class="chip">실시간 유량 흐름 · EPANET</span></h2>
+    <div class="kpis">
+      <div class="kpi"><div class="lab">금일 공급량</div><div class="val">42,180<span style="font-size:15px;color:#5b7290"> ㎥</span></div><div class="delta up">▲ 2.1% 전일 대비</div></div>
+      <div class="kpi"><div class="lab">진행중 경보</div><div class="val warn">3</div><div class="delta">경고 1 · 주의 2</div></div>
+      <div class="kpi"><div class="lab">배수지 평균 수위</div><div class="val">72<span style="font-size:15px;color:#5b7290"> %</span></div><div class="delta up">안정 범위</div></div>
+      <div class="kpi"><div class="lab">야간최소유량 이상</div><div class="val up">0</div><div class="delta">누수 의심 없음</div></div>
+    </div>
+    <div class="mapwrap">
+      <svg width="100%" height="100%" viewBox="0 0 1200 520">
+        <!-- 관로 (바탕) + 흐름 애니메이션 -->
+        <path class="pipe" d="M120,110 C300,90 420,150 560,170"/>
+        <path class="flow" d="M120,110 C300,90 420,150 560,170"/>
+        <path class="pipe" d="M560,170 C700,190 760,120 930,120"/>
+        <path class="flow slow" d="M560,170 C700,190 760,120 930,120"/>
+        <path class="pipe" d="M560,170 C620,290 640,330 700,380"/>
+        <path class="flow" d="M560,170 C620,290 640,330 700,380"/>
+        <path class="pipe" d="M700,380 C820,420 940,410 1060,370"/>
+        <path class="flow slow" d="M700,380 C820,420 940,410 1060,370"/>
+        <path class="pipe" d="M120,110 C160,260 220,330 350,390"/>
+        <path class="flow rev" d="M120,110 C160,260 220,330 350,390"/>
+        <path class="pipe" d="M350,390 C460,430 560,420 700,380"/>
+        <path class="flow" d="M350,390 C460,430 560,420 700,380"/>
+
+        <!-- 알람 리플 (한빛 가압장) -->
+        <circle class="ripple" cx="930" cy="120" r="10"/>
+        <circle class="ripple r2" cx="930" cy="120" r="10"/>
+        <circle class="ripple r3" cx="930" cy="120" r="10"/>
+
+        <!-- 노드 -->
+        <g class="node"><circle cx="120" cy="110" r="15" fill="#0ea5e9" stroke="#7dd3fc"/><text x="145" y="106">청수 정수장</text><text class="cap" x="145" y="122">유출 1,240 ㎥/h</text></g>
+        <g class="node"><circle cx="560" cy="170" r="13" fill="#34d399" stroke="#a7f3d0"/><text x="583" y="164">한빛 배수지</text><text class="cap" x="583" y="180">수위 3.4 m · 78%</text></g>
+        <g class="node"><circle cx="930" cy="120" r="13" fill="#f87171" stroke="#fecaca"/><text x="953" y="114">동부 가압장</text><text class="cap" x="953" y="130" fill="#fca5a5">토출압 저하 — 경고</text></g>
+        <g class="node"><circle cx="700" cy="380" r="12" fill="#34d399" stroke="#a7f3d0"/><text x="722" y="374">남산 배수지</text><text class="cap" x="722" y="390">수위 2.9 m · 71%</text></g>
+        <g class="node"><circle cx="350" cy="390" r="11" fill="#a78bfa" stroke="#ddd6fe"/><text x="372" y="384">서부 소블록</text><text class="cap" x="372" y="400">유입 214 ㎥/h</text></g>
+        <g class="node"><circle cx="1060" cy="370" r="11" fill="#a78bfa" stroke="#ddd6fe"/><text x="1000" y="404">동부 소블록</text><text class="cap" x="1000" y="420">유입 186 ㎥/h</text></g>
+      </svg>
+      <div class="maplegend">
+        <span class="lg" style="background:#38bdf8"></span>정류 (유속 비례 속도)<br>
+        <span class="lg" style="background:#fb923c"></span>역류 감지 구간<br>
+        <span class="lg" style="background:#f87171"></span>진행중 경보 (리플)
+      </div>
+    </div>
+  </section>
+
+  <!-- ② 실시간 계통도 -->
+  <section class="panel" id="p1">
+    <h2>실시간 계통도 <span class="chip">한빛 배수지 계열</span></h2>
+    <div class="diagramwrap">
+      <svg width="86%" height="80%" viewBox="0 0 1000 420">
+        <defs>
+          <linearGradient id="tank" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0c2036"/><stop offset="55%" stop-color="#0c2036"/>
+            <stop offset="55%" stop-color="#155e8a"/><stop offset="100%" stop-color="#1d7cb8"/>
+          </linearGradient>
+        </defs>
+        <path class="pipe" d="M80,210 H320"/><path class="flow" d="M80,210 H320"/>
+        <path class="pipe" d="M480,210 H700"/><path class="flow slow" d="M480,210 H700"/>
+        <path class="pipe" d="M700,210 C760,210 760,120 830,120"/><path class="flow slow" d="M700,210 C760,210 760,120 830,120"/>
+        <path class="pipe" d="M700,210 C760,210 760,300 830,300"/><path class="flow" d="M700,210 C760,210 760,300 830,300"/>
+        <g class="node"><rect x="20" y="180" width="60" height="60" rx="10" fill="#0ea5e9"/><text x="14" y="270">광역 유입</text><text class="cap" x="14" y="286">1,240 ㎥/h</text></g>
+        <rect x="320" y="140" width="160" height="140" rx="12" fill="url(#tank)" stroke="#2a5f8a"/>
+        <text x="352" y="122" fill="#b8cbe4" font-size="13" font-weight="700">한빛 배수지</text>
+        <text x="352" y="310" fill="#7dd3fc" font-size="12">수위 3.42 m (78%)</text>
+        <g class="node"><rect x="830" y="90" width="120" height="58" rx="10" fill="#101c30" stroke="#27405f"/><text x="846" y="124">동부 가압장</text></g>
+        <g class="node"><rect x="830" y="270" width="120" height="58" rx="10" fill="#101c30" stroke="#27405f"/><text x="846" y="304">서부 소블록</text></g>
+        <circle cx="890" cy="80" r="7" fill="#f87171"><animate attributeName="opacity" values="1;.2;1" dur="1s" repeatCount="indefinite"/></circle>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ③ 경보 인터럽트 (자동 전환 시연) -->
+  <section class="panel" id="p2">
+    <h2>경보 대응 <span class="chip">발생 시 자동 전환</span></h2>
+    <div class="alarmwrap">
+      <div class="bigalarm">
+        <div class="icon">🚨</div>
+        <div>
+          <div class="title">동부 가압장 — 토출압력 저하 (경고)</div>
+          <div class="meta">14:29:41 발생 · 현재값 2.1 kgf/㎠ (임계 3.0) · 3분째 미확인 — 메신저 상신됨</div>
+          <div class="actions">
+            <button class="btn primary">경보 확인</button>
+            <button class="btn">진단 근거 보기</button>
+            <button class="btn">초동대응 매뉴얼</button>
+            <button class="btn">상황보고 1보 작성</button>
+          </div>
+        </div>
+      </div>
+      <div class="evrow"><span class="k">진단 근거 (자동 수집)</span><span>토출압 2.1 은 평소 이 시간대 범위(2.8~3.4)를 벗어남 · 상류 한빛 배수지 정상 · 관련 현장 지식 1건 · 최근 30일 조치 없음</span></div>
+      <div class="evrow"><span class="k">현장 지식</span><span style="color:#fbbf24">동부 가압장 2호 펌프 — 8월 베어링 교체 이력, 재발 시 우선 점검 대상</span></div>
+      <div class="evrow"><span class="k">AI 참고 의견</span><span style="color:#c4b5fd">[AI 참고 의견] 토출압력 2.1 kgf/㎠는 평소 범위 하한(2.8)보다 낮아 펌프 성능 저하 또는 흡입측 문제 가능성이 있습니다.</span></div>
+      <div class="evrow"><span class="k">영향 범위</span><span>동부 소블록 1,240세대 — 현재 공급 유지 중 (남산 배수지 우회 여유 4.2시간)</span></div>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <span class="kioskbadge">자동 순환 9s</span>
+  <div class="rotdots" id="dots"><i class="on"></i><i></i><i></i></div>
+  <div class="ticker"><span>
+    <b class="bad">⚠ 14:29 동부 가압장 토출압력 저하(경고) — 미확인</b> &nbsp;·&nbsp;
+    <b class="warn">14:11 서부 소블록 유량계 통신이상(주의)</b> &nbsp;·&nbsp;
+    13:58 한빛 배수지 수위 78% 안정 &nbsp;·&nbsp; 13:40 야간최소유량 이상 없음 &nbsp;·&nbsp;
+    13:22 정기 점검 2건 완료 (청수 정수장·남산 배수지)
+  </span></div>
+  <span class="kioskbadge" id="mode">화면 1/3 — 관망 현황</span>
+</footer>
+
+<script>
+  // 시계
+  const pad = n => String(n).padStart(2, "0");
+  setInterval(() => {
+    const d = new Date();
+    document.getElementById("clock").textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }, 1000);
+
+  // 자동 순환 (9초) — 실제 구현에선 경보 발생 시 p2 로 즉시 인터럽트
+  const names = ["관망 현황", "실시간 계통도", "경보 대응"];
+  let cur = 0;
+  setInterval(() => {
+    cur = (cur + 1) % 3;
+    document.querySelectorAll(".panel").forEach((p, i) => p.classList.toggle("active", i === cur));
+    document.querySelectorAll("#dots i").forEach((d, i) => {
+      d.classList.remove("on");
+      if (i === cur) { void d.offsetWidth; d.classList.add("on"); }
+    });
+    document.getElementById("mode").textContent = `화면 ${cur + 1}/3 — ${names[cur]}`;
+  }, 9000);
+</script>
+</body>
+</html>
