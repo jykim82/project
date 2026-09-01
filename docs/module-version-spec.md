@@ -78,7 +78,14 @@ node-red / ai-weights / map-bundle / vision-agent / epanet(feature, SKU B1)
   (수동 롤백 블록 원칙 유지, UI confirm 에도 명시)
 - kind=container(이미지 교체) 는 코드 경로만 존재 — **실 이미지 번들
   확보 시 검증 예정** (에이전트가 건너뛰며 미검증 경고)
-- 실행: `--once`(1회) / `--loop`(10s 상주). launchd/systemd 등록은 운영 문서
+- **실행 방침: 수동 실행 확정** (2026-09-01 사용자 결정) — 상주 등록
+  (launchd/systemd) 하지 않는다. 업데이트 적용 시 구축 담당자가
+  `python3 scripts/update_agent.py --once` 1회 실행. 승인만 된 번들은
+  에이전트 실행 전까지 "적용 대기" 상태로 남는 것이 정상
+
+### 첫 실전 배포 시 함께 (예약)
+- kind=container(이미지 tar 교체) 실검증 — 실제 이미지 번들 제작 시점
+- 번들 pack 스크립트(모듈·버전 지정 → manifest+sha256 자동 생성)
 
 ### 검증 (2026-09-01 — 시나리오 6종 × 각 5회 = 30/30)
 정상 반입 / sha 불일치 차단 / SKU 잠금 반입 차단 / 승인→적용→버전 스탬프
