@@ -57,11 +57,29 @@ node-red / ai-weights / map-bundle / vision-agent / epanet(feature, SKU B1)
   "고지 의무 이행"을 이 화면 하나로 답변
 - 새로고침 = health 재검사
 
-## 5. 후속 (P2/P3 — 착수 별도 승인)
+## 5. P2/P3 — 구현 완료 (2026-09-01, Migration 0139)
 
-- P2: 통합 업데이트 번들 규격(manifest: 모듈·버전·sha256·마이그레이션·
-  **required_sku** — 미보유 모듈 반입 차단) + 웹 업로드→검증→스테이징,
-  배포 스크립트 버전 자동 스탬핑
-- P3: 호스트 업데이터 에이전트 — 버튼 적용·health 실패 시 자동 롤백.
-  단 **DB 마이그레이션 롤백은 자동화하지 않는다** (데이터 손실 위험 —
-  롤백 블록 수동 실행 유지)
+### P2 — 번들 반입·검증·스탬핑
+- 번들 = tar.gz(manifest.json + 아티팩트 + migrations/). manifest 규격은
+  `slm/endpoints/module_update.py` 모듈 docstring 정본
+- `POST /system/update/upload` — 스테이징 해제 → **sha256 전수 검증 +
+  required_sku 게이트**(미보유 모듈 포함 시 반입 차단) + 경로 안전
+  (절대경로·`..` 거부). 이력 `tb_module_update`(0139)
+- 버전 자동 스탬핑: 백엔드 기동 시 `/app/VERSION`, 프런트는
+  `switch-frontend-prod.sh` 빌드 성공 시 (날짜-커밋SHA)
+- UI: 시스템 버전 페이지 "업데이트 번들" 패널 — 업로드·상태·승인·롤백·삭제
+
+### P3 — 호스트 에이전트 (`scripts/update_agent.py`)
+- 백엔드는 잡 스풀(`files/updates/jobs/`)에 쓰고, **적용·롤백은 호스트
+  에이전트**가 수행: 대상 백업 → 배치 → sha 재검증 → 마이그레이션 적용
+  → health 검사 → **실패 시 자동 복원**. 결과 파일은 백엔드가 DB 병합
+  (상태 전이 직전에도 병합 — 낡은 상태로 전이 거부되던 결함 수정)
+- 롤백: 적용 시점 백업 복원. **DB 마이그레이션은 자동 롤백 안 함**
+  (수동 롤백 블록 원칙 유지, UI confirm 에도 명시)
+- kind=container(이미지 교체) 는 코드 경로만 존재 — **실 이미지 번들
+  확보 시 검증 예정** (에이전트가 건너뛰며 미검증 경고)
+- 실행: `--once`(1회) / `--loop`(10s 상주). launchd/systemd 등록은 운영 문서
+
+### 검증 (2026-09-01 — 시나리오 6종 × 각 5회 = 30/30)
+정상 반입 / sha 불일치 차단 / SKU 잠금 반입 차단 / 승인→적용→버전 스탬프
+/ 롤백→이전본 복원 / 변조 적용 실패→자동 복원

@@ -68,3 +68,8 @@ docker run -d --name slm-caddy --network "$NET" "${CADDY_PORTS[@]}" \
 echo "✅ 프로덕션 프런트 가동. https://<host 또는 DDNS>:3000 — HMR 없음(리로드 없음)."
 echo "   코드 변경 반영/재빌드: 이 스크립트를 다시 실행."
 echo "   개발(HMR) 복귀: scripts/switch-frontend-dev.sh"
+
+# 프런트 버전 자동 스탬핑 (module-version-spec P2) — 빌드 성공 시에만 도달
+FRONT_SHA=$(git -C "$PWD/slm-dashboard/slm-dashboard" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+docker exec slm-timescaledb psql -U slm_dev -d slm -c \
+  "UPDATE tb_module_version SET version='$(date +%Y.%m.%d)-${FRONT_SHA}', installed_at=now(), installed_by='switch-frontend-prod', updated_at=now() WHERE module_key='frontend'" >/dev/null 2>&1 || true
