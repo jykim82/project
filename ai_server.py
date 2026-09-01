@@ -126,6 +126,9 @@ from endpoints.site_knowledge import (
 from endpoints.nameplate import (
     router as nameplate_router, init as init_nameplate,
 )
+from endpoints.module_version import (
+    router as module_version_router, init as init_module_version,
+)
 from endpoints.tags import router as tags_router, init as init_tags
 from endpoints.dashboard import router as dashboard_router, init as init_dashboard
 from endpoints.flow_realtime import router as flow_realtime_router, init as init_flow_realtime
@@ -2453,6 +2456,10 @@ app.include_router(site_knowledge_router)
 # 명판 비전 입력 (로드맵 E P1)
 init_nameplate(get_db_connection)
 app.include_router(nameplate_router)
+
+# 모듈 버전·라이선스 (module-version-spec P1)
+init_module_version(get_db_connection)
+app.include_router(module_version_router)
 
 
 def _attach_site_knowledge(resp, params: dict) -> None:
