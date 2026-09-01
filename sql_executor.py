@@ -16,7 +16,12 @@ from typing import Any, Optional
 
 import psycopg2
 
-from shared.timeseries import get_chunks_for_range as _get_chunks_for_range, query_chunks_raw as _query_chunks_raw
+from shared.timeseries import (
+    get_chunks_for_range as _get_chunks_for_range,
+    query_chunks_agg as _query_chunks_agg,
+    query_chunks_raw as _query_chunks_raw,
+    reaggregate as _reaggregate,
+)
 
 logger = logging.getLogger("slm")
 
