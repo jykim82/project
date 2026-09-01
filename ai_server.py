@@ -242,6 +242,37 @@ _ALARM_RELEASE_LOOKBACK = "1 day"
 _ANOMALY_SCAN_CACHE: Optional[dict] = None
 _ANOMALY_SCAN_CACHE_TIME: Optional[datetime] = None
 _ANOMALY_SCAN_CACHE_TTL = 300  # 5분
+# 디스크 영속화 — 재기동 직후 "준비 중" 공백(빌드 ~50초) 제거. 기동 시
+# 직전 캐시를 즉시 로드하고(나이는 정직하게 유지) 백그라운드 재빌드가
+# 갈아끼운다. 24h 초과분은 오도 위험이 커서 버린다.
+_ANOMALY_SCAN_CACHE_FILE = os.path.join(
+    os.environ.get("FILES_DIR", "/data/files"), "cache", "anomaly_scan_cache.pkl")
+_ANOMALY_SCAN_CACHE_MAX_AGE_S = 24 * 3600
+
+
+def _persist_scan_cache(result: dict, ts: datetime) -> None:
+    try:
+        import pickle
+        os.makedirs(os.path.dirname(_ANOMALY_SCAN_CACHE_FILE), exist_ok=True)
+        tmp = _ANOMALY_SCAN_CACHE_FILE + ".tmp"
+        with open(tmp, "wb") as f:
+            pickle.dump({"time": ts, "result": result}, f)
+        os.replace(tmp, _ANOMALY_SCAN_CACHE_FILE)  # 원자 교체
+    except Exception as e:
+        logger.debug(f"스캔 캐시 영속화 실패: {e}")
+
+
+def _load_persisted_scan_cache() -> Optional[tuple[dict, datetime]]:
+    try:
+        import pickle
+        with open(_ANOMALY_SCAN_CACHE_FILE, "rb") as f:
+            d = pickle.load(f)
+        age = (datetime.now() - d["time"]).total_seconds()
+        if age > _ANOMALY_SCAN_CACHE_MAX_AGE_S:
+            return None
+        return d["result"], d["time"]
+    except Exception:
+        return None
 
 # ── 물 수지 백그라운드 캐시 ──────────────────────────────────
 _FLOW_BALANCE_CACHE: Optional[list] = None
@@ -1247,6 +1278,14 @@ async def _anomaly_scan_cache_loop():
     사용자 요청 시 캐시 반환 (<1s).
     """
     global _ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME
+    # 재기동 공백 제거 — 직전 영속 캐시를 먼저 올린다 (나이 표시는 정직하게
+    # 유지되고, 아래 첫 빌드가 곧 갈아끼운다)
+    _persisted = _load_persisted_scan_cache()
+    if _persisted and _ANOMALY_SCAN_CACHE is None:
+        _ANOMALY_SCAN_CACHE, _ANOMALY_SCAN_CACHE_TIME = _persisted
+        _age = (datetime.now() - _ANOMALY_SCAN_CACHE_TIME).total_seconds()
+        logger.info(f"ANOMALY_SCAN_ALL 영속 캐시 로드: "
+                    f"{len(_ANOMALY_SCAN_CACHE.get('rows', []))}행 ({_age:.0f}초 전)")
     # 프로파일링 완료 대기 (최대 30초, 3초 간격 체크) — 초기 캐시 빌드 빠르게 시작
     for _ in range(10):
         if site_profiler and site_profiler.profiles:
@@ -1264,6 +1303,8 @@ async def _anomaly_scan_cache_loop():
                 _ANOMALY_SCAN_CACHE_TIME = datetime.now()
                 row_count = len(result.get("rows", []))
                 logger.info(f"ANOMALY_SCAN_ALL 캐시 갱신: {row_count}행, {elapsed:.1f}초")
+                await asyncio.to_thread(
+                    _persist_scan_cache, result, _ANOMALY_SCAN_CACHE_TIME)
                 await asyncio.sleep(_ANOMALY_SCAN_CACHE_TTL)
             else:
                 logger.warning("ANOMALY_SCAN_ALL 캐시 갱신 실패: 빈 결과 — 30초 후 재시도")
