@@ -516,6 +516,42 @@ async def delete_facility_file(facility_file_id: int):
 # 사이트 설정 API (관리자용)
 # =============================================================================
 
+# 키오스크 순환 화면 허용 키 — 프런트 KIOSK_VIEW_CATALOG 와 동기 유지
+# (slm-dashboard src/components/kiosk/kiosk-views.ts)
+_KIOSK_ALLOWED_VIEWS = ["gis", "flow", "alarm", "tags", "health"]
+_KIOSK_DEFAULT_VIEWS = ["gis", "flow", "alarm"]
+_KIOSK_NIGHT_DEFAULT = {"enabled": False, "start_hour": 22, "end_hour": 6, "brightness_pct": 40}
+
+
+def _parse_kiosk_settings(views_raw, night_raw, kpi_raw):
+    """tb_comm_code 원시값 → 키오스크 설정 dict (파싱 실패는 기본값)"""
+    views = _KIOSK_DEFAULT_VIEWS
+    if views_raw:
+        parsed = [v.strip() for v in str(views_raw).split(",")]
+        valid = [v for v in parsed if v in _KIOSK_ALLOWED_VIEWS]
+        # 중복 제거 (순서 보존)
+        valid = list(dict.fromkeys(valid))
+        if valid:
+            views = valid
+
+    night = dict(_KIOSK_NIGHT_DEFAULT)
+    if night_raw:
+        comm_val, enabled = night_raw
+        night["enabled"] = enabled
+        try:
+            start_h, end_h, pct = (int(x) for x in str(comm_val).split(","))
+            if 0 <= start_h <= 23 and 0 <= end_h <= 23 and 10 <= pct <= 100:
+                night.update(start_hour=start_h, end_hour=end_h, brightness_pct=pct)
+        except (ValueError, TypeError):
+            pass  # 손상값은 기본 스케줄 유지
+
+    return {
+        "views": views,
+        "night_dim": night,
+        "kpi_strip_enabled": True if kpi_raw is None else bool(kpi_raw),
+    }
+
+
 @router.get("/admin/site-settings")
 async def get_site_settings():
     """사이트 설정 조회 (랜딩/DB접속/AI파라미터)"""
@@ -563,6 +599,12 @@ async def get_site_settings():
                 settings["gis_center"] = comm_val  # "lon,lat"
             elif comm_cd == "GIS_MAP_ZOOM":
                 settings["gis_zoom"] = comm_val
+            elif comm_cd == "KIOSK_VIEWS":
+                settings["_kiosk_views_raw"] = comm_val
+            elif comm_cd == "KIOSK_NIGHT_DIM":
+                settings["_kiosk_night_raw"] = (comm_val, use_yn == "Y")
+            elif comm_cd == "KIOSK_KPI_STRIP":
+                settings["_kiosk_kpi_raw"] = use_yn == "Y"
 
         if "default_landing_page" not in settings:
             settings["default_landing_page"] = "/dashboard"
@@ -591,6 +633,13 @@ async def get_site_settings():
             settings["trend_comparison_enabled"] = True
         if "report_automation_enabled" not in settings:
             settings["report_automation_enabled"] = True
+
+        # 키오스크 P2 (kiosk-mode-spec.md §5) — 파싱 실패는 기본값으로 방어
+        settings["kiosk"] = _parse_kiosk_settings(
+            settings.pop("_kiosk_views_raw", None),
+            settings.pop("_kiosk_night_raw", None),
+            settings.pop("_kiosk_kpi_raw", None),
+        )
 
         # DB 접속정보 (읽기 전용, 비밀번호 마스킹)
         settings["db"] = {
@@ -821,6 +870,57 @@ async def update_site_settings(request: Request):
             )
             conn.commit()
 
+        # 키오스크 P2 — 순환 화면·야간 밝기·KPI 스트립 (kiosk-mode-spec.md §5)
+        if "kiosk" in body and isinstance(body["kiosk"], dict):
+            k = body["kiosk"]
+            if "views" in k:
+                views = [v for v in k["views"] if v in _KIOSK_ALLOWED_VIEWS] \
+                    if isinstance(k["views"], list) else []
+                views = list(dict.fromkeys(views))
+                if not views:
+                    raise HTTPException(400, "kiosk.views 는 허용 화면 키 1개 이상")
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', 'KIOSK_VIEWS', '키오스크 순환 화면', %s, 'Y')
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET comm_val = EXCLUDED.comm_val
+                    """,
+                    (",".join(views),),
+                )
+            if "night_dim" in k and isinstance(k["night_dim"], dict):
+                nd = k["night_dim"]
+                try:
+                    start_h = int(nd.get("start_hour", 22))
+                    end_h = int(nd.get("end_hour", 6))
+                    pct = int(nd.get("brightness_pct", 40))
+                    if not (0 <= start_h <= 23 and 0 <= end_h <= 23 and 10 <= pct <= 100):
+                        raise ValueError
+                except (ValueError, TypeError):
+                    raise HTTPException(400, "kiosk.night_dim 은 시각 0~23, 밝기 10~100")
+                use_yn = "Y" if nd.get("enabled") else "N"
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, comm_val, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', 'KIOSK_NIGHT_DIM', '키오스크 야간 밝기', %s, %s)
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET comm_val = EXCLUDED.comm_val, use_yn = EXCLUDED.use_yn
+                    """,
+                    (f"{start_h},{end_h},{pct}", use_yn),
+                )
+            if "kpi_strip_enabled" in k:
+                use_yn = "Y" if k["kpi_strip_enabled"] else "N"
+                cur.execute(
+                    """
+                    INSERT INTO tb_comm_code (region, grp_cd, comm_cd, comm_nm, use_yn)
+                    VALUES ('R01', 'SITE_SETTING', 'KIOSK_KPI_STRIP', '키오스크 KPI 스트립', %s)
+                    ON CONFLICT (region, grp_cd, comm_cd)
+                    DO UPDATE SET use_yn = EXCLUDED.use_yn
+                    """,
+                    (use_yn,),
+                )
+            conn.commit()
+
         # SKU B2/B4/B5 (feature-sku-spec.md §6, Migration 0082)
         _sku_map = {
             "vision_agent_enabled":      ("VISION_AGENT_ENABLED", "AI 멀티모달 진단 (B2)"),
@@ -882,6 +982,11 @@ async def update_site_settings(request: Request):
         cur.close()
         return {"status": "OK"}
 
+    except HTTPException:
+        # 검증 실패(400)는 그대로 전파 — 아래 except 가 삼키면 200 OK 로 보인다
+        if conn:
+            conn.rollback()
+        raise
     except Exception as e:
         if conn:
             conn.rollback()
