@@ -3836,3 +3836,28 @@ memo-schedule-spec §4 반영. 확장 후보: 메모→일정 등록 연계, 대
   버스트 → 8건). 교훈: 패턴 수정은 형제 컴포넌트 시그니처 일괄 스캔
 - E-057 Radix Tabs 비제어라 코드 탭 전환 불가 · E-058 세션 키는 user_id
   (id 는 조용히 실패)
+
+## 캔버스 정렬 + 키오스크 P2 (2026-09-19)
+
+**캔버스 정렬 (백로그 2026-09-01 해소)**
+- setup/workspace 양 레이어(계통도 CanvasEditor·통신망 NetworkLinkEditor):
+  좌클릭 드래그=박스 선택(SelectionMode.Partial), 팬=우클릭/휠클릭 드래그
+- 정렬 5종 (align-utils.ts 순수 계산 + AlignButtons.tsx 공용): 좌/가운데/우
+  정렬(2개↑), 가로/세로 등간격(3개↑ — 양 끝 고정·사이 간격 균등)
+- 계통도는 store alignSelected — undo 히스토리·isDirty 통합. 통신망은
+  변경분만 즉시 canvas-positions 저장
+- Playwright 실검증: 박스 선택·정렬 수렴·undo 복원·우클릭 팬·저장 PUT 관통
+
+**키오스크 P2 (0142, kiosk-mode-spec §5)**
+- KIOSK_VIEWS 화면 목록·순서 커스텀 (허용 5종: gis/flow/alarm/tags/health).
+  경보 인터럽트는 목록 무관 — alarm iframe 항상 상주
+- KIOSK_NIGHT_DIM 야간 밝기 (자정 걸침 지원, 검은 오버레이 opacity·조작
+  통과) + KIOSK_KPI_STRIP 상단 요약 (진행중 경보 폴링 공유 + /alarm/summary
+  5분 — 새 API 없음)
+- /admin/site-settings "상황실 키오스크 모드" 카드 (체크+순서 화살표·시간대
+  Select·밝기 Slider·단일 PUT). 키오스크는 로드 1회 조회, 실패 시 P1 폴백
+- 부수 수정: site-settings PUT 의 HTTPException 이 broad except 에 삼켜져
+  400 이 200 으로 응답되던 문제 재전파로 근본 수정
+- **기능 테스트 4회**: ①기본(P1 회귀+KPI 표시) ②관리자 UI 목록·순서 변경
+  반영 ③야간 창 내(오버레이 0.6·야간 배지·alarm 상주) ④KPI 끔+창 밖+자동
+  순환 — 전 항목 통과, 콘솔 에러 0
