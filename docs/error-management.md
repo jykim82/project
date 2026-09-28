@@ -1861,3 +1861,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** Ollama 0.20.x 부터 gemma4 계열이 `think` 미지정 시 **thinking 모드**로 동작 — 생성 토큰 전량이 `thinking` 필드로 가고 `response` 는 빔 (실측: 400토큰 소모, response='', done_reason=length)
 - **해결:** `OllamaClient.generate` 에 `payload["think"]=False` 기본 명시 (파라미터로 개방). keep-warm(num_predict=1) 빈 응답 경고는 debug 강등 — 진짜 빈 응답과 분리
 - **재발 방지:** ① Ollama/모델 업그레이드 후엔 **직접 curl 로 response 필드 실측** (클라이언트 경유 전) ② "빈 응답" 경고가 keep-warm 주기(4분)와 일치하면 소음, 불일치하면 실제 장애 ③ 신규 thinking 모델 도입 시 think 파라미터 정책 먼저 결정
+
+### [E-064] DB 상시 CPU 244% — Node-RED '현재수위(평균)' 전 청크 스캔이 30초 주기로 연속 실행
+
+- **날짜:** 2026-09-28 ("web 속도 확인" 요청 진단 중 발견)
+- **증상:** 웹 페이지·API 응답은 정상(수 ms~수십 ms)인데 slm-timescaledb 컨테이너가 상시 CPU 244%, node-red 106%. pg_stat_activity 에 `UPDATE tb_service_reservoir_status ... avg_level` 이 항상 25~31초째 실행 중 (매번 새 PID — 반복 루프). node-red 로그에 deadlock detected 산발
+- **원인:** Node-RED "운영현황 갱신" 탭 '현재수위(평균)' 노드가 `tb_tag_raw_data` 를 **logtime 하한 없이** `DISTINCT ON (tagsn) ... ORDER BY logtime DESC` 전 청크 스캔 — E-056 에서 금지한 패턴이 백엔드가 아닌 Node-RED 플로우에 잔존. 실행 25~31초 > 트리거 주기 30초라 사실상 무휴 실행 + 겹친 UPDATE 끼리 deadlock
+- **해결:** 하한 추가 3개 노드 (flows.json 직접 수정 + 컨테이너 재시작, 백업 flows.json.bak-20260928-2325) — ① 현재수위(평균) `logtime >= now()-'1 day'` (실측 25~31s → **30ms, 약 1,000배**) ② HH,LL 설정값 LATERAL 30일 ③ 압력 정보 LATERAL 7일. 결과: DB CPU 244→20%, node-red 106→0%, 장기 쿼리 0건, 수위·임계 갱신 정상, deadlock 재발 없음
+- **재발 방지:** ① E-056 "tb_tag_raw_data 조회는 logtime 하한 필수"는 **백엔드 SQL 만이 아니라 Node-RED function 노드에도 적용** — 플로우 수정 시 필수 점검 ② 진단 스크립트: flows.json 에서 `tb_tag_raw_data` 참조 수 vs `logtime >=` 수 비교 스윕 (이번 조사에서 하한 부족 노드 ~25개 추가 확인 — 대부분 태그 단건 조회라 저위험, 알람 탭 이벤트 구동. 필요 시 후속 정리) ③ "웹이 느리다" 증상에서 앱 응답이 정상이면 pg_stat_activity 의 반복 장기 쿼리부터 볼 것

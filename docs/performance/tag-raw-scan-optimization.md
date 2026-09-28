@@ -203,3 +203,11 @@ grep -rn "tb_tag_raw_data" --include="*.py" /Users/jykim/slm
 SELECT now()-query_start dur, left(regexp_replace(query,'\s+',' ','g'),60)
 FROM pg_stat_activity WHERE state <> 'idle' ORDER BY query_start;
 ```
+
+## 추가: Node-RED 플로우의 전 청크 스캔 (E-064, 2026-09-28)
+
+logtime 하한 원칙은 백엔드 SQL 만이 아니라 **Node-RED function 노드에도 적용**.
+'운영현황 갱신' 탭 현재수위(평균) 이 하한 없이 30초 주기 실행되어 DB 상시
+CPU 244% — 하한 1일 추가로 25~31s → 30ms (약 1,000배), CPU 20%.
+플로우 수정 시 `tb_tag_raw_data` 참조 대비 `logtime >=` 수를 스윕할 것.
+상세: docs/error-management.md E-064.
