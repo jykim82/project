@@ -100,20 +100,6 @@ def _tool_upstream_status(conn, ctx: dict) -> dict:
     return {"summary": summary, "items": items}
 
 
-def _tool_knowledge_cards(conn, ctx: dict) -> dict:
-    """현장 지식 카드 매칭 (site-knowledge-spec 재사용)."""
-    from endpoints.site_knowledge import find_matching_cards
-
-    cards = find_matching_cards(
-        conn, ctx["sitename"], ctx.get("facilitytype") or "",
-    )[:_MAX_ITEMS]
-    items = [{"k_type": c["k_type"], "title": c["title"],
-              "description": c["description"]} for c in cards]
-    summary = (f"관련 현장 지식 {len(items)}건" if items
-               else "등록된 현장 지식 없음")
-    return {"summary": summary, "items": items}
-
-
 def _tool_recent_actions(conn, ctx: dict) -> dict:
     """최근 30일 작업·조치 이력 — 이미 알려진 문제인가."""
     cur = conn.cursor()
@@ -145,8 +131,6 @@ _TOOLS = [
     ("same_hour_history", "평소 동일 시간대 대비", _tool_same_hour_history,
      lambda ctx: bool(ctx.get("anomaly_tags"))),
     ("upstream_status", "상류 시설 알람", _tool_upstream_status,
-     lambda ctx: bool(ctx.get("sitename"))),
-    ("knowledge_cards", "현장 지식", _tool_knowledge_cards,
      lambda ctx: bool(ctx.get("sitename"))),
     ("recent_actions", "최근 조치 이력", _tool_recent_actions,
      lambda ctx: bool(ctx.get("sitename"))),

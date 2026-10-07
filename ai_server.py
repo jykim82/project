@@ -117,12 +117,6 @@ from endpoints.alarm_approach import (
 from endpoints.alarm_label import (
     router as alarm_label_router, init as init_alarm_label,
 )
-from endpoints.incident_report import (
-    router as incident_report_router, init as init_incident_report,
-)
-from endpoints.site_knowledge import (
-    router as site_knowledge_router, init as init_site_knowledge,
-)
 from endpoints.nameplate import (
     router as nameplate_router, init as init_nameplate,
 )
@@ -2497,12 +2491,8 @@ init_alarm_label(get_db_connection)
 app.include_router(alarm_label_router)
 
 # 상황보고 1보/2보
-init_incident_report(get_db_connection)
-app.include_router(incident_report_router)
 
 # 현장 지식 카드 (로드맵 B P1)
-init_site_knowledge(get_db_connection)
-app.include_router(site_knowledge_router)
 
 # 명판 비전 입력 (로드맵 E P1)
 init_nameplate(get_db_connection)
@@ -2559,35 +2549,6 @@ def _stamp_backend_version() -> None:
 
 _stamp_backend_version()
 
-
-def _attach_site_knowledge(resp, params: dict) -> None:
-    """채팅 응답에 현장 지식 카드 첨부 — site-knowledge-spec P2 (채팅 주입).
-
-    sitename 문맥이 있는 성공 응답에만, active 매칭 카드 최대 3장.
-    실패해도 응답을 막지 않는다 (카드는 부가물).
-    """
-    try:
-        if not isinstance(resp, dict) or resp.get("status") != "OK":
-            return
-        sn = (params.get("sitename") or "").strip().strip("%")
-        if not sn:
-            return
-        ft = (params.get("facilitytype") or "").strip().strip("%")
-        from endpoints.site_knowledge import find_matching_cards
-
-        conn = get_db_connection()
-        try:
-            cards = find_matching_cards(conn, sn, ft)[:3]
-        finally:
-            conn.close()
-        if cards:
-            resp["site_knowledge_cards"] = [
-                {"k_type": c["k_type"], "title": c["title"],
-                 "description": c["description"]}
-                for c in cards
-            ]
-    except Exception as e:
-        logger.debug(f"지식 카드 첨부 실패 (응답은 유지): {e}")
 
 # 대시보드 엔드포인트 모듈 초기화
 def _get_scan_cache():
@@ -3357,7 +3318,6 @@ async def ask_stream(request: AskRequest):
                 if _hctx.progress_message is not None:
                     _p_step, _p_msg = _hctx.progress_message
                     yield _sse_event("progress", {"step": _p_step, "message": _p_msg})
-                _attach_site_knowledge(_hctx.final_response, params)
                 yield _sse_event("result", _hctx.final_response)
                 return
 
@@ -3715,7 +3675,6 @@ async def ask_stream(request: AskRequest):
             ml_features_used=processed_data.get("ml_features_used"),
         )
 
-        _attach_site_knowledge(final_response, params)
         yield _sse_event("result", final_response)
 
     return StreamingResponse(
