@@ -3875,3 +3875,22 @@ memo-schedule-spec §4 반영. 확장 후보: 메모→일정 등록 연계, 대
 - **롤백 대비**: tb_canvas_layout_bak_20260930(295) ·
   tb_flow_diagram_node_bak_20260930(122) + 복원 SQL.
   정책 문서 docs/canvas-monitoring-sync-policy.md 신설, memory 저장
+
+## 토폴로지 정렬 + 기능 제거 3종 (2026-10-07)
+
+**토폴로지 정렬 (링크 에디터)** — 시안 HTML 승인 후 구현.
+- 모니터링 computeHierarchicalLayout 을 그대로 import + 168×46 스케일 (복제
+  금지 원칙). 툴바 버튼 병존: 계층 정렬(격자)·토폴로지 정렬(모니터링 작화)
+- 동기이탈 lint 확장: 표준 작화 2종 중 가까운 쪽 기준 (혼합 일치는 이탈)
+
+**기능 제거 3종 (사용자 결정, Migration 0143 — 인수인계 폐기 0134 전례)**
+- 상황보고 1·2보: M005-6·/reports/incident·incident-api·IncidentDraftButton·
+  incident_report.py 제거. tb_incident_report 데이터 보존
+- 현장 모드: M009·/field·components/field·field-handoff·FieldModeBanner·
+  채팅 fieldPhoto 핸드오프 제거 (백엔드 무변경 — 채팅 재사용 구조)
+- 현장 지식: M006-8·/crisis/site-knowledge·채팅 site_knowledge_cards 전달
+  경로·경보 상세 amber 카드·site_knowledge.py·진단 근거 "지식 카드" 도구
+  (4종→3종) 제거. tb_site_knowledge 데이터 보존
+- 주의: `incident-html.ts`/`reports-api 의 incident_report 양식` 은 장애
+  보고서 인쇄 양식 (이름 충돌 — 무관, 보존). tsc 가 오삭제 1건 검출→복원
+- 검증: tsc 0 · 채팅 스모크 17/17 · 빌드 매니페스트에서 제거 3경로 부재 확인
