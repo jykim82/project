@@ -1,0 +1,13 @@
+# [DEV-ONLY] tb_tag_raw_data 가상 데이터 생성 데몬 이미지 (외부 수집 차단 대체)
+# 납품 시 제거: docker-compose.dev.yml의 dev-tag-synth 서비스와 함께 삭제
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir "psycopg2-binary==2.9.10"
+
+WORKDIR /app
+COPY tag_synth.py /app/tag_synth.py
+
+ENV PYTHONUNBUFFERED=1 \
+    TZ=Asia/Seoul
+
+ENTRYPOINT ["python", "/app/tag_synth.py"]
