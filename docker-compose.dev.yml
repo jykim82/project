@@ -151,6 +151,33 @@ services:
     restart: unless-stopped
 
   # ============================================================
+  # [DEV-ONLY] 가상 태그 데이터 생성 (외부 수집 차단 대체) — 납품 시 제거
+  # 과거 21일 시간대 프로파일 기반 생성 + 외부 수집 재개 시 자동 양보.
+  # 상세: docs/dev-tag-ingest-spec.md (가상 생성 절)
+  # ============================================================
+  dev-tag-synth:
+    build:
+      context: ../slm/dev_tools
+      dockerfile: Dockerfile.tag_synth
+    container_name: slm-dev-tag-synth
+    environment:
+      TZ: Asia/Seoul
+      LOCAL_DB_HOST: timescaledb
+      LOCAL_DB_PORT: "5432"
+      LOCAL_DB_NAME: ${DB_NAME:-slm}
+      LOCAL_DB_USER: ${DB_USER:-slm_dev}
+      LOCAL_DB_PASSWORD: ${DB_PASSWORD:-slm_dev_1234}
+      LOCAL_REGION: ${DEV_TAG_INGEST_REGION:-R01}
+      INTERVAL_S: ${DEV_TAG_SYNTH_INTERVAL_S:-120}
+      PROFILE_DAYS: ${DEV_TAG_SYNTH_PROFILE_D:-21}
+      BACKFILL_STALL: ${DEV_TAG_SYNTH_BACKFILL:-1}
+      BACKFILL_MAX_H: ${DEV_TAG_SYNTH_BACKFILL_MAX_H:-48}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================================
   # Frontend (Next.js 대시보드)
   # ============================================================
   frontend:

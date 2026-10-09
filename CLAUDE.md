@@ -202,7 +202,7 @@ web/
 - `docs/chat-after-concept-spec.md` — AFTER 채팅 컨셉
 - `docs/chat-feedback-telemetry-spec.md` — 오답 피드백 루프 텔레메트리
 - `docs/chat-photo-upload-scenario-spec.md` — 사진 업로드 4 시나리오 (P1~P3)
-- `docs/dev-tag-ingest-spec.md` — 원격→로컬 tb_tag_raw_data 복제 (납품 시 제거)
+- `docs/dev-tag-ingest-spec.md` — 원격→로컬 tb_tag_raw_data 복제 + **가상 생성 엔진 dev-tag-synth**(외부 차단 대체 — 21일 시간대 프로파일·백필·외부 재개 자동 양보, 2026-10-09) (둘 다 납품 시 제거)
 - `docs/equipment-fault-tracking-spec.md` — 설비 장애 이력 추적 (migration 0045)
 - `docs/report-spec.md` — 보고서 (장애 조치 / 일 점검) 사양 + 채팅 점검 인텐트 (migration 0058)
 - `docs/feature-spec.md` — 기능 개괄

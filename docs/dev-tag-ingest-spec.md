@@ -159,3 +159,26 @@ docker compose -f docker-compose.dev.yml rm -sf dev-tag-ingest
 - 근본 배경: 본 테스트 환경의 Node-RED flows(`flows_deploy.json` / 324개 postgres 노드)는 전부 알람 조건/네트워크 상태 판정용이며, `tb_tag_raw_data` INSERT 쿼리는 **0개**다. 프로젝트 전체(`/Users/jykim/slm`, `/Users/jykim/web`)에서 `INSERT INTO tb_tag_raw_data`는 스키마 dump 파일에만 존재
 - Node-RED 자체의 DB 접속 설정은 [E-014] 참고 (`host: 172.17.0.1 → slm-timescaledb`, `port: 5433 → 5432`로 수정)
 - 에러 이력: `docs/error-management.md` [E-014]
+
+## 가상 데이터 생성 엔진 — dev-tag-synth (2026-10-09 추가, 납품 시 제거)
+
+외부(참고 사이트) DB 접속이 차단된 기간의 대체 수집. 복제(dev-tag-ingest)와
+별도 엔진 — 제품 코드 무접촉, 같은 dev_tools 체계.
+
+- **생성 원리**: `cagg_1h_raw_stats_ai` 최근 21일 → 태그×시간대 프로파일
+  (평균/표준편차/비영비율/관측범위). AI=AR(1) 연속성+프로파일+범위 클램프,
+  DI=시간대 가동률 기반 상태 유지/전환, SET·AO=마지막 값 고정
+- **부팅 백필**: 마지막 수집 시각 → 현재 공백을 120s 간격으로 채움 (상한
+  48h). 2026-10-09 실측: 31.3h 공백 2,532,600행 백필 60초
+- **외부 재개 자동 양보**: 주기마다 신규 행 수가 자체 삽입량+여유(200)를
+  초과하면 진짜 수집 재개로 판정 → 생성 건너뜀. (logtime,tagsn) UNIQUE +
+  ON CONFLICT DO NOTHING 이라 교차 구간도 안전
+- **현실성 검증 (2026-10-09)**: 전수 1,367태그 중 96% 가 과거 21일 관측
+  범위 내 (이탈 4%는 최근 실측 수준의 자연 연속). Node-RED 운영현황·알람
+  폴링 정상 소비 확인
+- **구성**: `slm/dev_tools/tag_synth.py` + `Dockerfile.tag_synth` +
+  compose `dev-tag-synth` (환경변수 INTERVAL_S=120·PROFILE_DAYS=21·
+  BACKFILL_STALL=1·BACKFILL_MAX_H=48)
+- **납품 시 제거**: 스크립트·Dockerfile·compose 블록 — dev-tag-ingest 와
+  동일 체계. 가상 구간 데이터 정리가 필요하면 차단 시작 시각 이후
+  logtime 범위 DELETE (실데이터와 교차 구간은 로그로 식별)

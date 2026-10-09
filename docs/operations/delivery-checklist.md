@@ -15,6 +15,8 @@
 ## 2. 개발 전용 요소 제거
 - [ ] **dev_tag_ingest 제거** — 테스트용 원격 태그 복제 데몬
       (docs/dev-tag-ingest-spec.md, 컨테이너 slm-dev-tag-ingest)
+- [ ] **dev_tag_synth 제거** — 가상 태그 데이터 생성 데몬 (외부 차단 대체,
+      같은 사양 문서, 컨테이너 slm-dev-tag-synth + Dockerfile.tag_synth)
 - [ ] 개발 계정/비밀번호 정리, `.env` 시크릿 재발급 (docs/deploy-secrets.md)
 - [ ] `NEXT_PUBLIC_MAP_CDN` 미설정(기본 오프라인) 확인
 
