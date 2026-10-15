@@ -246,6 +246,7 @@ web/
 - `docs/tweaks-layout-spec.md` — 테마/브랜드/레이아웃 Tweaks 패널
 
 ## 마케팅·영업 자산
+- `docs/SLM_개발대가산정_단일FP_엔지니어링.xlsx` — 개발대가 산정 (KOSA 단일 FP유형 간이법 — 142기능 724.2FP + 구축·설치 엔지니어링 M/M. 생성기 `scripts/create_slm_cost_estimation.py` — 기능 추가·단가 갱신 시 스크립트 수정 후 재생성. 기준일 2026-10-15)
 - `docs/catalog-draft.md` — 제품 카탈로그 초안 원고 (A4 16p 구성 — 개요·차별화 4·기능군 4축·SKU·기술 사양·구축 프로세스. 캡처 15점 목록 + 확정 필요 항목 부록)
 - `docs/brochure-draft.md` — 제품 브로셔 초안 원고 (A4 6p / 3단 접지 — 카탈로그 요약판. 관심 유발용, 캡처 7점)
 - `docs/catalog-draft.html` — 카탈로그 HTML 판 (자립형 16p, A4 인쇄 CSS. `[화면]` 자리를 임의 현장명(청수시·한빛배수지 등) HTML/CSS 목업으로 직접 구성 — 실 현장명 비노출)
