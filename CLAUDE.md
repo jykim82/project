@@ -251,6 +251,7 @@ web/
 - `docs/brochure-draft.md` — 제품 브로셔 초안 원고 (A4 6p / 3단 접지 — 카탈로그 요약판. 관심 유발용, 캡처 7점)
 - `docs/catalog-draft.html` — 카탈로그 HTML 판 (자립형 16p, A4 인쇄 CSS. `[화면]` 자리를 임의 현장명(청수시·한빛배수지 등) HTML/CSS 목업으로 직접 구성 — 실 현장명 비노출)
 - `docs/brochure-draft.html` — 브로셔 HTML 판 (자립형 6p, 동일 목업 체계. 브라우저 인쇄 → PDF 제작 가능)
+- `docs/brochure-crisis.html` — **위기대응 중심 브로셔** (A4 6p 자립형, 2026-10-19 — 추린 7업무군 66기능(SLM_개발대가산정 축소판 xlsx) 기준. 실화면 캡처 9점 base64 내장: 경보관리·경보분석·대시보드·GIS·계통도·채팅·설비건강성·네트워크·트렌드. 캡처 원본 tmp/brochure-captures/)
 
 ## 가이드
 - `docs/slm-dev-environment-guide.md` — 로컬 TimescaleDB 환경 구성
