@@ -3894,3 +3894,16 @@ memo-schedule-spec §4 반영. 확장 후보: 메모→일정 등록 연계, 대
 - 주의: `incident-html.ts`/`reports-api 의 incident_report 양식` 은 장애
   보고서 인쇄 양식 (이름 충돌 — 무관, 보존). tsc 가 오삭제 1건 검출→복원
 - 검증: tsc 0 · 채팅 스모크 17/17 · 빌드 매니페스트에서 제거 3경로 부재 확인
+
+## GIS 관망도 — KPI 스트립·공급가능시간 패널 이식 (2026-10-21)
+
+**사용자 요청**: 계통도의 배수지 공급가능시간 패널·상단 KPI 를 GIS 에도,
+KPI 클릭으로 지도 필터링.
+- `lib/flow-kpi.ts` 신설 — KPI 통계·필터 계산 단일 소스 (노드 키
+  `sitename__facilitytype` = GIS 시설 키와 동일해 지도 필터 직결)
+- FlowKpiCard(sm 변형)·ReservoirSupplyPanel 공용 추출 — flow 페이지
+  로컬 정의 -174줄, 동작 불변
+- GIS: 상단 KPI 스트립 7종(클릭=마커 필터·active 링), 좌측 공급가능시간
+  패널(툴바 "공급가능시간" 토글·행 클릭=flyTo), 타임라인 모드 중 숨김,
+  useFlowKpi 훅 60s 갱신
+- 실검증: 마커 122→11(교차검증 이상 필터)→122 복원·토글·콘솔 0
