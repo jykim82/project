@@ -657,31 +657,42 @@ def _attach_comm_errors(conn, node_data):
 
 
 def _attach_equip_failures(conn, node_data):
-    """설비 장애 감지 — 네트워크 장애 + DI 장애(COMM_ERROR/EQUIP_FAULT/POWER_FAULT)."""
+    """설비 장애 감지 — 네트워크 장애 + DI 장애(COMM_ERROR/EQUIP_FAULT/POWER_FAULT).
+
+    건수와 함께 상세(items — 어떤 설비/태그가, 언제부터)를 담는다. 건수만으로는
+    운영자가 GIS/계통도에서 원인 설비를 특정할 수 없다 (2026-10-21).
+    """
     equip_failures_map: dict[str, list[dict]] = {}
+    _MAX_ITEMS = 5
     try:
-        # A) 네트워크 장애 설비 -> 시설별 집계
+        # A) 네트워크 장애 설비 -> 시설별 집계 (+장비 상세)
         cur_ef = conn.cursor()
         cur_ef.execute("""
             WITH lt AS (SELECT MAX(check_time) AS ct FROM tb_network_status)
-            SELECT e.sitename, e.facilitytype, COUNT(*) AS cnt
+            SELECT e.sitename, e.facilitytype, e.equipmenttype, e.equipment_id
             FROM tb_network_status ns
             JOIN lt ON ns.check_time = lt.ct
             JOIN tb_equipment_info e ON ns.equipment_id = e.equipment_id
             WHERE ns.is_alive = false
-            GROUP BY e.sitename, e.facilitytype
+            ORDER BY e.sitename, e.facilitytype, e.equipment_id
         """)
-        for sn, ft, cnt in cur_ef.fetchall():
-            nid = f"{sn}__{ft}"
+        net_group: dict[str, list[dict]] = {}
+        for sn, ft, et, eid in cur_ef.fetchall():
+            net_group.setdefault(f"{sn}__{ft}", []).append(
+                {"name": et or eid, "equipmenttype": et, "since": None})
+        for nid, items in net_group.items():
             equip_failures_map.setdefault(nid, []).append({
                 "type": "network_down",
                 "label": "네트워크 단절",
-                "count": cnt,
+                "count": len(items),
+                "items": items[:_MAX_ITEMS],
             })
 
         # B) DI 장애 태그 (COMM_ERROR/EQUIP_FAULT/POWER_FAULT) val=1 최근 10분
+        #    — 태그 단위로 받아 Python 집계 (datainfo 상세 유지)
         cur_ef.execute("""
-            SELECT ti.sitename, ti.facilitytype, dg.group_code, COUNT(DISTINCT gm.tagsn) AS cnt
+            SELECT DISTINCT ti.sitename, ti.facilitytype, dg.group_code,
+                   gm.tagsn, ti.datainfo, ti.equipmenttype
             FROM tb_tag_group_map gm
             JOIN tb_tag_data_group dg ON gm.group_id = dg.group_id
             JOIN tb_tag_info ti ON gm.tagsn = ti.tagsn
@@ -692,7 +703,6 @@ def _attach_equip_failures(conn, node_data):
                     AND r.logtime >= now() - interval '10 minutes'
                     AND r.val = 1
               )
-            GROUP BY ti.sitename, ti.facilitytype, dg.group_code
         """)
         _DI_LABEL = {
             "COMM_ERROR": "통신이상",
@@ -704,12 +714,35 @@ def _attach_equip_failures(conn, node_data):
             "EQUIP_FAULT": "equip_fault",
             "POWER_FAULT": "power_fault",
         }
-        for sn, ft, gc, cnt in cur_ef.fetchall():
-            nid = f"{sn}__{ft}"
+        di_rows = cur_ef.fetchall()
+
+        # 장애 시작 시각 — 마지막 val=0 직후 (14일 하한, E-056). 없으면 14일+
+        since_map: dict[str, str] = {}
+        di_tags = [r[3] for r in di_rows]
+        if di_tags:
+            cur_ef.execute("""
+                SELECT tagsn, MAX(logtime)
+                FROM tb_tag_raw_data
+                WHERE tagsn = ANY(%s) AND val = 0
+                  AND logtime > now() - interval '14 days'
+                GROUP BY tagsn
+            """, (di_tags,))
+            for tagsn, last_zero in cur_ef.fetchall():
+                since_map[tagsn] = last_zero.isoformat()
+
+        di_group: dict[tuple, list[dict]] = {}
+        for sn, ft, gc, tagsn, datainfo, et in di_rows:
+            di_group.setdefault((f"{sn}__{ft}", gc), []).append({
+                "name": datainfo or tagsn,
+                "equipmenttype": et,
+                "since": since_map.get(tagsn),  # None = 14일 이상 지속
+            })
+        for (nid, gc), items in di_group.items():
             equip_failures_map.setdefault(nid, []).append({
                 "type": _DI_TYPE.get(gc, "comm_error"),
                 "label": _DI_LABEL.get(gc, gc),
-                "count": cnt,
+                "count": len(items),
+                "items": items[:_MAX_ITEMS],
             })
         cur_ef.close()
     except Exception as e:
