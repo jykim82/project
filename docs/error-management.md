@@ -1869,3 +1869,11 @@ LS 제품(PLC/인버터) 위주로 E2E 검증을 했으므로 AC&T System 4개 �
 - **원인:** Node-RED "운영현황 갱신" 탭 '현재수위(평균)' 노드가 `tb_tag_raw_data` 를 **logtime 하한 없이** `DISTINCT ON (tagsn) ... ORDER BY logtime DESC` 전 청크 스캔 — E-056 에서 금지한 패턴이 백엔드가 아닌 Node-RED 플로우에 잔존. 실행 25~31초 > 트리거 주기 30초라 사실상 무휴 실행 + 겹친 UPDATE 끼리 deadlock
 - **해결:** 하한 추가 3개 노드 (flows.json 직접 수정 + 컨테이너 재시작, 백업 flows.json.bak-20260928-2325) — ① 현재수위(평균) `logtime >= now()-'1 day'` (실측 25~31s → **30ms, 약 1,000배**) ② HH,LL 설정값 LATERAL 30일 ③ 압력 정보 LATERAL 7일. 결과: DB CPU 244→20%, node-red 106→0%, 장기 쿼리 0건, 수위·임계 갱신 정상, deadlock 재발 없음
 - **재발 방지:** ① E-056 "tb_tag_raw_data 조회는 logtime 하한 필수"는 **백엔드 SQL 만이 아니라 Node-RED function 노드에도 적용** — 플로우 수정 시 필수 점검 ② 진단 스크립트: flows.json 에서 `tb_tag_raw_data` 참조 수 vs `logtime >=` 수 비교 스윕 (이번 조사에서 하한 부족 노드 ~25개 추가 확인 — 대부분 태그 단건 조회라 저위험, 알람 탭 이벤트 구동. 필요 시 후속 정리) ③ "웹이 느리다" 증상에서 앱 응답이 정상이면 pg_stat_activity 의 반복 장기 쿼리부터 볼 것
+
+### [E-065] 팝업 내용 하단 잘림 — flex 내부 h-full(%높이) 미해석 + 오버레이 스크롤바 숨음
+
+- **날짜:** 2026-10-21 (GIS 경보 상세 분석 팝업 — 사용자 2회 보고)
+- **증상:** maxHeight 제한된 팝업에서 긴 내용의 하단이 잘리고 스크롤 불가. 짧은 내용에선 정상이라 검증을 통과해 재발 보고로 드러남
+- **원인:** 2중 — ① `flex-1 min-h-0 overflow-hidden` 래퍼 안의 자식 `h-full`(%높이)이 flex 레이아웃에서 해석되지 않아 자식이 내용 높이(1702px)로 팽창 → 상자(1105px)를 뚫고 overflow-hidden 에 잘림. 스크롤바가 "안 보인" 게 아니라 스크롤 컨테이너가 성립하지 않았음 ② 스크롤이 성립해도 Win11/Chromium 오버레이 스크롤바는 평소 숨어 있어 "아래 더 있음" 인지 불가
+- **해결:** ① 래퍼 자체를 `flex-1 min-h-0 overflow-y-auto` 스크롤 컨테이너로 (자식 h-full 의존 금지) ② `.slm-scroll-visible` 전역 유틸(scrollbar-width thin + scrollbar-color 45%) — 경보 분석 5개 사용처 일괄 적용
+- **재발 방지:** ① 팝업/다이얼로그 스크롤은 **flex 부모 쪽에 overflow-y-auto + min-h-0** 패턴 고정 — 자식 h-full 에 스크롤을 맡기지 말 것 ② 긴 내용 팝업 검증은 반드시 **내용이 넘치는 케이스**로 (짧은 레코드 통과는 검증이 아님) ③ 스크롤 가능한 팝업 본문엔 .slm-scroll-visible 기본 적용 검토
