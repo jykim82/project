@@ -83,9 +83,18 @@ node-red / ai-weights / map-bundle / vision-agent / epanet(feature, SKU B1)
   `python3 scripts/update_agent.py --once` 1회 실행. 승인만 된 번들은
   에이전트 실행 전까지 "적용 대기" 상태로 남는 것이 정상
 
+### 번들 pack 스크립트 — 완료 (2026-11-01)
+`scripts/pack_update_bundle.py` — 모듈·버전·아티팩트 지정 → manifest.json
++sha256 자동 생성 + tar.gz 조립 + **자체 재검증**(멤버 경로·sha 되읽기).
+- `--module KEY=VERSION[:ARTIFACT[:TARGET_DIR]]` 반복 (기본 target 레지스트리)
+- `--migrations-since NNNN` — db/migrations 자동 수집 + **db 모듈 자동 등록**
+  (버전=최신 번호, 마커 아티팩트 — modules 빈 번들 반입 거부 규칙 대응 +
+  적용 성공 시 db 버전 스탬핑)
+- `--list-modules` 레지스트리 출력. container 종류는 경고 후 pack 허용
+- E2E 검증: 정상 번들 업로드 verified / 변조 번들 sha 차단 / 삭제 왕복
+
 ### 첫 실전 배포 시 함께 (예약)
 - kind=container(이미지 tar 교체) 실검증 — 실제 이미지 번들 제작 시점
-- 번들 pack 스크립트(모듈·버전 지정 → manifest+sha256 자동 생성)
 
 ### 검증 (2026-09-01 — 시나리오 6종 × 각 5회 = 30/30)
 정상 반입 / sha 불일치 차단 / SKU 잠금 반입 차단 / 승인→적용→버전 스탬프
