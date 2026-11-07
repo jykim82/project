@@ -1,0 +1,500 @@
+<meta charset="utf-8">
+<title>고양이 강아지 타로</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=Gowun+Batang:wght@400;700&display=swap">
+<style>
+/* Layout: 밤의 리딩 테이블. 왼쪽은 켈틱 크로스 판, 오른쪽은 위치별 리딩 기록. 좁으면 위아래로 쌓는다. */
+:root {
+  color-scheme: dark;
+  --table: #241a33;      /* 테이블 천 */
+  --table-deep: #170f22;
+  --panel: #2f2342;
+  --line: #4a3a60;
+  --gold: #d8b46a;
+  --gold-soft: #a88c56;
+  --ink: #f1e7d6;
+  --muted: #b7a6c8;
+  --focus: #f3d48e;
+  --display: "IM Fell English SC", "Times New Roman", serif;
+  --serif-en: "IM Fell English", "Times New Roman", serif;
+  --body: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { min-height: 100%; }
+body {
+  background: radial-gradient(ellipse at 50% 0%, #34264a 0%, var(--table) 45%, var(--table-deep) 100%) fixed, var(--table);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+  display: grid;
+  gap: 28px;
+}
+header { display: grid; gap: 6px; }
+.eyebrow { font-family: var(--display); letter-spacing: .18em; color: var(--gold); font-size: 13px; }
+h1 { font-family: var(--display); font-weight: 400; font-size: clamp(30px, 6vw, 46px); line-height: 1.1; margin: 0; text-wrap: balance; }
+h1 .ko { font-family: var(--body); font-weight: 700; font-size: .62em; display: block; margin-top: 6px; letter-spacing: -.01em; }
+h2 { font-family: var(--body); font-size: 18px; margin: 0; }
+.lede { color: var(--muted); margin: 4px 0 0; max-width: 60ch; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+/* ---------- 1단계: 덱 고르기 ---------- */
+.setup { display: grid; gap: 24px; }
+.step-title { display: flex; align-items: baseline; gap: 10px; }
+.step-title .num { font-family: var(--display); color: var(--gold); font-size: 20px; }
+.decks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.deck-opt {
+  display: grid; gap: 10px; justify-items: center; text-align: center;
+  padding: 16px 10px 14px; border-radius: 10px;
+  background: transparent; border: 1px solid var(--line);
+  transition: border-color .2s, background .2s, transform .2s;
+}
+.deck-opt:hover { border-color: var(--gold-soft); transform: translateY(-2px); }
+.deck-opt[aria-pressed="true"] { border-color: var(--gold); background: rgba(216,180,106,.08); }
+.deck-opt .mini { width: 66px; aspect-ratio: 1 / 1.73; border-radius: 6px; box-shadow: 0 6px 14px rgba(0,0,0,.4); }
+.deck-opt .name { font-weight: 700; }
+.deck-opt .grp { font-size: 12px; color: var(--muted); }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+.guest { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 14px; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field label { font-size: 13px; color: var(--muted); }
+.field input[type=text] {
+  font: inherit; color: var(--ink); background: var(--table-deep);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%;
+}
+.field input[type=text]::placeholder { color: #7f6f93; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.check input { accent-color: var(--gold); width: 16px; height: 16px; }
+
+.btn {
+  border-radius: 999px; padding: 11px 22px; border: 1px solid var(--gold);
+  background: var(--gold); color: #24172f; font-weight: 700;
+  transition: filter .2s, transform .1s;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost { background: transparent; color: var(--gold); }
+.btn:disabled { opacity: .45; cursor: default; }
+
+/* ---------- 2단계: 리딩 테이블 ---------- */
+.table { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
+.table[hidden] { display: none !important; }
+.reading-head { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+.reading-head .who { display: grid; gap: 2px; min-width: 0; }
+.reading-head .q { color: var(--muted); overflow-wrap: anywhere; }
+.reading-head .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reading-head .btn { padding: 8px 16px; font-size: 14px; }
+
+.spread-wrap { container-type: inline-size; min-width: 0; padding: 18px 0 0 14px; }
+.spread {
+  --w: min(112px, calc(100cqi / 5.25));
+  --h: calc(var(--w) * 1.73);
+  position: relative;
+  width: calc(var(--w) * 5.15);
+  height: calc(var(--w) * 7.22);
+  margin: 0 auto;
+}
+.pile {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--w); height: var(--h);
+  transform: translate(-50%, -50%);
+}
+.pile .c {
+  position: absolute; inset: 0; border-radius: calc(var(--w) * .07);
+  box-shadow: 0 4px 10px rgba(0,0,0,.45);
+}
+.pile.shuffling .c:nth-child(odd) { animation: riffle-l .5s ease-in-out 3; }
+.pile.shuffling .c:nth-child(even) { animation: riffle-r .5s ease-in-out 3; }
+@keyframes riffle-l { 50% { transform: translateX(-70%) rotate(-8deg); } }
+@keyframes riffle-r { 50% { transform: translateX(70%) rotate(8deg); } }
+
+.slot {
+  position: absolute; width: var(--w); height: var(--h);
+  left: calc(var(--w) * var(--x)); top: calc(var(--w) * var(--y));
+  border: 1px dashed rgba(216,180,106,.28); border-radius: calc(var(--w) * .07);
+}
+.slot.rot { transform: rotate(90deg); }
+.card {
+  position: absolute; width: var(--w); height: var(--h);
+  left: calc(var(--w) * var(--x)); top: calc(var(--w) * var(--y));
+  padding: 0; border: 0; background: none; perspective: 900px;
+  transition: left .55s cubic-bezier(.2,.8,.2,1), top .55s cubic-bezier(.2,.8,.2,1), opacity .3s, transform .55s;
+}
+.card.rot { transform: rotate(90deg); z-index: 2; }
+.card.dealing { left: calc(50% - var(--w) / 2); top: calc(50% - var(--h) / 2); opacity: 0; }
+.card.rot.dealing { transform: none; }
+.card .inner {
+  position: absolute; inset: 0; transform-style: preserve-3d;
+  transition: transform .7s cubic-bezier(.3,.7,.2,1);
+}
+.card.open .inner { transform: rotateY(180deg); }
+.card .face {
+  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  border-radius: calc(var(--w) * .07); overflow: hidden;
+  box-shadow: 0 6px 16px rgba(0,0,0,.5);
+}
+.card .front { transform: rotateY(180deg); background: #eee5d2; }
+.card .front img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card.rev .front img { transform: rotate(180deg); }
+.card .badge {
+  position: absolute; top: calc(var(--w) * -.16); left: calc(var(--w) * -.12);
+  width: calc(var(--w) * .3); height: calc(var(--w) * .3); min-width: 20px; min-height: 20px;
+  border-radius: 50%; display: grid; place-items: center;
+  background: var(--table-deep); border: 1px solid var(--gold); color: var(--gold);
+  font-family: var(--display); font-size: max(11px, calc(var(--w) * .15)); z-index: 3;
+}
+.card.rot .badge { transform: rotate(-90deg); }
+.card.active .face { box-shadow: 0 0 0 2px var(--gold), 0 8px 22px rgba(0,0,0,.6); }
+.card:not(.open):hover .inner { transform: translateY(-4px); }
+
+/* 카드 뒷면: 덱마다 다르게 */
+.back {
+  background-color: var(--bk, #2a1f3d);
+  background-image:
+    var(--paw),
+    radial-gradient(circle at 1px 1px, var(--bk-dot, rgba(216,180,106,.35)) 1px, transparent 1.4px);
+  background-size: 46% auto, 9px 9px;
+  background-position: center, 0 0;
+  background-repeat: no-repeat, repeat;
+  border: 3px solid var(--bk-edge, var(--gold));
+  outline: 1px solid var(--bk-dot, var(--gold)); outline-offset: -8px;
+}
+.back.img { background: #e8ddd0 url("images/original/card_back.jpg") center / cover; border: 0; outline: 0; }
+.deck-black_cat  { --bk: #1b1722; --bk-edge: #d8b46a; --bk-dot: rgba(216,180,106,.45); --paw: var(--paw-gold); }
+.deck-yellow_cat { --bk: #d39a3a; --bk-edge: #fff1d0; --bk-dot: rgba(255,241,208,.55); --paw: var(--paw-cream); }
+.deck-white_cat  { --bk: #efe8da; --bk-edge: #6d4f86; --bk-dot: rgba(109,79,134,.35); --paw: var(--paw-plum); }
+.deck-dog        { --bk: #74472a; --bk-edge: #f0d29b; --bk-dot: rgba(240,210,155,.4); --paw: var(--paw-cream); }
+:root {
+  --paw-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
+  --paw-cream: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23fff1d0'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
+  --paw-plum: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%236d4f86'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ---------- 리딩 기록 ---------- */
+.log { display: grid; gap: 14px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+.focus-card {
+  border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  background: var(--panel); display: grid; gap: 8px; min-height: 132px;
+}
+.focus-card .pos { font-family: var(--display); color: var(--gold); letter-spacing: .08em; font-size: 13px; }
+.focus-card .title { font-size: 20px; font-weight: 700; line-height: 1.3; }
+.focus-card .en { font-family: var(--serif-en); font-style: italic; color: var(--muted); }
+.focus-card .meaning { color: var(--muted); font-size: 14px; }
+.pill { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--gold-soft); color: var(--gold); margin-right: 6px; }
+.pill.rev { border-color: #c98b9b; color: #e3a9b7; }
+.pill.fb { border-color: var(--line); color: var(--muted); }
+.zoom { justify-self: start; background: none; border: 0; padding: 0; color: var(--gold); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
+ol.positions { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+ol.positions li button {
+  width: 100%; text-align: left; background: none; border: 0; border-radius: 8px;
+  display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 8px;
+}
+ol.positions li button:hover { background: rgba(255,255,255,.04); }
+ol.positions .n { font-family: var(--display); color: var(--gold); text-align: right; font-variant-numeric: tabular-nums; }
+ol.positions .lbl { font-size: 13px; color: var(--muted); }
+ol.positions .val { display: block; font-size: 14.5px; }
+ol.positions .val.hidden { color: #7f6f93; }
+
+dialog {
+  border: 0; padding: 0; background: transparent; max-width: min(92vw, 520px); max-height: 92vh;
+}
+dialog::backdrop { background: rgba(10,6,16,.82); }
+dialog img { display: block; max-height: 84vh; width: auto; max-width: 100%; border-radius: 10px; margin: 0 auto; }
+dialog img.rev { transform: rotate(180deg); }
+dialog .cap { text-align: center; color: var(--ink); margin-top: 10px; }
+dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.55); border: 0; color: #fff; border-radius: 999px; width: 34px; height: 34px; font-size: 18px; }
+
+@media (max-width: 860px) {
+  .table { grid-template-columns: minmax(0, 1fr); }
+  .log { position: static; }
+}
+@media (max-width: 560px) {
+  .guest { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .card .inner, .deck-opt { transition: none; }
+  .pile.shuffling .c { animation: none !important; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Celtic Cross · 10 Cards</div>
+    <h1>Tarot of Cats &amp; Dogs<span class="ko">고양이 · 강아지 타로 리딩</span></h1>
+    <p class="lede">손님이 덱을 고르고 질문을 떠올리면, 카드를 섞어 켈틱 크로스 10자리에 놓습니다. 카드를 한 장씩 눌러 뒤집으세요.</p>
+  </header>
+
+  <!-- 1단계: 덱과 손님 정보 -->
+  <section class="setup" id="setup">
+    <div class="step-title"><span class="num">I</span><h2>덱 고르기</h2></div>
+    <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
+    <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여주고 '원본 그림' 표시를 붙입니다.</p>
+
+    <div class="step-title"><span class="num">II</span><h2>손님 정보</h2></div>
+    <div class="guest">
+      <div class="field">
+        <label for="guest-name">손님 이름</label>
+        <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤" value="지윤">
+      </div>
+      <div class="field">
+        <label for="guest-q">질문</label>
+        <input type="text" id="guest-q" maxlength="80" placeholder="예: 올해 이직을 해도 될까요?" value="올해 새로운 일을 시작해도 될까요?">
+      </div>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
+      <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
+    </div>
+  </section>
+
+  <!-- 2단계: 리딩 테이블 -->
+  <section class="table" id="table" hidden>
+    <div class="reading-head">
+      <div class="who">
+        <h2 id="who-title"></h2>
+        <div class="q" id="who-q"></div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btn-all" type="button">모두 뒤집기</button>
+        <button class="btn ghost" id="btn-again" type="button">다시 섞기</button>
+        <button class="btn ghost" id="btn-back" type="button">덱 바꾸기</button>
+      </div>
+    </div>
+    <div class="spread-wrap">
+      <div class="spread" id="spread"></div>
+    </div>
+    <aside class="log">
+      <div class="focus-card" id="focus" aria-live="polite"></div>
+      <ol class="positions" id="positions"></ol>
+    </aside>
+  </section>
+</div>
+
+<dialog id="zoom">
+  <button class="close" id="zoom-close" type="button" aria-label="닫기">×</button>
+  <img id="zoom-img" alt="">
+  <div class="cap" id="zoom-cap"></div>
+</dialog>
+
+<script>
+// ---------- 덱과 카드 데이터 ----------
+// 동물 그림 경로: images/<덱>/<카드id>.jpg  (없으면 images/original/<카드id>.jpg 로 대신 표시)
+const DECKS = [
+  { id: "black_cat",  name: "검정 고양이", group: "고양이 버전" },
+  { id: "yellow_cat", name: "노랑 고양이", group: "고양이 버전" },
+  { id: "white_cat",  name: "흰 고양이",   group: "고양이 버전" },
+  { id: "dog",        name: "강아지",      group: "강아지 버전" },
+  { id: "original",   name: "라이더-웨이트", group: "원본 1909" },
+];
+
+const MAJOR = [
+  ["바보","The Fool"],["마법사","The Magician"],["여사제","The High Priestess"],["여황제","The Empress"],
+  ["황제","The Emperor"],["교황","The Hierophant"],["연인","The Lovers"],["전차","The Chariot"],
+  ["힘","Strength"],["은둔자","The Hermit"],["운명의 수레바퀴","Wheel of Fortune"],["정의","Justice"],
+  ["매달린 사람","The Hanged Man"],["죽음","Death"],["절제","Temperance"],["악마","The Devil"],
+  ["탑","The Tower"],["별","The Star"],["달","The Moon"],["태양","The Sun"],["심판","Judgement"],["세계","The World"],
+];
+const SUITS = [["cups","컵","Cups"],["wands","완드","Wands"],["swords","소드","Swords"],["pentacles","펜타클","Pentacles"]];
+const RANK_EN = ["Ace","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Page","Knight","Queen","King"];
+const RANK_KO = ["에이스","2","3","4","5","6","7","8","9","10","페이지","나이트","퀸","킹"];
+
+const CARDS = [];
+MAJOR.forEach(([ko, en], i) => CARDS.push({ id: "major_" + String(i).padStart(2, "0"), ko, en }));
+SUITS.forEach(([s, sko, sen]) => RANK_EN.forEach((r, i) =>
+  CARDS.push({ id: s + "_" + String(i + 1).padStart(2, "0"), ko: sko + " " + RANK_KO[i], en: r + " of " + sen })));
+
+// 켈틱 크로스 10자리. x, y 는 카드 너비 단위 좌표
+const POSITIONS = [
+  { name: "현재",        meaning: "지금 손님이 놓여 있는 상황",          x: 1.45, y: 2.745 },
+  { name: "장애",        meaning: "상황을 가로막거나 교차하는 힘",        x: 1.45, y: 2.745, rot: true },
+  { name: "의식",        meaning: "손님이 바라는 것, 겉으로 드러난 목표",  x: 1.45, y: 0.915 },
+  { name: "무의식",      meaning: "상황의 뿌리, 마음 깊은 곳의 바탕",      x: 1.45, y: 4.575 },
+  { name: "과거",        meaning: "지나가고 있는 일",                    x: 0.0,  y: 2.745 },
+  { name: "가까운 미래", meaning: "곧 다가올 일",                        x: 2.9,  y: 2.745 },
+  { name: "자신",        meaning: "손님의 태도와 입장",                  x: 4.15, y: 5.49 },
+  { name: "주변",        meaning: "주변 사람과 환경의 영향",              x: 4.15, y: 3.66 },
+  { name: "희망과 두려움", meaning: "마음속 기대와 걱정",                 x: 4.15, y: 1.83 },
+  { name: "결과",        meaning: "지금 흐름이 이어질 때의 결말",          x: 4.15, y: 0.0 },
+];
+
+// ---------- 상태 ----------
+const S = { deck: "black_cat", draw: [], open: new Set(), active: null, fallback: new Set() };
+const $ = (id) => document.getElementById(id);
+
+function backHTML(deck) {
+  return deck === "original" ? '<div class="face back img"></div>' : '<div class="face back"></div>';
+}
+function srcFor(deck, id) { return "images/" + (deck === "original" ? "original" : deck) + "/" + id + ".jpg"; }
+
+// ---------- 덱 선택 ----------
+function renderDecks() {
+  $("decks").innerHTML = DECKS.map(d => `
+    <button type="button" class="deck-opt deck-${d.id}" data-deck="${d.id}" aria-pressed="${d.id === S.deck}">
+      <span class="mini back${d.id === "original" ? " img" : ""}"></span>
+      <span class="name">${d.name}</span>
+      <span class="grp">${d.group}</span>
+    </button>`).join("");
+}
+$("decks").addEventListener("click", (e) => {
+  const b = e.target.closest(".deck-opt"); if (!b) return;
+  S.deck = b.dataset.deck; renderDecks();
+});
+
+// ---------- 셔플 ----------
+function rand(n) { // 0..n-1 균등 난수
+  const a = new Uint32Array(1); const lim = Math.floor(0x100000000 / n) * n;
+  do { crypto.getRandomValues(a); } while (a[0] >= lim);
+  return a[0] % n;
+}
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = rand(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const wait = (ms) => new Promise(r => setTimeout(r, reduced ? 0 : ms));
+
+async function startReading() {
+  const name = $("guest-name").value.trim() || "손님";
+  const q = $("guest-q").value.trim();
+  const deck = DECKS.find(d => d.id === S.deck);
+  $("who-title").textContent = name + "님의 켈틱 크로스 · " + deck.name;
+  $("who-q").textContent = q ? "질문: " + q : "질문 없이 전체 흐름을 봅니다.";
+  $("setup").hidden = true; $("table").hidden = false;
+
+  const withRev = $("opt-rev").checked;
+  S.draw = shuffle(CARDS).slice(0, 10).map(c => ({ ...c, rev: withRev && rand(2) === 1 }));
+  S.open = new Set(); S.active = null; S.fallback = new Set();
+
+  const spread = $("spread");
+  spread.className = "spread deck-" + S.deck;
+  spread.innerHTML =
+    POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("") +
+    `<div class="pile shuffling" id="pile">${Array.from({ length: 6 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
+  renderLog();
+  $("btn-all").disabled = true; $("btn-again").disabled = true;
+  window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+
+  await wait(1500);
+  $("pile").remove();
+
+  // 카드 10장을 순서대로 놓는다
+  S.draw.forEach((c, i) => {
+    const p = POSITIONS[i];
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "card dealing" + (p.rot ? " rot" : "") + (c.rev ? " rev" : "");
+    b.style.setProperty("--x", p.x); b.style.setProperty("--y", p.y);
+    b.dataset.i = i;
+    b.setAttribute("aria-label", (i + 1) + "번 " + p.name + " 카드 뒤집기");
+    b.innerHTML = `<span class="badge">${i + 1}</span><span class="inner">${backHTML(S.deck)}
+      <div class="face front"><img alt="" loading="eager" src="${srcFor(S.deck, c.id)}"></div></span>`;
+    const img = b.querySelector("img");
+    img.addEventListener("error", () => {
+      if (img.dataset.fb) return;
+      img.dataset.fb = "1"; S.fallback.add(i); img.src = srcFor("original", c.id);
+      if (S.open.has(i)) { renderLog(); if (S.active === i) renderFocus(); }
+    });
+    spread.appendChild(b);
+  });
+  const cards = [...spread.querySelectorAll(".card")];
+  void spread.offsetWidth;
+  for (const el of cards) { el.classList.remove("dealing"); await wait(140); }
+  $("btn-all").disabled = false; $("btn-again").disabled = false;
+}
+
+// ---------- 뒤집기와 기록 ----------
+function reveal(i) {
+  const el = $("spread").querySelector(`.card[data-i="${i}"]`); if (!el) return;
+  el.classList.add("open");
+  el.setAttribute("aria-label", (i + 1) + "번 " + POSITIONS[i].name + ": " + S.draw[i].ko + (S.draw[i].rev ? " 역방향" : ""));
+  S.open.add(i);
+}
+function setActive(i) {
+  S.active = i;
+  $("spread").querySelectorAll(".card").forEach(el => el.classList.toggle("active", +el.dataset.i === i));
+  renderFocus(); renderLog();
+}
+$("spread").addEventListener("click", (e) => {
+  const el = e.target.closest(".card"); if (!el || el.classList.contains("dealing")) return;
+  const i = +el.dataset.i;
+  if (S.open.has(i) && S.active === i) { openZoom(i); return; }
+  reveal(i); setActive(i);
+});
+
+function renderFocus() {
+  const f = $("focus"), i = S.active;
+  if (i === null) {
+    f.innerHTML = `<div class="pos">READING</div>
+      <div class="title">카드를 눌러 뒤집으세요</div>
+      <div class="meaning">번호 순서대로 보는 것을 권합니다. 1번은 현재, 10번은 결과 자리입니다. 뒤집은 카드를 한 번 더 누르면 크게 볼 수 있습니다.</div>`;
+    return;
+  }
+  const c = S.draw[i], p = POSITIONS[i];
+  f.innerHTML = `<div class="pos">${toRoman(i + 1)} · ${p.name}</div>
+    <div class="title">${c.ko}</div>
+    <div class="en">${c.en}</div>
+    <div><span class="pill${c.rev ? " rev" : ""}">${c.rev ? "역방향" : "정방향"}</span>${S.fallback.has(i) ? '<span class="pill fb">원본 그림</span>' : ""}</div>
+    <div class="meaning">${p.meaning}</div>
+    <button type="button" class="zoom" id="zoom-open">카드 크게 보기</button>`;
+  $("zoom-open").addEventListener("click", () => openZoom(i));
+}
+function renderLog() {
+  if (S.active === null) renderFocus();
+  $("positions").innerHTML = POSITIONS.map((p, i) => {
+    const c = S.draw[i], o = S.open.has(i);
+    return `<li><button type="button" data-i="${i}">
+      <span class="n">${i + 1}</span>
+      <span><span class="lbl">${p.name} · ${p.meaning}</span>
+      <span class="val${o ? "" : " hidden"}">${o ? c.ko + (c.rev ? " (역방향)" : "") : "아직 뒤집지 않음"}</span></span>
+    </button></li>`;
+  }).join("");
+}
+$("positions").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-i]"); if (!b || !S.draw.length) return;
+  const i = +b.dataset.i;
+  if ($("spread").querySelector(".card.dealing") || !$("spread").querySelector(".card")) return;
+  reveal(i); setActive(i);
+});
+
+function toRoman(n) { return ["I","II","III","IV","V","VI","VII","VIII","IX","X"][n - 1]; }
+
+// ---------- 크게 보기 ----------
+function openZoom(i) {
+  const c = S.draw[i];
+  const img = $("zoom-img");
+  img.src = S.fallback.has(i) ? srcFor("original", c.id) : srcFor(S.deck, c.id);
+  img.alt = c.ko; img.className = c.rev ? "rev" : "";
+  $("zoom-cap").textContent = (i + 1) + ". " + POSITIONS[i].name + " — " + c.ko + (c.rev ? " (역방향)" : "");
+  $("zoom").showModal();
+}
+$("zoom-close").addEventListener("click", () => $("zoom").close());
+$("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) $("zoom").close(); });
+
+// ---------- 버튼 ----------
+$("btn-start").addEventListener("click", startReading);
+$("btn-again").addEventListener("click", startReading);
+$("btn-all").addEventListener("click", () => {
+  S.draw.forEach((_, i) => reveal(i));
+  setActive(S.active === null ? 0 : S.active);
+});
+$("btn-back").addEventListener("click", () => {
+  $("table").hidden = true; $("setup").hidden = false; renderDecks();
+});
+
+renderDecks();
+</script>
