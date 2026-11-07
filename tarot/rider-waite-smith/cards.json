@@ -1,0 +1,626 @@
+[
+ {
+  "file": "major/00_the_fool.jpg",
+  "group": "major",
+  "name_en": "The Fool",
+  "name_ko": "바보",
+  "width": 1144,
+  "height": 1919
+ },
+ {
+  "file": "major/01_the_magician.jpg",
+  "group": "major",
+  "name_en": "The Magician",
+  "name_ko": "마법사",
+  "width": 1108,
+  "height": 1920
+ },
+ {
+  "file": "major/02_the_high_priestess.jpg",
+  "group": "major",
+  "name_en": "The High Priestess",
+  "name_ko": "여사제",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "major/03_the_empress.jpg",
+  "group": "major",
+  "name_en": "The Empress",
+  "name_ko": "여황제",
+  "width": 1123,
+  "height": 1920
+ },
+ {
+  "file": "major/04_the_emperor.jpg",
+  "group": "major",
+  "name_en": "The Emperor",
+  "name_ko": "황제",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "major/05_the_hierophant.jpg",
+  "group": "major",
+  "name_en": "The Hierophant",
+  "name_ko": "교황",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "major/06_the_lovers.jpg",
+  "group": "major",
+  "name_en": "The Lovers",
+  "name_ko": "연인",
+  "width": 1122,
+  "height": 1920
+ },
+ {
+  "file": "major/07_the_chariot.jpg",
+  "group": "major",
+  "name_en": "The Chariot",
+  "name_ko": "전차",
+  "width": 1111,
+  "height": 1919
+ },
+ {
+  "file": "major/08_strength.jpg",
+  "group": "major",
+  "name_en": "Strength",
+  "name_ko": "힘",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "major/09_the_hermit.jpg",
+  "group": "major",
+  "name_en": "The Hermit",
+  "name_ko": "은둔자",
+  "width": 1123,
+  "height": 1920
+ },
+ {
+  "file": "major/10_wheel_of_fortune.jpg",
+  "group": "major",
+  "name_en": "Wheel of Fortune",
+  "name_ko": "운명의 수레바퀴",
+  "width": 1104,
+  "height": 1920
+ },
+ {
+  "file": "major/11_justice.jpg",
+  "group": "major",
+  "name_en": "Justice",
+  "name_ko": "정의",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "major/12_the_hanged_man.jpg",
+  "group": "major",
+  "name_en": "The Hanged Man",
+  "name_ko": "매달린 사람",
+  "width": 1092,
+  "height": 1920
+ },
+ {
+  "file": "major/13_death.jpg",
+  "group": "major",
+  "name_en": "Death",
+  "name_ko": "죽음",
+  "width": 1111,
+  "height": 1919
+ },
+ {
+  "file": "major/14_temperance.jpg",
+  "group": "major",
+  "name_en": "Temperance",
+  "name_ko": "절제",
+  "width": 1106,
+  "height": 1920
+ },
+ {
+  "file": "major/15_the_devil.jpg",
+  "group": "major",
+  "name_en": "The Devil",
+  "name_ko": "악마",
+  "width": 1090,
+  "height": 1920
+ },
+ {
+  "file": "major/16_the_tower.jpg",
+  "group": "major",
+  "name_en": "The Tower",
+  "name_ko": "탑",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "major/17_the_star.jpg",
+  "group": "major",
+  "name_en": "The Star",
+  "name_ko": "별",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "major/18_the_moon.jpg",
+  "group": "major",
+  "name_en": "The Moon",
+  "name_ko": "달",
+  "width": 1111,
+  "height": 1919
+ },
+ {
+  "file": "major/19_the_sun.jpg",
+  "group": "major",
+  "name_en": "The Sun",
+  "name_ko": "태양",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "major/20_judgement.jpg",
+  "group": "major",
+  "name_en": "Judgement",
+  "name_ko": "심판",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "major/21_the_world.jpg",
+  "group": "major",
+  "name_en": "The World",
+  "name_ko": "세계",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_01_ace.jpg",
+  "group": "cups",
+  "name_en": "Ace of Cups",
+  "name_ko": "컵 에이스",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_02_two.jpg",
+  "group": "cups",
+  "name_en": "Two of Cups",
+  "name_ko": "컵 2",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_03_three.jpg",
+  "group": "cups",
+  "name_en": "Three of Cups",
+  "name_ko": "컵 3",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "cups/cups_04_four.jpg",
+  "group": "cups",
+  "name_en": "Four of Cups",
+  "name_ko": "컵 4",
+  "width": 1118,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_05_five.jpg",
+  "group": "cups",
+  "name_en": "Five of Cups",
+  "name_ko": "컵 5",
+  "width": 1121,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_06_six.jpg",
+  "group": "cups",
+  "name_en": "Six of Cups",
+  "name_ko": "컵 6",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_07_seven.jpg",
+  "group": "cups",
+  "name_en": "Seven of Cups",
+  "name_ko": "컵 7",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_08_eight.jpg",
+  "group": "cups",
+  "name_en": "Eight of Cups",
+  "name_ko": "컵 8",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "cups/cups_09_nine.jpg",
+  "group": "cups",
+  "name_en": "Nine of Cups",
+  "name_ko": "컵 9",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "cups/cups_10_ten.jpg",
+  "group": "cups",
+  "name_en": "Ten of Cups",
+  "name_ko": "컵 10",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_11_page.jpg",
+  "group": "cups",
+  "name_en": "Page of Cups",
+  "name_ko": "컵 페이지",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_12_knight.jpg",
+  "group": "cups",
+  "name_en": "Knight of Cups",
+  "name_ko": "컵 나이트",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "cups/cups_13_queen.jpg",
+  "group": "cups",
+  "name_en": "Queen of Cups",
+  "name_ko": "컵 퀸",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "cups/cups_14_king.jpg",
+  "group": "cups",
+  "name_en": "King of Cups",
+  "name_ko": "컵 킹",
+  "width": 1121,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_01_ace.jpg",
+  "group": "wands",
+  "name_en": "Ace of Wands",
+  "name_ko": "완드 에이스",
+  "width": 1106,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_02_two.jpg",
+  "group": "wands",
+  "name_en": "Two of Wands",
+  "name_ko": "완드 2",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_03_three.jpg",
+  "group": "wands",
+  "name_en": "Three of Wands",
+  "name_ko": "완드 3",
+  "width": 1103,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_04_four.jpg",
+  "group": "wands",
+  "name_en": "Four of Wands",
+  "name_ko": "완드 4",
+  "width": 1108,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_05_five.jpg",
+  "group": "wands",
+  "name_en": "Five of Wands",
+  "name_ko": "완드 5",
+  "width": 1108,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_06_six.jpg",
+  "group": "wands",
+  "name_en": "Six of Wands",
+  "name_ko": "완드 6",
+  "width": 1118,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_07_seven.jpg",
+  "group": "wands",
+  "name_en": "Seven of Wands",
+  "name_ko": "완드 7",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_08_eight.jpg",
+  "group": "wands",
+  "name_en": "Eight of Wands",
+  "name_ko": "완드 8",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_09_nine.jpg",
+  "group": "wands",
+  "name_en": "Nine of Wands",
+  "name_ko": "완드 9",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "wands/wands_10_ten.jpg",
+  "group": "wands",
+  "name_en": "Ten of Wands",
+  "name_ko": "완드 10",
+  "width": 1101,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_11_page.jpg",
+  "group": "wands",
+  "name_en": "Page of Wands",
+  "name_ko": "완드 페이지",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_12_knight.jpg",
+  "group": "wands",
+  "name_en": "Knight of Wands",
+  "name_ko": "완드 나이트",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_13_queen.jpg",
+  "group": "wands",
+  "name_en": "Queen of Wands",
+  "name_ko": "완드 퀸",
+  "width": 1118,
+  "height": 1920
+ },
+ {
+  "file": "wands/wands_14_king.jpg",
+  "group": "wands",
+  "name_en": "King of Wands",
+  "name_ko": "완드 킹",
+  "width": 1104,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_01_ace.jpg",
+  "group": "swords",
+  "name_en": "Ace of Swords",
+  "name_ko": "소드 에이스",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_02_two.jpg",
+  "group": "swords",
+  "name_en": "Two of Swords",
+  "name_ko": "소드 2",
+  "width": 1121,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_03_three.jpg",
+  "group": "swords",
+  "name_en": "Three of Swords",
+  "name_ko": "소드 3",
+  "width": 1103,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_04_four.jpg",
+  "group": "swords",
+  "name_en": "Four of Swords",
+  "name_ko": "소드 4",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "swords/swords_05_five.jpg",
+  "group": "swords",
+  "name_en": "Five of Swords",
+  "name_ko": "소드 5",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_06_six.jpg",
+  "group": "swords",
+  "name_en": "Six of Swords",
+  "name_ko": "소드 6",
+  "width": 1111,
+  "height": 1919
+ },
+ {
+  "file": "swords/swords_07_seven.jpg",
+  "group": "swords",
+  "name_en": "Seven of Swords",
+  "name_ko": "소드 7",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "swords/swords_08_eight.jpg",
+  "group": "swords",
+  "name_en": "Eight of Swords",
+  "name_ko": "소드 8",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "swords/swords_09_nine.jpg",
+  "group": "swords",
+  "name_en": "Nine of Swords",
+  "name_ko": "소드 9",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "swords/swords_10_ten.jpg",
+  "group": "swords",
+  "name_en": "Ten of Swords",
+  "name_ko": "소드 10",
+  "width": 1107,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_11_page.jpg",
+  "group": "swords",
+  "name_en": "Page of Swords",
+  "name_ko": "소드 페이지",
+  "width": 1108,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_12_knight.jpg",
+  "group": "swords",
+  "name_en": "Knight of Swords",
+  "name_ko": "소드 나이트",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_13_queen.jpg",
+  "group": "swords",
+  "name_en": "Queen of Swords",
+  "name_ko": "소드 퀸",
+  "width": 1104,
+  "height": 1920
+ },
+ {
+  "file": "swords/swords_14_king.jpg",
+  "group": "swords",
+  "name_en": "King of Swords",
+  "name_ko": "소드 킹",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "pentacles/pentacles_01_ace.jpg",
+  "group": "pentacles",
+  "name_en": "Ace of Pentacles",
+  "name_ko": "펜타클 에이스",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_02_two.jpg",
+  "group": "pentacles",
+  "name_en": "Two of Pentacles",
+  "name_ko": "펜타클 2",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_03_three.jpg",
+  "group": "pentacles",
+  "name_en": "Three of Pentacles",
+  "name_ko": "펜타클 3",
+  "width": 1117,
+  "height": 1919
+ },
+ {
+  "file": "pentacles/pentacles_04_four.jpg",
+  "group": "pentacles",
+  "name_en": "Four of Pentacles",
+  "name_ko": "펜타클 4",
+  "width": 1110,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_05_five.jpg",
+  "group": "pentacles",
+  "name_en": "Five of Pentacles",
+  "name_ko": "펜타클 5",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_06_six.jpg",
+  "group": "pentacles",
+  "name_en": "Six of Pentacles",
+  "name_ko": "펜타클 6",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_07_seven.jpg",
+  "group": "pentacles",
+  "name_en": "Seven of Pentacles",
+  "name_ko": "펜타클 7",
+  "width": 1114,
+  "height": 1919
+ },
+ {
+  "file": "pentacles/pentacles_08_eight.jpg",
+  "group": "pentacles",
+  "name_en": "Eight of Pentacles",
+  "name_ko": "펜타클 8",
+  "width": 1117,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_09_nine.jpg",
+  "group": "pentacles",
+  "name_en": "Nine of Pentacles",
+  "name_ko": "펜타클 9",
+  "width": 1108,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_10_ten.jpg",
+  "group": "pentacles",
+  "name_en": "Ten of Pentacles",
+  "name_ko": "펜타클 10",
+  "width": 1115,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_11_page.jpg",
+  "group": "pentacles",
+  "name_en": "Page of Pentacles",
+  "name_ko": "펜타클 페이지",
+  "width": 1112,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_12_knight.jpg",
+  "group": "pentacles",
+  "name_en": "Knight of Pentacles",
+  "name_ko": "펜타클 나이트",
+  "width": 1111,
+  "height": 1919
+ },
+ {
+  "file": "pentacles/pentacles_13_queen.jpg",
+  "group": "pentacles",
+  "name_en": "Queen of Pentacles",
+  "name_ko": "펜타클 퀸",
+  "width": 1109,
+  "height": 1920
+ },
+ {
+  "file": "pentacles/pentacles_14_king.jpg",
+  "group": "pentacles",
+  "name_en": "King of Pentacles",
+  "name_ko": "펜타클 킹",
+  "width": 1107,
+  "height": 1920
+ }
+]
