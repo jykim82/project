@@ -175,10 +175,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .back.img { background: #e8ddd0 url("images/original/card_back.jpg") center / cover; border: 0; outline: 0; }
 .back.img.cbd { background-image: url("images/cbd/card_back.jpg"); }
-.deck-black_cat  { --bk: #1b1722; --bk-edge: #d8b46a; --bk-dot: rgba(216,180,106,.45); --paw: var(--paw-gold); }
-.deck-yellow_cat { --bk: #d39a3a; --bk-edge: #fff1d0; --bk-dot: rgba(255,241,208,.55); --paw: var(--paw-cream); }
-.deck-white_cat  { --bk: #efe8da; --bk-edge: #6d4f86; --bk-dot: rgba(109,79,134,.35); --paw: var(--paw-plum); }
-.deck-dog        { --bk: #74472a; --bk-edge: #f0d29b; --bk-dot: rgba(240,210,155,.4); --paw: var(--paw-cream); }
+.deck-cat { --bk: #1b1722; --bk-edge: #d8b46a; --bk-dot: rgba(216,180,106,.45); --paw: var(--paw-gold); }
+.deck-dog { --bk: #74472a; --bk-edge: #f0d29b; --bk-dot: rgba(240,210,155,.4); --paw: var(--paw-cream); }
 :root {
   --paw-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
   --paw-cream: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23fff1d0'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
@@ -260,10 +258,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
     <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여주고 '원본 그림' 표시를 붙입니다.</p>
 
-    <div class="step-title"><span class="num">II</span><h2>배열 고르기</h2></div>
-    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
-
-    <div class="step-title"><span class="num">III</span><h2>손님 정보</h2></div>
+    <div class="step-title"><span class="num">II</span><h2>손님 정보</h2></div>
     <div class="guest">
       <div class="field">
         <label for="guest-name">손님 이름</label>
@@ -274,6 +269,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         <input type="text" id="guest-q" maxlength="80" placeholder="예: 올해 이직을 해도 될까요?" value="올해 새로운 일을 시작해도 될까요?">
       </div>
     </div>
+
+    <div class="step-title"><span class="num">III</span><h2>배열 고르기</h2></div>
+    <p class="note" id="spread-note">질문과 어울리는 배열만 보여줍니다. 질문을 바꾸면 목록이 달라집니다.</p>
+    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
     <div class="row">
       <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
       <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
@@ -348,12 +347,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 // ---------- 덱과 카드 데이터 ----------
 // 동물 그림 경로: images/<덱>/<카드id>.jpg  (없으면 images/original/<카드id>.jpg 로 대신 표시)
 const DECKS = [
-  { id: "black_cat",  name: "검정 고양이", group: "고양이 버전" },
-  { id: "yellow_cat", name: "노랑 고양이", group: "고양이 버전" },
-  { id: "white_cat",  name: "흰 고양이",   group: "고양이 버전" },
-  { id: "dog",        name: "강아지",      group: "강아지 버전" },
-  { id: "cbd",        name: "CBD 마르세유", group: "콩베르 1760 복원" },
-  { id: "original",   name: "라이더-웨이트", group: "원본 1909" },
+  { id: "cat",      name: "달빛 고양이",  group: "고양이 버전" },
+  { id: "dog",      name: "강아지",       group: "강아지 버전" },
+  { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원" },
+  { id: "original", name: "라이더-웨이트", group: "원본 1909" },
 ];
 // 그림 전체가 자기 파일로 제공되는 덱(대체 그림 없음), 뒷면도 이미지 사용
 const IMG_BACK_DECKS = new Set(["original", "cbd"]);
@@ -480,7 +477,7 @@ const SPREADS = [
 let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "black_cat", spread: "celtic", draw: [], open: new Set(), active: null, fallback: new Set() };
+const S = { deck: "cat", spread: "celtic", draw: [], open: new Set(), active: null, fallback: new Set() };
 const $ = (id) => document.getElementById(id);
 
 function backHTML(deck) {
@@ -503,17 +500,44 @@ $("decks").addEventListener("click", (e) => {
 });
 
 // ---------- 배열 선택 ----------
+// 질문 내용에 따라 어울리는 배열만 남긴다. 범용 배열(켈틱/3카드/말굽)은 항상 보여준다.
+const GENERAL_SPREADS = ["celtic", "three", "horseshoe"];
+const SPREAD_RULES = [
+  { id: "today",   re: /오늘|하루/ },
+  { id: "cup",     re: /연애|사랑|썸|애인|남자\s*친구|여자\s*친구|남친|여친|그\s*사람|짝사랑|재회|이별|헤어|결혼|궁합|고백|소개팅|배우자|커플|관계/ },
+  { id: "choice",  re: /둘\s*중|선택|고를|고르|아니면|말까|말지|할지|vs|중에\s*뭐|어느\s*쪽|갈림길/ },
+  { id: "career",  re: /이직|취업|직장|회사|사업|창업|커리어|진로|승진|면접|퇴사|합격|시험|일이|직업/ },
+  { id: "year",    re: /올해|내년|[일1]\s*년|한\s*해|연간|새해|열두\s*달|월별/ },
+  { id: "houses",  re: /인생|삶\s*전반|전체|종합|전반적/ },
+  { id: "tree",    re: /인생|삶\s*전반|전체|종합|전반적|영적|내면/ },
+];
+function allowedSpreads() {
+  const q = ($("guest-q").value || "").trim();
+  if (!q) return SPREADS.map(s => s.id);
+  const ids = new Set(GENERAL_SPREADS);
+  SPREAD_RULES.forEach(r => { if (r.re.test(q)) ids.add(r.id); });
+  return SPREADS.map(s => s.id).filter(id => ids.has(id));
+}
 function renderSpreads() {
-  $("spreads").innerHTML = SPREADS.map(s => `
+  const allowed = allowedSpreads();
+  if (!allowed.includes(S.spread)) S.spread = "celtic";
+  $("spreads").innerHTML = SPREADS.filter(s => allowed.includes(s.id)).map(s => {
+    const rec = !GENERAL_SPREADS.includes(s.id) && allowed.length < SPREADS.length;
+    return `
     <button type="button" class="deck-opt" data-spread="${s.id}" aria-pressed="${s.id === S.spread}">
-      <span class="name">${s.name} · ${s.positions.length}장</span>
-      <span class="grp">${s.desc}</span>
-    </button>`).join("");
+      <span class="name">${s.name} · ${s.positions.length}장${rec ? " ★" : ""}</span>
+      <span class="grp">${rec ? "질문과 어울리는 배열" : s.desc}</span>
+    </button>`;
+  }).join("");
+  $("spread-note").textContent = allowed.length === SPREADS.length
+    ? "질문을 적으면 어울리는 배열만 추려서 보여줍니다."
+    : "질문과 어울리는 배열만 보여줍니다. 질문을 바꾸면 목록이 달라집니다.";
 }
 $("spreads").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
   S.spread = b.dataset.spread; renderSpreads();
 });
+$("guest-q").addEventListener("input", renderSpreads);
 
 // ---------- 셔플 ----------
 function rand(n) { // 0..n-1 균등 난수

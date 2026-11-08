@@ -18,11 +18,10 @@ sys.path.insert(0, os.path.join(TAROT, "animal-prompts"))
 import build_prompts as bp  # noqa: E402  카드 장면 설명(MAJOR, MINOR)을 재사용
 
 # 덱별 동물 묘사. 동물 얼굴/털을 프롬프트 맨 앞에 둬야 사람이 아닌 동물로 그려진다.
+# cat = '달빛 고양이' 덱 (고양이 버전 단일 덱)
 ANIMALS = {
-    "black_cat":  ("a cute black cat with a cat head, whiskers, black fur and paws", "the black cat", "black cats"),
-    "yellow_cat": ("a cute ginger orange tabby cat with a cat head, whiskers, orange striped fur and paws", "the ginger cat", "ginger tabby cats"),
-    "white_cat":  ("a cute fluffy white cat with a cat head, whiskers, white fur and paws", "the white cat", "white cats"),
-    "dog":        ("a cute golden retriever dog with a dog head, floppy ears, golden fur and paws", "the dog", "dogs"),
+    "cat": ("a cute black cat with a cat head, whiskers, black fur, golden eyes and paws", "the black cat", "black cats"),
+    "dog": ("a cute golden retriever dog with a dog head, floppy ears, golden fur and paws", "the dog", "dogs"),
 }
 # 섬세한 아르누보 화풍. 짧게 유지해야 장면의 상징(심벌)이 77토큰 안에 들어간다.
 STYLE = "Ornate art nouveau tarot card, intricate fine linework, rich jewel colors, highly detailed. "
