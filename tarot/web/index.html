@@ -251,7 +251,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   <header>
     <div class="eyebrow">Celtic Cross · 10 Cards</div>
     <h1>Tarot of Cats &amp; Dogs<span class="ko">고양이 · 강아지 타로 리딩</span></h1>
-    <p class="lede">손님이 덱을 고르고 질문을 떠올리면, 카드를 섞어 켈틱 크로스 10자리에 놓습니다. 카드를 한 장씩 눌러 뒤집으세요.</p>
+    <p class="lede">손님이 덱과 배열을 고르고 질문을 떠올리면, 카드를 섞어 자리에 놓습니다. 카드를 한 장씩 눌러 뒤집으세요.</p>
   </header>
 
   <!-- 1단계: 덱과 손님 정보 -->
@@ -260,7 +260,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
     <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여주고 '원본 그림' 표시를 붙입니다.</p>
 
-    <div class="step-title"><span class="num">II</span><h2>손님 정보</h2></div>
+    <div class="step-title"><span class="num">II</span><h2>배열 고르기</h2></div>
+    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
+
+    <div class="step-title"><span class="num">III</span><h2>손님 정보</h2></div>
     <div class="guest">
       <div class="field">
         <label for="guest-name">손님 이름</label>
@@ -371,22 +374,93 @@ MAJOR.forEach(([ko, en], i) => CARDS.push({ id: "major_" + String(i).padStart(2,
 SUITS.forEach(([s, sko, sen]) => RANK_EN.forEach((r, i) =>
   CARDS.push({ id: s + "_" + String(i + 1).padStart(2, "0"), ko: sko + " " + RANK_KO[i], en: r + " of " + sen })));
 
-// 켈틱 크로스 10자리. x, y 는 카드 너비 단위 좌표
-const POSITIONS = [
-  { name: "현재",        meaning: "지금 손님이 놓여 있는 상황",          x: 1.45, y: 2.745 },
-  { name: "장애",        meaning: "상황을 가로막거나 교차하는 힘",        x: 1.45, y: 2.745, rot: true },
-  { name: "의식",        meaning: "손님이 바라는 것, 겉으로 드러난 목표",  x: 1.45, y: 0.915 },
-  { name: "무의식",      meaning: "상황의 뿌리, 마음 깊은 곳의 바탕",      x: 1.45, y: 4.575 },
-  { name: "과거",        meaning: "지나가고 있는 일",                    x: 0.0,  y: 2.745 },
-  { name: "가까운 미래", meaning: "곧 다가올 일",                        x: 2.9,  y: 2.745 },
-  { name: "자신",        meaning: "손님의 태도와 입장",                  x: 4.15, y: 5.49 },
-  { name: "주변",        meaning: "주변 사람과 환경의 영향",              x: 4.15, y: 3.66 },
-  { name: "희망과 두려움", meaning: "마음속 기대와 걱정",                 x: 4.15, y: 1.83 },
-  { name: "결과",        meaning: "지금 흐름이 이어질 때의 결말",          x: 4.15, y: 0.0 },
+// 배열(스프레드) 정의. positions 의 x, y 는 카드 너비 단위 좌표
+const SPREADS = [
+  { id: "celtic", name: "켈틱 크로스", en: "Celtic Cross", desc: "전체 상황을 깊게", positions: [
+    { name: "현재",        meaning: "지금 손님이 놓여 있는 상황",          x: 1.45, y: 2.745 },
+    { name: "장애",        meaning: "상황을 가로막거나 교차하는 힘",        x: 1.45, y: 2.745, rot: true },
+    { name: "의식",        meaning: "손님이 바라는 것, 겉으로 드러난 목표",  x: 1.45, y: 0.915 },
+    { name: "무의식",      meaning: "상황의 뿌리, 마음 깊은 곳의 바탕",      x: 1.45, y: 4.575 },
+    { name: "과거",        meaning: "지나가고 있는 일",                    x: 0.0,  y: 2.745 },
+    { name: "가까운 미래", meaning: "곧 다가올 일",                        x: 2.9,  y: 2.745 },
+    { name: "자신",        meaning: "손님의 태도와 입장",                  x: 4.15, y: 5.49 },
+    { name: "주변",        meaning: "주변 사람과 환경의 영향",              x: 4.15, y: 3.66 },
+    { name: "희망과 두려움", meaning: "마음속 기대와 걱정",                 x: 4.15, y: 1.83 },
+    { name: "결과",        meaning: "지금 흐름이 이어질 때의 결말",          x: 4.15, y: 0.0 },
+  ]},
+  { id: "cup", name: "컵 오브 릴레이션십", en: "Cup of Relationship", desc: "두 사람의 관계를 성배 모양으로", positions: [
+    { name: "나의 마음",      meaning: "관계 속 나의 솔직한 현재 마음",    x: 0.0, y: 0 },
+    { name: "상대의 마음",    meaning: "관계 속 상대의 솔직한 현재 마음",  x: 4.2, y: 0 },
+    { name: "내가 보는 상대", meaning: "내 눈에 비친 상대의 모습",        x: 1.4, y: 0 },
+    { name: "상대가 보는 나", meaning: "상대의 눈에 비친 나의 모습",      x: 2.8, y: 0 },
+    { name: "나의 바람",      meaning: "내가 이 관계에서 바라는 것",      x: 0.7, y: 1.85 },
+    { name: "상대의 바람",    meaning: "상대가 이 관계에서 바라는 것",    x: 3.5, y: 1.85 },
+    { name: "현재 관계",      meaning: "두 사람 관계의 현주소",           x: 2.1, y: 1.85 },
+    { name: "장애물",        meaning: "관계를 가로막는 것",               x: 2.1, y: 3.7 },
+    { name: "주변의 영향",    meaning: "주변 사람과 환경이 주는 영향",     x: 0.7, y: 5.55 },
+    { name: "흐름",          meaning: "가까운 미래에 다가올 흐름",        x: 2.1, y: 5.55 },
+    { name: "최종 결과",      meaning: "이 관계가 향하는 곳",             x: 3.5, y: 5.55 },
+  ]},
+  { id: "three", name: "3카드", en: "Three Cards", desc: "과거 · 현재 · 미래 한눈에", positions: [
+    { name: "과거", meaning: "지나온 흐름과 바탕",   x: 0.35, y: 0 },
+    { name: "현재", meaning: "지금 놓여 있는 상황",  x: 1.7,  y: 0 },
+    { name: "미래", meaning: "다가올 흐름",          x: 3.05, y: 0 },
+  ]},
+  { id: "choice", name: "양자택일", en: "Two Paths", desc: "A와 B, 두 갈림길 비교", positions: [
+    { name: "현재 상황",  meaning: "선택 앞에 선 지금의 나",      x: 2.1, y: 5.55 },
+    { name: "A의 흐름",   meaning: "A를 고르면 펼쳐지는 초반",    x: 1.4, y: 3.7 },
+    { name: "B의 흐름",   meaning: "B를 고르면 펼쳐지는 초반",    x: 2.8, y: 3.7 },
+    { name: "A의 과정",   meaning: "A길에서 겪게 되는 일",        x: 0.7, y: 1.85 },
+    { name: "B의 과정",   meaning: "B길에서 겪게 되는 일",        x: 3.5, y: 1.85 },
+    { name: "A의 결과",   meaning: "A를 선택했을 때의 끝",        x: 0.0, y: 0 },
+    { name: "B의 결과",   meaning: "B를 선택했을 때의 끝",        x: 4.2, y: 0 },
+  ]},
+  { id: "year", name: "1년 운세", en: "Year Ahead", desc: "열두 달의 흐름 + 한 해 총평", positions: [
+    { name: "1월",  meaning: "1월의 흐름",  x: 2.10, y: 0 },
+    { name: "2월",  meaning: "2월의 흐름",  x: 3.15, y: 0.50 },
+    { name: "3월",  meaning: "3월의 흐름",  x: 3.92, y: 1.85 },
+    { name: "4월",  meaning: "4월의 흐름",  x: 4.20, y: 3.70 },
+    { name: "5월",  meaning: "5월의 흐름",  x: 3.92, y: 5.55 },
+    { name: "6월",  meaning: "6월의 흐름",  x: 3.15, y: 6.90 },
+    { name: "7월",  meaning: "7월의 흐름",  x: 2.10, y: 7.40 },
+    { name: "8월",  meaning: "8월의 흐름",  x: 1.05, y: 6.90 },
+    { name: "9월",  meaning: "9월의 흐름",  x: 0.28, y: 5.55 },
+    { name: "10월", meaning: "10월의 흐름", x: 0.00, y: 3.70 },
+    { name: "11월", meaning: "11월의 흐름", x: 0.28, y: 1.85 },
+    { name: "12월", meaning: "12월의 흐름", x: 1.05, y: 0.50 },
+    { name: "한 해 총평", meaning: "일 년 전체를 관통하는 기운", x: 2.10, y: 3.70 },
+  ]},
+  { id: "houses", name: "12하우스", en: "12 Houses", desc: "점성술 하우스로 삶의 열두 영역 점검", positions: [
+    { name: "1하우스 · 자아",   meaning: "나 자신, 첫인상과 태도",        x: 0.00, y: 3.70 },
+    { name: "2하우스 · 재물",   meaning: "돈, 소유, 가치관",              x: 0.28, y: 5.55 },
+    { name: "3하우스 · 소통",   meaning: "대화, 배움, 가까운 이들",       x: 1.05, y: 6.90 },
+    { name: "4하우스 · 가정",   meaning: "집, 가족, 마음의 뿌리",         x: 2.10, y: 7.40 },
+    { name: "5하우스 · 연애",   meaning: "사랑, 즐거움, 창조",            x: 3.15, y: 6.90 },
+    { name: "6하우스 · 일상",   meaning: "건강, 일, 하루하루의 습관",     x: 3.92, y: 5.55 },
+    { name: "7하우스 · 관계",   meaning: "동반자, 계약, 마주보는 상대",   x: 4.20, y: 3.70 },
+    { name: "8하우스 · 변화",   meaning: "공유하는 것, 깊은 변화",        x: 3.92, y: 1.85 },
+    { name: "9하우스 · 탐구",   meaning: "여행, 공부, 더 넓은 세계",      x: 3.15, y: 0.50 },
+    { name: "10하우스 · 성취",  meaning: "직업, 명예, 사회적 자리",       x: 2.10, y: 0 },
+    { name: "11하우스 · 공동체", meaning: "친구, 모임, 바라는 미래",      x: 1.05, y: 0.50 },
+    { name: "12하우스 · 내면",  meaning: "무의식, 비밀, 홀로의 시간",     x: 0.28, y: 1.85 },
+  ]},
+  { id: "tree", name: "생명의 나무", en: "Tree of Life", desc: "카발라 세피로트 열 자리", positions: [
+    { name: "케테르 · 왕관",   meaning: "가장 높은 이상, 영적 본질",    x: 2.1, y: 0 },
+    { name: "호크마 · 지혜",   meaning: "밀고 나가는 힘, 주도성",       x: 3.6, y: 1.0 },
+    { name: "비나 · 이해",     meaning: "받아들이는 힘, 인내와 제약",   x: 0.6, y: 1.0 },
+    { name: "헤세드 · 자비",   meaning: "베풂, 기회와 풍요",            x: 3.6, y: 2.9 },
+    { name: "게부라 · 엄격",   meaning: "시련, 끊어내야 하는 것",       x: 0.6, y: 2.9 },
+    { name: "티페렛 · 조화",   meaning: "중심의 균형, 핵심 성취",       x: 2.1, y: 2.9 },
+    { name: "네짜흐 · 승리",   meaning: "감정과 욕망, 지속하는 힘",     x: 3.6, y: 4.8 },
+    { name: "호드 · 영광",     meaning: "지성과 소통, 계획",            x: 0.6, y: 4.8 },
+    { name: "예소드 · 기초",   meaning: "무의식의 토대, 습관",          x: 2.1, y: 4.8 },
+    { name: "말쿠트 · 왕국",   meaning: "현실로 드러나는 결과",         x: 2.1, y: 6.7 },
+  ]},
 ];
+let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "black_cat", draw: [], open: new Set(), active: null, fallback: new Set() };
+const S = { deck: "black_cat", spread: "celtic", draw: [], open: new Set(), active: null, fallback: new Set() };
 const $ = (id) => document.getElementById(id);
 
 function backHTML(deck) {
@@ -408,6 +482,19 @@ $("decks").addEventListener("click", (e) => {
   S.deck = b.dataset.deck; renderDecks();
 });
 
+// ---------- 배열 선택 ----------
+function renderSpreads() {
+  $("spreads").innerHTML = SPREADS.map(s => `
+    <button type="button" class="deck-opt" data-spread="${s.id}" aria-pressed="${s.id === S.spread}">
+      <span class="name">${s.name} · ${s.positions.length}장</span>
+      <span class="grp">${s.desc}</span>
+    </button>`).join("");
+}
+$("spreads").addEventListener("click", (e) => {
+  const b = e.target.closest(".deck-opt"); if (!b) return;
+  S.spread = b.dataset.spread; renderSpreads();
+});
+
 // ---------- 셔플 ----------
 function rand(n) { // 0..n-1 균등 난수
   const a = new Uint32Array(1); const lim = Math.floor(0x100000000 / n) * n;
@@ -427,16 +514,23 @@ async function startReading() {
   const name = $("guest-name").value.trim() || "손님";
   const q = $("guest-q").value.trim();
   const deck = DECKS.find(d => d.id === S.deck);
-  $("who-title").textContent = name + "님의 켈틱 크로스 · " + deck.name;
+  const sp = SPREADS.find(s => s.id === S.spread);
+  $("who-title").textContent = name + "님의 " + sp.name + " · " + deck.name;
+  document.querySelector(".eyebrow").textContent = sp.en + " · " + sp.positions.length + " Cards";
   $("who-q").textContent = q ? "질문: " + q : "질문 없이 전체 흐름을 봅니다.";
   $("setup").hidden = true; $("table").hidden = false;
 
   const withRev = $("opt-rev").checked;
-  S.draw = shuffle(CARDS).slice(0, 10).map(c => ({ ...c, rev: withRev && rand(2) === 1 }));
+  POSITIONS = SPREADS.find(s => s.id === S.spread).positions;
+  S.draw = shuffle(CARDS).slice(0, POSITIONS.length).map(c => ({ ...c, rev: withRev && rand(2) === 1 }));
   S.open = new Set(); S.active = null; S.fallback = new Set();
 
   const spread = $("spread");
   spread.className = "spread deck-" + S.deck;
+  // 배열 크기에 맞춰 판 크기 조정 (x, y 는 카드 너비 단위, 카드 높이 = 1.73)
+  const maxX = Math.max(...POSITIONS.map(p => p.x)), maxY = Math.max(...POSITIONS.map(p => p.y));
+  spread.style.width = `calc(var(--w) * ${(maxX + 1).toFixed(2)})`;
+  spread.style.height = `calc(var(--w) * ${(maxY + 1.78).toFixed(2)})`;
   spread.innerHTML =
     POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("") +
     `<div class="pile shuffling" id="pile">${Array.from({ length: 6 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
@@ -552,8 +646,9 @@ $("btn-all").addEventListener("click", () => {
   setActive(S.active === null ? 0 : S.active);
 });
 $("btn-back").addEventListener("click", () => {
-  $("table").hidden = true; $("setup").hidden = false; renderDecks();
+  $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderSpreads();
 });
 
 renderDecks();
+renderSpreads();
 </script>
