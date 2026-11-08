@@ -173,6 +173,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   outline: 1px solid var(--bk-dot, var(--gold)); outline-offset: -8px;
 }
 .back.img { background: #e8ddd0 url("images/original/card_back.jpg") center / cover; border: 0; outline: 0; }
+.back.img.cbd { background-image: url("images/cbd/card_back.jpg"); }
 .deck-black_cat  { --bk: #1b1722; --bk-edge: #d8b46a; --bk-dot: rgba(216,180,106,.45); --paw: var(--paw-gold); }
 .deck-yellow_cat { --bk: #d39a3a; --bk-edge: #fff1d0; --bk-dot: rgba(255,241,208,.55); --paw: var(--paw-cream); }
 .deck-white_cat  { --bk: #efe8da; --bk-edge: #6d4f86; --bk-dot: rgba(109,79,134,.35); --paw: var(--paw-plum); }
@@ -211,6 +212,21 @@ ol.positions .val.hidden { color: #7f6f93; }
 dialog {
   border: 0; padding: 0; background: transparent; max-width: min(92vw, 520px); max-height: 92vh;
 }
+.credits-footer { max-width: 1180px; margin: 28px auto 20px; padding: 0 20px; text-align: center; }
+.credits-link {
+  background: none; border: 0; color: var(--muted); font-size: 13px;
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.credits-link:hover { color: var(--gold); }
+.credits-box {
+  position: relative; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; display: grid; gap: 10px;
+}
+.credits-box h2 { font-family: var(--display); color: var(--gold); font-size: 19px; margin: 0; }
+.credits-box h3 { font-size: 15px; margin: 8px 0 0; }
+.credits-box p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted); }
+.credits-box a { color: var(--gold); }
+.credits-box .en-note { font-size: 12.5px; }
 dialog::backdrop { background: rgba(10,6,16,.82); }
 dialog img { display: block; max-height: 84vh; width: auto; max-width: 100%; border-radius: 10px; margin: 0 auto; }
 dialog img.rev { transform: rotate(180deg); }
@@ -283,10 +299,37 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   </section>
 </div>
 
+<footer class="credits-footer">
+  <button type="button" class="credits-link" id="btn-credits">오픈소스 라이선스 · 카드 이미지 출처</button>
+</footer>
+
 <dialog id="zoom">
   <button class="close" id="zoom-close" type="button" aria-label="닫기">×</button>
   <img id="zoom-img" alt="">
   <div class="cap" id="zoom-cap"></div>
+</dialog>
+
+<dialog id="credits" aria-labelledby="credits-title">
+  <div class="credits-box">
+    <button class="close" id="credits-close" type="button" aria-label="닫기">×</button>
+    <h2 id="credits-title">오픈소스 라이선스</h2>
+    <h3>CBD 마르세유 덱</h3>
+    <p lang="ko">
+      카드 이미지: &ldquo;CBD Tarot de Marseille&rdquo; by Yoav Ben-Dov
+      (<a href="https://www.cbdtarot.com" target="_blank" rel="noopener">cbdtarot.com</a>),
+      <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>
+      라이선스에 따라 사용. 니콜라 콩베르(1760)의 마르세유 타로를 요아브 벤도브가 복원한 덱입니다.
+      이미지는 원본 그대로 사용했습니다(파일명만 변경).
+    </p>
+    <p lang="en" class="en-note">
+      Card images: &ldquo;CBD Tarot de Marseille&rdquo; by Yoav Ben-Dov
+      (<a href="https://www.cbdtarot.com" target="_blank" rel="noopener">cbdtarot.com</a>),
+      licensed under <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.
+      A restoration of the Tarot de Marseille printed by Nicolas Conver (1760). Images are used unmodified.
+    </p>
+    <h3>라이더-웨이트 덱</h3>
+    <p>라이더-웨이트-스미스 타로(1909), 아서 에드워드 웨이트 · 파멜라 콜먼 스미스. 퍼블릭 도메인.</p>
+  </div>
 </dialog>
 
 <script>
@@ -297,8 +340,11 @@ const DECKS = [
   { id: "yellow_cat", name: "노랑 고양이", group: "고양이 버전" },
   { id: "white_cat",  name: "흰 고양이",   group: "고양이 버전" },
   { id: "dog",        name: "강아지",      group: "강아지 버전" },
+  { id: "cbd",        name: "CBD 마르세유", group: "콩베르 1760 복원" },
   { id: "original",   name: "라이더-웨이트", group: "원본 1909" },
 ];
+// 그림 전체가 자기 파일로 제공되는 덱(대체 그림 없음), 뒷면도 이미지 사용
+const IMG_BACK_DECKS = new Set(["original", "cbd"]);
 
 const MAJOR = [
   ["바보","The Fool"],["마법사","The Magician"],["여사제","The High Priestess"],["여황제","The Empress"],
@@ -335,7 +381,7 @@ const S = { deck: "black_cat", draw: [], open: new Set(), active: null, fallback
 const $ = (id) => document.getElementById(id);
 
 function backHTML(deck) {
-  return deck === "original" ? '<div class="face back img"></div>' : '<div class="face back"></div>';
+  return IMG_BACK_DECKS.has(deck) ? `<div class="face back img ${deck}"></div>` : '<div class="face back"></div>';
 }
 function srcFor(deck, id) { return "images/" + (deck === "original" ? "original" : deck) + "/" + id + ".jpg"; }
 
@@ -343,7 +389,7 @@ function srcFor(deck, id) { return "images/" + (deck === "original" ? "original"
 function renderDecks() {
   $("decks").innerHTML = DECKS.map(d => `
     <button type="button" class="deck-opt deck-${d.id}" data-deck="${d.id}" aria-pressed="${d.id === S.deck}">
-      <span class="mini back${d.id === "original" ? " img" : ""}"></span>
+      <span class="mini back${IMG_BACK_DECKS.has(d.id) ? " img " + d.id : ""}"></span>
       <span class="name">${d.name}</span>
       <span class="grp">${d.group}</span>
     </button>`).join("");
@@ -483,6 +529,10 @@ function openZoom(i) {
   $("zoom").showModal();
 }
 $("zoom-close").addEventListener("click", () => $("zoom").close());
+
+// ---------- 오픈소스 라이선스 ----------
+$("btn-credits").addEventListener("click", () => $("credits").showModal());
+$("credits-close").addEventListener("click", () => $("credits").close());
 $("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) $("zoom").close(); });
 
 // ---------- 버튼 ----------

@@ -102,12 +102,17 @@ def pick_device(torch):
     return "cpu", torch.float32
 
 
-def load_pipe(model, lightning, device, dtype, img2img=False):
+def load_pipe(model, lightning, device, dtype, img2img=False, controlnet=False):
     import torch
     from diffusers import (AutoPipelineForText2Image, AutoPipelineForImage2Image,
                            AutoencoderKL, EulerDiscreteScheduler)
     cls = AutoPipelineForImage2Image if img2img else AutoPipelineForText2Image
     kw = {"torch_dtype": dtype}
+    if controlnet:
+        from diffusers import StableDiffusionXLControlNetPipeline, ControlNetModel
+        cls = StableDiffusionXLControlNetPipeline
+        kw["controlnet"] = ControlNetModel.from_pretrained(
+            "diffusers/controlnet-canny-sdxl-1.0", torch_dtype=dtype)
     is_xl = "xl" in model.lower()
     if is_xl and dtype == torch.float16:
         # SDXL 기본 VAE는 fp16에서 검은 화면(NaN)이 나와서 고친 VAE를 쓴다
@@ -146,6 +151,10 @@ def main():
     ap.add_argument("--strength", type=float, default=0.55,
                     help="원본 라이더-웨이트 그림을 밑그림으로 쓰는 정도. "
                          "낮을수록 원본 구도/심벌 유지, 높을수록 자유롭게. 1.0이면 밑그림 없이 생성")
+    ap.add_argument("--controlnet", action="store_true",
+                    help="원본의 윤곽선(canny)만 뼈대로 쓰고 화풍은 자유롭게 생성. --strength 무시")
+    ap.add_argument("--cn-scale", type=float, default=0.55,
+                    help="controlnet 윤곽선을 따르는 정도 (0.3 느슨 ~ 0.8 엄격)")
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="프롬프트만 출력하고 생성하지 않음")
     ap.add_argument("--retitle", action="store_true",
@@ -196,13 +205,14 @@ def main():
     import torch
     from PIL import Image
     device, dtype = pick_device(torch)
-    img2img = a.strength < 0.999
+    img2img = a.strength < 0.999 and not a.controlnet
     # img2img는 실제 스텝 수가 steps * strength 라서 기본 스텝을 올려 보정한다
     steps = a.steps or (4 if a.lightning else (round(30 / a.strength) if img2img else 30))
     guidance = a.guidance if a.guidance is not None else (0.0 if a.lightning else 6.0)
     print(f"device={device} model={a.model} lightning={a.lightning} steps={steps} "
-          f"guidance={guidance} strength={a.strength if img2img else '없음(text2img)'}")
-    pipe, _ = load_pipe(a.model, a.lightning, device, dtype, img2img=img2img)
+          f"guidance={guidance} "
+          f"{'controlnet scale=' + str(a.cn_scale) if a.controlnet else 'strength=' + (str(a.strength) if img2img else '없음(text2img)')}")
+    pipe, _ = load_pipe(a.model, a.lightning, device, dtype, img2img=img2img, controlnet=a.controlnet)
 
     for n, (deck, cid, prompt, path, name_en, name_ko) in enumerate(jobs, 1):
         t = time.time()
@@ -210,7 +220,7 @@ def main():
         seed = a.seed + sum(map(ord, cid))
         args = dict(prompt=prompt, num_inference_steps=steps,
                     guidance_scale=guidance, generator=torch.Generator("cpu").manual_seed(seed))
-        if img2img:
+        if img2img or a.controlnet:
             # 원본 라이더-웨이트 카드를 밑그림으로 -> 구도, 자세, 심벌 배치가 원본을 따라간다
             orig = os.path.join(TAROT, "web", "images", "original", cid + ".jpg")
             if not os.path.exists(orig):
@@ -219,8 +229,18 @@ def main():
             W, H = im.size
             # 흰 테두리/로마숫자/하단 제목 띠를 잘라낸다 -> 깨진 글자로 생성되는 것 방지
             im = im.crop((round(W * 0.05), round(H * 0.06), round(W * 0.95), round(H * 0.885)))
-            args["image"] = im.resize((a.width, a.height), Image.LANCZOS)
-            args["strength"] = a.strength
+            im = im.resize((a.width, a.height), Image.LANCZOS)
+            if a.controlnet:
+                # 윤곽선만 뼈대로 쓰고 색/질감/화풍은 프롬프트가 결정한다
+                import cv2
+                import numpy as np
+                edges = cv2.Canny(np.array(im), 100, 200)
+                args["image"] = Image.fromarray(np.stack([edges] * 3, axis=-1))
+                args["controlnet_conditioning_scale"] = a.cn_scale
+                args["width"], args["height"] = a.width, a.height
+            else:
+                args["image"] = im
+                args["strength"] = a.strength
         else:
             args["width"], args["height"] = a.width, a.height
         if guidance > 1.0:
