@@ -41,7 +41,28 @@ body {
   display: grid;
   gap: 28px;
 }
-header { display: grid; gap: 6px; }
+header { display: grid; gap: 6px; position: relative; }
+.sound-ctrl { position: absolute; top: 0; right: 0; display: flex; gap: 8px; align-items: center; }
+.sound-ctrl button, .sound-ctrl select {
+  font: inherit; font-size: 12.5px; color: var(--muted);
+  background: var(--table-deep); border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 12px; cursor: pointer;
+}
+.sound-ctrl button.off { opacity: .5; }
+.sound-ctrl button:hover, .sound-ctrl select:hover { color: var(--gold); border-color: var(--gold-soft); }
+
+/* ---------- 카드 뽑기 ---------- */
+.pick-area { display: grid; gap: 10px; margin-bottom: 18px; }
+.pick-note { margin: 0; text-align: center; color: var(--gold); font-size: 14.5px; letter-spacing: .02em; }
+.pickfan { display: flex; justify-content: center; padding: 10px 0 4px 26px; flex-wrap: wrap; row-gap: 14px; }
+.pickfan button {
+  width: 52px; aspect-ratio: 1 / 1.73; margin-left: -26px;
+  border: 0; padding: 0; background: none; cursor: pointer;
+  transition: transform .18s, opacity .3s; position: relative;
+}
+.pickfan button .face { position: absolute; inset: 0; border-radius: 5px; box-shadow: 0 4px 10px rgba(0,0,0,.5); }
+.pickfan button:hover { transform: translateY(-12px); z-index: 5; }
+.pickfan button.used { opacity: 0; pointer-events: none; }
 .eyebrow { font-family: var(--display); letter-spacing: .18em; color: var(--gold); font-size: 13px; }
 h1 { font-family: var(--display); font-weight: 400; font-size: clamp(30px, 6vw, 46px); line-height: 1.1; margin: 0; text-wrap: balance; }
 h1 .ko { font-family: var(--body); font-weight: 700; font-size: .62em; display: block; margin-top: 6px; letter-spacing: -.01em; }
@@ -270,6 +291,15 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 
 <div class="wrap">
   <header>
+    <div class="sound-ctrl">
+      <button type="button" id="btn-sfx" title="효과음 켜기/끄기">🔊 효과음</button>
+      <select id="bgm-sel" title="배경음악" aria-label="배경음악 선택">
+        <option value="off">🎵 음악 끄기</option>
+        <option value="calm">차분한</option>
+        <option value="warm">따뜻한</option>
+        <option value="quiet">조용한</option>
+      </select>
+    </div>
     <div class="eyebrow">Celtic Cross · 10 Cards</div>
     <h1>Tarot of Cats &amp; Dogs<span class="ko">고양이 · 강아지 타로 리딩</span></h1>
     <p class="lede">손님이 덱과 배열을 고르고 질문을 떠올리면, 카드를 섞어 자리에 놓습니다. 카드를 한 장씩 눌러 뒤집으세요.</p>
@@ -327,6 +357,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       </div>
     </div>
     <div class="spread-wrap">
+      <div class="pick-area" id="pick-area" hidden>
+        <p class="pick-note" id="pick-note"></p>
+        <div class="pickfan" id="pickfan"></div>
+      </div>
       <div class="spread" id="spread"></div>
     </div>
     <aside class="log">
@@ -607,8 +641,102 @@ const SPREADS = [
 let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set() };
+const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
 const $ = (id) => document.getElementById(id);
+
+// ---------- 효과음 (Web Audio 합성 - 음원 파일 없음) ----------
+const SFX = (() => {
+  let ctx = null;
+  let on = localStorage.getItem("tarot-sfx") !== "off";
+  const ac = () => (ctx ||= new (window.AudioContext || window.webkitAudioContext)());
+  // 짧은 노이즈 버스트 = 카드 소리의 기본 재료
+  function burst(dur, freq, gain, delay = 0, q = 1.2) {
+    if (!on) return;
+    try {
+      const c = ac(), t = c.currentTime + delay;
+      const len = Math.max(1, Math.round(c.sampleRate * dur));
+      const buf = c.createBuffer(1, len, c.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const src = c.createBufferSource(); src.buffer = buf;
+      const f = c.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = freq; f.Q.value = q;
+      const g = c.createGain();
+      g.gain.setValueAtTime(gain, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(f); f.connect(g); g.connect(c.destination);
+      src.start(t);
+    } catch (e) { /* 소리 실패는 무시 */ }
+  }
+  return {
+    get on() { return on; },
+    toggle() { on = !on; localStorage.setItem("tarot-sfx", on ? "on" : "off"); return on; },
+    shuffle() { for (let i = 0; i < 14; i++) burst(0.05, 1600 + Math.random() * 1400, 0.22, i * 0.085); },
+    pick() { burst(0.05, 2400 + Math.random() * 400, 0.3); },
+    deal() { burst(0.07, 950 + Math.random() * 200, 0.28); },
+    flip() { burst(0.04, 2800, 0.2); burst(0.09, 1200 + Math.random() * 500, 0.26, 0.03, 0.8); },
+  };
+})();
+
+// ---------- 배경음악 (Web Audio 생성 앰비언트 - 무드 3종) ----------
+const BGM = (() => {
+  let ctx = null, master = null, timer = null, mode = "off";
+  // 무드별 설정: 음계(주파수), 간격, 음색, 볼륨
+  const MOODS = {
+    calm:  { notes: [110, 130.8, 146.8, 164.8, 196, 220],        wave: "sine",     gap: [3.5, 6],  vol: 0.05, len: 9,  chord: 2 },
+    warm:  { notes: [130.8, 164.8, 196, 220, 261.6, 329.6],      wave: "triangle", gap: [2.5, 5],  vol: 0.045, len: 8, chord: 3 },
+    quiet: { notes: [146.8, 174.6, 220, 293.7, 349.2],           wave: "sine",     gap: [6, 11],   vol: 0.035, len: 12, chord: 1 },
+  };
+  function ac() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      master = ctx.createGain(); master.gain.value = 1; master.connect(ctx.destination);
+    }
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  }
+  function pad(freq, m) {
+    const c = ac(), t = c.currentTime;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(m.vol, t + m.len * 0.35);   // 느린 어택
+    g.gain.exponentialRampToValueAtTime(0.0001, t + m.len);          // 느린 릴리즈
+    const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 900;
+    g.connect(f); f.connect(master);
+    [0, 2.5, -2.5].slice(0, 2).forEach(det => {                      // 살짝 디튠된 2개 오실레이터
+      const o = c.createOscillator(); o.type = m.wave;
+      o.frequency.value = freq; o.detune.value = det;
+      o.connect(g); o.start(t); o.stop(t + m.len);
+    });
+  }
+  function step() {
+    if (mode === "off") return;
+    const m = MOODS[mode];
+    const base = m.notes[Math.floor(Math.random() * m.notes.length)];
+    pad(base, m);                                                    // 근음
+    if (m.chord >= 2 && Math.random() < 0.8) pad(base * 1.5, m);     // 5도
+    if (m.chord >= 3 && Math.random() < 0.6) pad(base * 2, m);       // 옥타브
+    const [a, b] = m.gap;
+    timer = setTimeout(step, (a + Math.random() * (b - a)) * 1000);
+  }
+  return {
+    set(next) {
+      mode = next;
+      clearTimeout(timer); timer = null;
+      localStorage.setItem("tarot-bgm", next);
+      if (next !== "off") { ac(); step(); }
+    },
+    saved() { return localStorage.getItem("tarot-bgm") || "off"; },
+  };
+})();
+$("btn-sfx").classList.toggle("off", !SFX.on);
+$("btn-sfx").addEventListener("click", () => {
+  const on = SFX.toggle();
+  $("btn-sfx").classList.toggle("off", !on);
+  if (on) SFX.pick();
+});
+// 저장된 무드는 선택값만 복원 (자동재생 제한 때문에 사용자가 다시 고르면 시작)
+$("bgm-sel").value = "off";
+$("bgm-sel").addEventListener("change", () => BGM.set($("bgm-sel").value));
 
 function backHTML(deck) {
   return IMG_BACK_DECKS.has(deck) ? `<div class="face back img ${deck}"></div>` : '<div class="face back"></div>';
@@ -802,37 +930,69 @@ async function startReading() {
   $("btn-all").disabled = true; $("btn-again").disabled = true;
   window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
 
+  SFX.shuffle();
   await wait(1500);
   $("pile").remove();
 
-  // 카드 10장을 순서대로 놓는다
-  S.draw.forEach((c, i) => {
-    const p = POSITIONS[i];
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "card dealing" + (p.rot ? " rot" : "") + (c.rev ? " rev" : "");
-    b.style.setProperty("--x", p.x); b.style.setProperty("--y", p.y);
-    b.dataset.i = i;
-    b.setAttribute("aria-label", (i + 1) + "번 " + p.name + " 카드 뒤집기");
-    b.innerHTML = `<span class="badge">${i + 1}</span><span class="inner">${backHTML(S.deck)}
-      <div class="face front"><img alt="" loading="eager" src="${srcFor(S.deck, c.id)}"></div></span>`;
-    const img = b.querySelector("img");
-    img.addEventListener("error", () => {
-      if (img.dataset.fb) return;
-      img.dataset.fb = "1"; S.fallback.add(i); img.src = srcFor("original", c.id);
-      if (S.open.has(i)) { renderLog(); if (S.active === i) renderFocus(); }
-    });
-    spread.appendChild(b);
-  });
-  const cards = [...spread.querySelectorAll(".card")];
-  void spread.offsetWidth;
-  for (const el of cards) { el.classList.remove("dealing"); await wait(140); }
-  $("btn-all").disabled = false; $("btn-again").disabled = false;
+  // 손님이 뒷면 카드 중에서 직접 필요한 장수만큼 뽑는다
+  startPicking();
 }
+
+// 뽑힌 카드 1장을 다음 자리에 놓는다
+function dealOne(i) {
+  const spread = $("spread");
+  const c = S.draw[i], p = POSITIONS[i];
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "card dealing" + (p.rot ? " rot" : "") + (c.rev ? " rev" : "");
+  b.style.setProperty("--x", p.x); b.style.setProperty("--y", p.y);
+  b.dataset.i = i;
+  b.setAttribute("aria-label", (i + 1) + "번 " + p.name + " 카드 뒤집기");
+  b.innerHTML = `<span class="badge">${i + 1}</span><span class="inner">${backHTML(S.deck)}
+    <div class="face front"><img alt="" loading="eager" src="${srcFor(S.deck, c.id)}"></div></span>`;
+  const img = b.querySelector("img");
+  img.addEventListener("error", () => {
+    if (img.dataset.fb) return;
+    img.dataset.fb = "1"; S.fallback.add(i); img.src = srcFor("original", c.id);
+    if (S.open.has(i)) { renderLog(); if (S.active === i) renderFocus(); }
+  });
+  spread.appendChild(b);
+  void b.offsetWidth;
+  b.classList.remove("dealing");
+  SFX.deal();
+}
+
+function startPicking() {
+  const need = POSITIONS.length;
+  S.picked = 0;
+  const FAN = Math.max(22, need + 8); // 필요 장수보다 넉넉하게 펼친다
+  $("pick-area").hidden = false;
+  $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (0/${need})`;
+  $("pickfan").innerHTML = Array.from({ length: FAN }, (_, k) =>
+    `<button type="button" data-k="${k}" aria-label="카드 뽑기">${backHTML(S.deck)}</button>`).join("");
+  $("btn-again").disabled = false; // 뽑는 중에도 다시 섞기는 가능
+}
+$("pickfan").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b || b.classList.contains("used")) return;
+  const need = POSITIONS.length;
+  if (S.picked >= need) return;
+  b.classList.add("used");
+  SFX.pick();
+  dealOne(S.picked);
+  S.picked += 1;
+  if (S.picked < need) {
+    $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (${S.picked}/${need})`;
+  } else {
+    $("pick-note").textContent = "준비되었습니다. 카드를 한 장씩 눌러 뒤집으세요.";
+    setTimeout(() => { $("pick-area").hidden = true; }, 900);
+    $("btn-all").disabled = false;
+  }
+});
 
 // ---------- 뒤집기와 기록 ----------
 function reveal(i) {
   const el = $("spread").querySelector(`.card[data-i="${i}"]`); if (!el) return;
+  if (!el.classList.contains("open")) SFX.flip();
   el.classList.add("open");
   el.setAttribute("aria-label", (i + 1) + "번 " + POSITIONS[i].name + ": " + S.draw[i].ko + (S.draw[i].rev ? " 역방향" : ""));
   S.open.add(i);
