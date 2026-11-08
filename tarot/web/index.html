@@ -211,6 +211,13 @@ ol.positions .val.hidden { color: #7f6f93; }
 dialog {
   border: 0; padding: 0; background: transparent; max-width: min(92vw, 520px); max-height: 92vh;
 }
+.spread-guide {
+  margin: 0; padding: 10px 14px; font-size: 14px; color: var(--ink);
+  border: 1px solid var(--gold-soft); border-left: 3px solid var(--gold);
+  border-radius: 8px; background: rgba(216,180,106,.07);
+}
+.spread-guide::before { content: "🕯️ "; }
+
 .deck-row { display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 18px; align-items: start; }
 .deck-preview { margin: 0; display: grid; gap: 8px; justify-items: center; }
 .deck-preview img {
@@ -279,6 +286,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     <div class="step-title"><span class="num">III</span><h2>배열 고르기</h2></div>
     <p class="note" id="spread-note">고른 분야에 맞는 배열만 보여줍니다.</p>
     <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
+    <p class="spread-guide" id="spread-guide" aria-live="polite"></p>
 
     <div class="step-title"><span class="num">IV</span><h2>손님 정보</h2></div>
     <div class="guest">
@@ -391,7 +399,7 @@ SUITS.forEach(([s, sko, sen]) => RANK_EN.forEach((r, i) =>
 
 // 배열(스프레드) 정의. positions 의 x, y 는 카드 너비 단위 좌표
 const SPREADS = [
-  { id: "celtic", name: "켈틱 크로스", en: "Celtic Cross", desc: "전체 상황을 깊게", positions: [
+  { id: "celtic", guide: "하나의 상황이나 고민을 구체적으로 떠올리고 봐주세요.", name: "켈틱 크로스", en: "Celtic Cross", desc: "전체 상황을 깊게", positions: [
     { name: "현재",        meaning: "지금 손님이 놓여 있는 상황",          x: 1.45, y: 2.745 },
     { name: "장애",        meaning: "상황을 가로막거나 교차하는 힘",        x: 1.45, y: 2.745, rot: true },
     { name: "의식",        meaning: "손님이 바라는 것, 겉으로 드러난 목표",  x: 1.45, y: 0.915 },
@@ -403,7 +411,7 @@ const SPREADS = [
     { name: "희망과 두려움", meaning: "마음속 기대와 걱정",                 x: 4.15, y: 1.83 },
     { name: "결과",        meaning: "지금 흐름이 이어질 때의 결말",          x: 4.15, y: 0.0 },
   ]},
-  { id: "cup", name: "컵 오브 릴레이션십", en: "Cup of Relationship", desc: "두 사람의 관계를 성배 모양으로", positions: [
+  { id: "cup", guide: "특정 상대 한 사람을 마음에 두고 질문하세요. 상대와의 관계(연인 · 썸 · 재회 등)를 질문에 적으면 해석이 깊어집니다.", name: "컵 오브 릴레이션십", en: "Cup of Relationship", desc: "두 사람의 관계를 성배 모양으로", positions: [
     { name: "나의 마음",      meaning: "관계 속 나의 솔직한 현재 마음",    x: 0.0, y: 0 },
     { name: "상대의 마음",    meaning: "관계 속 상대의 솔직한 현재 마음",  x: 4.2, y: 0 },
     { name: "내가 보는 상대", meaning: "내 눈에 비친 상대의 모습",        x: 1.4, y: 0 },
@@ -416,15 +424,15 @@ const SPREADS = [
     { name: "흐름",          meaning: "가까운 미래에 다가올 흐름",        x: 2.1, y: 5.55 },
     { name: "최종 결과",      meaning: "이 관계가 향하는 곳",             x: 3.5, y: 5.55 },
   ]},
-  { id: "three", name: "3카드", en: "Three Cards", desc: "과거 · 현재 · 미래 한눈에", positions: [
+  { id: "three", guide: "궁금한 주제 하나를 떠올리면 과거 · 현재 · 미래의 흐름으로 보여줍니다.", name: "3카드", en: "Three Cards", desc: "과거 · 현재 · 미래 한눈에", positions: [
     { name: "과거", meaning: "지나온 흐름과 바탕",   x: 0.35, y: 0 },
     { name: "현재", meaning: "지금 놓여 있는 상황",  x: 1.7,  y: 0 },
     { name: "미래", meaning: "다가올 흐름",          x: 3.05, y: 0 },
   ]},
-  { id: "today", name: "오늘의 카드", en: "Card of the Day", desc: "하루를 비추는 한 장", positions: [
+  { id: "today", guide: "질문 없이 뽑아도 좋습니다. 오늘 하루에 마음을 모아 주세요.", name: "오늘의 카드", en: "Card of the Day", desc: "하루를 비추는 한 장", positions: [
     { name: "오늘의 카드", meaning: "오늘 하루를 비추는 기운", x: 0, y: 0 },
   ]},
-  { id: "horseshoe", name: "말굽", en: "Horseshoe", desc: "고민 해결의 고전, 일곱 자리", positions: [
+  { id: "horseshoe", guide: "풀고 싶은 고민 하나를 분명하게 정하고 시작하세요.", name: "말굽", en: "Horseshoe", desc: "고민 해결의 고전, 일곱 자리", positions: [
     { name: "과거",        meaning: "이 고민이 지나온 길",         x: 0.0, y: 5.55 },
     { name: "현재",        meaning: "지금의 상황",                 x: 0.7, y: 3.7 },
     { name: "숨은 영향",   meaning: "겉으로 드러나지 않은 힘",     x: 1.4, y: 1.85 },
@@ -433,7 +441,7 @@ const SPREADS = [
     { name: "조언",        meaning: "지금 취하면 좋은 태도",       x: 3.5, y: 3.7 },
     { name: "결과",        meaning: "이대로 흘러갔을 때의 끝",     x: 4.2, y: 5.55 },
   ]},
-  { id: "career", name: "진로 · 커리어", en: "Career Path", desc: "일과 커리어 점검, 여섯 자리", positions: [
+  { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "진로 · 커리어", en: "Career Path", desc: "일과 커리어 점검, 여섯 자리", positions: [
     { name: "현재 위치", meaning: "일에서 지금 내가 서 있는 자리", x: 0.35, y: 1.85 },
     { name: "나의 강점", meaning: "믿고 쓸 수 있는 능력",          x: 1.7,  y: 1.85 },
     { name: "걸림돌",    meaning: "발목을 잡고 있는 것",           x: 3.05, y: 1.85 },
@@ -441,7 +449,7 @@ const SPREADS = [
     { name: "조언",      meaning: "지금 취해야 할 전략",           x: 1.7,  y: 0 },
     { name: "전망",      meaning: "이 길이 향하는 흐름",           x: 3.05, y: 0 },
   ]},
-  { id: "choice", name: "양자택일", en: "Two Paths", desc: "A와 B, 두 갈림길 비교", positions: [
+  { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "양자택일", en: "Two Paths", desc: "A와 B, 두 갈림길 비교", positions: [
     { name: "현재 상황",  meaning: "선택 앞에 선 지금의 나",      x: 2.1, y: 5.55 },
     { name: "A의 흐름",   meaning: "A를 고르면 펼쳐지는 초반",    x: 1.4, y: 3.7 },
     { name: "B의 흐름",   meaning: "B를 고르면 펼쳐지는 초반",    x: 2.8, y: 3.7 },
@@ -450,7 +458,7 @@ const SPREADS = [
     { name: "A의 결과",   meaning: "A를 선택했을 때의 끝",        x: 0.0, y: 0 },
     { name: "B의 결과",   meaning: "B를 선택했을 때의 끝",        x: 4.2, y: 0 },
   ]},
-  { id: "year", name: "1년 운세", en: "Year Ahead", desc: "열두 달의 흐름 + 한 해 총평", positions: [
+  { id: "year", guide: "언제부터의 열두 달인지(1월부터 또는 이번 달부터) 정하고 봐주세요.", name: "1년 운세", en: "Year Ahead", desc: "열두 달의 흐름 + 한 해 총평", positions: [
     { name: "1월",  meaning: "1월의 흐름",  x: 2.10, y: 0 },
     { name: "2월",  meaning: "2월의 흐름",  x: 3.15, y: 0.50 },
     { name: "3월",  meaning: "3월의 흐름",  x: 3.92, y: 1.85 },
@@ -465,7 +473,16 @@ const SPREADS = [
     { name: "12월", meaning: "12월의 흐름", x: 1.05, y: 0.50 },
     { name: "한 해 총평", meaning: "일 년 전체를 관통하는 기운", x: 2.10, y: 3.70 },
   ]},
-  { id: "houses", name: "12하우스", en: "12 Houses", desc: "점성술 하우스로 삶의 열두 영역 점검", positions: [
+  { id: "paw", guide: "함께 사는 아이(강아지 · 고양이) 한 마리를 떠올리며 봐주세요. 질문 칸에 아이 이름을 적으면 좋습니다.", name: "발바닥", en: "Paw Print", desc: "반려동물의 마음을 발자국 모양으로", positions: [
+    { name: "지금 기분",     meaning: "아이의 요즘 마음 상태",            x: 0.0, y: 0.55 },
+    { name: "몸의 기운",     meaning: "컨디션과 활력의 흐름",             x: 1.4, y: 0 },
+    { name: "하고 싶은 말",  meaning: "보호자에게 전하고 싶은 것",        x: 2.8, y: 0 },
+    { name: "좋아하는 것",   meaning: "요즘 아이를 기쁘게 하는 것",       x: 4.2, y: 0.55 },
+    { name: "바라는 것",     meaning: "아이가 원하는 변화",               x: 0.9, y: 2.35 },
+    { name: "우리 사이",     meaning: "보호자와 아이의 유대",             x: 2.1, y: 2.5 },
+    { name: "보호자에게",    meaning: "아이를 위해 해주면 좋은 일",       x: 3.3, y: 2.35 },
+  ]},
+  { id: "houses", guide: "특정 사건보다 삶 전체를 점검하는 배열입니다. 질문은 비워두어도 됩니다.", name: "12하우스", en: "12 Houses", desc: "점성술 하우스로 삶의 열두 영역 점검", positions: [
     { name: "1하우스 · 자아",   meaning: "나 자신, 첫인상과 태도",        x: 0.00, y: 3.70 },
     { name: "2하우스 · 재물",   meaning: "돈, 소유, 가치관",              x: 0.28, y: 5.55 },
     { name: "3하우스 · 소통",   meaning: "대화, 배움, 가까운 이들",       x: 1.05, y: 6.90 },
@@ -479,7 +496,7 @@ const SPREADS = [
     { name: "11하우스 · 공동체", meaning: "친구, 모임, 바라는 미래",      x: 1.05, y: 0.50 },
     { name: "12하우스 · 내면",  meaning: "무의식, 비밀, 홀로의 시간",     x: 0.28, y: 1.85 },
   ]},
-  { id: "tree", name: "생명의 나무", en: "Tree of Life", desc: "카발라 세피로트 열 자리", positions: [
+  { id: "tree", guide: "구체적 사건보다 내면의 상태와 큰 방향을 묻는 배열입니다.", name: "생명의 나무", en: "Tree of Life", desc: "카발라 세피로트 열 자리", positions: [
     { name: "케테르 · 왕관",   meaning: "가장 높은 이상, 영적 본질",    x: 2.1, y: 0 },
     { name: "호크마 · 지혜",   meaning: "밀고 나가는 힘, 주도성",       x: 3.6, y: 1.0 },
     { name: "비나 · 이해",     meaning: "받아들이는 힘, 인내와 제약",   x: 0.6, y: 1.0 },
@@ -536,8 +553,9 @@ $("decks").addEventListener("click", (e) => {
 const CATEGORIES = [
   { id: "today",  name: "오늘의 운세",  desc: "가볍게 하루 보기",      spreads: ["today", "three"] },
   { id: "love",   name: "연애 · 관계",  desc: "사랑, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three"] },
-  { id: "choice", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
-  { id: "career", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three"] },
+  { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
+  { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three"] },
+  { id: "pet",    name: "반려동물",     desc: "아이의 마음 읽기",      spreads: ["paw", "three"] },
   { id: "worry",  name: "고민 해결",    desc: "막힌 문제 풀기",        spreads: ["horseshoe", "celtic", "three"] },
   { id: "year",   name: "한 해 운세",   desc: "열두 달의 흐름",        spreads: ["year", "houses"] },
   { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["houses", "tree", "celtic"] },
@@ -567,6 +585,8 @@ function renderSpreads() {
       <span class="grp">${n === 0 ? "이 분야의 추천 배열" : s.desc}</span>
     </button>`;
   }).join("");
+  // 선택한 배열에 필요한 준비(질문 요령)를 알려준다
+  $("spread-guide").textContent = SPREADS.find(x => x.id === S.spread).guide || "";
 }
 $("spreads").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
