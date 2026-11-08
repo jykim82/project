@@ -258,21 +258,24 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
     <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여주고 '원본 그림' 표시를 붙입니다.</p>
 
-    <div class="step-title"><span class="num">II</span><h2>손님 정보</h2></div>
+    <div class="step-title"><span class="num">II</span><h2>분야 고르기</h2></div>
+    <div class="decks cats" id="cats" role="group" aria-label="상담 분야"></div>
+
+    <div class="step-title"><span class="num">III</span><h2>배열 고르기</h2></div>
+    <p class="note" id="spread-note">고른 분야에 맞는 배열만 보여줍니다.</p>
+    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
+
+    <div class="step-title"><span class="num">IV</span><h2>손님 정보</h2></div>
     <div class="guest">
       <div class="field">
         <label for="guest-name">손님 이름</label>
         <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤" value="지윤">
       </div>
       <div class="field">
-        <label for="guest-q">질문</label>
-        <input type="text" id="guest-q" maxlength="80" placeholder="예: 올해 이직을 해도 될까요?" value="올해 새로운 일을 시작해도 될까요?">
+        <label for="guest-q">질문 (선택)</label>
+        <input type="text" id="guest-q" maxlength="80" placeholder="비워두면 전체 흐름을 봅니다">
       </div>
     </div>
-
-    <div class="step-title"><span class="num">III</span><h2>배열 고르기</h2></div>
-    <p class="note" id="spread-note">질문과 어울리는 배열만 보여줍니다. 질문을 바꾸면 목록이 달라집니다.</p>
-    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
     <div class="row">
       <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
       <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
@@ -477,7 +480,7 @@ const SPREADS = [
 let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "cat", spread: "celtic", draw: [], open: new Set(), active: null, fallback: new Set() };
+const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set() };
 const $ = (id) => document.getElementById(id);
 
 function backHTML(deck) {
@@ -499,45 +502,47 @@ $("decks").addEventListener("click", (e) => {
   S.deck = b.dataset.deck; renderDecks();
 });
 
-// ---------- 배열 선택 ----------
-// 질문 내용에 따라 어울리는 배열만 남긴다. 범용 배열(켈틱/3카드/말굽)은 항상 보여준다.
-const GENERAL_SPREADS = ["celtic", "three", "horseshoe"];
-const SPREAD_RULES = [
-  { id: "today",   re: /오늘|하루/ },
-  { id: "cup",     re: /연애|사랑|썸|애인|남자\s*친구|여자\s*친구|남친|여친|그\s*사람|짝사랑|재회|이별|헤어|결혼|궁합|고백|소개팅|배우자|커플|관계/ },
-  { id: "choice",  re: /둘\s*중|선택|고를|고르|아니면|말까|말지|할지|vs|중에\s*뭐|어느\s*쪽|갈림길/ },
-  { id: "career",  re: /이직|취업|직장|회사|사업|창업|커리어|진로|승진|면접|퇴사|합격|시험|일이|직업/ },
-  { id: "year",    re: /올해|내년|[일1]\s*년|한\s*해|연간|새해|열두\s*달|월별/ },
-  { id: "houses",  re: /인생|삶\s*전반|전체|종합|전반적/ },
-  { id: "tree",    re: /인생|삶\s*전반|전체|종합|전반적|영적|내면/ },
+// ---------- 분야와 배열 선택 ----------
+// 분야마다 어울리는 배열 목록. 첫 번째가 추천 배열(★)이고 그 배열이 기본 선택된다.
+const CATEGORIES = [
+  { id: "today",  name: "오늘의 운세",  desc: "가볍게 하루 보기",      spreads: ["today", "three"] },
+  { id: "love",   name: "연애 · 관계",  desc: "사랑, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three"] },
+  { id: "choice", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
+  { id: "career", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three"] },
+  { id: "worry",  name: "고민 해결",    desc: "막힌 문제 풀기",        spreads: ["horseshoe", "celtic", "three"] },
+  { id: "year",   name: "한 해 운세",   desc: "열두 달의 흐름",        spreads: ["year", "houses"] },
+  { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["houses", "tree", "celtic"] },
 ];
-function allowedSpreads() {
-  const q = ($("guest-q").value || "").trim();
-  if (!q) return SPREADS.map(s => s.id);
-  const ids = new Set(GENERAL_SPREADS);
-  SPREAD_RULES.forEach(r => { if (r.re.test(q)) ids.add(r.id); });
-  return SPREADS.map(s => s.id).filter(id => ids.has(id));
+function cat() { return CATEGORIES.find(c => c.id === S.cat); }
+function renderCats() {
+  $("cats").innerHTML = CATEGORIES.map(c => `
+    <button type="button" class="deck-opt" data-cat="${c.id}" aria-pressed="${c.id === S.cat}">
+      <span class="name">${c.name}</span>
+      <span class="grp">${c.desc}</span>
+    </button>`).join("");
 }
+$("cats").addEventListener("click", (e) => {
+  const b = e.target.closest(".deck-opt"); if (!b) return;
+  S.cat = b.dataset.cat;
+  S.spread = cat().spreads[0]; // 분야를 바꾸면 추천 배열을 기본 선택
+  renderCats(); renderSpreads();
+});
 function renderSpreads() {
-  const allowed = allowedSpreads();
-  if (!allowed.includes(S.spread)) S.spread = "celtic";
-  $("spreads").innerHTML = SPREADS.filter(s => allowed.includes(s.id)).map(s => {
-    const rec = !GENERAL_SPREADS.includes(s.id) && allowed.length < SPREADS.length;
+  const ids = cat().spreads;
+  if (!ids.includes(S.spread)) S.spread = ids[0];
+  $("spreads").innerHTML = ids.map((id, n) => {
+    const s = SPREADS.find(x => x.id === id);
     return `
     <button type="button" class="deck-opt" data-spread="${s.id}" aria-pressed="${s.id === S.spread}">
-      <span class="name">${s.name} · ${s.positions.length}장${rec ? " ★" : ""}</span>
-      <span class="grp">${rec ? "질문과 어울리는 배열" : s.desc}</span>
+      <span class="name">${s.name} · ${s.positions.length}장${n === 0 ? " ★" : ""}</span>
+      <span class="grp">${n === 0 ? "이 분야의 추천 배열" : s.desc}</span>
     </button>`;
   }).join("");
-  $("spread-note").textContent = allowed.length === SPREADS.length
-    ? "질문을 적으면 어울리는 배열만 추려서 보여줍니다."
-    : "질문과 어울리는 배열만 보여줍니다. 질문을 바꾸면 목록이 달라집니다.";
 }
 $("spreads").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
   S.spread = b.dataset.spread; renderSpreads();
 });
-$("guest-q").addEventListener("input", renderSpreads);
 
 // ---------- 셔플 ----------
 function rand(n) { // 0..n-1 균등 난수
@@ -690,9 +695,10 @@ $("btn-all").addEventListener("click", () => {
   setActive(S.active === null ? 0 : S.active);
 });
 $("btn-back").addEventListener("click", () => {
-  $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderSpreads();
+  $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderCats(); renderSpreads();
 });
 
 renderDecks();
+renderCats();
 renderSpreads();
 </script>
