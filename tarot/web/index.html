@@ -76,6 +76,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%;
 }
 .field input[type=text]::placeholder { color: #7f6f93; }
+.field select {
+  font: inherit; color: var(--ink); background: var(--table-deep);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%;
+}
+.extras { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.extras:empty { display: none; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
 .check input { accent-color: var(--gold); width: 16px; height: 16px; }
@@ -299,6 +305,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         <input type="text" id="guest-q" maxlength="80" placeholder="비워두면 전체 흐름을 봅니다">
       </div>
     </div>
+    <div class="guest extras" id="extras"></div>
     <div class="row">
       <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
       <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
@@ -572,8 +579,48 @@ $("cats").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
   S.cat = b.dataset.cat;
   S.spread = cat().spreads[0]; // 분야를 바꾸면 추천 배열을 기본 선택
-  renderCats(); renderSpreads();
+  renderCats(); renderSpreads(); renderExtras();
 });
+
+// ---------- 분야별 추가 질문 (해석의 분기가 되는 정보) ----------
+const EXTRA_FIELDS = {
+  love: [
+    { id: "x-pname", label: "상대 이름 · 호칭", ph: "예: 민수, 회사 그분" },
+    { id: "x-page",  label: "상대 나이 (선택)", ph: "예: 29" },
+    { id: "x-prel",  label: "지금 관계", type: "select",
+      options: ["썸 · 알아가는 중", "짝사랑", "연인", "권태기", "이별 후 재회 희망", "부부", "기타"] },
+  ],
+  choice: [
+    { id: "x-ca", label: "선택지 A", ph: "예: 이직한다" },
+    { id: "x-cb", label: "선택지 B", ph: "예: 지금 회사에 남는다" },
+  ],
+  career: [
+    { id: "x-wnow", label: "현재 상태", type: "select",
+      options: ["재직 중", "구직 중", "사업 · 프리랜서", "준비 · 학업 중"] },
+    { id: "x-wtopic", label: "고민 종류", type: "select",
+      options: ["이직 · 퇴사", "취업 · 합격", "창업 · 확장", "승진 · 평가", "적성 · 방향"] },
+  ],
+  pet: [
+    { id: "x-petname", label: "아이 이름", ph: "예: 보리" },
+    { id: "x-petkind", label: "종류", type: "select", options: ["고양이", "강아지", "기타"] },
+    { id: "x-petage",  label: "나이 (선택)", ph: "예: 3살" },
+  ],
+  year: [
+    { id: "x-ystart", label: "시작 시점", type: "select",
+      options: ["이번 달부터 열두 달", "1월부터 12월"] },
+  ],
+};
+function renderExtras() {
+  const fields = EXTRA_FIELDS[S.cat] || [];
+  $("extras").innerHTML = fields.map(f => `
+    <div class="field">
+      <label for="${f.id}">${f.label}</label>
+      ${f.type === "select"
+        ? `<select id="${f.id}">${f.options.map(o => `<option>${o}</option>`).join("")}</select>`
+        : `<input type="text" id="${f.id}" maxlength="30" placeholder="${f.ph || ""}">`}
+    </div>`).join("");
+}
+function extraVal(id) { const el = $(id); return el ? el.value.trim() : ""; }
 function renderSpreads() {
   const ids = cat().spreads;
   if (!ids.includes(S.spread)) S.spread = ids[0];
@@ -615,11 +662,42 @@ async function startReading() {
   const sp = SPREADS.find(s => s.id === S.spread);
   $("who-title").textContent = name + "님의 " + sp.name + " · " + deck.name;
   document.querySelector(".eyebrow").textContent = sp.en + " · " + sp.positions.length + " Cards";
-  $("who-q").textContent = q ? "질문: " + q : "질문 없이 전체 흐름을 봅니다.";
+
+  // 분야별 추가 정보 -> 머리글 요약
+  const info = [];
+  if (S.cat === "love") {
+    const n = extraVal("x-pname"), a = extraVal("x-page"), r = extraVal("x-prel");
+    if (n) info.push("상대: " + n + (a ? "(" + a + ")" : ""));
+    if (r) info.push(r);
+  } else if (S.cat === "pet") {
+    const n = extraVal("x-petname"), k = extraVal("x-petkind"), a = extraVal("x-petage");
+    if (n) info.push("아이: " + n + " (" + k + (a ? ", " + a : "") + ")");
+  } else if (S.cat === "career") {
+    info.push(extraVal("x-wnow"), extraVal("x-wtopic"));
+  } else if (S.cat === "choice") {
+    const ca = extraVal("x-ca"), cb = extraVal("x-cb");
+    if (ca && cb) info.push("A: " + ca, "B: " + cb);
+  }
+  S.info = info.filter(Boolean).join(" · ");
+  $("who-q").textContent = [q ? "질문: " + q : "질문 없이 전체 흐름을 봅니다.", S.info]
+    .filter(Boolean).join("  ·  ");
   $("setup").hidden = true; $("table").hidden = false;
 
   const withRev = $("opt-rev").checked;
-  POSITIONS = SPREADS.find(s => s.id === S.spread).positions;
+  POSITIONS = SPREADS.find(s => s.id === S.spread).positions.map(p => ({ ...p }));
+  // 입력 정보로 자리 이름을 바꿔 몰입도를 높인다
+  if (S.spread === "choice") {
+    const cut = (t) => "‘" + (t.length > 8 ? t.slice(0, 8) + "…" : t) + "’";
+    const ca = extraVal("x-ca"), cb = extraVal("x-cb");
+    if (ca) POSITIONS.forEach(p => { p.name = p.name.replace(/^A(?=의)/, cut(ca)); p.meaning = p.meaning.replace(/^A(?=를)/, cut(ca)).replace(/^A길/, cut(ca) + " 길"); });
+    if (cb) POSITIONS.forEach(p => { p.name = p.name.replace(/^B(?=의)/, cut(cb)); p.meaning = p.meaning.replace(/^B(?=를)/, cut(cb)).replace(/^B길/, cut(cb) + " 길"); });
+  }
+  if (S.spread === "year" && extraVal("x-ystart").startsWith("이번 달")) {
+    const m0 = new Date().getMonth(); // 이번 달부터 열두 달로 자리 이름을 바꾼다
+    POSITIONS.forEach((p, i) => {
+      if (i < 12) { const m = ((m0 + i) % 12) + 1; p.name = m + "월"; p.meaning = m + "월의 흐름"; }
+    });
+  }
   S.draw = shuffle(CARDS).slice(0, POSITIONS.length).map(c => ({ ...c, rev: withRev && rand(2) === 1 }));
   S.open = new Set(); S.active = null; S.fallback = new Set();
 
@@ -751,4 +829,5 @@ renderDecks();
 renderPreview();
 renderCats();
 renderSpreads();
+renderExtras();
 </script>
