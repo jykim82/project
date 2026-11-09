@@ -51,6 +51,21 @@ header { display: grid; gap: 6px; position: relative; }
 .sound-ctrl button.off { opacity: .5; }
 .sound-ctrl button:hover, .sound-ctrl select:hover { color: var(--gold); border-color: var(--gold-soft); }
 
+/* ---------- 지난 리딩 ---------- */
+#history-sec { display: grid; gap: 12px; }
+.history { display: grid; gap: 8px; }
+.history .h-item {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+  background: transparent; text-align: left;
+}
+.history .h-item:hover { border-color: var(--gold-soft); }
+.history .h-open { flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; display: grid; gap: 2px; }
+.history .h-top { font-size: 14.5px; font-weight: 700; }
+.history .h-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history .h-del { background: none; border: 0; color: var(--muted); font-size: 15px; padding: 4px 6px; }
+.history .h-del:hover { color: #e3a9b7; }
+
 /* ---------- 카드 뽑기 ---------- */
 .pick-area { display: grid; gap: 10px; margin-bottom: 18px; }
 .pick-note { margin: 0; text-align: center; color: var(--gold); font-size: 14.5px; letter-spacing: .02em; }
@@ -287,6 +302,28 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   .card, .card .inner, .deck-opt { transition: none; }
   .pile.shuffling .c { animation: none !important; }
 }
+
+/* ---------- PDF 저장 (브라우저 인쇄 -> PDF) ---------- */
+#print-view { display: none; }
+@media print {
+  body > *:not(#print-view) { display: none !important; }
+  body { background: #fff !important; color: #222; font-family: var(--body); }
+  #print-view { display: block; padding: 8mm 4mm; }
+  #print-view h1 { font-family: var(--display); font-size: 22px; margin: 0 0 2mm; color: #3a2b55; }
+  #print-view .p-meta { color: #666; font-size: 12.5px; margin: 0 0 6mm; }
+  #print-view .p-card {
+    display: flex; gap: 6mm; align-items: flex-start;
+    border-bottom: 1px solid #ddd; padding: 4mm 0; break-inside: avoid;
+  }
+  #print-view .p-card img { width: 26mm; border-radius: 2mm; border: 1px solid #ccc; }
+  #print-view .p-card img.rev { transform: rotate(180deg); }
+  #print-view .p-pos { font-size: 11.5px; color: #8a6d2f; letter-spacing: .06em; margin: 0 0 1mm; }
+  #print-view .p-name { font-size: 15.5px; font-weight: 700; margin: 0 0 1mm; }
+  #print-view .p-dir { font-size: 11.5px; color: #946; margin-left: 6px; font-weight: 400; }
+  #print-view .p-sense { font-size: 12.5px; margin: 0 0 1mm; }
+  #print-view .p-slot { font-size: 11.5px; color: #777; margin: 0; }
+  #print-view .p-foot { margin-top: 6mm; font-size: 11px; color: #999; text-align: center; }
+}
 </style>
 
 <div class="wrap">
@@ -341,6 +378,13 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
       <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
     </div>
+
+    <div id="history-sec" hidden>
+      <div class="step-title"><span class="num">✦</span><h2>지난 리딩</h2></div>
+      <p class="note">이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 함께 사라집니다.</p>
+      <div class="history" id="history"></div>
+      <button type="button" class="btn ghost" id="btn-history-clear" style="justify-self:start; padding:7px 14px; font-size:13px;">기록 전체 삭제</button>
+    </div>
   </section>
 
   <!-- 2단계: 리딩 테이블 -->
@@ -353,6 +397,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <div class="actions">
         <button class="btn ghost" id="btn-all" type="button">모두 뒤집기</button>
         <button class="btn ghost" id="btn-again" type="button">다시 섞기</button>
+        <button class="btn ghost" id="btn-pdf" type="button">PDF 저장</button>
         <button class="btn ghost" id="btn-back" type="button">덱 바꾸기</button>
       </div>
     </div>
@@ -369,6 +414,9 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     </aside>
   </section>
 </div>
+
+<!-- PDF 저장(인쇄)용 요약 - 화면에는 보이지 않음 -->
+<div id="print-view" aria-hidden="true"></div>
 
 <footer class="credits-footer">
   <button type="button" class="credits-link" id="btn-credits">오픈소스 라이선스 · 카드 이미지 출처</button>
@@ -959,7 +1007,7 @@ function dealOne(i) {
   spread.appendChild(b);
   void b.offsetWidth;
   b.classList.remove("dealing");
-  SFX.deal();
+  if (!S.replayMute) SFX.deal();
 }
 
 function startPicking() {
@@ -986,13 +1034,119 @@ $("pickfan").addEventListener("click", (e) => {
     $("pick-note").textContent = "준비되었습니다. 카드를 한 장씩 눌러 뒤집으세요.";
     setTimeout(() => { $("pick-area").hidden = true; }, 900);
     $("btn-all").disabled = false;
+    saveReading(); // 카드가 확정되는 순간 이 브라우저에 기록
   }
 });
+
+// ---------- 지난 리딩 (이 브라우저의 localStorage 에만 저장) ----------
+const HIST_KEY = "tarot-history";
+function histAll() {
+  try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch (e) { return []; }
+}
+function histsave(list) { localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, 50))); }
+function saveReading() {
+  const sp = SPREADS.find(s => s.id === S.spread);
+  const list = histAll();
+  list.unshift({
+    t: Date.now(), deck: S.deck, spread: S.spread, spreadName: sp.name, en: sp.en,
+    name: $("guest-name").value.trim(), q: $("guest-q").value.trim(), info: S.info,
+    positions: POSITIONS.map(p => ({ ...p })),
+    draw: S.draw.map(c => ({ ...c })),
+  });
+  histsaveAndRender(list);
+}
+function histsaveAndRender(list) { histsave(list); renderHistory(); }
+function renderHistory() {
+  const list = histAll();
+  $("history-sec").hidden = list.length === 0;
+  $("history").innerHTML = list.map((h, i) => {
+    const d = new Date(h.t);
+    const when = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const deck = DECKS.find(x => x.id === h.deck);
+    const sub = [h.q, h.info].filter(Boolean).join(" · ") || "질문 없음";
+    return `<div class="h-item">
+      <button type="button" class="h-open" data-i="${i}">
+        <span class="h-top">${when} · ${h.spreadName} · ${deck ? deck.name : h.deck}</span>
+        <span class="h-sub">${sub}</span>
+      </button>
+      <button type="button" class="h-del" data-del="${i}" aria-label="이 기록 삭제">✕</button>
+    </div>`;
+  }).join("");
+}
+$("history").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) {
+    const list = histAll(); list.splice(+del.dataset.del, 1); histsaveAndRender(list);
+    return;
+  }
+  const open = e.target.closest(".h-open");
+  if (open) openReading(histAll()[+open.dataset.i]);
+});
+$("btn-history-clear").addEventListener("click", () => {
+  if (confirm("지난 리딩 기록을 모두 삭제할까요?")) histsaveAndRender([]);
+});
+
+// ---------- PDF 저장 (브라우저 인쇄 기능 이용 - 서버 전송 없음) ----------
+$("btn-pdf").addEventListener("click", () => {
+  if (!S.draw.length) return;
+  const sp = SPREADS.find(s => s.id === S.spread);
+  const d = new Date();
+  const when = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+  const imgSrc = (i) => {
+    const el = $("spread").querySelector(`.card[data-i="${i}"] img`);
+    return el ? el.src : srcFor(S.deck, S.draw[i].id);
+  };
+  $("print-view").innerHTML = `
+    <h1>${$("who-title").textContent}</h1>
+    <p class="p-meta">${when} · ${$("who-q").textContent}</p>
+    ${S.draw.map((c, i) => `
+      <div class="p-card">
+        <img src="${imgSrc(i)}" class="${c.rev ? "rev" : ""}" alt="">
+        <div>
+          <p class="p-pos">${toRoman(i + 1)} · ${POSITIONS[i].name}</p>
+          <p class="p-name">${c.ko} <span class="en">${c.en}</span><span class="p-dir">${c.rev ? "역방향" : "정방향"}</span></p>
+          <p class="p-sense">${c.rev ? c.rev_m : c.up}</p>
+          <p class="p-slot">자리 의미 · ${POSITIONS[i].meaning}</p>
+        </div>
+      </div>`).join("")}
+    <p class="p-foot">Tarot of Cats &amp; Dogs — 이 문서는 내 기기에서만 만들어졌으며 서버에 저장되지 않습니다.</p>`;
+  window.print();
+});
+
+// 저장된 리딩을 다시 펼쳐 보여준다 (모두 공개 상태로)
+function openReading(h) {
+  if (!h) return;
+  S.deck = h.deck; S.spread = h.spread;
+  POSITIONS = h.positions.map(p => ({ ...p }));
+  S.draw = h.draw.map(c => ({ ...c }));
+  S.open = new Set(); S.active = null; S.fallback = new Set(); S.picked = POSITIONS.length;
+  const deck = DECKS.find(x => x.id === h.deck) || DECKS[0];
+  $("who-title").textContent = (h.name || "손님") + "님의 " + h.spreadName + " · " + deck.name;
+  document.querySelector(".eyebrow").textContent = h.en + " · " + POSITIONS.length + " Cards";
+  S.info = h.info || "";
+  $("who-q").textContent = [h.q ? "질문: " + h.q : "지난 리딩 다시 보기", S.info].filter(Boolean).join("  ·  ");
+  $("setup").hidden = true; $("table").hidden = false;
+  $("pick-area").hidden = true;
+
+  const spread = $("spread");
+  spread.className = "spread deck-" + S.deck;
+  const maxX = Math.max(...POSITIONS.map(p => p.x)), maxY = Math.max(...POSITIONS.map(p => p.y));
+  spread.style.width = `calc(var(--w) * ${(maxX + 1).toFixed(2)})`;
+  spread.style.height = `calc(var(--w) * ${(maxY + 1.78).toFixed(2)})`;
+  spread.innerHTML = POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("");
+  S.replayMute = true;
+  for (let i = 0; i < POSITIONS.length; i++) { dealOne(i); reveal(i); }
+  S.replayMute = false;
+  renderLog();
+  setActive(0);
+  $("btn-all").disabled = true; $("btn-again").disabled = false;
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
 
 // ---------- 뒤집기와 기록 ----------
 function reveal(i) {
   const el = $("spread").querySelector(`.card[data-i="${i}"]`); if (!el) return;
-  if (!el.classList.contains("open")) SFX.flip();
+  if (!el.classList.contains("open") && !S.replayMute) SFX.flip();
   el.classList.add("open");
   el.setAttribute("aria-label", (i + 1) + "번 " + POSITIONS[i].name + ": " + S.draw[i].ko + (S.draw[i].rev ? " 역방향" : ""));
   S.open.add(i);
@@ -1079,4 +1233,5 @@ renderPreview();
 renderCats();
 renderSpreads();
 renderExtras();
+renderHistory();
 </script>
