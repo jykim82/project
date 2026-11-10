@@ -770,12 +770,19 @@ const SFX = (() => {
 // ---------- 배경음악: 클래식(퍼블릭 도메인/CC 녹음) + 생성 앰비언트 ----------
 const BGM = (() => {
   let ctx = null, master = null, timer = null, mode = "off", audioEl = null;
-  // 무드별 설정: 음계(주파수), 간격, 음색, 볼륨
+  // 포근한 코드 진행(C - Am - F - G)을 순환 - 불안한 마음을 가라앉히는 익숙하고 부드러운 화성
+  const CHORDS = [
+    [130.81, 164.81, 196.00, 246.94],  // Cmaj7
+    [110.00, 130.81, 164.81, 196.00],  // Am7
+    [174.61, 220.00, 261.63, 329.63],  // Fmaj7
+    [196.00, 246.94, 293.66, 329.63],  // G6
+  ];
   const MOODS = {
-    calm:  { notes: [110, 130.8, 146.8, 164.8, 196, 220],        wave: "sine",     gap: [3.5, 6],  vol: 0.05, len: 9,  chord: 2 },
-    warm:  { notes: [130.8, 164.8, 196, 220, 261.6, 329.6],      wave: "triangle", gap: [2.5, 5],  vol: 0.045, len: 8, chord: 3 },
-    quiet: { notes: [146.8, 174.6, 220, 293.7, 349.2],           wave: "sine",     gap: [6, 11],   vol: 0.035, len: 12, chord: 1 },
+    calm:  { wave: "sine",     vol: 0.045, dur: 13, voices: 3, melody: 0.35, melVol: 0.035 },
+    warm:  { wave: "triangle", vol: 0.04,  dur: 11, voices: 4, melody: 0.65, melVol: 0.05 },
+    quiet: { wave: "sine",     vol: 0.03,  dur: 16, voices: 2, melody: 0.2,  melVol: 0.03 },
   };
+  let chordIdx = 0;
   function ac() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -784,29 +791,52 @@ const BGM = (() => {
     if (ctx.state === "suspended") ctx.resume();
     return ctx;
   }
-  function pad(freq, m) {
+  function pad(freq, m, dur) {
     const c = ac(), t = c.currentTime;
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(m.vol, t + m.len * 0.35);   // 느린 어택
-    g.gain.exponentialRampToValueAtTime(0.0001, t + m.len);          // 느린 릴리즈
-    const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 900;
+    g.gain.exponentialRampToValueAtTime(m.vol, t + dur * 0.35);     // 느린 어택
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);            // 느린 릴리즈
+    const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 850;
     g.connect(f); f.connect(master);
-    [0, 2.5, -2.5].slice(0, 2).forEach(det => {                      // 살짝 디튠된 2개 오실레이터
+    [1.8, -1.8].forEach(det => {                                     // 살짝 디튠된 2개 오실레이터
       const o = c.createOscillator(); o.type = m.wave;
       o.frequency.value = freq; o.detune.value = det;
-      o.connect(g); o.start(t); o.stop(t + m.len);
+      o.connect(g); o.start(t); o.stop(t + dur);
     });
   }
+  // 멜로디 음: 종처럼 울리고 길게 사라지는 한 음
+  function bell(freq, vol) {
+    const c = ac(), t = c.currentTime;
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 5);
+    g.connect(master);
+    const o = c.createOscillator(); o.type = "sine"; o.frequency.value = freq;
+    o.connect(g); o.start(t); o.stop(t + 5);
+    const g2 = c.createGain();                                       // 옥타브 위 배음을 살짝
+    g2.gain.setValueAtTime(vol * 0.2, t);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 2.2);
+    g2.connect(master);
+    const o2 = c.createOscillator(); o2.type = "sine"; o2.frequency.value = freq * 2;
+    o2.connect(g2); o2.start(t); o2.stop(t + 2.2);
+  }
   function step() {
-    if (mode === "off") return;
+    if (mode === "off" || mode.startsWith("t-")) return;
     const m = MOODS[mode];
-    const base = m.notes[Math.floor(Math.random() * m.notes.length)];
-    pad(base, m);                                                    // 근음
-    if (m.chord >= 2 && Math.random() < 0.8) pad(base * 1.5, m);     // 5도
-    if (m.chord >= 3 && Math.random() < 0.6) pad(base * 2, m);       // 옥타브
-    const [a, b] = m.gap;
-    timer = setTimeout(step, (a + Math.random() * (b - a)) * 1000);
+    const chord = CHORDS[chordIdx % CHORDS.length]; chordIdx++;
+    chord.slice(0, m.voices).forEach((f, i) => pad(f, m, m.dur + i * 0.4));
+    if (Math.random() < m.melody) {                                  // 코드 구성음을 한 옥타브 위에서 드문드문
+      const n = 1 + Math.floor(Math.random() * 2);
+      for (let k = 0; k < n; k++) {
+        const f = chord[1 + Math.floor(Math.random() * (chord.length - 1))] * 2;
+        setTimeout(() => {
+          if (mode !== "off" && !mode.startsWith("t-")) bell(f, m.melVol);
+        }, (2 + Math.random() * (m.dur - 6)) * 1000);
+      }
+    }
+    timer = setTimeout(step, (m.dur - 3) * 1000);                    // 코드끼리 자연스럽게 크로스페이드
   }
   return {
     set(next) {
