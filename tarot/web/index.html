@@ -170,10 +170,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: absolute; inset: 0; border-radius: calc(var(--w) * .07);
   box-shadow: 0 4px 10px rgba(0,0,0,.45);
 }
-.pile.shuffling .c:nth-child(odd) { animation: riffle-l .38s ease-in-out infinite; }
-.pile.shuffling .c:nth-child(even) { animation: riffle-r .38s ease-in-out infinite; }
-@keyframes riffle-l { 50% { transform: translateX(-42%) rotate(-4deg); } }
-@keyframes riffle-r { 50% { transform: translateX(42%) rotate(4deg); } }
+.pile .c { transition: transform .24s ease; }
 
 .slot {
   position: absolute; width: var(--w); height: var(--h);
@@ -1055,19 +1052,14 @@ async function startReading() {
   spread.style.height = `calc(var(--w) * ${(maxY + 1.78).toFixed(2)})`;
   spread.innerHTML =
     POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("") +
-    `<div class="pile" id="pile">${Array.from({ length: 6 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
+    `<div class="pile" id="pile">${Array.from({ length: 8 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
   renderLog();
   $("btn-all").disabled = true; $("btn-again").disabled = true;
   window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
 
   SFX.shuffle();
-  // 녹음된 셔플 소리의 리플 구간에만 더미가 흔들린다 (소리와 동작 동기화)
-  const sway = (on) => { const p = $("pile"); if (p) p.classList.toggle("shuffling", on); };
-  setTimeout(() => sway(true), 310);
-  setTimeout(() => sway(false), 1720);
-  setTimeout(() => sway(true), 2100);
-  setTimeout(() => sway(false), 2750);
-  await wait(2950);
+  animateShuffle($("pile")); // 실제 리플 셔플 안무 (소리 구간과 동기화)
+  await wait(3050);
   $("pile").remove();
 
   // 손님이 뒷면 카드 중에서 직접 필요한 장수만큼 뽑는다
@@ -1096,6 +1088,43 @@ function dealOne(i) {
   void b.offsetWidth;
   b.classList.remove("dealing");
   if (!S.replayMute) SFX.deal();
+}
+
+// 실제 리플 셔플 동작: 두 뭉치로 가르기 -> 좌우 번갈아 끼워 합치기 -> 정리
+function animateShuffle(pile) {
+  if (!pile) return;
+  const cs = [...pile.children];
+  const L = cs.filter((_, i) => i % 2 === 0), R = cs.filter((_, i) => i % 2 === 1);
+  const splitTo = (amt) => {
+    L.forEach((c, i) => setTimeout(() => {
+      c.style.transform = `translateX(-${amt + i * 3}%) rotate(${-(4 + i)}deg)`;
+    }, i * 40));
+    R.forEach((c, i) => setTimeout(() => {
+      c.style.transform = `translateX(${amt + i * 3}%) rotate(${4 + i}deg)`;
+    }, i * 40));
+  };
+  const riffleIn = (start, interval) => {
+    const order = [];
+    for (let i = 0; i < Math.max(L.length, R.length); i++) {
+      if (L[i]) order.push(L[i]);
+      if (R[i]) order.push(R[i]);
+    }
+    order.forEach((c, k) => setTimeout(() => {
+      c.style.transition = "transform .17s cubic-bezier(.3,.8,.3,1)";
+      c.style.transform = `translateX(0) rotate(${(Math.random() * 5 - 2.5).toFixed(1)}deg)`;
+    }, start + k * interval));
+  };
+  // 리플 1 (소리 0.31~1.72초): 가르고 -> 천천히 끼워 넣기
+  setTimeout(() => splitTo(95), 60);
+  riffleIn(430, 160);
+  // 사이 정리
+  setTimeout(() => cs.forEach(c => { c.style.transform = "translateX(0) rotate(0deg)"; }), 1800);
+  // 리플 2 (소리 2.10~2.75초): 빠르게 한 번 더
+  setTimeout(() => splitTo(75), 1960);
+  riffleIn(2200, 80);
+  // 마무리 스퀘어업: 살짝 모았다가 제자리
+  setTimeout(() => cs.forEach(c => { c.style.transform = "scale(1.04)"; }), 2840);
+  setTimeout(() => cs.forEach(c => { c.style.transform = ""; }), 2960);
 }
 
 function startPicking() {
