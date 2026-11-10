@@ -51,6 +51,11 @@ header { display: grid; gap: 6px; position: relative; }
 .sound-ctrl button.off { opacity: .5; }
 .sound-ctrl button:hover, .sound-ctrl select:hover { color: var(--gold); border-color: var(--gold-soft); }
 
+/* ---------- 글자 타이핑 등장 (강조/필수 문구) ---------- */
+.reveal span { opacity: 0; animation: chfade .6s ease forwards; }
+@keyframes chfade { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .reveal span { animation: none; opacity: 1; } }
+
 /* ---------- 설정 위자드 ---------- */
 .wstep { display: none; }
 .wstep.on { display: grid; gap: 18px; animation: wfade .35s ease; }
@@ -1023,10 +1028,21 @@ $("cats").addEventListener("click", (e) => {
 });
 
 // ---------- 설정 위자드: 한 번에 한 단계만, 지난 선택은 칩으로 ----------
+// 중요 문구를 글자 단위로 서서히 드러낸다
+function animateText(el, speed = 0.028) {
+  if (!el || !el.textContent) return;
+  const esc = (ch) => ch === "<" ? "&lt;" : ch === "&" ? "&amp;" : ch === " " ? "&nbsp;" : ch;
+  el.innerHTML = [...el.textContent].map((ch, i) =>
+    `<span style="animation-delay:${(i * speed).toFixed(3)}s">${esc(ch)}</span>`).join("");
+  el.classList.add("reveal");
+}
+
 const WIZ_LABELS = ["분야", "덱", "배열"];
 function showStep(n) {
   S.wstep = n;
   document.querySelectorAll(".wstep").forEach(el => el.classList.toggle("on", +el.dataset.w === n));
+  const q = document.querySelector(`.wstep[data-w="${n}"] .wiz-q`);
+  if (q) { q.textContent = q.textContent; animateText(q); }  // 단계 질문을 천천히 드러낸다
   renderChips();
   $("setup").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -1117,6 +1133,7 @@ function renderSpreadDetail() {
   $("sd-pos").innerHTML = sp.positions.map((p, i) =>
     `<li><span class="n">${i + 1}</span><b>${p.name}</b> · ${p.meaning}</li>`).join("");
   $("spread-guide").textContent = sp.guide || "";
+  animateText($("spread-guide"), 0.022);                      // 준비 안내 강조 애니메이션
   // 자리 배치 미니 지도
   const maxX = Math.max(...sp.positions.map(p => p.x)) + 1;
   const maxY = Math.max(...sp.positions.map(p => p.y)) + 1.73;
@@ -1299,6 +1316,7 @@ function startPicking() {
   const need = POSITIONS.length;
   S.picked = 0;
   $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (0/${need})`;
+  animateText($("pick-note"));                                 // 선택 안내도 천천히
   $("pickfan").className = "pickfan deck-" + S.deck;              // 덱 뒷면 무늬 적용
   $("pickfan").innerHTML = Array.from({ length: 78 }, (_, k) =>   // 실제 덱처럼 78장 전체
     `<button type="button" data-k="${k}" aria-label="카드 뽑기">${backHTML(S.deck)}</button>`).join("");
