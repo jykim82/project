@@ -718,8 +718,29 @@ const SFX = (() => {
   return {
     get on() { return on; },
     toggle() { on = !on; localStorage.setItem("tarot-sfx", on ? "on" : "off"); return on; },
-    shuffle() { for (let i = 0; i < 14; i++) burst(0.05, 1600 + Math.random() * 1400, 0.22, i * 0.085); },
-    pick() { burst(0.05, 2400 + Math.random() * 400, 0.3); },
+    // 리플 셔플: 카드가 드르륵 떨어지는 소리 (틱 간격이 점점 좁아짐) 2회 + 정리 탁탁
+    shuffle() {
+      let t = 0.05;
+      for (let r = 0; r < 2; r++) {
+        let gap = 0.034;
+        for (let i = 0; i < 26; i++) {
+          burst(0.016, 2000 + Math.random() * 1800, 0.15, t, 0.6);  // 카드 모서리 튕김
+          burst(0.010, 4800 + Math.random() * 2500, 0.06, t, 0.4);  // 종이의 빳빳한 고역
+          t += gap;
+          gap = Math.max(0.009, gap * 0.92);                        // 점점 빨라지는 낙하
+        }
+        t += 0.28;
+      }
+      burst(0.05, 850, 0.28, t + 0.05, 1.6);                        // 카드 정리 탁
+      burst(0.05, 780, 0.26, t + 0.2, 1.6);                         // 탁
+    },
+    // 카드를 손으로 슥 집어 올리는 소리: 올라가는 마찰음 + 가벼운 톡
+    pick() {
+      burst(0.055, 650 + Math.random() * 100, 0.12, 0, 0.5);
+      burst(0.05, 1100 + Math.random() * 150, 0.13, 0.035, 0.5);
+      burst(0.04, 1700 + Math.random() * 200, 0.11, 0.07, 0.5);
+      burst(0.03, 2900 + Math.random() * 300, 0.17, 0.105, 1.2);
+    },
     deal() { burst(0.07, 950 + Math.random() * 200, 0.28); },
     flip() { burst(0.04, 2800, 0.2); burst(0.09, 1200 + Math.random() * 500, 0.26, 0.03, 0.8); },
   };
