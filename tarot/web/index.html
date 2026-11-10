@@ -71,7 +71,7 @@ header { display: grid; gap: 6px; position: relative; }
 }
 .wiz-chips button:hover { border-color: var(--gold); }
 .wiz-chips button .edit { color: var(--muted); font-size: 11.5px; }
-.wiz-nav { display: flex; justify-content: flex-end; }
+.wiz-nav { display: flex; justify-content: space-between; }
 .btn-big { font-size: 16.5px; padding: 14px 28px; }
 /* 분야 타일: 첫 화면의 얼굴 */
 .cats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
@@ -437,7 +437,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         </figure>
       </div>
       <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여드립니다.</p>
-      <div class="wiz-nav"><button type="button" class="btn" data-next>다음 →</button></div>
+      <div class="wiz-nav">
+        <button type="button" class="btn ghost" data-prev>← 이전</button>
+        <button type="button" class="btn" data-next>다음 →</button>
+      </div>
     </div>
 
     <div class="wstep" data-w="2">
@@ -452,7 +455,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
           <p class="spread-guide" id="spread-guide"></p>
         </div>
       </div>
-      <div class="wiz-nav"><button type="button" class="btn" data-next>다음 →</button></div>
+      <div class="wiz-nav">
+        <button type="button" class="btn ghost" data-prev>← 이전</button>
+        <button type="button" class="btn" data-next>다음 →</button>
+      </div>
     </div>
 
     <div class="wstep" data-w="3">
@@ -469,6 +475,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       </div>
       <div class="guest extras" id="extras"></div>
       <div class="row">
+        <button type="button" class="btn ghost" data-prev>← 이전</button>
         <button class="btn btn-big" id="btn-start" type="button">🔮 카드 섞고 펼치기</button>
       </div>
     </div>
@@ -1055,7 +1062,7 @@ function renderChips() {
     done.push([2, "✦ " + sp.name + " · " + sp.positions.length + "장"]);
   }
   $("wiz-chips").innerHTML = done.map(([i, label]) =>
-    `<button type="button" data-goto="${i}">${label} <span class="edit">수정</span></button>`).join("");
+    `<button type="button" data-goto="${i}">${label} <span class="edit">바꾸기</span></button>`).join("");
 }
 $("wiz-chips").addEventListener("click", (e) => {
   const b = e.target.closest("[data-goto]"); if (!b) return;
@@ -1063,6 +1070,8 @@ $("wiz-chips").addEventListener("click", (e) => {
 });
 document.querySelectorAll("[data-next]").forEach(btn =>
   btn.addEventListener("click", () => showStep(S.wstep + 1)));
+document.querySelectorAll("[data-prev]").forEach(btn =>
+  btn.addEventListener("click", () => showStep(Math.max(0, S.wstep - 1))));
 
 // ---------- 분야별 추가 질문 (해석의 분기가 되는 정보) ----------
 const EXTRA_FIELDS = {
