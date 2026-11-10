@@ -290,6 +290,30 @@ ol.positions .val.hidden { color: #7f6f93; }
 dialog {
   border: 0; padding: 0; background: transparent; max-width: min(92vw, 520px); max-height: 92vh;
 }
+.spread-detail {
+  display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 20px;
+  border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+  background: rgba(255,255,255,.02); align-items: start;
+}
+.sd-map { position: relative; width: 100%; }
+.sd-map .ms {
+  position: absolute; border: 1px solid var(--gold-soft); border-radius: 3px;
+  background: rgba(216,180,106,.1);
+  display: grid; place-items: center;
+  font-family: var(--display); font-size: 10px; color: var(--gold);
+}
+.sd-map .ms.rot { transform: rotate(90deg); }
+.sd-info { display: grid; gap: 10px; min-width: 0; }
+.sd-about { margin: 0; font-size: 14.5px; line-height: 1.6; }
+.sd-pos { margin: 0; padding: 0 0 0 2px; list-style: none; columns: 2; column-gap: 24px; }
+.sd-pos li { font-size: 12.5px; color: var(--muted); line-height: 1.55; break-inside: avoid; margin-bottom: 4px; }
+.sd-pos li b { color: var(--ink); font-weight: 700; }
+.sd-pos li .n { color: var(--gold); font-family: var(--display); margin-right: 4px; }
+@media (max-width: 680px) {
+  .spread-detail { grid-template-columns: 1fr; }
+  .sd-map { max-width: 190px; margin: 0 auto; }
+  .sd-pos { columns: 1; }
+}
 .spread-guide {
   margin: 0; padding: 10px 14px; font-size: 14px; color: var(--ink);
   border: 1px solid var(--gold-soft); border-left: 3px solid var(--gold);
@@ -412,7 +436,14 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <h2 class="wiz-q">카드를 놓을 배열입니다</h2>
       <p class="note" id="spread-note">고른 분야에 맞는 배열만 보여줍니다.</p>
       <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
-      <p class="spread-guide" id="spread-guide" aria-live="polite"></p>
+      <div class="spread-detail" id="spread-detail" aria-live="polite">
+        <div class="sd-map" id="sd-map"></div>
+        <div class="sd-info">
+          <p class="sd-about" id="sd-about"></p>
+          <ol class="sd-pos" id="sd-pos"></ol>
+          <p class="spread-guide" id="spread-guide"></p>
+        </div>
+      </div>
       <div class="wiz-nav"><button type="button" class="btn" data-next>다음 →</button></div>
     </div>
 
@@ -1034,6 +1065,36 @@ function renderExtras() {
     </div>`).join("");
 }
 function extraVal(id) { const el = $(id); return el ? el.value.trim() : ""; }
+const SPREAD_ABOUT = {
+  celtic: "열 장이 상황의 겉과 속, 과거와 미래, 주변의 영향과 결말까지 입체적으로 비추는 가장 깊은 배열입니다.",
+  cup: "성배 모양으로 두 사람의 마음을 마주 놓고, 서로를 바라보는 시선과 바람, 관계의 현재와 끝을 읽습니다.",
+  three: "가장 간결한 배열입니다. 하나의 주제를 과거 - 현재 - 미래의 흐름으로 짚어봅니다.",
+  today: "하루를 비추는 단 한 장. 복잡한 해석 없이 오늘의 기운에 집중합니다.",
+  horseshoe: "말굽(∩) 모양을 따라 고민의 뿌리에서 결과까지 일곱 걸음으로 차근차근 짚어가는 고전 배열입니다.",
+  career: "일에서의 현재 위치와 강점 - 걸림돌을 진단하고, 기회와 전망까지 내다보는 실용 배열입니다.",
+  paw: "발자국 모양으로 반려동물의 기분과 몸 상태, 바라는 것을 읽고 보호자와의 유대를 살핍니다.",
+  choice: "갈림길 모양입니다. 아래 현재에서 출발해 왼쪽은 A, 오른쪽은 B의 흐름 - 과정 - 결과를 나란히 비교합니다.",
+  year: "열두 달을 시계처럼 둘러 놓고 달마다의 흐름을 읽고, 중앙의 한 장으로 한 해 전체의 기운을 봅니다.",
+  houses: "점성술의 12하우스를 빌려 자아 - 재물 - 관계 - 일 등 삶의 열두 영역을 한 바퀴 점검합니다.",
+  tree: "카발라 '생명의 나무' 열 자리를 따라, 높은 이상에서 현실의 결과까지 내면의 구조를 비추는 심층 배열입니다.",
+};
+function renderSpreadDetail() {
+  const sp = SPREADS.find(x => x.id === S.spread);
+  $("sd-about").textContent = SPREAD_ABOUT[sp.id] || sp.desc;
+  $("sd-pos").innerHTML = sp.positions.map((p, i) =>
+    `<li><span class="n">${i + 1}</span><b>${p.name}</b> · ${p.meaning}</li>`).join("");
+  $("spread-guide").textContent = sp.guide || "";
+  // 자리 배치 미니 지도
+  const maxX = Math.max(...sp.positions.map(p => p.x)) + 1;
+  const maxY = Math.max(...sp.positions.map(p => p.y)) + 1.73;
+  const map = $("sd-map");
+  map.style.aspectRatio = (maxX / maxY).toFixed(3);
+  map.innerHTML = sp.positions.map((p, i) => `
+    <div class="ms${p.rot ? " rot" : ""}" style="
+      left:${(p.x / maxX * 100).toFixed(2)}%; top:${(p.y / maxY * 100).toFixed(2)}%;
+      width:${(1 / maxX * 100).toFixed(2)}%; height:${(1.73 / maxY * 100).toFixed(2)}%;
+    ">${i + 1}</div>`).join("");
+}
 function renderSpreads() {
   const ids = cat().spreads;
   if (!ids.includes(S.spread)) S.spread = ids[0];
@@ -1045,8 +1106,7 @@ function renderSpreads() {
       <span class="grp">${n === 0 ? "이 분야의 추천 배열" : s.desc}</span>
     </button>`;
   }).join("");
-  // 선택한 배열에 필요한 준비(질문 요령)를 알려준다
-  $("spread-guide").textContent = SPREADS.find(x => x.id === S.spread).guide || "";
+  renderSpreadDetail(); // 개략 의미 + 자리 지도 + 자리 설명 + 준비 안내
 }
 $("spreads").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
