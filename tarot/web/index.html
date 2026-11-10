@@ -170,8 +170,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: absolute; inset: 0; border-radius: calc(var(--w) * .07);
   box-shadow: 0 4px 10px rgba(0,0,0,.45);
 }
-.pile.shuffling .c:nth-child(odd) { animation: riffle-l .9s ease-in-out 3; }
-.pile.shuffling .c:nth-child(even) { animation: riffle-r .9s ease-in-out 3; }
+.pile.shuffling .c:nth-child(odd) { animation: riffle-l .38s ease-in-out infinite; }
+.pile.shuffling .c:nth-child(even) { animation: riffle-r .38s ease-in-out infinite; }
 @keyframes riffle-l { 50% { transform: translateX(-42%) rotate(-4deg); } }
 @keyframes riffle-r { 50% { transform: translateX(42%) rotate(4deg); } }
 
@@ -739,12 +739,12 @@ const SFX = (() => {
       buffers[n] = await ac().decodeAudioData(await r.arrayBuffer());
     } catch (e) { /* 로드 실패 시 그냥 무음 */ }
   });
-  function play(name, { offset = 0, dur, vol = 1, fadeOut = 0 } = {}) {
+  function play(name, { offset = 0, dur, vol = 1, fadeOut = 0, delay = 0 } = {}) {
     if (!on || !buffers[name]) return;
     try {
       const c = ac();
       if (c.state === "suspended") c.resume();
-      const t = c.currentTime;
+      const t = c.currentTime + delay;
       const src = c.createBufferSource(); src.buffer = buffers[name];
       const g = c.createGain(); g.gain.setValueAtTime(vol, t);
       if (dur && fadeOut) {
@@ -758,7 +758,10 @@ const SFX = (() => {
   return {
     get on() { return on; },
     toggle() { on = !on; localStorage.setItem("tarot-sfx", on ? "on" : "off"); return on; },
-    shuffle() { play("shuffle", { vol: 0.9, dur: 2.6, fadeOut: 0.5 }); },  // 리플 셔플 녹음
+    shuffle() {  // 리플 2회: 녹음의 두 구간을 자연스러운 간격으로 이어붙임
+      play("shuffle", { offset: 0, dur: 1.95, vol: 0.9, fadeOut: 0.18 });
+      play("shuffle", { offset: 3.0, dur: 1.05, vol: 0.9, fadeOut: 0.25, delay: 2.0 });
+    },
     pick() { play("pick", { vol: 0.8 }); },                                  // 집는 클릭
     deal() { play("cards", { offset: 3.74, dur: 0.22, vol: 0.9 }); },        // 카드 한 장 놓는 소리
     flip() { play("flip", { vol: 0.5 }); },                                  // 부드러운 휙
@@ -1052,13 +1055,19 @@ async function startReading() {
   spread.style.height = `calc(var(--w) * ${(maxY + 1.78).toFixed(2)})`;
   spread.innerHTML =
     POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("") +
-    `<div class="pile shuffling" id="pile">${Array.from({ length: 6 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
+    `<div class="pile" id="pile">${Array.from({ length: 6 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
   renderLog();
   $("btn-all").disabled = true; $("btn-again").disabled = true;
   window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
 
   SFX.shuffle();
-  await wait(2700);
+  // 녹음된 셔플 소리의 리플 구간에만 더미가 흔들린다 (소리와 동작 동기화)
+  const sway = (on) => { const p = $("pile"); if (p) p.classList.toggle("shuffling", on); };
+  setTimeout(() => sway(true), 310);
+  setTimeout(() => sway(false), 1720);
+  setTimeout(() => sway(true), 2100);
+  setTimeout(() => sway(false), 2750);
+  await wait(2950);
   $("pile").remove();
 
   // 손님이 뒷면 카드 중에서 직접 필요한 장수만큼 뽑는다
