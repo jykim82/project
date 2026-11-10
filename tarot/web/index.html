@@ -336,6 +336,13 @@ dialog {
   box-shadow: 0 8px 20px rgba(0,0,0,.45); aspect-ratio: 11 / 19; object-fit: cover;
 }
 .deck-preview figcaption { font-size: 12.5px; color: var(--muted); text-align: center; }
+.deck-preview img.pop { animation: cardpop .75s cubic-bezier(.2, .85, .3, 1); }
+@keyframes cardpop {
+  0%   { transform: scale(1.55) translateY(-6px); opacity: 0; box-shadow: 0 18px 40px rgba(0,0,0,.6); }
+  30%  { opacity: 1; }
+  100% { transform: scale(1) translateY(0); box-shadow: 0 8px 20px rgba(0,0,0,.45); }
+}
+@media (prefers-reduced-motion: reduce) { .deck-preview img.pop { animation: none; } }
 @media (max-width: 560px) { .deck-row { grid-template-columns: minmax(0, 1fr); } .deck-preview { max-width: 180px; margin: 0 auto; } }
 
 .credits-footer { max-width: 1180px; margin: 28px auto 20px; padding: 0 20px; text-align: center; }
@@ -992,6 +999,8 @@ function renderPreview() {
     if (img.dataset.fb) return;
     img.dataset.fb = "1"; img.src = srcFor("original", cid);
   };
+  img.classList.remove("pop");
+  img.onload = () => { void img.offsetWidth; img.classList.add("pop"); };
   img.src = srcFor(S.deck, cid);
   const card = CARDS.find(c => c.id === cid);
   $("deck-preview-cap").textContent = DECKS.find(d => d.id === S.deck).name + " · " + card.ko;
