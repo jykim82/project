@@ -159,10 +159,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: absolute; inset: 0; border-radius: calc(var(--w) * .07);
   box-shadow: 0 4px 10px rgba(0,0,0,.45);
 }
-.pile.shuffling .c:nth-child(odd) { animation: riffle-l .5s ease-in-out 3; }
-.pile.shuffling .c:nth-child(even) { animation: riffle-r .5s ease-in-out 3; }
-@keyframes riffle-l { 50% { transform: translateX(-70%) rotate(-8deg); } }
-@keyframes riffle-r { 50% { transform: translateX(70%) rotate(8deg); } }
+.pile.shuffling .c:nth-child(odd) { animation: riffle-l .9s ease-in-out 3; }
+.pile.shuffling .c:nth-child(even) { animation: riffle-r .9s ease-in-out 3; }
+@keyframes riffle-l { 50% { transform: translateX(-42%) rotate(-4deg); } }
+@keyframes riffle-r { 50% { transform: translateX(42%) rotate(4deg); } }
 
 .slot {
   position: absolute; width: var(--w); height: var(--h);
@@ -471,7 +471,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       사티 &lsquo;짐노페디 · 그노시엔느&rsquo; — Rafi Simcha 연주
       (<a href="https://archive.org/details/ThreeGnossiennesErikSatie" target="_blank" rel="noopener">archive.org</a>),
       <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.
-      효과음은 자체 합성(Web Audio)입니다.</p>
+      효과음: Pixabay (freesound_community, Dragon Studio 외 - Pixabay 콘텐츠 라이선스, 출처 표기 불요).</p>
   </div>
 </dialog>
 
@@ -708,64 +708,42 @@ let POSITIONS = SPREADS[0].positions;
 const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
 const $ = (id) => document.getElementById(id);
 
-// ---------- 효과음 (Web Audio 합성 - 음원 파일 없음) ----------
+// ---------- 효과음 (실제 카드 녹음 - audio/sfx/, Pixabay) ----------
 const SFX = (() => {
   let ctx = null;
   let on = localStorage.getItem("tarot-sfx") !== "off";
+  const buffers = {};
   const ac = () => (ctx ||= new (window.AudioContext || window.webkitAudioContext)());
-  // 짧은 노이즈 버스트 = 카드 소리의 기본 재료
-  function burst(dur, freq, gain, delay = 0, q = 1.2) {
-    if (!on) return;
+  // 페이지 열릴 때 미리 디코딩해 둔다
+  ["shuffle", "cards", "flip", "pick"].forEach(async (n) => {
     try {
-      const c = ac(), t = c.currentTime + delay;
-      const len = Math.max(1, Math.round(c.sampleRate * dur));
-      const buf = c.createBuffer(1, len, c.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-      const src = c.createBufferSource(); src.buffer = buf;
-      const f = c.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = freq; f.Q.value = q;
-      const g = c.createGain();
-      g.gain.setValueAtTime(gain, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      src.connect(f); f.connect(g); g.connect(c.destination);
-      src.start(t);
-    } catch (e) { /* 소리 실패는 무시 */ }
+      const r = await fetch("audio/sfx/" + n + ".mp3");
+      buffers[n] = await ac().decodeAudioData(await r.arrayBuffer());
+    } catch (e) { /* 로드 실패 시 그냥 무음 */ }
+  });
+  function play(name, { offset = 0, dur, vol = 1, fadeOut = 0 } = {}) {
+    if (!on || !buffers[name]) return;
+    try {
+      const c = ac();
+      if (c.state === "suspended") c.resume();
+      const t = c.currentTime;
+      const src = c.createBufferSource(); src.buffer = buffers[name];
+      const g = c.createGain(); g.gain.setValueAtTime(vol, t);
+      if (dur && fadeOut) {
+        g.gain.setValueAtTime(vol, t + dur - fadeOut);
+        g.gain.linearRampToValueAtTime(0.0001, t + dur);
+      }
+      src.connect(g); g.connect(c.destination);
+      src.start(t, offset, dur);
+    } catch (e) { /* 재생 실패 무시 */ }
   }
   return {
     get on() { return on; },
     toggle() { on = !on; localStorage.setItem("tarot-sfx", on ? "on" : "off"); return on; },
-    // 오래된 종이 카드를 넘기며 섞는 소리: 둔탁하고 바스락거리는 중저역 + 밑에 깔리는 종이 스침
-    shuffle() {
-      burst(0.8, 500, 0.05, 0.05, 0.25);                            // 종이 다발이 스치는 밑소리
-      burst(0.9, 650, 0.04, 0.9, 0.25);
-      let t = 0.1;
-      for (let r = 0; r < 2; r++) {
-        let gap = 0.06;
-        for (let i = 0; i < 12; i++) {
-          burst(0.04, 800 + Math.random() * 500, 0.14, t, 0.4);     // 낡은 종이가 둔하게 넘어감
-          burst(0.03, 1500 + Math.random() * 500, 0.06, t + 0.008, 0.35); // 바스락 질감
-          t += gap;
-          gap = Math.max(0.034, gap * 0.95);                        // 천천히 빨라지는 낙하
-        }
-        t += 0.38;
-      }
-      burst(0.08, 600, 0.2, t + 0.08, 0.8);                         // 카드 정리 톡
-      burst(0.08, 540, 0.18, t + 0.32, 0.8);                        // 톡
-    },
-    // 카드를 손으로 슥 집어 올리는 소리: 느긋하게 올라가는 마찰음 + 가벼운 톡
-    pick() {
-      burst(0.09, 600 + Math.random() * 100, 0.11, 0, 0.5);
-      burst(0.08, 1000 + Math.random() * 150, 0.12, 0.06, 0.5);
-      burst(0.07, 1600 + Math.random() * 200, 0.10, 0.12, 0.5);
-      burst(0.045, 2700 + Math.random() * 300, 0.15, 0.19, 1.2);
-    },
-    deal() { burst(0.07, 950 + Math.random() * 200, 0.28); },
-    // 종이가 스륵 넘어가는 부드러운 소리 (날카로운 고역 없이 넓은 마찰음)
-    flip() {
-      burst(0.13, 850 + Math.random() * 150, 0.10, 0, 0.35);
-      burst(0.11, 1500 + Math.random() * 250, 0.07, 0.05, 0.3);
-      burst(0.07, 650, 0.08, 0.13, 0.5);
-    },
+    shuffle() { play("shuffle", { vol: 0.9, dur: 2.6, fadeOut: 0.5 }); },  // 리플 셔플 녹음
+    pick() { play("pick", { vol: 0.8 }); },                                  // 집는 클릭
+    deal() { play("cards", { offset: 3.74, dur: 0.22, vol: 0.9 }); },        // 카드 한 장 놓는 소리
+    flip() { play("flip", { vol: 0.5 }); },                                  // 부드러운 휙
   };
 })();
 
@@ -1062,7 +1040,7 @@ async function startReading() {
   window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
 
   SFX.shuffle();
-  await wait(1500);
+  await wait(2700);
   $("pile").remove();
 
   // 손님이 뒷면 카드 중에서 직접 필요한 장수만큼 뽑는다
