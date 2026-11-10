@@ -51,6 +51,34 @@ header { display: grid; gap: 6px; position: relative; }
 .sound-ctrl button.off { opacity: .5; }
 .sound-ctrl button:hover, .sound-ctrl select:hover { color: var(--gold); border-color: var(--gold-soft); }
 
+/* ---------- 설정 위자드 ---------- */
+.wstep { display: none; }
+.wstep.on { display: grid; gap: 18px; animation: wfade .35s ease; }
+@keyframes wfade { from { opacity: 0; transform: translateY(8px); } }
+.wiz-q { font-family: var(--body); font-weight: 700; font-size: clamp(19px, 3.4vw, 24px); margin: 0; letter-spacing: -.01em; }
+.wiz-chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 0; }
+.wiz-chips:empty { display: none; }
+.wiz-chips button {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 13px; color: var(--ink);
+  background: rgba(216,180,106,.08); border: 1px solid var(--gold-soft); border-radius: 999px;
+  padding: 6px 14px; cursor: pointer;
+}
+.wiz-chips button:hover { border-color: var(--gold); }
+.wiz-chips button .edit { color: var(--muted); font-size: 11.5px; }
+.wiz-nav { display: flex; justify-content: flex-end; }
+.btn-big { font-size: 16.5px; padding: 14px 28px; }
+/* 분야 타일: 첫 화면의 얼굴 */
+.cats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.cats .deck-opt { padding: 20px 12px 16px; gap: 6px; }
+.cats .ico { font-size: 30px; line-height: 1; filter: drop-shadow(0 3px 6px rgba(0,0,0,.4)); }
+.cats .deck-opt:hover { transform: translateY(-4px); box-shadow: 0 10px 22px rgba(0,0,0,.35); }
+@media (max-width: 560px) {
+  .cats { grid-template-columns: repeat(2, 1fr); }
+  .wiz-nav .btn, .row .btn { width: 100%; }
+  .row { position: sticky; bottom: 10px; }
+}
+
 /* ---------- 지난 리딩 ---------- */
 #history-sec { display: grid; gap: 12px; }
 .history { display: grid; gap: 8px; }
@@ -359,39 +387,52 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 
   <!-- 1단계: 덱과 손님 정보 -->
   <section class="setup" id="setup">
-    <div class="step-title"><span class="num">I</span><h2>덱 고르기</h2></div>
-    <div class="deck-row">
-      <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
-      <figure class="deck-preview">
-        <img id="deck-preview-img" alt="덱 대표 카드 미리보기">
-        <figcaption id="deck-preview-cap"></figcaption>
-      </figure>
+    <div class="wiz-chips" id="wiz-chips" aria-label="선택한 항목"></div>
+
+    <div class="wstep" data-w="0">
+      <h2 class="wiz-q">오늘, 어떤 이야기를 나눠볼까요?</h2>
+      <p class="note">궁금한 분야를 고르면 어울리는 배열을 추천해 드립니다.</p>
+      <div class="decks cats" id="cats" role="group" aria-label="상담 분야"></div>
     </div>
-    <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여주고 '원본 그림' 표시를 붙입니다.</p>
 
-    <div class="step-title"><span class="num">II</span><h2>분야 고르기</h2></div>
-    <div class="decks cats" id="cats" role="group" aria-label="상담 분야"></div>
-
-    <div class="step-title"><span class="num">III</span><h2>배열 고르기</h2></div>
-    <p class="note" id="spread-note">고른 분야에 맞는 배열만 보여줍니다.</p>
-    <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
-    <p class="spread-guide" id="spread-guide" aria-live="polite"></p>
-
-    <div class="step-title"><span class="num">IV</span><h2>손님 정보</h2></div>
-    <div class="guest">
-      <div class="field">
-        <label for="guest-name">손님 이름</label>
-        <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤" value="지윤">
+    <div class="wstep" data-w="1">
+      <h2 class="wiz-q">카드를 고를 덱을 선택하세요</h2>
+      <div class="deck-row">
+        <div class="decks" id="decks" role="group" aria-label="타로 덱"></div>
+        <figure class="deck-preview">
+          <img id="deck-preview-img" alt="덱 대표 카드 미리보기">
+          <figcaption id="deck-preview-cap"></figcaption>
+        </figure>
       </div>
-      <div class="field">
-        <label for="guest-q">질문 (선택)</label>
-        <input type="text" id="guest-q" maxlength="80" placeholder="비워두면 전체 흐름을 봅니다">
-      </div>
+      <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여드립니다.</p>
+      <div class="wiz-nav"><button type="button" class="btn" data-next>다음 →</button></div>
     </div>
-    <div class="guest extras" id="extras"></div>
-    <div class="row">
-      <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
-      <button class="btn" id="btn-start" type="button">카드 섞고 펼치기</button>
+
+    <div class="wstep" data-w="2">
+      <h2 class="wiz-q">카드를 놓을 배열입니다</h2>
+      <p class="note" id="spread-note">고른 분야에 맞는 배열만 보여줍니다.</p>
+      <div class="decks spreads" id="spreads" role="group" aria-label="카드 배열"></div>
+      <p class="spread-guide" id="spread-guide" aria-live="polite"></p>
+      <div class="wiz-nav"><button type="button" class="btn" data-next>다음 →</button></div>
+    </div>
+
+    <div class="wstep" data-w="3">
+      <h2 class="wiz-q">마지막으로, 당신에 대해 알려주세요</h2>
+      <div class="guest">
+        <div class="field">
+          <label for="guest-name">손님 이름</label>
+          <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤" value="지윤">
+        </div>
+        <div class="field">
+          <label for="guest-q">질문 (선택)</label>
+          <input type="text" id="guest-q" maxlength="80" placeholder="비워두면 전체 흐름을 봅니다">
+        </div>
+      </div>
+      <div class="guest extras" id="extras"></div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
+        <button class="btn btn-big" id="btn-start" type="button">🔮 카드 섞고 펼치기</button>
+      </div>
     </div>
 
     <div id="history-sec" hidden>
@@ -910,10 +951,12 @@ const CATEGORIES = [
   { id: "year",   name: "한 해 운세",   desc: "열두 달의 흐름",        spreads: ["year", "houses"] },
   { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["houses", "tree", "celtic"] },
 ];
+const CAT_ICONS = { today: "🌅", love: "💞", pet: "🐾", choice: "⚖️", career: "💼", worry: "🕯️", year: "🗓️", life: "🌙" };
 function cat() { return CATEGORIES.find(c => c.id === S.cat); }
 function renderCats() {
   $("cats").innerHTML = CATEGORIES.map(c => `
     <button type="button" class="deck-opt" data-cat="${c.id}" aria-pressed="${c.id === S.cat}">
+      <span class="ico">${CAT_ICONS[c.id] || "✦"}</span>
       <span class="name">${c.name}</span>
       <span class="grp">${c.desc}</span>
     </button>`).join("");
@@ -923,7 +966,34 @@ $("cats").addEventListener("click", (e) => {
   S.cat = b.dataset.cat;
   S.spread = cat().spreads[0]; // 분야를 바꾸면 추천 배열을 기본 선택
   renderCats(); renderSpreads(); renderExtras();
+  showStep(1); // 분야를 고르면 바로 덱 선택으로
 });
+
+// ---------- 설정 위자드: 한 번에 한 단계만, 지난 선택은 칩으로 ----------
+const WIZ_LABELS = ["분야", "덱", "배열"];
+function showStep(n) {
+  S.wstep = n;
+  document.querySelectorAll(".wstep").forEach(el => el.classList.toggle("on", +el.dataset.w === n));
+  renderChips();
+  $("setup").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function renderChips() {
+  const done = [];
+  if (S.wstep > 0) done.push([0, CAT_ICONS[S.cat] + " " + cat().name]);
+  if (S.wstep > 1) done.push([1, "🂠 " + DECKS.find(d => d.id === S.deck).name]);
+  if (S.wstep > 2) {
+    const sp = SPREADS.find(x => x.id === S.spread);
+    done.push([2, "✦ " + sp.name + " · " + sp.positions.length + "장"]);
+  }
+  $("wiz-chips").innerHTML = done.map(([i, label]) =>
+    `<button type="button" data-goto="${i}">${label} <span class="edit">수정</span></button>`).join("");
+}
+$("wiz-chips").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goto]"); if (!b) return;
+  showStep(+b.dataset.goto);
+});
+document.querySelectorAll("[data-next]").forEach(btn =>
+  btn.addEventListener("click", () => showStep(S.wstep + 1)));
 
 // ---------- 분야별 추가 질문 (해석의 분기가 되는 정보) ----------
 const EXTRA_FIELDS = {
@@ -1161,6 +1231,7 @@ function quitPicking() {
   if (S.picked < POSITIONS.length) {
     $("table").hidden = true; $("setup").hidden = false;
     renderDecks(); renderCats(); renderSpreads();
+    showStep(0);
   }
 }
 $("pick-quit").addEventListener("click", quitPicking);
@@ -1353,6 +1424,7 @@ $("btn-all").addEventListener("click", () => {
 });
 $("btn-back").addEventListener("click", () => {
   $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderCats(); renderSpreads();
+  showStep(0);
 });
 
 renderDecks();
@@ -1361,4 +1433,6 @@ renderCats();
 renderSpreads();
 renderExtras();
 renderHistory();
+S.wstep = 0;
+showStep(0);
 </script>
