@@ -464,7 +464,6 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       </div>
       <div class="guest extras" id="extras"></div>
       <div class="row">
-        <label class="check"><input type="checkbox" id="opt-rev" checked> 역방향 카드 포함</label>
         <button class="btn btn-big" id="btn-start" type="button">🔮 카드 섞고 펼치기</button>
       </div>
     </div>
@@ -735,6 +734,20 @@ const SPREADS = [
     { name: "조언",      meaning: "지금 취해야 할 전략",           x: 1.7,  y: 0 },
     { name: "전망",      meaning: "이 길이 향하는 흐름",           x: 3.05, y: 0 },
   ]},
+  { id: "money", guide: "구체적인 돈 고민(수입 · 투자 · 지출 등)을 하나 정하고 봐주세요.", name: "재물의 흐름", en: "Money Flow", desc: "들어오는 기운과 새는 곳을 비교", positions: [
+    { name: "현재 재정",     meaning: "지금 나의 돈 상태",             x: 2.1, y: 1.85 },
+    { name: "들어오는 기운", meaning: "돈이 들어오는 길",              x: 0.6, y: 0 },
+    { name: "새는 곳",       meaning: "돈이 빠져나가는 곳",            x: 3.6, y: 0 },
+    { name: "조언",          meaning: "재정을 위해 취할 태도",         x: 0.6, y: 3.7 },
+    { name: "전망",          meaning: "다가올 재물의 흐름",            x: 3.6, y: 3.7 },
+  ]},
+  { id: "exam", guide: "준비 중인 시험이나 목표를 떠올리고 봐주세요. 질문 칸에 적으면 좋습니다.", name: "합격운", en: "Exam Path", desc: "준비에서 결과까지 계단 오르기", positions: [
+    { name: "현재 준비",     meaning: "지금까지의 준비 상태",          x: 0,    y: 4.0 },
+    { name: "나의 강점",     meaning: "믿고 갈 수 있는 무기",          x: 1.05, y: 3.0 },
+    { name: "보완할 곳",     meaning: "합격까지 채워야 할 부분",       x: 2.1,  y: 2.0 },
+    { name: "시험운",        meaning: "당일의 기운과 변수",            x: 3.15, y: 1.0 },
+    { name: "결과 전망",     meaning: "이대로 갔을 때의 결말",         x: 4.2,  y: 0 },
+  ]},
   { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "양자택일", en: "Two Paths", desc: "A와 B, 두 갈림길 비교", positions: [
     { name: "현재 상황",  meaning: "선택 앞에 선 지금의 나",      x: 2.1, y: 5.55 },
     { name: "A의 흐름",   meaning: "A를 고르면 펼쳐지는 초반",    x: 1.4, y: 3.7 },
@@ -983,12 +996,15 @@ const CATEGORIES = [
   { id: "love",   name: "연애 · 관계",  desc: "사랑, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three"] },
   { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
   { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three"] },
+  { id: "people", name: "인간관계",     desc: "친구, 동료, 가족 사이", spreads: ["cup", "horseshoe", "three"] },
+  { id: "study",  name: "학업 · 시험",  desc: "공부와 합격운",         spreads: ["exam", "three", "celtic"] },
+  { id: "money",  name: "금전 · 재물",  desc: "돈의 흐름과 전망",      spreads: ["money", "celtic", "three"] },
   { id: "pet",    name: "반려동물",     desc: "아이의 마음 읽기",      spreads: ["paw", "three"] },
   { id: "worry",  name: "고민 해결",    desc: "막힌 문제 풀기",        spreads: ["horseshoe", "celtic", "three"] },
   { id: "year",   name: "한 해 운세",   desc: "열두 달의 흐름",        spreads: ["year", "houses"] },
   { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["houses", "tree", "celtic"] },
 ];
-const CAT_ICONS = { today: "🌅", love: "💞", pet: "🐾", choice: "⚖️", career: "💼", worry: "🕯️", year: "🗓️", life: "🌙" };
+const CAT_ICONS = { today: "🌅", love: "💞", people: "👥", choice: "⚖️", career: "💼", study: "📚", money: "💰", pet: "🐾", worry: "🕯️", year: "🗓️", life: "🌙" };
 function cat() { return CATEGORIES.find(c => c.id === S.cat); }
 function renderCats() {
   $("cats").innerHTML = CATEGORIES.map(c => `
@@ -1059,6 +1075,15 @@ const EXTRA_FIELDS = {
     { id: "x-ystart", label: "시작 시점", type: "select",
       options: ["이번 달부터 열두 달", "1월부터 12월"] },
   ],
+  money: [
+    { id: "x-mtopic", label: "고민 종류", type: "select",
+      options: ["수입 · 월급", "투자", "지출 · 빚", "사업 자금", "전반"] },
+  ],
+  study: [
+    { id: "x-sgoal", label: "시험 · 목표", ph: "예: 정보처리기사, 수능" },
+    { id: "x-swhen", label: "시험 시기", type: "select",
+      options: ["한 달 안", "3개월 안", "6개월 이상", "미정"] },
+  ],
 };
 function renderExtras() {
   const fields = EXTRA_FIELDS[S.cat] || [];
@@ -1081,6 +1106,8 @@ const SPREAD_ABOUT = {
   paw: "발자국 모양으로 반려동물의 기분과 몸 상태, 바라는 것을 읽고 보호자와의 유대를 살핍니다.",
   choice: "갈림길 모양입니다. 아래 현재에서 출발해 왼쪽은 A, 오른쪽은 B의 흐름 - 과정 - 결과를 나란히 비교합니다.",
   year: "열두 달을 시계처럼 둘러 놓고 달마다의 흐름을 읽고, 중앙의 한 장으로 한 해 전체의 기운을 봅니다.",
+  money: "가운데 현재 재정을 두고, 위로는 들어오는 기운과 새는 곳을 나란히 비교하고, 아래로 조언과 전망을 놓는 실속 배열입니다.",
+  exam: "계단을 오르듯 다섯 장이 이어집니다. 지금의 준비에서 출발해 강점과 보완점을 짚고, 시험운을 지나 결과 전망에 닿습니다.",
   houses: "점성술의 12하우스를 빌려 자아 - 재물 - 관계 - 일 등 삶의 열두 영역을 한 바퀴 점검합니다.",
   tree: "카발라 '생명의 나무' 열 자리를 따라, 높은 이상에서 현실의 결과까지 내면의 구조를 비추는 심층 배열입니다.",
 };
@@ -1153,6 +1180,12 @@ async function startReading() {
     if (n) info.push("아이: " + n + " (" + k + (a ? ", " + a : "") + ")");
   } else if (S.cat === "career") {
     info.push(extraVal("x-wnow"), extraVal("x-wtopic"));
+  } else if (S.cat === "money") {
+    info.push(extraVal("x-mtopic"));
+  } else if (S.cat === "study") {
+    const g = extraVal("x-sgoal"), w = extraVal("x-swhen");
+    if (g) info.push("목표: " + g);
+    if (w) info.push(w);
   } else if (S.cat === "choice") {
     const ca = extraVal("x-ca"), cb = extraVal("x-cb");
     if (ca && cb) info.push("A: " + ca, "B: " + cb);
@@ -1162,7 +1195,6 @@ async function startReading() {
     .filter(Boolean).join("  ·  ");
   $("setup").hidden = true; $("table").hidden = false;
 
-  const withRev = $("opt-rev").checked;
   POSITIONS = SPREADS.find(s => s.id === S.spread).positions.map(p => ({ ...p }));
   // 입력 정보로 자리 이름을 바꿔 몰입도를 높인다
   if (S.spread === "choice") {
@@ -1177,7 +1209,7 @@ async function startReading() {
       if (i < 12) { const m = ((m0 + i) % 12) + 1; p.name = m + "월"; p.meaning = m + "월의 흐름"; }
     });
   }
-  S.draw = shuffle(CARDS).slice(0, POSITIONS.length).map(c => ({ ...c, rev: withRev && rand(2) === 1 }));
+  S.draw = shuffle(CARDS).slice(0, POSITIONS.length).map(c => ({ ...c, rev: rand(2) === 1 }));
   S.open = new Set(); S.active = null; S.fallback = new Set();
 
   const spread = $("spread");
