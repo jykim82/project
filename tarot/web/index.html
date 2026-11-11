@@ -1,4 +1,11 @@
+<!DOCTYPE html>
+<html lang="ko">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="고양이와 강아지가 들려주는 타로 리딩. 분야를 고르고 78장에서 직접 카드를 뽑아보세요. 기록은 당신의 기기에만 남습니다.">
+<meta property="og:title" content="고양이 · 강아지 타로 리딩">
+<meta property="og:description" content="오늘, 어떤 이야기를 나눠볼까요? 카드를 직접 뽑는 무료 타로 리딩.">
+<meta property="og:type" content="website">
 <title>고양이 강아지 타로</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%AE%3C/text%3E%3C/svg%3E">
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -23,6 +30,32 @@
   --body: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", serif;
 }
 * { box-sizing: border-box; }
+/* 별빛이 은은하게 깜빡이는 밤하늘 */
+body::before, body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    radial-gradient(1.2px 1.2px at 12% 18%, rgba(243,212,142,.8), transparent 60%),
+    radial-gradient(1px 1px at 28% 64%, rgba(255,255,255,.55), transparent 60%),
+    radial-gradient(1.4px 1.4px at 41% 9%, rgba(243,212,142,.7), transparent 60%),
+    radial-gradient(1px 1px at 57% 38%, rgba(255,255,255,.5), transparent 60%),
+    radial-gradient(1.3px 1.3px at 69% 74%, rgba(243,212,142,.75), transparent 60%),
+    radial-gradient(1px 1px at 83% 22%, rgba(255,255,255,.5), transparent 60%),
+    radial-gradient(1.2px 1.2px at 92% 55%, rgba(243,212,142,.7), transparent 60%);
+  animation: twinkle 5.5s ease-in-out infinite alternate;
+}
+body::after {
+  background-image:
+    radial-gradient(1px 1px at 7% 45%, rgba(255,255,255,.5), transparent 60%),
+    radial-gradient(1.3px 1.3px at 22% 86%, rgba(243,212,142,.7), transparent 60%),
+    radial-gradient(1px 1px at 48% 58%, rgba(255,255,255,.45), transparent 60%),
+    radial-gradient(1.2px 1.2px at 63% 13%, rgba(243,212,142,.7), transparent 60%),
+    radial-gradient(1px 1px at 77% 91%, rgba(255,255,255,.5), transparent 60%),
+    radial-gradient(1.3px 1.3px at 96% 33%, rgba(243,212,142,.65), transparent 60%);
+  animation-delay: 2.7s; animation-duration: 7s;
+}
+@keyframes twinkle { from { opacity: .25; } to { opacity: 1; } }
+.wrap, header { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { body::before, body::after { animation: none; opacity: .5; } }
 [hidden] { display: none !important; }
 html, body { min-height: 100%; }
 body {
@@ -41,7 +74,24 @@ body {
   display: grid;
   gap: 28px;
 }
-header { display: grid; gap: 6px; position: relative; }
+header { display: grid; gap: 6px; position: relative; justify-items: start; }
+/* 히어로: 둥실 떠 있는 카드 부채꼴 */
+.hero-fan { position: relative; height: 150px; width: 100%; max-width: 420px; margin: 14px 0 4px; }
+.hero-fan .back {
+  position: absolute; left: 50%; bottom: 0; width: 86px; aspect-ratio: 1 / 1.73;
+  border-radius: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.5);
+  transform-origin: 50% 115%;
+  animation: herofloat 5s ease-in-out infinite alternate;
+}
+.hero-fan .back:nth-child(1) { transform: translateX(-50%) rotate(-24deg); animation-delay: 0s; }
+.hero-fan .back:nth-child(2) { transform: translateX(-50%) rotate(-12deg); animation-delay: .6s; }
+.hero-fan .back:nth-child(3) { transform: translateX(-50%) rotate(0deg);   animation-delay: 1.2s; }
+.hero-fan .back:nth-child(4) { transform: translateX(-50%) rotate(12deg);  animation-delay: 1.8s; }
+.hero-fan .back:nth-child(5) { transform: translateX(-50%) rotate(24deg);  animation-delay: 2.4s; }
+@keyframes herofloat { to { translate: 0 -7px; } }
+@media (prefers-reduced-motion: reduce) { .hero-fan .back { animation: none; } }
+.quick-draw { margin-top: 6px; font-size: 15px; padding: 12px 24px; box-shadow: 0 0 22px rgba(216,180,106,.25); }
+.quick-draw:hover { box-shadow: 0 0 30px rgba(216,180,106,.45); }
 .sound-ctrl { position: absolute; top: 0; right: 0; display: flex; gap: 8px; align-items: center; }
 .sound-ctrl button, .sound-ctrl select {
   font: inherit; font-size: 12.5px; color: var(--muted);
@@ -79,6 +129,7 @@ header { display: grid; gap: 6px; position: relative; }
 .cats .ico { font-size: 30px; line-height: 1; filter: drop-shadow(0 3px 6px rgba(0,0,0,.4)); }
 .cats .deck-opt:hover { transform: translateY(-4px); box-shadow: 0 10px 22px rgba(0,0,0,.35); }
 @media (max-width: 560px) {
+  .sound-ctrl { position: static; justify-self: end; margin-bottom: 4px; }
   .cats { grid-template-columns: repeat(2, 1fr); }
   .wiz-nav .btn, .row .btn { width: 100%; }
   .row { position: sticky; bottom: 10px; }
@@ -421,7 +472,12 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     </div>
     <div class="eyebrow">Celtic Cross · 10 Cards</div>
     <h1>Tarot of Cats &amp; Dogs<span class="ko">고양이 · 강아지 타로 리딩</span></h1>
-    <p class="lede">손님이 덱과 배열을 고르고 질문을 떠올리면, 카드를 섞어 자리에 놓습니다. 카드를 한 장씩 눌러 뒤집으세요.</p>
+    <p class="lede">카드는 이미 당신의 이야기를 준비하고 있어요. 마음속 질문 하나만 떠올려 보세요.</p>
+    <div class="hero-fan deck-cat" aria-hidden="true">
+      <div class="face back"></div><div class="face back"></div><div class="face back"></div>
+      <div class="face back"></div><div class="face back"></div>
+    </div>
+    <button type="button" class="btn quick-draw" id="btn-quick">✨ 오늘의 카드 한 장, 바로 뽑기</button>
   </header>
 
   <!-- 1단계: 덱과 손님 정보 -->
@@ -840,9 +896,10 @@ const SFX = (() => {
   const buffers = {};
   const ac = () => (ctx ||= new (window.AudioContext || window.webkitAudioContext)());
   // 페이지 열릴 때 미리 디코딩해 둔다
-  ["shuffle", "cards", "flip", "pick"].forEach(async (n) => {
+  const FILES = { shuffle: "shuffle.mp3", deal: "deal.m4a", flip: "flip.mp3", pick: "pick.mp3" };
+  Object.entries(FILES).forEach(async ([n, f]) => {
     try {
-      const r = await fetch("audio/sfx/" + n + ".mp3");
+      const r = await fetch("audio/sfx/" + f);
       buffers[n] = await ac().decodeAudioData(await r.arrayBuffer());
     } catch (e) { /* 로드 실패 시 그냥 무음 */ }
   });
@@ -870,7 +927,7 @@ const SFX = (() => {
       play("shuffle", { offset: 3.0, dur: 1.05, vol: 0.9, fadeOut: 0.25, delay: 2.0 });
     },
     pick() { play("pick", { vol: 0.8 }); },                                  // 집는 클릭
-    deal() { play("cards", { offset: 3.74, dur: 0.22, vol: 0.9 }); },        // 카드 한 장 놓는 소리
+    deal() { play("deal", { vol: 0.9 }); },                                  // 카드 한 장 놓는 소리
     flip() { play("flip", { vol: 0.5 }); },                                  // 부드러운 휙
   };
 })();
@@ -1054,13 +1111,15 @@ function animateText(el, speed = 0.028) {
 }
 
 const WIZ_LABELS = ["분야", "덱", "배열"];
+let wizReady = false;  // 첫 로드 때는 스크롤하지 않는다
 function showStep(n) {
   S.wstep = n;
   document.querySelectorAll(".wstep").forEach(el => el.classList.toggle("on", +el.dataset.w === n));
   const q = document.querySelector(`.wstep[data-w="${n}"] .wiz-q`);
   if (q) { q.textContent = q.textContent; animateText(q); }  // 단계 질문을 천천히 드러낸다
   renderChips();
-  $("setup").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (wizReady) $("setup").scrollIntoView({ behavior: "smooth", block: "start" });
+  wizReady = true;
 }
 function renderChips() {
   const done = [];
@@ -1563,6 +1622,12 @@ $("btn-all").addEventListener("click", () => {
 $("btn-back").addEventListener("click", () => {
   $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderCats(); renderSpreads();
   showStep(0);
+});
+
+$("btn-quick").addEventListener("click", () => {
+  S.cat = "today"; S.spread = "today";
+  renderCats(); renderSpreads(); renderExtras();
+  startReading();  // 분야 - 덱 - 배열을 건너뛰고 바로 섞는다 (덱은 현재 기본값)
 });
 
 renderDecks();
