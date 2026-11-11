@@ -90,6 +90,39 @@ header { display: grid; gap: 6px; position: relative; justify-items: start; }
 .hero-fan .back:nth-child(5) { transform: translateX(-50%) rotate(24deg);  animation-delay: 2.4s; }
 @keyframes herofloat { to { translate: 0 -7px; } }
 @media (prefers-reduced-motion: reduce) { .hero-fan .back { animation: none; } }
+/* 숲 실루엣: 히어로 하단에 은은하게 깔리는 침엽수 */
+header { overflow: hidden; }
+header > .sound-ctrl, header > .eyebrow, header > h1, header > .lede,
+header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
+.forest {
+  position: absolute; left: -2%; right: -2%; bottom: 0; width: 104%; height: 150px;
+  z-index: 0; pointer-events: none; opacity: .5;
+  -webkit-mask-image: linear-gradient(to top, #000 55%, transparent);
+  mask-image: linear-gradient(to top, #000 55%, transparent);
+}
+.forest svg { width: 100%; height: 100%; display: block; }
+.forest polygon { fill: #1c2a2a; }
+/* 반딧불: 느리게 떠다니며 깜빡이는 금녹색 점 */
+.fireflies { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.fireflies span {
+  position: absolute; width: 3px; height: 3px; border-radius: 50%;
+  background: #c8e6a0; box-shadow: 0 0 6px 2px rgba(200,230,160,.6);
+  opacity: 0; animation: firefly 7s ease-in-out infinite;
+}
+.fireflies span:nth-child(1) { left: 14%; bottom: 22%; animation-delay: 0s;   animation-duration: 8s; }
+.fireflies span:nth-child(2) { left: 32%; bottom: 40%; animation-delay: 1.6s; animation-duration: 9s; }
+.fireflies span:nth-child(3) { left: 55%; bottom: 16%; animation-delay: 3.1s; animation-duration: 7.5s; }
+.fireflies span:nth-child(4) { left: 71%; bottom: 34%; animation-delay: 2.2s; animation-duration: 8.5s; }
+.fireflies span:nth-child(5) { left: 86%; bottom: 24%; animation-delay: 4.3s; animation-duration: 10s; }
+@keyframes firefly {
+  0%, 100% { opacity: 0; transform: translate(0, 0); }
+  20%      { opacity: .7; }
+  50%      { opacity: .25; transform: translate(-10px, -14px); }
+  80%      { opacity: .7; transform: translate(8px, -6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fireflies span { animation: none; opacity: .4; }
+}
 .quick-draw { margin-top: 6px; font-size: 15px; padding: 12px 24px; box-shadow: 0 0 22px rgba(216,180,106,.25); }
 .quick-draw:hover { box-shadow: 0 0 30px rgba(216,180,106,.45); }
 .sound-ctrl { position: absolute; top: 0; right: 0; display: flex; gap: 8px; align-items: center; }
@@ -198,6 +231,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .deck-opt .mini { width: 66px; aspect-ratio: 1 / 1.73; border-radius: 6px; box-shadow: 0 6px 14px rgba(0,0,0,.4); }
 .deck-opt .name { font-weight: 700; }
 .deck-opt .grp { font-size: 12px; color: var(--muted); }
+.deck-opt.unready { opacity: .55; cursor: not-allowed; position: relative; }
+.deck-opt.unready:hover { border-color: var(--line); transform: none; }
+.deck-opt .deck-badge {
+  font-size: 11.5px; letter-spacing: .02em; color: var(--gold);
+  border: 1px solid var(--gold-soft); border-radius: 999px; padding: 2px 9px;
+  background: rgba(216,180,106,.08);
+}
 .note { font-size: 13px; color: var(--muted); margin: 0; }
 
 .guest { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 14px; }
@@ -470,7 +510,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         </optgroup>
       </select>
     </div>
-    <div class="eyebrow">Celtic Cross · 10 Cards</div>
+    <div class="eyebrow">Tarot Forest · 숲의 타로</div>
     <h1>Tarot Forest<span class="ko">타로의 숲 · 숲의 친구들이 들려주는 타로</span></h1>
     <p class="lede">카드는 이미 당신의 이야기를 준비하고 있어요. 마음속 질문 하나만 떠올려 보세요.</p>
     <div class="hero-fan deck-cat" aria-hidden="true">
@@ -478,6 +518,22 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <div class="face back"></div><div class="face back"></div>
     </div>
     <button type="button" class="btn quick-draw" id="btn-quick">✨ 오늘의 카드 한 장, 바로 뽑기</button>
+    <!-- 숲 실루엣 + 반딧불 (장식, 외부 에셋 없음) -->
+    <div class="forest" aria-hidden="true">
+      <svg viewBox="0 0 1200 160" preserveAspectRatio="none">
+        <polygon points="60,160 20,90 45,95 10,40 35,45 60,8 85,45 110,40 75,95 100,90"/>
+        <polygon points="210,160 180,100 200,104 170,55 192,60 210,20 228,60 250,55 220,104 240,100"/>
+        <polygon points="360,160 325,78 350,84 312,28 338,34 360,0 382,34 408,28 370,84 395,78"/>
+        <polygon points="520,160 490,104 508,108 480,62 500,66 520,28 540,66 560,62 532,108 550,104"/>
+        <polygon points="660,160 630,96 648,100 618,52 640,57 660,16 680,57 702,52 672,100 690,96"/>
+        <polygon points="820,160 785,78 810,84 772,28 798,34 820,0 842,34 868,28 830,84 855,78"/>
+        <polygon points="980,160 950,104 968,108 940,62 960,66 980,28 1000,66 1020,62 992,108 1010,104"/>
+        <polygon points="1140,160 1110,96 1128,100 1098,52 1120,57 1140,16 1160,57 1182,52 1152,100 1170,96"/>
+      </svg>
+    </div>
+    <div class="fireflies" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
   </header>
 
   <!-- 1단계: 덱과 손님 정보 -->
@@ -499,7 +555,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
           <figcaption id="deck-preview-cap"></figcaption>
         </figure>
       </div>
-      <p class="note">고양이·강아지 그림이 아직 없는 카드는 원본(라이더-웨이트, 1909) 그림으로 대신 보여드립니다.</p>
+      <p class="note">동물 덱은 지금 그림을 준비하고 있어요. 완성되면 바로 열립니다.</p>
       <div class="wiz-nav">
         <button type="button" class="btn ghost" data-prev>← 이전</button>
         <button type="button" class="btn" data-next>다음 →</button>
@@ -528,8 +584,8 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <h2 class="wiz-q">마지막으로, 당신에 대해 알려주세요</h2>
       <div class="guest">
         <div class="field">
-          <label for="guest-name">손님 이름</label>
-          <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤" value="지윤">
+          <label for="guest-name">손님 이름 (선택)</label>
+          <input type="text" id="guest-name" maxlength="20" placeholder="예: 지윤">
         </div>
         <div class="field">
           <label for="guest-q">질문 (선택)</label>
@@ -537,6 +593,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         </div>
       </div>
       <div class="guest extras" id="extras"></div>
+      <p class="note">🔒 입력한 내용은 이 기기(브라우저)에만 저장되며, 서버로 전송되지 않습니다.</p>
       <div class="row">
         <button type="button" class="btn ghost" data-prev>← 이전</button>
         <button class="btn btn-big" id="btn-start" type="button">🔮 카드 섞고 펼치기</button>
@@ -646,10 +703,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 // ---------- 덱과 카드 데이터 ----------
 // 동물 그림 경로: images/<덱>/<카드id>.jpg  (없으면 images/original/<카드id>.jpg 로 대신 표시)
 const DECKS = [
-  { id: "cat",      name: "달빛 고양이",  group: "고양이 버전" },
-  { id: "dog",      name: "강아지",       group: "강아지 버전" },
-  { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원" },
-  { id: "original", name: "라이더-웨이트", group: "원본 1909" },
+  { id: "cat",      name: "달빛 고양이",  group: "고양이 버전",      ready: false },
+  { id: "dog",      name: "강아지",       group: "강아지 버전",      ready: false },
+  { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원", ready: true },
+  { id: "original", name: "라이더-웨이트", group: "원본 1909",        ready: true },
 ];
 // 그림 전체가 자기 파일로 제공되는 덱(대체 그림 없음), 뒷면도 이미지 사용
 const IMG_BACK_DECKS = new Set(["original", "cbd"]);
@@ -886,7 +943,7 @@ const SPREADS = [
 let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
+const S = { deck: "original", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
 const $ = (id) => document.getElementById(id);
 
 // ---------- 효과음 (실제 카드 녹음 - audio/sfx/, Pixabay) ----------
@@ -1039,18 +1096,24 @@ function srcFor(deck, id) { return "images/" + (deck === "original" ? "original"
 
 // ---------- 덱 선택 ----------
 function renderDecks() {
-  $("decks").innerHTML = DECKS.map(d => `
-    <button type="button" class="deck-opt deck-${d.id}" data-deck="${d.id}" aria-pressed="${d.id === S.deck}">
+  $("decks").innerHTML = DECKS.map(d => {
+    const unready = d.ready === false;
+    return `
+    <button type="button" class="deck-opt deck-${d.id}${unready ? " unready" : ""}" data-deck="${d.id}" aria-pressed="${d.id === S.deck}"${unready ? ' disabled aria-disabled="true"' : ""}>
       <span class="mini back${IMG_BACK_DECKS.has(d.id) ? " img " + d.id : ""}"></span>
       <span class="name">${d.name}</span>
       <span class="grp">${d.group}</span>
-    </button>`).join("");
+      ${unready ? '<span class="deck-badge">🌱 준비 중</span>' : ""}
+    </button>`;
+  }).join("");
 }
 // 덱 대표 카드 미리보기: 태양 / 연인 / 마법사 / 운명의 수레바퀴 중 랜덤
 const PREVIEW_CARDS = ["major_19", "major_06", "major_01", "major_10"];
 function renderPreview() {
   const cid = PREVIEW_CARDS[rand(PREVIEW_CARDS.length)];
   const img = $("deck-preview-img");
+  // 준비 안 된(그림 없는) 덱은 아예 원본 그림으로 미리보기 — 404 요청을 만들지 않음
+  const previewDeck = (DECKS.find(d => d.id === S.deck) || {}).ready === false ? "original" : S.deck;
   img.dataset.fb = "";
   img.onerror = () => {
     if (img.dataset.fb) return;
@@ -1058,12 +1121,14 @@ function renderPreview() {
   };
   img.classList.remove("pop");
   img.onload = () => { void img.offsetWidth; img.classList.add("pop"); };
-  img.src = srcFor(S.deck, cid);
+  img.src = srcFor(previewDeck, cid);
   const card = CARDS.find(c => c.id === cid);
   $("deck-preview-cap").textContent = DECKS.find(d => d.id === S.deck).name + " · " + card.ko;
 }
 $("decks").addEventListener("click", (e) => {
   const b = e.target.closest(".deck-opt"); if (!b) return;
+  const d = DECKS.find(x => x.id === b.dataset.deck);
+  if (d && d.ready === false) return; // 준비 중인 덱은 선택 불가
   S.deck = b.dataset.deck; renderDecks(); renderPreview();
 });
 
@@ -1256,11 +1321,11 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const wait = (ms) => new Promise(r => setTimeout(r, reduced ? 0 : ms));
 
 async function startReading() {
-  const name = $("guest-name").value.trim() || "손님";
+  const name = $("guest-name").value.trim();
   const q = $("guest-q").value.trim();
   const deck = DECKS.find(d => d.id === S.deck);
   const sp = SPREADS.find(s => s.id === S.spread);
-  $("who-title").textContent = name + "님의 " + sp.name + " · " + deck.name;
+  $("who-title").textContent = (name ? name + "님의 " : "당신의 ") + sp.name + " · " + deck.name;
   document.querySelector(".eyebrow").textContent = sp.en + " · " + sp.positions.length + " Cards";
 
   // 분야별 추가 정보 -> 머리글 요약
@@ -1424,6 +1489,7 @@ function quitPicking() {
   if (S.picked < POSITIONS.length) {
     $("table").hidden = true; $("setup").hidden = false;
     renderDecks(); renderCats(); renderSpreads();
+    resetEyebrow();
     showStep(0);
   }
 }
@@ -1517,7 +1583,7 @@ function openReading(h) {
   S.draw = h.draw.map(c => ({ ...c }));
   S.open = new Set(); S.active = null; S.fallback = new Set(); S.picked = POSITIONS.length;
   const deck = DECKS.find(x => x.id === h.deck) || DECKS[0];
-  $("who-title").textContent = (h.name || "손님") + "님의 " + h.spreadName + " · " + deck.name;
+  $("who-title").textContent = (h.name ? h.name + "님의 " : "당신의 ") + h.spreadName + " · " + deck.name;
   document.querySelector(".eyebrow").textContent = h.en + " · " + POSITIONS.length + " Cards";
   S.info = h.info || "";
   $("who-q").textContent = [h.q ? "질문: " + h.q : "지난 리딩 다시 보기", S.info].filter(Boolean).join("  ·  ");
@@ -1561,9 +1627,13 @@ $("spread").addEventListener("click", (e) => {
 function renderFocus() {
   const f = $("focus"), i = S.active;
   if (i === null) {
+    const N = POSITIONS.length;
+    const order = N <= 1
+      ? "카드를 눌러 뒤집어 보세요."
+      : `번호 순서대로 보는 것을 권합니다. 1번은 ${POSITIONS[0].name}, ${N}번은 ${POSITIONS[N - 1].name} 자리입니다.`;
     f.innerHTML = `<div class="pos">READING</div>
       <div class="title">카드를 눌러 뒤집으세요</div>
-      <div class="meaning">번호 순서대로 보는 것을 권합니다. 1번은 현재, 10번은 결과 자리입니다. 뒤집은 카드를 한 번 더 누르면 크게 볼 수 있습니다.</div>`;
+      <div class="meaning">${order} 뒤집은 카드를 한 번 더 누르면 크게 볼 수 있습니다.</div>`;
     return;
   }
   const c = S.draw[i], p = POSITIONS[i];
@@ -1619,12 +1689,19 @@ $("btn-all").addEventListener("click", () => {
   S.draw.forEach((_, i) => reveal(i));
   setActive(S.active === null ? 0 : S.active);
 });
+const EYEBROW_HOME = "Tarot Forest · 숲의 타로";
+function resetEyebrow() { document.querySelector(".eyebrow").textContent = EYEBROW_HOME; }
 $("btn-back").addEventListener("click", () => {
   $("table").hidden = true; $("setup").hidden = false; renderDecks(); renderCats(); renderSpreads();
+  resetEyebrow();
   showStep(0);
 });
 
 $("btn-quick").addEventListener("click", () => {
+  // 리딩 진행 중(카드 선택 모달이 열렸거나, 리딩 영역이 홈으로 안 돌아간 상태)이면 확인
+  const inReading = $("pick-modal").open || !$("table").hidden;
+  if (inReading && !confirm("진행 중인 리딩을 끝내고 오늘의 카드를 새로 뽑을까요?")) return;
+  if ($("pick-modal").open) $("pick-modal").close();
   S.cat = "today"; S.spread = "today";
   renderCats(); renderSpreads(); renderExtras();
   startReading();  // 분야 - 덱 - 배열을 건너뛰고 바로 섞는다 (덱은 현재 기본값)
