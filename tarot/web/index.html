@@ -196,10 +196,15 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   padding: 18px 20px 20px; display: grid; gap: 14px;
   box-shadow: inset 0 0 0 1px rgba(216,180,106,.18), inset 0 0 44px rgba(216,180,106,.12), inset 0 0 90px rgba(10,6,20,.55);
 }
-.pick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .pick-note { margin: 0; color: var(--gold); font-size: 15.5px; letter-spacing: .02em; }
 .pick-head .btn { padding: 7px 14px; font-size: 13px; }
-.pick-actions { display: flex; gap: 8px; }
+.pick-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.pick-actions .btn:disabled { opacity: .4; cursor: default; }
+@media (max-width: 700px) {
+  .pick-head { flex-direction: column; align-items: stretch; }
+  .pick-actions { justify-content: center; }
+}
 /* 리본 아크 스프레드: 78장을 하나의 호를 따라 절대 배치 (좌표는 JS 인라인) */
 .pickfan {
   position: relative; width: 100%; margin: 0 auto;
@@ -675,7 +680,9 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
     <div class="pick-head">
       <p class="pick-note" id="pick-note"></p>
       <div class="pick-actions">
+        <button type="button" class="btn ghost" id="pick-undo" disabled>↩️ 한 장 되돌리기</button>
         <button type="button" class="btn ghost" id="pick-reshuffle">🔀 다시 섞기</button>
+        <button type="button" class="btn ghost" id="pick-cancel">✖ 취소</button>
         <button type="button" class="btn ghost" id="pick-quit">🏠 홈으로</button>
       </div>
     </div>
@@ -1589,6 +1596,8 @@ function layoutPickFan() {
 function startPicking() {
   const need = POSITIONS.length;
   S.picked = 0;
+  S.pickStack = [];                                            // 뽑은 부채 버튼을 순서대로 쌓아 되돌리기에 사용
+  $("pick-undo").disabled = true;
   $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (0/${need})`;
   animateText($("pick-note"));                                 // 선택 안내도 천천히
   $("pickfan").className = "pickfan deck-" + S.deck;              // 덱 뒷면 무늬 적용
@@ -1618,15 +1627,32 @@ $("pickfan").addEventListener("click", (e) => {
   b.classList.add("used");
   SFX.pick();
   dealOne(S.picked);
+  S.pickStack.push(b);          // 이 부채 버튼을 되돌리기용 스택에 기록
   S.picked += 1;
   if (S.picked < need) {
     $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (${S.picked}/${need})`;
+    $("pick-undo").disabled = false;
   } else {
     $("pick-note").textContent = "준비되었습니다.";
+    $("pick-undo").disabled = true;   // 마지막 장은 즉시 저장되므로 되돌리기 비활성(close/save 경합 방지)
     setTimeout(() => { $("pick-modal").close(); }, 700);
     $("btn-all").disabled = false;
     saveReading(); // 카드가 확정되는 순간 이 브라우저에 기록
   }
+});
+// ↩️ 한 장 되돌리기: 마지막으로 뽑은 카드를 취소하고 부채로 복귀
+$("pick-undo").addEventListener("click", () => {
+  if (S.picked <= 0 || !S.pickStack.length) return;
+  const last = S.picked - 1;
+  const dealt = $("spread").querySelector(`.card[data-i="${last}"]`);  // 테이블에 날아간 그 카드 제거
+  if (dealt) dealt.remove();
+  const b = S.pickStack.pop();                                 // 부채 버튼 복귀 (.used 제거 → opacity transition 으로 복원)
+  if (b) b.classList.remove("used", "lift");
+  S.picked -= 1;
+  const need = POSITIONS.length;
+  $("pick-note").textContent = `마음이 가는 카드를 ${need}장 골라주세요 (${S.picked}/${need})`;
+  $("pick-undo").disabled = S.picked <= 0;
+  $("btn-all").disabled = true;       // 다시 미완료 상태이므로 모두 뒤집기 잠금
 });
 // 중간에 그만두거나 ESC 로 닫으면 설정 화면으로 되돌아간다 (기록은 완료 시에만 저장되므로 무효 판은 남지 않음)
 function quitPicking() {
@@ -1640,8 +1666,23 @@ function quitPicking() {
 }
 $("pick-quit").addEventListener("click", quitPicking);
 $("pick-reshuffle").addEventListener("click", () => {   // 같은 설정으로 다시 섞기
+  // 이미 뽑은 카드가 있으면 확인. startReading() 이 #spread 를 새로 그리고 startPicking() 이
+  // 부채/스택/카운트를 초기화하므로 테이블·부채·상태가 모두 되돌려진다.
+  if (S.picked > 0 && !confirm("뽑은 카드를 모두 되돌리고 다시 섞을까요?")) return;
   $("pick-modal").close();
   startReading();
+});
+// ✖ 취소: 뽑기만 중단하고 설정 마지막 단계(정보 입력)로 복귀 — 홈으로와 달리 분야/덱/배열 선택은 유지
+$("pick-cancel").addEventListener("click", () => {
+  if (S.picked > 0 && !confirm("지금까지 뽑은 카드를 버리고 돌아갈까요?")) return;
+  $("pick-modal").close();
+  S.picked = 0; S.pickStack = [];
+  S.draw = []; S.open = new Set(); S.active = null; S.fallback = new Set();
+  $("spread").innerHTML = "";                 // 테이블에 놓인 카드 정리
+  $("positions").innerHTML = "";              // 리딩 로그 비우기 (S.draw 가 비었으므로 renderLog 대신 직접 비움)
+  $("focus").innerHTML = "";                  // 포커스 카드 비우기
+  $("table").hidden = true; $("setup").hidden = false;
+  showStep(3);                                // 정보 입력 단계(🔮 카드 섞고 펼치기)로 복귀
 });
 $("pick-modal").addEventListener("cancel", (e) => { e.preventDefault(); quitPicking(); });
 
