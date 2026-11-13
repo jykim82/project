@@ -186,27 +186,42 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 /* ---------- 카드 뽑기 ---------- */
 #pick-modal { border: 0; padding: 0; background: transparent; max-width: min(96vw, 1060px); width: 96vw; max-height: 94vh; }
 #pick-modal::backdrop { background: rgba(10, 6, 16, .88); }
+/* 벨벳 상담 테이블: 진보라 radial + 미세 노이즈 + 금빛 비네트 */
 .pick-box {
-  background: var(--table); border: 1px solid var(--line); border-radius: 14px;
+  background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 4px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,.03) 0 3px, transparent 3px 6px),
+    radial-gradient(ellipse at 50% 38%, #2b1f47 0%, #201640 52%, #150e26 100%);
+  border: 1px solid var(--line); border-radius: 14px;
   padding: 18px 20px 20px; display: grid; gap: 14px;
+  box-shadow: inset 0 0 0 1px rgba(216,180,106,.18), inset 0 0 44px rgba(216,180,106,.12), inset 0 0 90px rgba(10,6,20,.55);
 }
 .pick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pick-note { margin: 0; color: var(--gold); font-size: 15.5px; letter-spacing: .02em; }
 .pick-head .btn { padding: 7px 14px; font-size: 13px; }
 .pick-actions { display: flex; gap: 8px; }
+/* 리본 아크 스프레드: 78장을 하나의 호를 따라 절대 배치 (좌표는 JS 인라인) */
 .pickfan {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 10px;
-  max-height: 72vh; overflow-y: auto; padding: 4px 2px 10px;
+  position: relative; width: 100%; margin: 0 auto;
+  height: var(--fan-h, 430px);
+  overflow: visible;
 }
+.pickfan.scroll { overflow-y: auto; max-height: 76vh; }
 .pickfan button {
-  aspect-ratio: 1 / 1.73; width: 100%;
+  position: absolute; top: 0; left: 0;
+  width: var(--card-w, 92px); height: var(--card-h, 159px);
   border: 0; padding: 0; background: none; cursor: pointer;
-  transition: transform .15s, opacity .35s; position: relative;
+  transform-origin: 50% 50%;
+  transition: transform .18s ease, opacity .35s; will-change: transform;
 }
-.pickfan button .face { position: absolute; inset: 0; border-radius: 6px; box-shadow: 0 3px 8px rgba(0,0,0,.45); }
-.pickfan button:hover { transform: translateY(-6px) scale(1.04); }
-.pickfan button.used { opacity: .12; pointer-events: none; transform: scale(.94); }
-@media (max-width: 560px) { .pickfan { grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 8px; } }
+.pickfan button .face { position: absolute; inset: 0; border-radius: 7px; box-shadow: 0 3px 8px rgba(0,0,0,.45); }
+/* 데스크톱 hover / 모바일 lift: 자기 각도에서 위로 들어올려 완전히 보이게 */
+.pickfan button:hover, .pickfan button.lift {
+  /* 카드별 쌓임 순서가 인라인 z-index로 들어가므로 !important 가 필요 */
+  transform: var(--t) translateY(-40px) scale(1.5); z-index: 999 !important;
+}
+.pickfan button.lift .face { box-shadow: 0 10px 26px rgba(0,0,0,.6); }
+.pickfan button.used { opacity: 0; pointer-events: none; }
 .eyebrow { font-family: var(--display); letter-spacing: .18em; color: var(--gold); font-size: 13px; }
 h1 { font-family: var(--display); font-weight: 400; font-size: clamp(30px, 6vw, 46px); line-height: 1.1; margin: 0; text-wrap: balance; }
 h1 .ko { font-family: var(--body); font-weight: 700; font-size: .62em; display: block; margin-top: 6px; letter-spacing: -.01em; }
@@ -277,9 +292,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .reading-head .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .reading-head .btn { padding: 8px 16px; font-size: 14px; }
 
-.spread-wrap { container-type: inline-size; min-width: 0; padding: 18px 0 0 14px; }
+/* 책상 윗면: 벨벳 테이블 질감 + 둥근 모서리 + inset 그림자 */
+.spread-wrap {
+  container-type: inline-size; min-width: 0;
+  padding: clamp(18px, 4cqi, 40px) clamp(12px, 3cqi, 32px);
+  border-radius: 18px;
+  background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 4px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,.03) 0 3px, transparent 3px 6px),
+    radial-gradient(ellipse at 50% 40%, #2b1f47 0%, #201640 54%, #150e26 100%);
+  box-shadow: inset 0 0 0 1px rgba(216,180,106,.16), inset 0 0 40px rgba(216,180,106,.1), inset 0 0 90px rgba(10,6,20,.5);
+}
 .spread {
-  --w: min(112px, calc(100cqi / 5.25));
+  /* 카드 약 25% 확대. --fit 은 넘칠 때 JS 가 1 미만으로 낮춰 안전하게 가둔다 */
+  --w: min(140px, calc(100cqi / 5.25 * var(--fit, 1)));
   --h: calc(var(--w) * 1.73);
   position: relative;
   width: calc(var(--w) * 5.15);
@@ -307,9 +333,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   position: absolute; width: var(--w); height: var(--h);
   left: calc(var(--w) * var(--x)); top: calc(var(--w) * var(--y));
   padding: 0; border: 0; background: none; perspective: 900px;
+  transform: rotate(var(--tilt, 0deg)); /* 카드별 결정적 미세 기울임 (물리감) */
   transition: left .55s cubic-bezier(.2,.8,.2,1), top .55s cubic-bezier(.2,.8,.2,1), opacity .3s, transform .55s;
 }
-.card.rot { transform: rotate(90deg); z-index: 2; }
+.card.rot { transform: rotate(calc(90deg + var(--tilt, 0deg))); z-index: 2; }
 .card.dealing { left: calc(50% - var(--w) / 2); top: calc(50% - var(--h) / 2); opacity: 0; }
 .card.rot.dealing { transform: none; }
 .card .inner {
@@ -320,7 +347,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .card .face {
   position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
   border-radius: calc(var(--w) * .07); overflow: hidden;
-  box-shadow: 0 6px 16px rgba(0,0,0,.5);
+  box-shadow: 0 6px 14px rgba(0,0,0,.5); /* 책상 위에 놓인 깊은 그림자 */
 }
 .card .front { transform: rotateY(180deg); background: #eee5d2; }
 .card .front img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -453,6 +480,9 @@ dialog {
 .credits-box .en-note { font-size: 12.5px; }
 dialog::backdrop { background: rgba(10,6,16,.82); }
 dialog img { display: block; max-height: 84vh; width: auto; max-width: 100%; border-radius: 10px; margin: 0 auto; }
+/* 카드 크게 보기: 치즈 고양이 그림이 주인공이 되도록 화면 높이의 82%까지 */
+#zoom { max-width: 94vw; }
+#zoom img { max-height: 82vh; width: auto; max-width: 94vw; border-radius: 12px; box-shadow: 0 18px 48px rgba(0,0,0,.6); }
 dialog img.rev { transform: rotate(180deg); }
 dialog .cap { text-align: center; color: var(--ink); margin-top: 10px; }
 dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.55); border: 0; color: #fff; border-radius: 999px; width: 34px; height: 34px; font-size: 18px; }
@@ -1094,6 +1124,27 @@ function backHTML(deck) {
 }
 function srcFor(deck, id) { return "images/" + (deck === "original" ? "original" : deck) + "/" + id + ".jpg"; }
 
+// 스프레드별 안전 배율: 확대한 카드가 가로(컨테이너)·세로(뷰포트)를 넘치면 이 판에서만 축소한다.
+function fitSpread() {
+  const spread = $("spread");
+  spread.style.setProperty("--fit", "1");
+  const maxX = Math.max(...POSITIONS.map(p => p.x)), maxY = Math.max(...POSITIONS.map(p => p.y));
+  const wrap = spread.closest(".spread-wrap");
+  const cs = getComputedStyle(wrap);
+  const availW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  // 기본 카드폭: min(140, availW/5.25) — 종전 112 상한에서 25% 키운 140 상한.
+  const baseW = Math.min(140, availW / 5.25);
+  let fit = 1;
+  // 가로: 스프레드 폭이 테이블 영역을 넘으면 그만큼 축소 (주된 안전장치)
+  const needW = baseW * (maxX + 1);
+  if (needW > availW) fit = Math.min(fit, availW / needW);
+  // 세로: 세로 스크롤은 허용하되, 뷰포트의 1.5배를 넘는 극단적 경우에만 추가 축소
+  const needHpx = baseW * (maxY + 1.78);
+  const budgetH = Math.max(560, window.innerHeight * 1.5);
+  if (needHpx > budgetH) fit = Math.min(fit, budgetH / needHpx);
+  spread.style.setProperty("--fit", fit.toFixed(3));
+}
+
 // ---------- 덱 선택 ----------
 function renderDecks() {
   $("decks").innerHTML = DECKS.map(d => {
@@ -1380,6 +1431,7 @@ async function startReading() {
   spread.innerHTML =
     POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("") +
     `<div class="pile" id="pile">${Array.from({ length: 8 }, () => backHTML(S.deck).replace("face back", "c back")).join("")}</div>`;
+  fitSpread();
   renderLog();
   $("btn-all").disabled = true; $("btn-again").disabled = true;
   window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
@@ -1401,6 +1453,8 @@ function dealOne(i) {
   b.type = "button";
   b.className = "card dealing" + (p.rot ? " rot" : "") + (c.rev ? " rev" : "");
   b.style.setProperty("--x", p.x); b.style.setProperty("--y", p.y);
+  // 카드 인덱스 기반 결정적 ±1.5° 기울임 (재렌더 시 동일, Math.random 금지)
+  b.style.setProperty("--tilt", (((i * 37 + 13) % 31 - 15) / 10).toFixed(1) + "deg");
   b.dataset.i = i;
   b.setAttribute("aria-label", (i + 1) + "번 " + p.name + " 카드 뒤집기");
   b.innerHTML = `<span class="badge">${i + 1}</span><span class="inner">${backHTML(S.deck)}
@@ -1454,6 +1508,84 @@ function animateShuffle(pile) {
   setTimeout(() => cs.forEach(c => { c.style.transform = ""; }), 2960);
 }
 
+// 터치 기기 여부 (hover 불가) — 모바일은 탭으로 들어올리고 재탭으로 뽑는다
+const touchPick = () => matchMedia("(hover: none)").matches;
+
+// 78장을 리본 아크(부채꼴)로 절대 배치. 데스크톱은 하나의 깊은 호, 모바일은 26장씩 얕은 호 3개.
+function layoutPickFan() {
+  const fan = $("pickfan");
+  const btns = fan.children;
+  if (!btns.length) return;
+  const mobile = matchMedia("(max-width: 700px)").matches;
+
+  if (!mobile) {
+    // 데스크톱: θ = -62 + 124·t 로 호를 그린 뒤, 그 호를 컨테이너(≈1040×430) 안에 맞게
+    // 균일 축소. x 는 0.92 로 가로 압축해 폭을 맞춘다. 카드 ~92×159, 옆에 ~13px 노출.
+    const cw = 92, ch = 159, R = 1050, SQ = 0.92, lift = 40;
+    const sin = t => Math.sin(t * Math.PI / 180), cos = t => Math.cos(t * Math.PI / 180);
+    const cont = Math.min(fan.clientWidth || 1000, 1040);
+    const boxH = 430;
+    fan.classList.remove("scroll");
+    fan.style.setProperty("--card-w", cw + "px");
+    fan.style.setProperty("--card-h", ch + "px");
+    fan.style.setProperty("--fan-h", (boxH + lift + 20) + "px");  // hover 로 들린 윗단 여유
+    // 1차: 원시 호 좌표 산출
+    const raw = [];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < 78; i++) {
+      const t = i / 77, th = -62 + 124 * t;
+      const x = R * sin(th) * SQ, y = -R * cos(th);
+      raw.push({ th, x, y });
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+    // 2차: 호의 중심점 범위를 컨테이너(카드 폭/높이 여유를 뺀 영역)에 맞게 균일 축소
+    const scale = Math.min((cont - 8 - cw) / (maxX - minX), (boxH - ch - lift) / (maxY - minY));
+    const offX = (cont - ((maxX - minX) * scale + cw)) / 2;
+    for (let i = 0; i < 78; i++) {
+      const r = raw[i];
+      const left = offX + (r.x - minX) * scale;
+      const top = lift + (r.y - minY) * scale;
+      const b = btns[i];
+      b.style.setProperty("--t", `rotate(${r.th.toFixed(2)}deg)`);
+      b.style.left = left.toFixed(1) + "px";
+      b.style.top = top.toFixed(1) + "px";
+      b.style.transform = `rotate(${r.th.toFixed(2)}deg)`;
+      b.style.zIndex = i;
+    }
+  } else {
+    // 모바일: 26장씩 얕은 호(θ -24°~24°, R≈620) 3개를 세로로 쌓고, 각 호를 컨테이너 폭에 맞게 축소.
+    const cw = 64, ch = 110, R = 620, SQ = 0.9, PER = 26;
+    const sin = t => Math.sin(t * Math.PI / 180), cos = t => Math.cos(t * Math.PI / 180);
+    const cont = Math.min(fan.clientWidth || 360, 680);
+    fan.classList.add("scroll");
+    fan.style.setProperty("--card-w", cw + "px");
+    fan.style.setProperty("--card-h", ch + "px");
+    // 한 호(26장)의 원시 중심 좌표 범위 — 모든 행 공통
+    const rx0 = R * sin(-24) * SQ, rx1 = R * sin(24) * SQ;
+    const ry0 = -R * cos(0), ry1 = -R * cos(24);           // 꼭대기(0°)가 위, 끝(±24°)이 아래
+    const scale = Math.min((cont - 8 - cw) / (rx1 - rx0), 1);
+    const offX = (cont - ((rx1 - rx0) * scale + cw)) / 2;
+    const archH = (ry1 - ry0) * scale;                     // 한 호의 세로 높이
+    const rowGap = archH + ch + 34;                        // 한 호가 차지하는 세로 간격
+    for (let i = 0; i < 78; i++) {
+      const row = Math.floor(i / PER), k = i % PER;
+      const n = Math.min(PER, 78 - row * PER);
+      const t = n > 1 ? k / (n - 1) : 0.5, th = -24 + 48 * t;
+      const rx = R * sin(th) * SQ, ry = -R * cos(th);
+      const x = offX + (rx - rx0) * scale;
+      const y = row * rowGap + (ry - ry0) * scale;
+      const b = btns[i];
+      b.style.setProperty("--t", `rotate(${th.toFixed(2)}deg)`);
+      b.style.left = x.toFixed(1) + "px";
+      b.style.top = y.toFixed(1) + "px";
+      b.style.transform = `rotate(${th.toFixed(2)}deg)`;
+      b.style.zIndex = k;
+    }
+    fan.style.setProperty("--fan-h", (2 * rowGap + archH + ch + 50) + "px");
+  }
+}
+
 function startPicking() {
   const need = POSITIONS.length;
   S.picked = 0;
@@ -1464,12 +1596,25 @@ function startPicking() {
     `<button type="button" data-k="${k}" aria-label="카드 뽑기">${backHTML(S.deck)}</button>`).join("");
   $("pickfan").scrollTop = 0;
   $("pick-modal").showModal();
+  layoutPickFan();                                             // 모달이 열린 뒤 크기 측정해 아크 배치
   $("btn-again").disabled = false;
 }
+// 창 크기 바뀌면 아크·스프레드 배율 재계산
+addEventListener("resize", () => {
+  if ($("pick-modal").open) layoutPickFan();
+  if (!$("table").hidden && $("spread").querySelector(".slot")) fitSpread();
+});
 $("pickfan").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b || b.classList.contains("used")) return;
   const need = POSITIONS.length;
   if (S.picked >= need) return;
+  // 터치 기기: 첫 탭은 들어올리기, 들어올린 카드를 재탭하면 뽑기 (데스크톱은 hover 가 있으므로 바로 뽑음)
+  if (touchPick() && !b.classList.contains("lift")) {
+    $("pickfan").querySelectorAll("button.lift").forEach(x => x.classList.remove("lift"));
+    b.classList.add("lift");
+    return;
+  }
+  b.classList.remove("lift");
   b.classList.add("used");
   SFX.pick();
   dealOne(S.picked);
@@ -1595,6 +1740,7 @@ function openReading(h) {
   spread.style.width = `calc(var(--w) * ${(maxX + 1).toFixed(2)})`;
   spread.style.height = `calc(var(--w) * ${(maxY + 1.78).toFixed(2)})`;
   spread.innerHTML = POSITIONS.map(p => `<div class="slot${p.rot ? " rot" : ""}" style="--x:${p.x};--y:${p.y}"></div>`).join("");
+  fitSpread();
   S.replayMute = true;
   for (let i = 0; i < POSITIONS.length; i++) { dealOne(i); reveal(i); }
   S.replayMute = false;
