@@ -146,14 +146,19 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 .wiz-q { font-family: var(--body); font-weight: 700; font-size: clamp(19px, 3.4vw, 24px); margin: 0; letter-spacing: -.01em; }
 .wiz-chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 0; }
 .wiz-chips:empty { display: none; }
-.wiz-chips button {
+.wiz-chips .chips-cap { align-self: center; color: var(--muted); font-size: 12px; letter-spacing: .04em; margin-right: 2px; }
+.wiz-chips .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  font: inherit; font-size: 13px; color: var(--ink);
+  font-size: 13px; color: var(--ink);
   background: rgba(216,180,106,.08); border: 1px solid var(--gold-soft); border-radius: 999px;
-  padding: 6px 14px; cursor: pointer;
+  padding: 6px 14px;
 }
-.wiz-chips button:hover { border-color: var(--gold); }
-.wiz-chips button .edit { color: var(--muted); font-size: 11.5px; }
+.wiz-chips #chip-restart {
+  font: inherit; font-size: 12.5px; color: var(--muted);
+  background: none; border: 1px dashed var(--line); border-radius: 999px;
+  padding: 6px 14px; cursor: pointer; margin-left: 4px;
+}
+.wiz-chips #chip-restart:hover { color: var(--ink); border-color: var(--gold); }
 .wiz-nav { display: flex; justify-content: space-between; }
 .btn-big { font-size: 16.5px; padding: 14px 28px; }
 /* 분야 타일: 첫 화면의 얼굴 */
@@ -1522,21 +1527,20 @@ function showStep(n) {
   wizReady = true;
 }
 function renderChips() {
-  const done = [];
-  // 분야 칩: 분야 선택은 홈 화면에 있으므로 '바꾸기'는 홈으로 돌아간다 (data-goto="home")
-  done.push(["home", CAT_ICONS[S.cat] + " " + cat().name]);
-  if (S.wstep > 1) done.push([1, "🂠 " + DECKS.find(d => d.id === S.deck).name]);
+  // 현재 선택은 순수 라벨로만 표시하고, 돌아가기는 별도 버튼으로 분리 (혼동 방지)
+  const done = [CAT_ICONS[S.cat] + " " + cat().name];
+  if (S.wstep > 1) done.push("🂠 " + DECKS.find(d => d.id === S.deck).name);
   if (S.wstep > 2) {
     const sp = SPREADS.find(x => x.id === S.spread);
-    done.push([2, "✦ " + sp.name + " · " + sp.positions.length + "장"]);
+    done.push("✦ " + sp.name + " · " + sp.positions.length + "장");
   }
-  $("wiz-chips").innerHTML = done.map(([i, label]) =>
-    `<button type="button" data-goto="${i}">${label} <span class="edit">${i === "home" ? "질문 내용 바꾸기" : "바꾸기"}</span></button>`).join("");
+  $("wiz-chips").innerHTML =
+    `<span class="chips-cap">현재 선택</span>` +
+    done.map(label => `<span class="chip">${label}</span>`).join("") +
+    `<button type="button" id="chip-restart">↩ 처음으로 돌아가기</button>`;
 }
 $("wiz-chips").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-goto]"); if (!b) return;
-  if (b.dataset.goto === "home") { goto("home"); return; }   // 분야 바꾸기 → 홈으로
-  showStep(+b.dataset.goto);
+  if (e.target.closest("#chip-restart")) goto("home");
 });
 document.querySelectorAll("[data-next]").forEach(btn =>
   btn.addEventListener("click", () => showStep(S.wstep + 1)));
