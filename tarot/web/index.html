@@ -92,7 +92,7 @@ header { display: grid; gap: 6px; position: relative; justify-items: start; }
 @media (prefers-reduced-motion: reduce) { .hero-fan .back { animation: none; } }
 /* 숲 실루엣: 히어로 하단에 은은하게 깔리는 침엽수 */
 header { overflow: hidden; }
-header > .sound-ctrl, header > .eyebrow, header > h1, header > .lede,
+header > .top-bar, header > .eyebrow, header > h1, header > .lede,
 header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 .forest {
   position: absolute; left: -2%; right: -2%; bottom: 0; width: 104%; height: 150px;
@@ -125,12 +125,19 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 }
 .quick-draw { margin-top: 6px; font-size: 15px; padding: 12px 24px; box-shadow: 0 0 22px rgba(216,180,106,.25); }
 .quick-draw:hover { box-shadow: 0 0 30px rgba(216,180,106,.45); }
-.sound-ctrl { position: absolute; top: 0; right: 0; display: flex; gap: 8px; align-items: center; }
+/* 상단 바: 🏠 홈 + 효과음/음악을 한 줄(nowrap)로 — 홈은 왼쪽, 사운드는 오른쪽으로 민다 */
+.top-bar {
+  grid-row: 1; width: 100%;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+  min-width: 0;
+}
+.sound-ctrl { margin-left: auto; display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; min-width: 0; }
 .sound-ctrl button, .sound-ctrl select {
   font: inherit; font-size: 12.5px; color: var(--muted);
   background: var(--table-deep); border: 1px solid var(--line); border-radius: 999px;
-  padding: 5px 12px; cursor: pointer;
+  padding: 5px 12px; cursor: pointer; white-space: nowrap;
 }
+.sound-ctrl select { max-width: 42vw; }
 .sound-ctrl button.off { opacity: .5; }
 .sound-ctrl button:hover, .sound-ctrl select:hover { color: var(--gold); border-color: var(--gold-soft); }
 
@@ -144,6 +151,8 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 .wstep.on { display: grid; gap: 18px; animation: wfade .35s ease; }
 @keyframes wfade { from { opacity: 0; transform: translateY(8px); } }
 .wiz-q { font-family: var(--body); font-weight: 700; font-size: clamp(19px, 3.4vw, 24px); margin: 0; letter-spacing: -.01em; }
+/* 정보 입력 단계 보조 안내: '왜 적는가'를 풀어주는 문구 (muted 톤, 글자 등장 애니메이션) */
+.wiz-intro { margin: -6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 60ch; }
 .wiz-chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 0; }
 .wiz-chips:empty { display: none; }
 .wiz-chips .chips-cap { align-self: center; color: var(--muted); font-size: 12px; letter-spacing: .04em; margin-right: 2px; }
@@ -167,7 +176,11 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 .cats .ico { font-size: 30px; line-height: 1; filter: drop-shadow(0 3px 6px rgba(0,0,0,.4)); }
 .cats .deck-opt:hover { transform: translateY(-4px); box-shadow: 0 10px 22px rgba(0,0,0,.35); }
 @media (max-width: 560px) {
-  .sound-ctrl { position: static; justify-self: end; margin-bottom: 4px; }
+  /* 좁은 화면에서도 상단 바 한 줄 유지 — 패딩/폰트/간격을 살짝 줄인다 (줄바꿈 금지) */
+  .top-bar { gap: 6px; }
+  .sound-ctrl { gap: 5px; }
+  .sound-ctrl button, .sound-ctrl select, .home-btn { font-size: 11.5px; padding: 4px 9px; }
+  .sound-ctrl select { max-width: 40vw; }
   .cats { grid-template-columns: repeat(2, 1fr); }
   .wiz-nav .btn, .row .btn { width: 100%; }
   .row { position: sticky; bottom: 10px; }
@@ -200,6 +213,8 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   border: 1px solid var(--line); border-radius: 14px;
   padding: 18px 20px 20px; display: grid; gap: 14px;
   box-shadow: inset 0 0 0 1px rgba(216,180,106,.18), inset 0 0 44px rgba(216,180,106,.12), inset 0 0 90px rgba(10,6,20,.55);
+  /* 상담 테이블 원근감: 부채를 테이블에 눕혀 위(먼 쪽)가 작아지게 */
+  perspective: 1200px; perspective-origin: 50% 12%;
 }
 .pick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .pick-note { margin: 0; color: var(--gold); font-size: 15.5px; letter-spacing: .02em; }
@@ -229,8 +244,15 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   position: relative; width: 100%; margin: 0 auto;
   height: var(--fan-h, 430px);
   overflow: visible;
+  /* 데스크톱: 부채 평면을 뒤로 눕혀 원근감. 카드는 translateZ 로 집어올린다(preserve-3d) */
+  transform: rotateX(20deg); transform-origin: 50% 100%;
+  transform-style: preserve-3d;
 }
-.pickfan.scroll { overflow-y: auto; max-height: 76vh; }
+/* 모바일(3단 아크·세로 스크롤): 평면 유지 — preserve-3d/scroll 충돌 방지 */
+.pickfan.scroll {
+  overflow-y: auto; max-height: 76vh;
+  transform: none; transform-style: flat;
+}
 .pickfan button {
   position: absolute; top: 0; left: 0;
   width: var(--card-w, 92px); height: var(--card-h, 159px);
@@ -242,7 +264,18 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 /* 데스크톱 hover / 모바일 lift: 자기 각도에서 위로 들어올려 완전히 보이게 */
 .pickfan button:hover, .pickfan button.lift {
   /* 카드별 쌓임 순서가 인라인 z-index로 들어가므로 !important 가 필요 */
-  transform: var(--t) translateY(-40px) scale(1.5); z-index: 999 !important;
+  z-index: 999 !important;
+}
+/* 데스크톱(기울어진 평면): 카드를 테이블에서 viewer 쪽으로 집어 올려 선명하게.
+   인라인 transform: rotate(th) 를 이기기 위해 !important + var(--t) 로 각도 보존 */
+.pickfan:not(.scroll) button:hover,
+.pickfan:not(.scroll) button.lift {
+  transform: var(--t) translateZ(110px) scale(1.18) !important;
+}
+/* 모바일(평면 부채): 평면 안에서 위로 들어올려 보이게 (translateZ 대신 translateY) */
+.pickfan.scroll button:hover,
+.pickfan.scroll button.lift {
+  transform: var(--t) translateY(-40px) scale(1.5) !important;
 }
 .pickfan button.lift .face { box-shadow: 0 10px 26px rgba(0,0,0,.6); }
 .pickfan button.used { opacity: 0; pointer-events: none; }
@@ -326,6 +359,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
     repeating-linear-gradient(-45deg, rgba(0,0,0,.03) 0 3px, transparent 3px 6px),
     radial-gradient(ellipse at 50% 40%, #2b1f47 0%, #201640 54%, #150e26 100%);
   box-shadow: inset 0 0 0 1px rgba(216,180,106,.16), inset 0 0 40px rgba(216,180,106,.1), inset 0 0 90px rgba(10,6,20,.5);
+  /* 상담 테이블 원근감: 손님 자리에서 테이블을 내려다보는 은은한 시점 */
+  perspective: 1400px; perspective-origin: 50% 0%;
 }
 .spread {
   /* 카드 약 25% 확대. --fit 은 넘칠 때 JS 가 1 미만으로 낮춰 안전하게 가둔다 */
@@ -335,6 +370,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   width: calc(var(--w) * 5.15);
   height: calc(var(--w) * 7.22);
   margin: 0 auto;
+  /* 캔버스 평면만 뒤로 기울인다 (의미 패널·텍스트는 평면 유지). 윗쪽(먼 쪽)이 작아진다.
+     flatten(기본값) — 각 .card 는 자신의 3D 컨텍스트에서 뒤집히므로 preserve-3d 불필요 */
+  transform: rotateX(15deg); transform-origin: 50% 100%;
 }
 .pile {
   position: absolute; left: 50%; top: 50%;
@@ -371,7 +409,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .card .face {
   position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
   border-radius: calc(var(--w) * .07); overflow: hidden;
-  box-shadow: 0 6px 14px rgba(0,0,0,.5); /* 책상 위에 놓인 깊은 그림자 */
+  box-shadow: 0 8px 20px rgba(0,0,0,.58); /* 기울어진 책상 위에 놓인 깊은 그림자 (원근 입체감 보강) */
 }
 .card .front { transform: rotateY(180deg); background: #eee5d2; }
 .card .front img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -606,18 +644,16 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 .wrap:not([data-screen="home"]) .fireflies { display: none; }
 /* 홈에서는 compact 홈버튼을 숨기고, 다른 화면에서는 로고를 작게 */
 .home-btn {
-  justify-self: start; margin-bottom: 2px;
+  flex: 0 0 auto;
   font: inherit; font-size: 12.5px; color: var(--muted);
   background: var(--table-deep); border: 1px solid var(--line); border-radius: 999px;
-  padding: 5px 13px; cursor: pointer;
+  padding: 5px 13px; cursor: pointer; white-space: nowrap;
 }
 .home-btn:hover { color: var(--gold); border-color: var(--gold-soft); }
 .wrap[data-screen="home"] .home-btn { display: none; }
 .wrap:not([data-screen="home"]) header { overflow: visible; }
 .wrap:not([data-screen="home"]) h1 { font-size: clamp(22px, 4.5vw, 30px); }
 .wrap:not([data-screen="home"]) h1 .ko { font-size: .55em; margin-top: 3px; }
-#logo { cursor: pointer; }
-#logo:hover { color: var(--focus); }
 
 /* 홈: 큰 입구 두 개 */
 .entries { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -648,25 +684,27 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 
 <div class="wrap" data-screen="home">
   <header>
-    <div class="sound-ctrl">
-      <button type="button" id="btn-sfx" title="효과음 켜기/끄기">🔊 효과음</button>
-      <select id="bgm-sel" title="배경음악" aria-label="배경음악 선택">
-        <option value="off">🎵 음악 끄기</option>
-        <optgroup label="클래식">
-          <option value="t-satie">사티 · 짐노페디</option>
-          <option value="t-bach">바흐 · 아리아</option>
-          <option value="t-chopin">쇼팽 · 녹턴</option>
-        </optgroup>
-        <optgroup label="앰비언트">
-          <option value="calm">차분한</option>
-          <option value="warm">따뜻한</option>
-          <option value="quiet">조용한</option>
-        </optgroup>
-      </select>
+    <div class="top-bar">
+      <button type="button" class="home-btn" id="btn-home-nav" aria-label="홈으로">🏠 홈</button>
+      <div class="sound-ctrl">
+        <button type="button" id="btn-sfx" title="효과음 켜기/끄기">🔊 효과음</button>
+        <select id="bgm-sel" title="배경음악" aria-label="배경음악 선택">
+          <option value="off">🎵 음악 끄기</option>
+          <optgroup label="클래식">
+            <option value="t-satie">사티 · 짐노페디</option>
+            <option value="t-bach">바흐 · 아리아</option>
+            <option value="t-chopin">쇼팽 · 녹턴</option>
+          </optgroup>
+          <optgroup label="앰비언트">
+            <option value="calm">차분한</option>
+            <option value="warm">따뜻한</option>
+            <option value="quiet">조용한</option>
+          </optgroup>
+        </select>
+      </div>
     </div>
-    <button type="button" class="home-btn" id="btn-home-nav" aria-label="홈으로">🏠 홈</button>
     <div class="eyebrow">Tarot Forest · 숲의 타로</div>
-    <h1 id="logo" role="link" tabindex="0" title="홈으로">Tarot Forest<span class="ko">타로의 숲 · 숲의 친구들이 들려주는 타로</span></h1>
+    <h1 id="logo">Tarot Forest<span class="ko">타로의 숲 · 숲의 친구들이 들려주는 타로</span></h1>
     <p class="lede">카드는 이미 당신의 이야기를 준비하고 있어요. 마음속 질문 하나만 떠올려 보세요.</p>
     <div class="hero-fan deck-cat" aria-hidden="true">
       <div class="face back"></div><div class="face back"></div><div class="face back"></div>
@@ -770,6 +808,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 
     <div class="wstep" data-w="3">
       <h2 class="wiz-q">마지막으로, 당신에 대해 알려주세요</h2>
+      <p class="wiz-intro" id="guest-intro">적는 것은 기록을 남기기 위해서가 아니에요. 이름과 질문을 손으로 적는 동안, 마음이 그 질문 하나에 모입니다 — 타로에서 가장 중요한 준비입니다.</p>
       <div class="guest">
         <div class="field">
           <label for="guest-name">손님 이름 (선택)</label>
@@ -1522,6 +1561,8 @@ function showStep(n) {
   document.querySelectorAll(".wstep").forEach(el => el.classList.toggle("on", +el.dataset.w === n));
   const q = document.querySelector(`.wstep[data-w="${n}"] .wiz-q`);
   if (q) { q.textContent = q.textContent; animateText(q); }  // 단계 질문을 천천히 드러낸다
+  // 정보 입력 단계: '왜 적는가' 안내문도 글자 등장 애니메이션으로 강조
+  if (n === 3) { const gi = $("guest-intro"); if (gi) { gi.textContent = gi.textContent; animateText(gi, 0.022); } }
   renderChips();
   if (wizReady) $("setup").scrollIntoView({ behavior: "smooth", block: "start" });
   wizReady = true;
@@ -2227,9 +2268,7 @@ $("btn-quick").addEventListener("click", () => {
 $("entry-today").addEventListener("click", () => goto("today"));
 $("entry-consult").addEventListener("click", () => { S.wstep = 1; goto("consult"); });
 
-// 로고 · 🏠 버튼: 홈으로 (진행 중이면 가드)
-$("logo").addEventListener("click", goHomeGuarded);
-$("logo").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHomeGuarded(); } });
+// 🏠 버튼: 홈으로 (진행 중이면 가드). 로고는 일반 텍스트 — 클릭 동작 없음.
 $("btn-home-nav").addEventListener("click", goHomeGuarded);
 
 // 해시 변경 → 화면 전환 (뒤로가기/앞으로가기/새로고침 포함)
