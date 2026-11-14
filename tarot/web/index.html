@@ -849,8 +849,8 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 // ---------- 덱과 카드 데이터 ----------
 // 동물 그림 경로: images/<덱>/<카드id>.jpg  (없으면 images/original/<카드id>.jpg 로 대신 표시)
 const DECKS = [
-  { id: "cat",      name: "치즈 고양이",  group: "고양이 버전",      ready: true },
-  { id: "dog",      name: "골든 리트리버", group: "강아지 버전",      ready: true },
+  { id: "cat",      name: "치즈 고양이",  group: "고양이 버전",      ready: true, ext: "webp" },
+  { id: "dog",      name: "골든 리트리버", group: "강아지 버전",      ready: true, ext: "webp" },
   { id: "marseille", name: "마르세유 1748", group: "타로의 숲 복원판", ready: true },
   { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원", ready: true, hidden: true },
   { id: "original", name: "라이더-웨이트", group: "원본 1909",        ready: true },
@@ -1328,7 +1328,11 @@ $("bgm-sel").addEventListener("change", () => BGM.set($("bgm-sel").value));
 function backHTML(deck) {
   return IMG_BACK_DECKS.has(deck) ? `<div class="face back img ${deck}"></div>` : '<div class="face back"></div>';
 }
-function srcFor(deck, id) { return "images/" + (deck === "original" ? "original" : deck) + "/" + id + ".jpg"; }
+function srcFor(deck, id) {
+  const d = DECKS.find(x => x.id === deck);
+  const ext = (d && d.ext) || "jpg";   // 투명 모서리 덱은 webp
+  return "images/" + (deck === "original" ? "original" : deck) + "/" + id + "." + ext;
+}
 
 // 스프레드별 안전 배율: 확대한 카드가 가로(컨테이너)·세로(뷰포트)를 넘치면 이 판에서만 축소한다.
 function fitSpread() {
