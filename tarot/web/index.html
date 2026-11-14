@@ -584,6 +584,60 @@ ol.positions .lbl { font-size: 13px; color: var(--muted); }
 ol.positions .val { display: block; font-size: 14.5px; }
 ol.positions .val.hidden { color: #7f6f93; }
 
+/* ---------- AI 대화형 리딩 데모 (예시 모드) ---------- */
+.btn.demo-toggle[aria-pressed="true"] { color: var(--table-deep); background: var(--gold); border-color: var(--gold); }
+.demo-chat {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  display: flex; flex-direction: column; min-height: 132px; overflow: hidden;
+}
+.demo-chat .demo-badge {
+  flex: 0 0 auto; font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  padding: 9px 13px; border-bottom: 1px solid var(--line);
+  background: rgba(216,180,106,.06); letter-spacing: .01em;
+}
+.demo-chat .demo-badge b { color: var(--gold); font-weight: 700; }
+.demo-stream {
+  flex: 1 1 auto; display: flex; flex-direction: column; gap: 12px;
+  padding: 14px; overflow-y: auto; max-height: min(66vh, 560px); scroll-behavior: smooth;
+}
+.demo-turn { display: flex; flex-direction: column; gap: 7px; animation: demopop var(--t-enter) var(--ease) both; }
+.demo-turn.me { align-items: flex-end; }
+@keyframes demopop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .demo-turn { animation: none; } }
+.demo-from { font-family: var(--serif-ko); font-size: 12px; color: var(--gold); letter-spacing: .01em; padding-left: 2px; }
+.demo-bubble {
+  max-width: 88%; padding: 11px 14px; border-radius: 13px; font-size: 14.5px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.demo-turn.counselor .demo-bubble {
+  background: var(--table); border: 1px solid var(--line);
+  border-top-left-radius: 4px; color: var(--ink);
+}
+.demo-turn.me .demo-bubble {
+  background: rgba(216,180,106,.08); border: 1px solid var(--gold-soft);
+  border-top-right-radius: 4px; color: var(--ink); text-align: left;
+}
+.demo-ask { display: flex; flex-direction: column; gap: 8px; margin-top: 1px; }
+.demo-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.demo-chip {
+  font: inherit; font-size: 13px; color: var(--gold); cursor: pointer;
+  background: none; border: 1px solid var(--gold-soft); border-radius: 999px; padding: 5px 13px;
+  transition: color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease), background var(--t-micro) var(--ease);
+}
+.demo-chip:hover { color: var(--table-deep); background: var(--gold); border-color: var(--gold); }
+.demo-input { display: flex; gap: 7px; }
+.demo-input input {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: 14px; color: var(--ink);
+  background: rgba(0,0,0,.18); border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+}
+.demo-input input:focus { outline: none; border-color: var(--gold-soft); }
+.demo-input button {
+  flex: 0 0 auto; font: inherit; font-size: 13px; color: var(--gold); cursor: pointer;
+  background: none; border: 1px solid var(--gold-soft); border-radius: 9px; padding: 8px 14px;
+}
+.demo-input button:hover { color: var(--table-deep); background: var(--gold); border-color: var(--gold); }
+.demo-hint { font-size: 12px; color: var(--muted); text-align: center; padding: 4px 0; opacity: .8; }
+
 dialog {
   border: 0; padding: 0; background: transparent; max-width: min(92vw, 520px); max-height: 92vh;
 }
@@ -1024,6 +1078,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
         <div class="q" id="who-q"></div>
       </div>
       <div class="actions">
+        <button class="btn ghost demo-toggle" id="btn-demo" type="button" aria-pressed="false" hidden><svg class="ico"><use href="#i-crystal"/></svg>상담사와 함께 (예시)</button>
         <button class="btn ghost" id="btn-all" type="button"><svg class="ico"><use href="#i-sparkle"/></svg>모두 뒤집기</button>
         <button class="btn ghost" id="btn-again" type="button"><svg class="ico"><use href="#i-shuffle"/></svg>다시 섞기</button>
         <button class="btn ghost" id="btn-pdf" type="button"><svg class="ico"><use href="#i-doc"/></svg>PDF 저장</button>
@@ -1034,6 +1089,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <div class="spread" id="spread"></div>
     </div>
     <aside class="log">
+      <div class="demo-chat" id="demo-chat" hidden>
+        <div class="demo-badge">예시 모드 — 정식 버전에서는 <b>AI 상담사</b>가 실제로 생각하고 답합니다.</div>
+        <div class="demo-stream" id="demo-stream" aria-live="polite"></div>
+      </div>
       <div class="focus-card" id="focus" aria-live="polite"></div>
       <ol class="positions" id="positions"></ol>
     </aside>
@@ -1777,7 +1836,7 @@ const SPREADS = [
 let POSITIONS = SPREADS[0].positions;
 
 // ---------- 상태 ----------
-const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
+const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0, demo: false, demoShown: new Set(), demoAnswers: {}, demoSummary: false };
 const $ = (id) => document.getElementById(id);
 
 // ---------- 전환 공통 유틸 ----------
@@ -2429,6 +2488,7 @@ async function startReading() {
   }
   S.draw = shuffle(CARDS).slice(0, POSITIONS.length).map(c => ({ ...c, rev: rand(2) === 1 }));
   S.open = new Set(); S.active = null; S.fallback = new Set();
+  resetDemo(); syncDemoButton();   // 예시 모드 초기화 + 켈틱일 때만 토글 버튼 노출
 
   const spread = $("spread");
   spread.className = "spread deck-" + S.deck;
@@ -2819,6 +2879,7 @@ function openReading(h) {
   POSITIONS = h.positions.map(p => ({ ...p }));
   S.draw = h.draw.map(c => ({ ...c }));
   S.open = new Set(); S.active = null; S.fallback = new Set(); S.picked = POSITIONS.length;
+  resetDemo();
   const deck = DECKS.find(x => x.id === h.deck) || DECKS[0];
   $("who-title").textContent = (h.name ? h.name + "님의 " : "당신의 ") + h.spreadName + " · " + deck.name;
   document.querySelector(".eyebrow").textContent = h.en + " · " + POSITIONS.length + " Cards";
@@ -2852,6 +2913,7 @@ function openReading(h) {
   S.replayMute = false;
   renderLog();
   setActive(0);
+  syncDemoButton();   // 켈틱 기록 재생 시에도 예시 모드 토글 노출
   $("btn-all").disabled = true; $("btn-again").disabled = false;
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -2859,10 +2921,12 @@ function openReading(h) {
 // ---------- 뒤집기와 기록 ----------
 function reveal(i) {
   const el = $("spread").querySelector(`.card[data-i="${i}"]`); if (!el) return;
+  const firstOpen = !S.open.has(i);
   if (!el.classList.contains("open") && !S.replayMute) SFX.flip();
   el.classList.add("open");
   el.setAttribute("aria-label", (i + 1) + "번 " + POSITIONS[i].name + ": " + S.draw[i].ko + (S.draw[i].rev ? " 역방향" : ""));
   S.open.add(i);
+  if (firstOpen && S.demo && !S.replayMute) demoReveal(i);  // 예시 모드: 뒤집을 때 상담사 서술
 }
 function setActive(i) {
   S.active = i;
@@ -2922,6 +2986,133 @@ $("positions").addEventListener("click", (e) => {
 
 function toRoman(n) { return ["I","II","III","IV","V","VI","VII","VIII","IX","X"][n - 1]; }
 
+// ---------- AI 대화형 리딩 데모 (켈틱 크로스 전용, 세션 메모리만) ----------
+// 자리 서술은 카드 index(0~9) 기준. 질문 자리는 index 0,1,8.
+const DEMO_SCRIPT = {
+  intro: "안녕하세요, 숲의 상담사예요. 켈틱 크로스를 함께 볼게요. 카드를 한 장씩 뒤집어 주세요 — 제가 따라가며 읽어드릴게요.",
+  seats: [
+    { text: "첫 자리는 '현재'예요. {card} — {sense}. 지금 당신을 가장 크게 차지하고 있는 기운이에요.", q: "요즘 마음을 가장 많이 쓰는 일이 이 느낌과 닿아 있나요?", chips: ["네, 꽤 비슷해요", "반쯤은요", "잘 모르겠어요"] },
+    { text: "이 자리를 가로지르는 건 '장애물'이에요. {card} — {sense}. 지금 흐름을 막거나 꼬이게 하는 결이죠.", q: "짚이는 게 있으세요?", chips: ["있어요", "딱히 없어요", "생각해 볼게요"] },
+    { text: "머리 위 자리 — 당신이 의식적으로 바라는 것. {card} — {sense}." },
+    { text: "뿌리 자리예요 — 이 상황이 자라난 토양. {card} — {sense}." },
+    { text: "지나온 자리 — 이미 흘러간 영향이에요. {card} — {sense}." },
+    { text: "다가오는 자리 — 가까운 미래의 흐름. {card} — {sense}." },
+    { text: "'나 자신'의 자리 — 이 판에서 당신의 태도예요. {card} — {sense}." },
+    { text: "주변의 기운 — 환경과 사람들이 미치는 영향. {card} — {sense}." },
+    { text: "{card} — {sense}. 희망과 두려움은 자주 같은 얼굴을 하고 있죠.", q: "이 자리의 기운, 당신에겐 바람에 가깝나요 두려움에 가깝나요?", chips: ["바람이요", "두려움이요", "둘 다예요"] },
+    { text: "마지막 '결과'의 자리예요. {card} — {sense}. 지금까지의 흐름이 향하는 곳입니다." },
+  ],
+};
+function demoCardName(i) { return S.draw[i].ko + (S.draw[i].rev ? " 역방향" : ""); }
+function demoSense(i) { const c = S.draw[i]; return c.rev ? c.rev_m : c.up; }
+function demoFill(t, i) { return t.replace("{card}", demoCardName(i)).replace("{sense}", demoSense(i)); }
+
+// 상담사 말풍선 추가 — 텍스트는 letter-reveal. ask 가 있으면 칩/입력 붙임.
+function demoCounselor(text, ask) {
+  const stream = $("demo-stream");
+  const turn = document.createElement("div");
+  turn.className = "demo-turn counselor";
+  const from = document.createElement("div");
+  from.className = "demo-from"; from.textContent = "숲의 상담사";
+  const bubble = document.createElement("div");
+  bubble.className = "demo-bubble";
+  bubble.textContent = text;
+  turn.appendChild(from); turn.appendChild(bubble);
+  if (ask) turn.appendChild(demoAskBox(ask));
+  stream.appendChild(turn);
+  animateText(bubble, 0.012);
+  demoScroll();
+}
+// 손님 답변 말풍선 (오른쪽)
+function demoGuest(text) {
+  const stream = $("demo-stream");
+  const turn = document.createElement("div");
+  turn.className = "demo-turn me";
+  const bubble = document.createElement("div");
+  bubble.className = "demo-bubble";
+  bubble.textContent = text;            // 사용자 입력은 textContent 로만 (XSS 방지)
+  turn.appendChild(bubble);
+  stream.appendChild(turn);
+  demoScroll();
+}
+// 질문 턴의 빠른 답 칩 + 직접 입력 한 줄. 답하면 사라지고 손님 말풍선 추가.
+function demoAskBox(ask) {
+  const wrap = document.createElement("div");
+  wrap.className = "demo-ask"; wrap.dataset.seat = ask.seat;
+  const chips = document.createElement("div");
+  chips.className = "demo-chips";
+  (ask.chips || []).forEach(label => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "demo-chip"; b.textContent = label;
+    b.addEventListener("click", () => demoAnswer(ask.seat, label, wrap));
+    chips.appendChild(b);
+  });
+  const row = document.createElement("div");
+  row.className = "demo-input";
+  const input = document.createElement("input");
+  input.type = "text"; input.placeholder = "직접 입력…"; input.setAttribute("aria-label", "직접 입력");
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); const v = input.value.trim(); if (v) demoAnswer(ask.seat, v, wrap); }
+  });
+  const send = document.createElement("button");
+  send.type = "button"; send.textContent = "보내기";
+  send.addEventListener("click", () => { const v = input.value.trim(); if (v) demoAnswer(ask.seat, v, wrap); });
+  row.appendChild(input); row.appendChild(send);
+  wrap.appendChild(chips); wrap.appendChild(row);
+  return wrap;
+}
+function demoAnswer(seat, text, wrap) {
+  if (wrap && wrap.parentNode) wrap.remove();   // 칩/입력창 제거
+  S.demoAnswers[seat] = text;                   // 세션 메모리만 (localStorage 저장 안 함)
+  demoGuest(text);
+}
+function demoScroll() {
+  const stream = $("demo-stream");
+  requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+}
+// 카드 뒤집힘 → 해당 자리 서술 (질문 자리는 질문+칩). 한 자리 1회만.
+function demoReveal(i) {
+  if (S.demoShown.has(i)) return;
+  S.demoShown.add(i);
+  const seat = DEMO_SCRIPT.seats[i]; if (!seat) return;
+  const ask = seat.q ? { seat: i, q: seat.q, chips: seat.chips } : null;
+  demoCounselor(demoFill(seat.text, i) + (ask ? "\n\n" + ask.q : ""), ask);
+  if (S.demoShown.size === POSITIONS.length) demoSummary();
+}
+function demoSummary() {
+  if (S.demoSummary) return; S.demoSummary = true;
+  const n = Object.keys(S.demoAnswers).length;
+  const t = `정리해 볼게요. 지금의 ${demoCardName(0)}에서 출발한 이야기가 ${demoCardName(1)}라는 매듭을 지나, ${demoCardName(5)}의 흐름을 타고 ${demoCardName(9)}를 향해 가고 있어요. 들려주신 답 ${n}개도 함께 놓고 보면, 결국 열쇠는 현재를 어떻게 다루느냐에 있습니다. 서두르지 않아도 괜찮아요 — 카드는 방향을 보여줄 뿐, 걸어가는 속도는 언제나 당신의 것이니까요. ※ 여기까지는 예시 문장이에요. 정식 버전에서는 AI 상담사가 당신의 답을 실제로 반영해 이 자리를 채웁니다.`;
+  setTimeout(() => demoCounselor(t), 400);
+}
+// 새 리딩/리플레이 시작 시 데모 상태 초기화 (세션 메모리만)
+function resetDemo() {
+  S.demo = false; S.demoShown = new Set(); S.demoAnswers = {}; S.demoSummary = false;
+  const stream = $("demo-stream"); if (stream) stream.innerHTML = "";
+  $("demo-chat").hidden = true; $("focus").hidden = false; $("positions").hidden = false;
+  $("btn-demo").setAttribute("aria-pressed", "false");
+}
+// 데모 On/Off 토글: 대화 패널 ↔ 기존 의미 패널 전환
+function setDemo(on) {
+  S.demo = on;
+  $("btn-demo").setAttribute("aria-pressed", on ? "true" : "false");
+  $("demo-chat").hidden = !on;
+  $("focus").hidden = on;          // 데모 중엔 의미 패널 숨김 (대화로 대체)
+  $("positions").hidden = on;
+  if (on) {
+    if (!S.demoShown.size && !$("demo-stream").children.length) demoCounselor(DEMO_SCRIPT.intro);
+    // 데모 켜기 전에 이미 뒤집힌 자리는 서술을 밀린 순서대로 채운다
+    for (let i = 0; i < POSITIONS.length; i++) if (S.open.has(i)) demoReveal(i);
+  }
+}
+// 켈틱 전용 토글 버튼 표시 관리
+function syncDemoButton() {
+  const show = S.spread === "celtic";
+  $("btn-demo").hidden = !show;
+  if (!show && S.demo) setDemo(false);
+}
+$("btn-demo").addEventListener("click", () => setDemo(!S.demo));
+
 // ---------- 크게 보기 ----------
 function openZoom(i) {
   const c = S.draw[i];
@@ -2953,6 +3144,12 @@ $("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) softClo
 $("btn-start").addEventListener("click", startReading);
 $("btn-again").addEventListener("click", startReading);
 $("btn-all").addEventListener("click", () => {
+  if (S.demo) {
+    // 예시 모드: 아직 안 뒤집은 자리를 순서대로 0.6s 간격으로 쌓는다
+    const rest = S.draw.map((_, i) => i).filter(i => !S.open.has(i));
+    rest.forEach((i, k) => setTimeout(() => { reveal(i); setActive(i); }, k * 600));
+    return;
+  }
   S.draw.forEach((_, i) => reveal(i));
   setActive(S.active === null ? 0 : S.active);
 });
