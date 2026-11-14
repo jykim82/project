@@ -6,8 +6,16 @@
 <meta property="og:title" content="타로의 숲 🌲 Tarot Forest">
 <meta property="og:description" content="오늘, 어떤 이야기를 나눠볼까요? 숲의 친구들과 함께 카드를 직접 뽑는 무료 타로.">
 <meta property="og:type" content="website">
+<meta property="og:image" content="images/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="타로의 숲 🌲 Tarot Forest">
+<meta name="twitter:description" content="오늘, 어떤 이야기를 나눠볼까요? 숲의 친구들과 함께 카드를 직접 뽑는 무료 타로.">
+<meta name="twitter:image" content="images/og.png">
 <title>타로의 숲 — 숲의 친구들이 들려주는 타로</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%AE%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%231d1530'/%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='66' rx='17' ry='13'/%3E%3Ccircle cx='30' cy='47' r='7.5'/%3E%3Ccircle cx='43' cy='37' r='7.5'/%3E%3Ccircle cx='57' cy='37' r='7.5'/%3E%3Ccircle cx='70' cy='47' r='7.5'/%3E%3C/g%3E%3Ctext x='74' y='30' font-size='20' fill='%23d8b46a' text-anchor='middle'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='43' fill='%231d1530'/%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='90' cy='119' rx='31' ry='23'/%3E%3Ccircle cx='54' cy='85' r='13.5'/%3E%3Ccircle cx='77' cy='67' r='13.5'/%3E%3Ccircle cx='103' cy='67' r='13.5'/%3E%3Ccircle cx='126' cy='85' r='13.5'/%3E%3C/g%3E%3Ctext x='133' y='54' font-size='36' fill='%23d8b46a' text-anchor='middle'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -215,6 +223,8 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   transition: border-color var(--t-micro) var(--ease), background var(--t-micro) var(--ease);
 }
 .history .h-item:hover { border-color: var(--gold-soft); background: rgba(216,180,106,.04); }
+.history .h-thumb { flex: 0 0 auto; width: 30px; height: 44px; border-radius: 5px; object-fit: cover; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.history .h-thumb.rev { transform: rotate(180deg); }
 .history .h-open { flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; display: grid; gap: 2px; }
 .history .h-top { font-size: 14.5px; font-weight: 700; }
 .history .h-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -635,6 +645,7 @@ dialog {
 @media (max-width: 560px) { .deck-row { grid-template-columns: minmax(0, 1fr); } .deck-preview { max-width: 180px; margin: 0 auto; } }
 
 .credits-footer { max-width: 1180px; margin: 28px auto 20px; padding: 0 20px; text-align: center; }
+.credits-sep { color: var(--muted); font-size: 12.5px; opacity: .6; margin: 0 2px; }
 .credits-link {
   background: none; border: 0; color: var(--muted); font-size: 13px;
   text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
@@ -928,6 +939,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <div class="step-title"><span class="num">✦</span><h2>지난 리딩</h2></div>
       <p class="note">이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 함께 사라집니다.</p>
       <div class="history" id="history"></div>
+      <button type="button" class="btn ghost" id="btn-history-more" hidden style="justify-self:start; padding:7px 14px; font-size:13px;"></button>
       <button type="button" class="btn ghost" id="btn-history-clear" style="justify-self:start; padding:7px 14px; font-size:13px;">기록 전체 삭제</button>
     </div>
   </section>
@@ -1033,6 +1045,10 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 
 <footer class="credits-footer">
   <button type="button" class="credits-link" id="btn-credits">오픈소스 라이선스 · 카드 이미지 출처</button>
+  <span class="credits-sep" aria-hidden="true">·</span>
+  <button type="button" class="credits-link" id="btn-notice">이용안내 · 면책</button>
+  <span class="credits-sep" aria-hidden="true">·</span>
+  <button type="button" class="credits-link" id="btn-privacy">개인정보처리방침</button>
 </footer>
 
 <!-- 카드 선택창: 78장 전체에서 고른다 -->
@@ -1106,6 +1122,22 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       (<a href="https://archive.org/details/ThreeGnossiennesErikSatie" target="_blank" rel="noopener">archive.org</a>),
       <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.
       효과음: Pixabay (freesound_community, Dragon Studio 외 - Pixabay 콘텐츠 라이선스, 출처 표기 불요).</p>
+  </div>
+</dialog>
+
+<dialog id="notice" aria-labelledby="notice-title">
+  <div class="credits-box">
+    <button class="close" id="notice-close" type="button" aria-label="닫기">×</button>
+    <h2 id="notice-title">이용안내 · 면책</h2>
+    <p lang="ko">타로의 숲은 오락과 자기 성찰을 위한 서비스입니다. 리딩 결과는 참고용이며 의료 · 법률 · 금융 · 투자 등 전문적 조언을 대체하지 않습니다. 중요한 결정은 반드시 해당 분야 전문가와 상의하세요. 만 14세 미만은 보호자와 함께 이용해 주세요.</p>
+  </div>
+</dialog>
+
+<dialog id="privacy" aria-labelledby="privacy-title">
+  <div class="credits-box">
+    <button class="close" id="privacy-close" type="button" aria-label="닫기">×</button>
+    <h2 id="privacy-title">개인정보처리방침</h2>
+    <p lang="ko">타로의 숲은 서버에 어떤 개인정보도 수집 · 저장하지 않습니다. 이름, 질문, 리딩 기록은 모두 사용자의 기기(브라우저 localStorage)에만 저장되며, 외부로 전송되지 않습니다. 기록은 &lsquo;기록 전체 삭제&rsquo; 버튼 또는 브라우저 데이터 삭제로 언제든 지울 수 있습니다. 쿠키 · 추적 도구 · 분석 도구를 사용하지 않습니다. (향후 AI 해석 등 서버 기능 도입 시 본 방침이 먼저 갱신됩니다 — 시행일: 2026-11-15)</p>
   </div>
 </dialog>
 
@@ -2143,15 +2175,15 @@ const CATEGORIES = [
   { id: "love",   name: "연애 · 관계",  desc: "사랑, 마음, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three", "bridge"] },
   { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
   { id: "timing", name: "시기 · 타이밍", desc: "언제 움직이면 좋을까", spreads: ["hourglass", "three", "horseshoe"] },
-  { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three", "compass"] },
-  { id: "people", name: "인간관계",     desc: "친구, 동료, 가족 사이", spreads: ["cup", "horseshoe", "three", "bridge"] },
+  { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["compass", "celtic", "horseshoe", "three"] },
+  { id: "people", name: "인간관계",     desc: "친구, 동료, 가족 사이", spreads: ["bridge", "cup", "horseshoe", "three"] },
   { id: "study",  name: "학업 · 시험",  desc: "공부와 합격운",         spreads: ["exam", "three", "celtic"] },
   { id: "money",  name: "금전 · 재물",  desc: "돈의 흐름과 전망",      spreads: ["money", "celtic", "three"] },
   { id: "pet",    name: "반려동물",     desc: "아이의 마음 읽기",      spreads: ["paw", "three"] },
   { id: "loss",   name: "떠나보낸 마음", desc: "사별 · 이별 · 펫로스", spreads: ["farewell", "three"] },
-  { id: "worry",  name: "고민 해결",    desc: "막힌 문제 풀기",        spreads: ["horseshoe", "celtic", "three", "knot"] },
+  { id: "worry",  name: "고민 해결",    desc: "막힌 문제 풀기",        spreads: ["knot", "horseshoe", "celtic", "three"] },
   { id: "year",   name: "한 해 운세",   desc: "열두 달의 흐름",        spreads: ["year", "houses", "week"] },
-  { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["houses", "tree", "celtic", "mirror"] },
+  { id: "life",   name: "인생 · 내면",  desc: "삶 전반과 마음 깊은 곳", spreads: ["mirror", "houses", "tree", "celtic"] },
 ];
 // 분야 아이콘: 금색 라인 SVG 스프라이트의 symbol id 로 매핑 (이모지 → 라인 아이콘)
 const CAT_ICONS = { today: "i-sunrise", love: "i-hearts", people: "i-people", choice: "i-scale", timing: "i-hourglass", career: "i-compass", study: "i-book", money: "i-pentacle", pet: "i-paw", loss: "i-dove", worry: "i-candle", year: "i-moons", life: "i-moonstar" };
@@ -2712,15 +2744,22 @@ function saveReading() {
   histsaveAndRender(list);
 }
 function histsaveAndRender(list) { histsave(list); renderHistory(); }
+let histExpanded = false;                        // 지난 리딩: 기본은 최근 4개만, true 면 전체 펼침
+const HIST_RECENT = 4;
 function renderHistory() {
   const list = histAll();
   $("history-sec").hidden = list.length === 0;
-  $("history").innerHTML = list.map((h, i) => {
+  const collapsed = !histExpanded && list.length > HIST_RECENT;
+  const shown = collapsed ? list.slice(0, HIST_RECENT) : list;   // 최신순이라 앞에서 N개 = 최근
+  $("history").innerHTML = shown.map((h, i) => {                 // i = 전체 리스트 인덱스(최신=0)와 동일
     const d = new Date(h.t);
     const when = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     const deck = DECKS.find(x => x.id === h.deck);
     const sub = [h.q, h.info].filter(Boolean).join(" · ") || "질문 없음";
+    const c0 = h.draw && h.draw[0];                              // 뽑았던 첫 카드 썸네일 (역방향이면 180° 회전)
+    const thumb = c0 ? `<img class="h-thumb${c0.rev ? " rev" : ""}" alt="" loading="lazy" src="${srcFor(h.deck, c0.id)}" onerror="this.onerror=null; this.src='${srcFor("original", c0.id)}'">` : "";
     return `<div class="h-item">
+      ${thumb}
       <button type="button" class="h-open" data-i="${i}">
         <span class="h-top">${when} · ${h.spreadName} · ${deck ? deck.name : h.deck}</span>
         <span class="h-sub">${sub}</span>
@@ -2728,6 +2767,9 @@ function renderHistory() {
       <button type="button" class="h-del" data-del="${i}" aria-label="이 기록 삭제">✕</button>
     </div>`;
   }).join("");
+  const more = $("btn-history-more");
+  more.hidden = list.length <= HIST_RECENT;
+  more.textContent = histExpanded ? "접기" : `모두 보기 (${list.length}개)`;
 }
 $("history").addEventListener("click", (e) => {
   const del = e.target.closest("[data-del]");
@@ -2738,8 +2780,9 @@ $("history").addEventListener("click", (e) => {
   const open = e.target.closest(".h-open");
   if (open) openReading(histAll()[+open.dataset.i]);
 });
+$("btn-history-more").addEventListener("click", () => { histExpanded = !histExpanded; renderHistory(); });
 $("btn-history-clear").addEventListener("click", async () => {
-  if (await askConfirm("지난 리딩 기록을 모두 삭제할까요?", { ok: "모두 삭제", cancel: "돌아가기" })) histsaveAndRender([]);
+  if (await askConfirm("지난 리딩 기록을 모두 삭제할까요?", { ok: "모두 삭제", cancel: "돌아가기" })) { histExpanded = false; histsaveAndRender([]); }
 });
 
 // ---------- PDF 저장 (브라우저 인쇄 기능 이용 - 서버 전송 없음) ----------
@@ -2897,6 +2940,14 @@ $("credits-close").addEventListener("click", () => softClose($("credits")));
 $("credits").addEventListener("cancel", (e) => { e.preventDefault(); softClose($("credits")); });  // ESC
 $("credits").addEventListener("click", (e) => { if (e.target === $("credits")) softClose($("credits")); });  // 바깥 클릭
 $("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) softClose($("zoom")); });
+
+// ---------- 이용안내 · 면책 / 개인정보처리방침 ----------
+["notice", "privacy"].forEach((id) => {
+  $("btn-" + id).addEventListener("click", () => $(id).showModal());
+  $(id + "-close").addEventListener("click", () => softClose($(id)));
+  $(id).addEventListener("cancel", (e) => { e.preventDefault(); softClose($(id)); });        // ESC
+  $(id).addEventListener("click", (e) => { if (e.target === $(id)) softClose($(id)); });      // 바깥 클릭
+});
 
 // ---------- 버튼 ----------
 $("btn-start").addEventListener("click", startReading);
