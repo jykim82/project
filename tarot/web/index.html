@@ -220,9 +220,10 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 /* 벨벳 상담 테이블: 진보라 radial + 미세 노이즈 + 금빛 비네트 */
 .pick-box {
   background:
-    repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 4px),
-    repeating-linear-gradient(-45deg, rgba(0,0,0,.03) 0 3px, transparent 3px 6px),
-    radial-gradient(ellipse at 50% 38%, #2b1f47 0%, #201640 52%, #150e26 100%);
+    radial-gradient(ellipse at 50% 45%, rgba(13,8,24,0) 42%, rgba(13,8,24,.52) 100%),
+    linear-gradient(rgba(20,13,36,.62), rgba(20,13,36,.62)),
+    url("images/table-bg.webp") 50% 52% / 260% no-repeat,
+    #150e26;
   border: 1px solid var(--line); border-radius: 14px;
   padding: 18px 20px 20px; display: grid; gap: 14px;
   box-shadow: inset 0 0 0 1px rgba(216,180,106,.18), inset 0 0 44px rgba(216,180,106,.12), inset 0 0 90px rgba(10,6,20,.55);
@@ -386,9 +387,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: clamp(18px, 4cqi, 40px) clamp(12px, 3cqi, 32px);
   border-radius: 18px;
   background:
-    repeating-linear-gradient(45deg, rgba(255,255,255,.012) 0 2px, transparent 2px 4px),
-    repeating-linear-gradient(-45deg, rgba(0,0,0,.03) 0 3px, transparent 3px 6px),
-    radial-gradient(ellipse at 50% 40%, #2b1f47 0%, #201640 54%, #150e26 100%);
+    radial-gradient(ellipse at 50% 46%, rgba(13,8,24,0) 42%, rgba(13,8,24,.56) 100%),
+    linear-gradient(rgba(20,13,36,.64), rgba(20,13,36,.64)),
+    url("images/table-bg.webp") 50% 55% / 260% no-repeat,
+    #150e26;
   box-shadow: inset 0 0 0 1px rgba(216,180,106,.16), inset 0 0 40px rgba(216,180,106,.1), inset 0 0 90px rgba(10,6,20,.5);
   /* 상담 테이블 원근감: 손님 자리에서 테이블을 내려다보는 은은한 시점 */
   perspective: 1400px; perspective-origin: 50% 0%;
@@ -493,9 +495,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-shadow: 0 0 6px rgba(20,29,58,.9), 0 1px 0 rgba(0,0,0,.5);
 }
 :root {
-  --paw-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
-  --paw-cream: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23fff1d0'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
-  --paw-plum: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%236d4f86'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
+  --paw-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='63' rx='19' ry='15'/%3E%3Ccircle cx='28' cy='42' r='8.5'/%3E%3Ccircle cx='42' cy='31' r='8.5'/%3E%3Ccircle cx='58' cy='31' r='8.5'/%3E%3Ccircle cx='72' cy='42' r='8.5'/%3E%3C/g%3E%3C/svg%3E");
+  --paw-cream: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23fff1d0'%3E%3Cellipse cx='50' cy='72' rx='24' ry='16'/%3E%3Cellipse cx='22' cy='48' rx='9.5' ry='13'/%3E%3Cellipse cx='40' cy='34' rx='10' ry='13'/%3E%3Cellipse cx='60' cy='34' rx='10' ry='13'/%3E%3Cellipse cx='78' cy='48' rx='9.5' ry='13'/%3E%3Cellipse cx='20' cy='30' rx='2.6' ry='6'/%3E%3Cellipse cx='38' cy='15' rx='2.6' ry='6'/%3E%3Cellipse cx='62' cy='15' rx='2.6' ry='6'/%3E%3Cellipse cx='80' cy='30' rx='2.6' ry='6'/%3E%3C/g%3E%3C/svg%3E");
+  --paw-plum: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%236d4f86'%3E%3Cellipse cx='50' cy='63' rx='19' ry='15'/%3E%3Ccircle cx='28' cy='42' r='8.5'/%3E%3Ccircle cx='42' cy='31' r='8.5'/%3E%3Ccircle cx='58' cy='31' r='8.5'/%3E%3Ccircle cx='72' cy='42' r='8.5'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 /* ---------- 리딩 기록 ---------- */
