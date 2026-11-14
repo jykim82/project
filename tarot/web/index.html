@@ -384,6 +384,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .back.img.cbd { background-image: url("images/cbd/card_back.jpg"); }
 .deck-cat { --bk: #1b1722; --bk-edge: #d8b46a; --bk-dot: rgba(216,180,106,.45); --paw: var(--paw-gold); }
 .deck-dog { --bk: #74472a; --bk-edge: #f0d29b; --bk-dot: rgba(240,210,155,.4); --paw: var(--paw-cream); }
+/* 마르세유: 깊은 남색 바탕 + 금색 목판화 격자/다이아몬드 (순수 CSS) */
+.deck-marseille .back:not(.img) {
+  background-color: #141d3a;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(200,164,96,.32) 0 1px, transparent 1px 13px),
+    repeating-linear-gradient(-45deg, rgba(200,164,96,.32) 0 1px, transparent 1px 13px),
+    repeating-linear-gradient(45deg, rgba(200,164,96,.12) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(-45deg, rgba(200,164,96,.12) 0 1px, transparent 1px 26px);
+  background-size: 18px 18px, 18px 18px, 18px 18px, 18px 18px;
+  background-position: center;
+  background-repeat: repeat;
+  border: 3px solid #c8a460;
+  outline: 1px solid rgba(200,164,96,.55); outline-offset: -8px;
+}
+.deck-marseille .mini.back:not(.img) { position: relative; }
+.deck-marseille .back:not(.img)::after {
+  content: "\2726"; position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: #e4c983; font-size: calc(var(--w, 66px) * .34);
+  text-shadow: 0 0 6px rgba(20,29,58,.9), 0 1px 0 rgba(0,0,0,.5);
+}
 :root {
   --paw-gold: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23d8b46a'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
   --paw-cream: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23fff1d0'%3E%3Cellipse cx='50' cy='66' rx='22' ry='18'/%3E%3Cellipse cx='24' cy='40' rx='9' ry='12'/%3E%3Cellipse cx='40' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='60' cy='24' rx='9' ry='12'/%3E%3Cellipse cx='76' cy='40' rx='9' ry='12'/%3E%3C/g%3E%3C/svg%3E");
@@ -781,6 +802,12 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   <div class="credits-box">
     <button class="close" id="credits-close" type="button" aria-label="닫기">×</button>
     <h2 id="credits-title">오픈소스 라이선스</h2>
+    <h3>마르세유 1760 (타로의 숲 복원판)</h3>
+    <p lang="ko">
+      1760년 니콜라 콩베르(Nicolas Conver) 목판 마르세유 타로(퍼블릭 도메인) 스캔을
+      타로의 숲이 직접 복원·정리한 자체 제작판입니다. 원작은 저작권이 만료되었으며,
+      복원본의 권리는 타로의 숲에 있습니다.
+    </p>
     <h3>CBD 마르세유 덱</h3>
     <p class="credit-line">
       <strong>CBD Tarot de Marseille by Dr.&nbsp;Yoav Ben-Dov,
@@ -792,6 +819,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
       <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/" target="_blank" rel="noopener">CC BY-NC-SA 3.0</a>
       라이선스에 따라 비영리 목적으로 사용. 니콜라 콩베르(1760)의 마르세유 타로를 요아브 벤도브가
       복원한 덱입니다. 이미지는 원본 그대로 사용했습니다(파일명만 변경).
+      (현재는 지난 기록 재생용으로만 사용됩니다)
     </p>
     <p lang="en" class="en-note">
       Card images: &ldquo;CBD Tarot de Marseille&rdquo; by Dr. Yoav Ben-Dov
@@ -823,7 +851,8 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 const DECKS = [
   { id: "cat",      name: "치즈 고양이",  group: "고양이 버전",      ready: true },
   { id: "dog",      name: "강아지",       group: "강아지 버전",      ready: false },
-  { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원", ready: true },
+  { id: "marseille", name: "마르세유 1760", group: "타로의 숲 복원판", ready: true },
+  { id: "cbd",      name: "CBD 마르세유", group: "콩베르 1760 복원", ready: true, hidden: true },
   { id: "original", name: "라이더-웨이트", group: "원본 1909",        ready: true },
 ];
 // 그림 전체가 자기 파일로 제공되는 덱(대체 그림 없음), 뒷면도 이미지 사용
@@ -1324,7 +1353,7 @@ function fitSpread() {
 
 // ---------- 덱 선택 ----------
 function renderDecks() {
-  $("decks").innerHTML = DECKS.map(d => {
+  $("decks").innerHTML = DECKS.filter(d => !d.hidden).map(d => {
     const unready = d.ready === false;
     return `
     <button type="button" class="deck-opt deck-${d.id}${unready ? " unready" : ""}" data-deck="${d.id}" aria-pressed="${d.id === S.deck}"${unready ? ' disabled aria-disabled="true"' : ""}>
