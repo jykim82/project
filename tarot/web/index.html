@@ -28,6 +28,11 @@
   --display: "IM Fell English SC", "Times New Roman", serif;
   --serif-en: "IM Fell English", "Times New Roman", serif;
   --body: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", serif;
+  /* 모션 토큰: 럭셔리 호텔풍 절제된 감속 커브 + 통일된 시간 스케일 */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);   /* 기본 ease-out-quad 계열 */
+  --t-micro: .22s;   /* hover 등 마이크로 전이 */
+  --t-enter: .34s;   /* 요소 등장 */
+  --t-screen: .42s;  /* 화면 전환 */
 }
 * { box-sizing: border-box; }
 /* 별빛이 은은하게 깜빡이는 밤하늘 */
@@ -136,6 +141,7 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   font: inherit; font-size: 12.5px; color: var(--muted);
   background: var(--table-deep); border: 1px solid var(--line); border-radius: 999px;
   padding: 5px 12px; cursor: pointer; white-space: nowrap;
+  transition: color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
 }
 .sound-ctrl select { max-width: 42vw; }
 .sound-ctrl button.off { opacity: .5; }
@@ -148,8 +154,9 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 
 /* ---------- 설정 위자드 ---------- */
 .wstep { display: none; }
-.wstep.on { display: grid; gap: 18px; animation: wfade .35s ease; }
-@keyframes wfade { from { opacity: 0; transform: translateY(8px); } }
+.wstep.on { display: grid; gap: 18px; animation: wfade var(--t-enter) var(--ease) both; }
+@keyframes wfade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .wstep.on { animation: none; } }
 .wiz-q { font-family: var(--body); font-weight: 700; font-size: clamp(19px, 3.4vw, 24px); margin: 0; letter-spacing: -.01em; }
 /* 정보 입력 단계 보조 안내: '왜 적는가'를 풀어주는 문구 (muted 톤, 글자 등장 애니메이션) */
 .wiz-intro { margin: -6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.6; max-width: 60ch; }
@@ -193,8 +200,9 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   display: flex; align-items: center; gap: 12px; width: 100%;
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
   background: transparent; text-align: left;
+  transition: border-color var(--t-micro) var(--ease), background var(--t-micro) var(--ease);
 }
-.history .h-item:hover { border-color: var(--gold-soft); }
+.history .h-item:hover { border-color: var(--gold-soft); background: rgba(216,180,106,.04); }
 .history .h-open { flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; display: grid; gap: 2px; }
 .history .h-top { font-size: 14.5px; font-weight: 700; }
 .history .h-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -204,6 +212,11 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
 /* ---------- 카드 뽑기 ---------- */
 #pick-modal { border: 0; padding: 0; background: transparent; max-width: min(96vw, 1060px); width: 96vw; max-height: 94vh; }
 #pick-modal::backdrop { background: rgba(10, 6, 16, .88); }
+/* 열림: 부채 좌표 측정에 영향 없도록 .pick-box 만 페이드인(+백드롭), transform 없음 */
+#pick-modal[open] .pick-box { animation: pickboxin var(--t-enter) var(--ease) both; }
+#pick-modal[open]::backdrop { animation: backdropin var(--t-enter) var(--ease) both; }
+@keyframes pickboxin { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { #pick-modal[open] .pick-box, #pick-modal[open]::backdrop { animation: none; } }
 /* 벨벳 상담 테이블: 진보라 radial + 미세 노이즈 + 금빛 비네트 */
 .pick-box {
   background:
@@ -232,6 +245,16 @@ header > .hero-fan, header > .quick-draw { position: relative; z-index: 1; }
   50%      { transform: scale(1.07); filter: brightness(1.12); }
 }
 @media (prefers-reduced-motion: reduce) { #pick-confirm:not(:disabled) { animation: none; } }
+/* 선택 확정 후: 모달은 살며시 사라지고 리딩 테이블이 떠오른다 */
+#pick-modal.closing { animation: modalout .45s var(--ease) forwards; pointer-events: none; }
+#pick-modal.closing::backdrop { animation: backdropout .45s var(--ease) forwards; }
+@keyframes modalout { to { opacity: 0; transform: translateY(14px) scale(.985); } }
+@keyframes backdropout { to { opacity: 0; } }
+.table.appear { animation: tablein .5s var(--ease) .05s both; }
+@keyframes tablein { from { opacity: 0; transform: translateY(16px); } }
+@media (prefers-reduced-motion: reduce) {
+  #pick-modal.closing, .table.appear { animation: none; }
+}
 .pick-head .btn { padding: 7px 14px; font-size: 13px; }
 .pick-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .pick-actions .btn:disabled { opacity: .4; cursor: default; }
@@ -296,11 +319,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
   display: grid; gap: 10px; justify-items: center; text-align: center;
   padding: 16px 10px 14px; border-radius: 10px;
   background: transparent; border: 1px solid var(--line);
-  transition: border-color .2s, background .2s, transform .2s;
+  transition: border-color var(--t-micro) var(--ease), background var(--t-micro) var(--ease), transform var(--t-micro) var(--ease), box-shadow var(--t-micro) var(--ease);
 }
 .deck-opt:hover { border-color: var(--gold-soft); transform: translateY(-2px); }
 .deck-opt[aria-pressed="true"] { border-color: var(--gold); background: rgba(216,180,106,.08); }
 .deck-opt .mini { width: 66px; aspect-ratio: 1 / 1.73; border-radius: 6px; box-shadow: 0 6px 14px rgba(0,0,0,.4); }
+/* 덱 선택 카드: 히어로 부채처럼 은은히 둥실거린다 (translate 프로퍼티라 hover transform 과 분리). */
+#decks .deck-opt .mini { animation: deckfloat 3.6s var(--ease) infinite alternate; will-change: translate; }
+#decks .deck-opt:nth-child(4n+1) .mini { animation-delay: 0s; }
+#decks .deck-opt:nth-child(4n+2) .mini { animation-delay: .4s; }
+#decks .deck-opt:nth-child(4n+3) .mini { animation-delay: .8s; }
+#decks .deck-opt:nth-child(4n)   .mini { animation-delay: 1.2s; }
+@keyframes deckfloat { from { translate: 0 0; } to { translate: 0 -4px; } }
+@media (prefers-reduced-motion: reduce) { #decks .deck-opt .mini { animation: none; } }
 .deck-opt .name { font-weight: 700; }
 .deck-opt .grp { font-size: 12px; color: var(--muted); }
 .deck-opt.unready { opacity: .55; cursor: not-allowed; position: relative; }
@@ -333,9 +364,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn {
   border-radius: 999px; padding: 11px 22px; border: 1px solid var(--gold);
   background: var(--gold); color: #24172f; font-weight: 700;
-  transition: filter .2s, transform .1s;
+  transition: filter var(--t-micro) var(--ease), transform var(--t-micro) var(--ease), box-shadow var(--t-micro) var(--ease);
 }
-.btn:hover { filter: brightness(1.08); }
+.btn:hover { filter: brightness(1.08); box-shadow: 0 4px 16px rgba(216,180,106,.28); }
 .btn:active { transform: translateY(1px); }
 .btn.ghost { background: transparent; color: var(--gold); }
 .btn:disabled { opacity: .45; cursor: default; }
@@ -562,6 +593,18 @@ dialog {
 .credits-box a { color: var(--gold); }
 .credits-box .en-note { font-size: 12.5px; }
 dialog::backdrop { background: rgba(10,6,16,.82); }
+/* 다이얼로그 공통: 열릴 때 살짝 스케일업하며 페이드인, 닫힐 때 softClose() 가 .closing 으로 페이드아웃 */
+/* (#pick-modal 은 아크 부채 좌표를 showModal 직후 측정하므로 transform 개입을 피해 제외) */
+dialog[open]:not(#pick-modal) { animation: dialogin var(--t-enter) var(--ease) both; }
+dialog[open]:not(#pick-modal)::backdrop { animation: backdropin var(--t-enter) var(--ease) both; }
+@keyframes dialogin { from { opacity: 0; transform: translateY(8px) scale(.975); } to { opacity: 1; transform: none; } }
+@keyframes backdropin { from { opacity: 0; } to { opacity: 1; } }
+dialog.closing { animation: dialogout var(--t-enter) var(--ease) forwards; pointer-events: none; }
+dialog.closing::backdrop { animation: backdropout var(--t-enter) var(--ease) forwards; }
+@keyframes dialogout { to { opacity: 0; transform: translateY(8px) scale(.985); } }
+@media (prefers-reduced-motion: reduce) {
+  dialog[open], dialog[open]::backdrop, dialog.closing, dialog.closing::backdrop { animation: none; }
+}
 dialog img { display: block; max-height: 84vh; width: auto; max-width: 100%; border-radius: 10px; margin: 0 auto; }
 /* 카드 크게 보기: 치즈 고양이 그림이 주인공이 되도록 화면 높이의 82%까지 */
 #zoom { max-width: 94vw; }
@@ -633,6 +676,20 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
 .home-screen, .today-screen { display: none; }
 .wrap[data-screen="home"] .home-screen { display: grid; gap: 28px; }
 .wrap[data-screen="today"] .today-screen { display: grid; gap: 14px; }
+/* 화면 전환: 새 화면 컨텐츠가 살짝 떠오르며 페이드인. 나가는 화면은 JS 가 짧게 페이드아웃 후 교체. */
+.wrap.screen-in .home-screen,
+.wrap.screen-in .today-screen,
+.wrap.screen-in #setup,
+.wrap.screen-in .table:not([hidden]) { animation: screenin var(--t-screen) var(--ease) both; }
+@keyframes screenin { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+/* 나가는 화면 페이드아웃 (교체 직전 짧게) */
+.wrap.screen-out header ~ * { animation: screenout .18s var(--ease) both; }
+@keyframes screenout { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .wrap.screen-in .home-screen, .wrap.screen-in .today-screen,
+  .wrap.screen-in #setup, .wrap.screen-in .table:not([hidden]),
+  .wrap.screen-out header ~ * { animation: none; }
+}
 /* 셋업(상담 위자드)은 상담 화면에서만. 테이블은 .hidden 으로 별도 제어. */
 .wrap[data-screen="home"] #setup,
 .wrap[data-screen="today"] #setup { display: none !important; }
@@ -648,6 +705,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   font: inherit; font-size: 12.5px; color: var(--muted);
   background: var(--table-deep); border: 1px solid var(--line); border-radius: 999px;
   padding: 5px 13px; cursor: pointer; white-space: nowrap;
+  transition: color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
 }
 .home-btn:hover { color: var(--gold); border-color: var(--gold-soft); }
 .wrap[data-screen="home"] .home-btn { display: none; }
@@ -661,7 +719,7 @@ dialog .close { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0
   display: grid; gap: 7px; justify-items: center; text-align: center;
   padding: 26px 18px; border-radius: 14px;
   background: rgba(216,180,106,.06); border: 1px solid var(--gold-soft);
-  transition: border-color .2s, transform .15s, box-shadow .2s;
+  transition: border-color var(--t-micro) var(--ease), transform var(--t-micro) var(--ease), box-shadow var(--t-micro) var(--ease);
 }
 .entry:hover { border-color: var(--gold); transform: translateY(-3px); box-shadow: 0 12px 26px rgba(0,0,0,.35); }
 .entry .entry-ico { font-size: 38px; line-height: 1; filter: drop-shadow(0 3px 6px rgba(0,0,0,.4)); }
@@ -1188,6 +1246,25 @@ let POSITIONS = SPREADS[0].positions;
 const S = { deck: "cat", cat: "today", spread: "today", draw: [], open: new Set(), active: null, fallback: new Set(), picked: 0 };
 const $ = (id) => document.getElementById(id);
 
+// ---------- 전환 공통 유틸 ----------
+// 모션 최소화 설정을 런타임마다 확인 (시스템 설정을 중간에 바꿔도 반영)
+const prefersReducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+// <dialog>.close() 는 즉시 닫혀 애니메이션이 안 보인다 → .closing 클래스로 페이드아웃시킨 뒤 닫는다.
+// 멱등: 이미 닫혔거나 닫히는 중이면 아무 것도 하지 않아 연타·중복 호출에도 안전하다.
+// reduced-motion 이면 즉시 닫는다. 닫힌 뒤 onClosed 콜백 실행.
+function softClose(dialog, { ms = 340, onClosed } = {}) {
+  if (!dialog || !dialog.open) return;
+  if (dialog.classList.contains("closing")) return;   // 이미 닫히는 중 — 중복 방지
+  const finish = () => {
+    dialog.classList.remove("closing");
+    if (dialog.open) dialog.close();
+    if (onClosed) onClosed();
+  };
+  if (prefersReducedMotion()) { finish(); return; }
+  dialog.classList.add("closing");
+  setTimeout(finish, ms);
+}
+
 // ---------- 해시 라우팅 (#home · #today · #consult) ----------
 // 세 화면을 해시로 전환한다. 브라우저 뒤로가기·새로고침이 자연스럽게 동작하도록 hashchange 로 복원한다.
 const SCREENS = ["home", "today", "consult"];
@@ -1205,7 +1282,7 @@ function readingInProgress() {
 }
 // 리딩 테이블/모달/셋업 상태를 홈 기준으로 완전히 정리한다 (화면 전환 가드용)
 function clearReadingState() {
-  if ($("pick-modal").open) $("pick-modal").close();
+  if ($("pick-modal").open) softClose($("pick-modal"), { ms: 450 });  // 홈 이동 등: 페이드아웃으로 닫는다
   $("pick-confirm").disabled = true; $("pick-note").classList.remove("done");
   $("table").hidden = true;
   document.querySelector(".wrap").classList.remove("reading-active");
@@ -1228,11 +1305,24 @@ function screenFromHash() {
   return SCREENS.includes(h) ? h : "home";
 }
 let activeScreen = "home";
+// 화면 전환 애니메이션: 새 화면 컨텐츠를 살짝 떠오르며 페이드인시킨다 (prefers-reduced-motion 이면 CSS 가 즉시).
+// 멱등: 연타로 여러 번 호출돼도 클래스를 리셋해 깔끔히 재생된다.
+let screenAnimTimer = 0;
+function playScreenEnter(wrap) {
+  wrap.classList.remove("screen-in");
+  // reflow 로 애니메이션 재시작 보장 (연타 시에도 매끄럽게)
+  void wrap.offsetWidth;
+  wrap.classList.add("screen-in");
+  clearTimeout(screenAnimTimer);
+  screenAnimTimer = setTimeout(() => wrap.classList.remove("screen-in"), 600);
+}
 // 화면을 적용한다. 해시를 직접 만지지 않고 DOM/상태만 바꾼다 (hashchange 핸들러가 이 함수를 부른다).
 function applyScreen(screen) {
+  const prev = activeScreen;
   activeScreen = screen;
   const wrap = document.querySelector(".wrap");
   wrap.dataset.screen = screen;
+  if (prev !== screen) playScreenEnter(wrap);   // 실제 화면이 바뀔 때만 등장 애니메이션
   document.querySelector(".eyebrow").textContent = EYEBROW[screen];
   if (screen === "home") {
     renderHistory();            // 지난 리딩 목록 갱신
@@ -1505,16 +1595,18 @@ $("deck-preview-img").addEventListener("click", openDeckInfo);
 $("deck-preview-img").addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); openDeckInfo(); }
 });
-$("deck-info-close").addEventListener("click", () => $("deck-info").close());
-$("deck-info-img").addEventListener("click", () => $("deck-info").close()); // 큰 이미지 재클릭으로도 닫기
-$("deck-info").addEventListener("click", (e) => { if (e.target === $("deck-info")) $("deck-info").close(); }); // 바깥 클릭
-// (ESC는 <dialog> 기본 동작. 닫힐 때 덱 선택 화면은 그대로 유지됨)
+$("deck-info-close").addEventListener("click", () => softClose($("deck-info")));
+$("deck-info-img").addEventListener("click", () => softClose($("deck-info"))); // 큰 이미지 재클릭으로도 닫기
+$("deck-info").addEventListener("click", (e) => { if (e.target === $("deck-info")) softClose($("deck-info")); }); // 바깥 클릭
+// ESC(cancel) 로 닫을 때도 페이드아웃 적용
+$("deck-info").addEventListener("cancel", (e) => { e.preventDefault(); softClose($("deck-info")); });
+// (닫힐 때 덱 선택 화면은 그대로 유지됨)
 
 // ---------- 분야와 배열 선택 ----------
 // 분야마다 어울리는 배열 목록. 첫 번째가 추천 배열(★)이고 그 배열이 기본 선택된다.
 const CATEGORIES = [
   { id: "today",  name: "오늘의 운세",  desc: "가볍게 하루 보기",      spreads: ["today", "three"] },
-  { id: "love",   name: "연애 · 관계",  desc: "사랑, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three"] },
+  { id: "love",   name: "연애 · 관계",  desc: "사랑, 마음, 사람 사이",       spreads: ["cup", "celtic", "horseshoe", "three"] },
   { id: "choice", guide: "A와 B 두 선택지를 분명히 정하고 시작하세요. 질문에 \"A는 ~, B는 ~\"처럼 적으면 읽기 쉽습니다.", name: "선택 · 결정",  desc: "둘 중 어느 쪽일까",     spreads: ["choice", "three", "celtic"] },
   { id: "career", guide: "어떤 일에 대한 것인지(이직 · 사업 · 승진 · 면접 등) 질문에 적어주세요.", name: "일 · 커리어",  desc: "직장, 사업, 진로",      spreads: ["career", "celtic", "horseshoe", "three"] },
   { id: "people", name: "인간관계",     desc: "친구, 동료, 가족 사이", spreads: ["cup", "horseshoe", "three"] },
@@ -1937,6 +2029,7 @@ function startPicking() {
   $("pickfan").innerHTML = Array.from({ length: 78 }, (_, k) =>   // 실제 덱처럼 78장 전체
     `<button type="button" data-k="${k}" aria-label="카드 뽑기">${backHTML(S.deck)}</button>`).join("");
   $("pickfan").scrollTop = 0;
+  $("pick-modal").classList.remove("closing");   // 이전 닫힘 애니메이션 잔여 클래스 제거(새 판은 깔끔히 열림)
   $("pick-modal").showModal();
   layoutPickFan();                                             // 모달이 열린 뒤 크기 측정해 아크 배치
   $("btn-again").disabled = false;
@@ -1976,10 +2069,18 @@ $("pickfan").addEventListener("click", (e) => {
 // ✅ 선택 확정: 이 시점에 기록 저장 + 모달 닫기 (오늘의 카드 1장도 동일 흐름)
 $("pick-confirm").addEventListener("click", () => {
   if (S.picked < POSITIONS.length) return;
+  $("pick-confirm").disabled = true;   // 전환 중 중복 클릭 방지
   SFX.flip();
   saveReading();                  // 카드가 확정되는 순간 이 브라우저에 기록
   $("btn-all").disabled = false;
-  $("pick-modal").close();
+  // 모달은 살며시 사라진 뒤 닫고(공통 softClose, #pick-modal.closing = modalout .45s),
+  // 닫힌 직후 리딩 테이블이 떠오른다. reduced-motion 이면 softClose 가 즉시 닫고 바로 테이블 등장.
+  softClose($("pick-modal"), { ms: 450, onClosed: () => {
+    const t = document.querySelector(".table");
+    t.classList.add("appear");
+    t.addEventListener("animationend", () => t.classList.remove("appear"), { once: true });
+    t.scrollIntoView({ behavior: "smooth", block: "start" });
+  }});
 });
 // ↩️ 한 장 되돌리기: 마지막으로 뽑은 카드를 취소하고 부채로 복귀
 $("pick-undo").addEventListener("click", () => {
@@ -2009,14 +2110,14 @@ $("pick-reshuffle").addEventListener("click", () => {   // 같은 설정으로 �
   // 이미 뽑은 카드가 있으면 확인. startReading() 이 #spread 를 새로 그리고 startPicking() 이
   // 부채/스택/카운트를 초기화하므로 테이블·부채·상태가 모두 되돌려진다.
   if (S.picked > 0 && !confirm("뽑은 카드를 모두 되돌리고 다시 섞을까요?")) return;
-  $("pick-modal").close();
-  startReading();
+  // 다시 섞기: 모달을 페이드아웃으로 닫은 뒤 새 판을 연다 (startReading 이 다시 모달을 띄움)
+  softClose($("pick-modal"), { ms: 450, onClosed: startReading });
 });
 // ✖ 취소: 뽑기만 중단하고 현재 화면의 이전 상태로 복귀 — 홈으로와 달리 분야/덱/배열 선택은 유지.
 // 상담 화면이면 정보 입력 단계(🔮 카드 섞고 펼치기)로, 오늘의 카드 화면이면 그 첫 상태로 돌아간다.
 function cancelPicking() {
   if (S.picked > 0 && !confirm("지금까지 뽑은 카드를 버리고 돌아갈까요?")) return;
-  $("pick-modal").close();
+  softClose($("pick-modal"), { ms: 450 });   // 페이드아웃으로 닫는다 (상태 정리는 바로 수행)
   $("pick-confirm").disabled = true; $("pick-note").classList.remove("done");
   S.picked = 0; S.pickStack = [];
   S.draw = []; S.open = new Set(); S.active = null; S.fallback = new Set();
@@ -2036,7 +2137,7 @@ $("pick-cancel").addEventListener("click", cancelPicking);
 // ESC/백드롭 닫힘 → 취소와 동일하게 현재 화면으로 복귀 (확인 생략: 브라우저 기본 동작처럼 가볍게)
 $("pick-modal").addEventListener("cancel", (e) => {
   e.preventDefault();
-  $("pick-modal").close();
+  softClose($("pick-modal"), { ms: 450 });   // ESC/백드롭도 페이드아웃으로 닫는다
   $("pick-confirm").disabled = true; $("pick-note").classList.remove("done");
   S.picked = 0; S.pickStack = [];
   S.draw = []; S.open = new Set(); S.active = null; S.fallback = new Set();
@@ -2140,9 +2241,15 @@ function openReading(h) {
     suppressHashOnce = true;
     location.hash = "#consult";
   }
+  const wasScreen = activeScreen;
   activeScreen = "consult";
   document.querySelector(".wrap").dataset.screen = "consult";
   showTable();
+  // 기록 재생으로 열 때도 테이블이 살짝 떠오르며 등장 (확정 흐름과 동일한 느낌)
+  const rt = document.querySelector(".table");
+  rt.classList.add("appear");
+  rt.addEventListener("animationend", () => rt.classList.remove("appear"), { once: true });
+  if (wasScreen !== "consult") playScreenEnter(document.querySelector(".wrap"));
 
   const spread = $("spread");
   spread.className = "spread deck-" + S.deck;
@@ -2231,12 +2338,15 @@ function openZoom(i) {
   $("zoom-cap").textContent = (i + 1) + ". " + POSITIONS[i].name + " — " + c.ko + (c.rev ? " (역방향)" : "");
   $("zoom").showModal();
 }
-$("zoom-close").addEventListener("click", () => $("zoom").close());
+$("zoom-close").addEventListener("click", () => softClose($("zoom")));
+$("zoom").addEventListener("cancel", (e) => { e.preventDefault(); softClose($("zoom")); });  // ESC
 
 // ---------- 오픈소스 라이선스 ----------
 $("btn-credits").addEventListener("click", () => $("credits").showModal());
-$("credits-close").addEventListener("click", () => $("credits").close());
-$("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) $("zoom").close(); });
+$("credits-close").addEventListener("click", () => softClose($("credits")));
+$("credits").addEventListener("cancel", (e) => { e.preventDefault(); softClose($("credits")); });  // ESC
+$("credits").addEventListener("click", (e) => { if (e.target === $("credits")) softClose($("credits")); });  // 바깥 클릭
+$("zoom").addEventListener("click", (e) => { if (e.target === $("zoom")) softClose($("zoom")); });
 
 // ---------- 버튼 ----------
 $("btn-start").addEventListener("click", startReading);
