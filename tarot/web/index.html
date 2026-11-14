@@ -1458,7 +1458,7 @@ function renderChips() {
     done.push([2, "✦ " + sp.name + " · " + sp.positions.length + "장"]);
   }
   $("wiz-chips").innerHTML = done.map(([i, label]) =>
-    `<button type="button" data-goto="${i}">${label} <span class="edit">바꾸기</span></button>`).join("");
+    `<button type="button" data-goto="${i}">${label} <span class="edit">${i === "home" ? "질문 내용 바꾸기" : "바꾸기"}</span></button>`).join("");
 }
 $("wiz-chips").addEventListener("click", (e) => {
   const b = e.target.closest("[data-goto]"); if (!b) return;
